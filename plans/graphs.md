@@ -1,79 +1,40 @@
 # Графы агента AutoBrowser
 
-## Текущий граф (фаза 2 — done)
+## Текущий граф (реализован)
 
 ```mermaid
 flowchart TD
 
     START([START])
 
-    START --> Planner
+    START --> Plan[plan]
 
-    Planner --> State[(AgentState)]
+    Plan --> Execute[execute\nLLM.bind_tools → tool_calls]
 
-    State --> Executor
+    Execute --> MCP[mcp\nmcp_invoke_node]
 
-    Executor --> MCP
+    MCP --> Observe[observe\nbrowser_snapshot]
 
-    MCP --> Observe
+    Observe --> Vision[vision\nLLM perception]
 
-    Observe --> Vision[Vision / Perception]
+    Vision --> Reflect[reflect\nLLM decision]
 
-    Vision --> Reflect
+    Reflect -->|continue| Execute
 
-    Reflect -->|continue current plan| Executor
+    Reflect -->|replan| Plan
 
-    Reflect -->|replan| Planner
+    Reflect -->|retry| Backoff[backoff\nexponential]
 
-    Reflect -->|retry tool| Retry
+    Backoff --> MCP
 
-    Retry --> MCP
+    Reflect -->|human| Human[human_input]
 
-    Reflect -->|done| END([END])
+    Human --> Execute
 
-    Reflect -->|fatal| END
-
-    Reflect -->|human approval| Human[Human-in-the-loop]
-
-    Human --> Executor
+    Reflect -->|done / fatal / other| END([END])
 ```
 
-## Целевой граф (фаза 2 — pending)
+## Известные проблемы
 
-```mermaid
-flowchart TD
-
-    START([START])
-
-    START --> Planner
-
-    Planner --> State[(AgentState)]
-
-    State --> Executor
-
-    Executor --> MCP
-
-    MCP --> Observe
-
-    Observe --> Vision[Vision / Perception]
-
-    Vision --> State
-
-    State --> Reflect
-
-    Reflect -->|continue current plan| Executor
-
-    Reflect -->|replan| Planner
-
-    Reflect -->|retry tool| Retry
-
-    Retry --> MCP
-
-    Reflect -->|done| END([END])
-
-    Reflect -->|fatal| END
-
-    Reflect -->|human approval| Human[Human-in-the-loop]
-
-    Human --> Executor
-```
+- `reflect_node` временно использует `ainvoke` без structured output — рефлексия всегда заканчивается в END
+- Продвижение шагов (`plan_steps[0]` → удалить после выполнения) не реализовано

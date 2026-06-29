@@ -3,7 +3,7 @@
 **Цель**: Расширить `AgentWorkflow` — добавить узлы `observe` и `reflect` между исполнением и принятием решения о следующем шаге. Reflection заменяет текущий `_should_retry` и становится единственной точкой маршрутизации.
 
 **Приоритет**: high  
-**Статус**: done
+**Статус**: done (реализован, частично broken — см. TODO ниже)
 
 ---
 
@@ -45,7 +45,8 @@ START → plan → execute → mcp → observe → reflect → (router)
 
 - [x] **3. Написать `reflect_node`**
   - Вход: `messages`, `observation`, `plan_steps`, `last_error_type`, `retry_attempts`
-  - LLM с structured output: `ReflectDecision(action: Literal["continue", "replan", "retry", "done", "fatal"])`
+  - ⚠️ Временно: `ainvoke` без structured output (закомментировано в коде) — `reflection` содержит сырой текст
+  - LLM с structured output: `ReflectDecision(action: Literal["continue", "replan", "retry", "done", "fatal"])` — TODO раскомментировать
   - Сохраняет решение в `state["reflection"]`
   - Файл: `src/agent/nodes.py`
 
@@ -55,18 +56,19 @@ START → plan → execute → mcp → observe → reflect → (router)
   - Файл: `src/agent/routers.py` (новый)
 
 - [x] **5. Переписать `AgentWorkflow._build_graph`**
-  - Добавить узлы: `observe`, `reflect`, `backoff`
+  - Добавить узлы: `observe`, `vision`, `reflect`, `backoff`, `human_input`
   - Убрать `_should_retry`
   - Рёбра:
     ```
-    START → plan → execute → mcp → observe → reflect
+    START → plan → execute → mcp → observe → vision → reflect
     reflect --conditional--> reflect_router
-    reflect_router: continue → execute
-                    replan   → plan
-                    retry    → backoff → mcp
-                    done     → END
-                    fatal    → END
+    reflect_router: continue     → execute
+                    replan       → plan
+                    retry        → backoff → mcp
+                    human        → human_input → execute
+                    done / fatal → END
     ```
+  - `execute` — вызывает `llm.bind_tools(tools).ainvoke(messages)` для генерации `tool_calls`
   - Файл: [src/agent/agent.py](../src/agent/agent.py)
 
 - [x] **6. Промпт для `reflect_node`**

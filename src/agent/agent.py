@@ -1,5 +1,6 @@
 from langgraph.graph import StateGraph, END, START
 from langchain.chat_models import BaseChatModel
+from langchain.messages import HumanMessage
 
 from ..subgraphs.planner.workflow import PlannerWorkflow
 from ..subgraphs.executor.nodes import mcp_invoke_node, backoff_node
@@ -45,8 +46,24 @@ class AgentWorkflow:
             "replan_count": replan_count + (1 if replan_count > 0 else 0),
         }
 
-    async def execute(self, _state: AgentState) -> dict:
-        return {}
+    async def execute(self, state: AgentState) -> dict:
+        messages = list(state.get("messages", []))
+
+        plan_steps = state.get("plan_steps")
+        steps = plan_steps.steps if hasattr(plan_steps, "steps") else (plan_steps or [])
+
+        if steps:
+            step = steps[0]
+            desc = step.description if hasattr(step, "description") else step.get("description", "")
+            tool_hint = step.estimated_tool if hasattr(step, "estimated_tool") else step.get("estimated_tool", "")
+            hint = f"Execute: {desc}"
+            if tool_hint:
+                hint += f" (use {tool_hint})"
+            messages = messages + [HumanMessage(content=hint)]
+
+        llm_with_tools = self.llm.bind_tools(self.tools)
+        response = await llm_with_tools.ainvoke(messages)
+        return {"messages": [response]}
 
     async def mcp(self, state: AgentState) -> dict:
         return await mcp_invoke_node(state, self.tools)
@@ -104,6 +121,22 @@ class AgentWorkflow:
         workflow.add_edge("human_input", "execute")
 
         return workflow.compile()
+    
+    # Временно заменено на код ниже, пока не придуам, как не костылить
+    
+    # TODO: переделать
+
+    # async def run(self, state: AgentState) -> dict:
+    #     return await self.graph.ainvoke(state)
 
     async def run(self, state: AgentState) -> dict:
-        return await self.graph.ainvoke(state)
+        final_state = None
+
+        async for state_snapshot in self.graph.astream(
+            state,
+            stream_mode="values",
+        ):
+            print(state_snapshot)
+            final_state = state_snapshot
+
+        return final_state

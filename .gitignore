@@ -32,4 +32,5 @@ profile/
 baseline/
 node_modules/
 .codegraph/
+.playwright-mcp/
 test.py

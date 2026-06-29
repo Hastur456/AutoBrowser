@@ -7,19 +7,28 @@ LangGraph-агент для автоматизации браузера. Сое�
 ## Граф верхнего уровня
 
 ```
-START → plan → execute → END
-                ↑           ↓
-                └── retry ──┘ (retryable error, attempts < max_retries)
+START → plan → execute → mcp → observe → vision → reflect → (router)
+                  ↑                                              |
+                  └── continue ──────────────────────────────────┘
+                  └── replan      → plan
+                  └── retry       → backoff → mcp
+                  └── human       → human_input → execute
+                  └── done/fatal  → END
 ```
 
 ## Компоненты
 
 | Компонент | Файл | Роль |
 |---|---|---|
-| `AgentWorkflow` | [src/agent/agent.py](../src/agent/agent.py) | Верхний граф, компонует planner + executor |
+| `AgentWorkflow` | [src/agent/agent.py](../src/agent/agent.py) | Верхний граф: plan → execute → mcp → observe → vision → reflect |
 | `AgentState` | [src/agent/state.py](../src/agent/state.py) | Общее состояние агента |
+| `observe_node` | [src/agent/nodes.py](../src/agent/nodes.py) | Снимает снапшот браузера после каждого tool-вызова |
+| `vision_node` | [src/agent/nodes.py](../src/agent/nodes.py) | LLM-интерпретация снапшота → `perception` |
+| `reflect_node` | [src/agent/nodes.py](../src/agent/nodes.py) | LLM-решение о следующем шаге (continue/replan/retry/done/fatal/human) |
+| `reflect_router` | [src/agent/routers.py](../src/agent/routers.py) | Читает `reflection`, возвращает имя следующего узла |
 | `PlannerWorkflow` | [src/subgraphs/planner/workflow.py](../src/subgraphs/planner/workflow.py) | Подграф планирования |
-| `ExecutorWorkflow` | [src/subgraphs/executor/workflow.py](../src/subgraphs/executor/workflow.py) | Подграф исполнения |
+| `mcp_invoke_node` | [src/subgraphs/executor/nodes.py](../src/subgraphs/executor/nodes.py) | Исполняет `tool_calls` из последнего сообщения |
+| `backoff_node` | [src/subgraphs/executor/nodes.py](../src/subgraphs/executor/nodes.py) | Экспоненциальный backoff перед повторным вызовом |
 | `setup_mcp` | [src/mcp/mcp_setup.py](../src/mcp/mcp_setup.py) | Инициализация MCP-клиента |
 | `main.py` | [main.py](../main.py) | Точка входа: запуск Chrome + граф |
 
@@ -43,12 +52,17 @@ browser_tabs, browser_navigate_back
 ## Состояние агента (`AgentState`)
 
 Наследует `ExecutorState`, добавляет:
-- `plan_steps` — типизированные шаги из планировщика
+- `plan_steps: PlanSteps | None` — типизированные шаги из планировщика
+- `observation: str | None` — снапшот браузера (из `observe_node`)
+- `perception: str | None` — интерпретация снапшота LLM (из `vision_node`)
+- `reflection: str | None` — решение о маршруте (из `reflect_node`)
+- `replan_count: int` — счётчик переплановок
 
 ## Известные проблемы / TODO
 
-- `main.py` вызывает узлы планировщика напрямую, минуя `AgentWorkflow` — временный обходной путь
-- Нет тестов для `AgentWorkflow` и `ExecutorWorkflow`
+- `reflect_node` временно использует `ainvoke` без structured output — `reflection` содержит сырой текст LLM, роутер всегда уходит в END
+- Нет продвижения `plan_steps` — после выполнения шага `steps[0]` не удаляется из списка
+- Нет тестов для `AgentWorkflow`
 - LLM захардкожен в `main.py`, не передаётся через конфиг
 
 ## Связанные планы
