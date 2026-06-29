@@ -43,27 +43,38 @@ class AgentWorkflow:
         return {
             "messages": result.get("messages", []),
             "plan_steps": result.get("plan_steps"),
-            "replan_count": replan_count + (1 if replan_count > 0 else 0),
+            "replan_count": replan_count + 1,
         }
 
     async def execute(self, state: AgentState) -> dict:
         messages = list(state.get("messages", []))
 
         plan_steps = state.get("plan_steps")
-        steps = plan_steps.steps if hasattr(plan_steps, "steps") else (plan_steps or [])
+        steps = list(plan_steps.steps if hasattr(plan_steps, "steps") else (plan_steps or []))
 
-        if steps:
-            step = steps[0]
-            desc = step.description if hasattr(step, "description") else step.get("description", "")
-            tool_hint = step.estimated_tool if hasattr(step, "estimated_tool") else step.get("estimated_tool", "")
-            hint = f"Execute: {desc}"
-            if tool_hint:
-                hint += f" (use {tool_hint})"
-            messages = messages + [HumanMessage(content=hint)]
+        # Advance: drop the completed step when coming from a successful reflect
+        if steps and state.get("reflection") == "continue":
+            steps = steps[1:]
+
+        if not steps:
+            return {"reflection": "done", "plan_steps": None}
+
+        step = steps[0]
+        desc = step.description if hasattr(step, "description") else step.get("description", "")
+        tool_hint = step.estimated_tool if hasattr(step, "estimated_tool") else step.get("estimated_tool", "")
+        hint = f"Execute: {desc}"
+        if tool_hint:
+            hint += f" (use {tool_hint})"
+        messages = messages + [HumanMessage(content=hint)]
+
+        if hasattr(plan_steps, "steps"):
+            plan_steps.steps = steps
+        else:
+            plan_steps = steps
 
         llm_with_tools = self.llm.bind_tools(self.tools)
         response = await llm_with_tools.ainvoke(messages)
-        return {"messages": [response]}
+        return {"messages": [response], "plan_steps": plan_steps}
 
     async def mcp(self, state: AgentState) -> dict:
         return await mcp_invoke_node(state, self.tools)
@@ -86,6 +97,14 @@ class AgentWorkflow:
     def _reflect_router(self, state: AgentState) -> str:
         return reflect_router(state)
 
+    def _execute_router(self, state: AgentState) -> str:
+        """Short-circuit to END when plan produced no steps."""
+        plan_steps = state.get("plan_steps")
+        steps = plan_steps.steps if hasattr(plan_steps, "steps") else (plan_steps or [])
+        if not steps:
+            return END
+        return "mcp"
+
     def _build_graph(self):
         workflow = StateGraph(AgentState)
 
@@ -100,7 +119,11 @@ class AgentWorkflow:
 
         workflow.add_edge(START, "plan")
         workflow.add_edge("plan", "execute")
-        workflow.add_edge("execute", "mcp")
+        workflow.add_conditional_edges(
+            "execute",
+            self._execute_router,
+            {"mcp": "mcp", END: END},
+        )
         workflow.add_edge("mcp", "observe")
         workflow.add_edge("observe", "vision")
         workflow.add_edge("vision", "reflect")
@@ -121,22 +144,12 @@ class AgentWorkflow:
         workflow.add_edge("human_input", "execute")
 
         return workflow.compile()
-    
-    # Временно заменено на код ниже, пока не придуам, как не костылить
-    
-    # TODO: переделать
 
-    # async def run(self, state: AgentState) -> dict:
-    #     return await self.graph.ainvoke(state)
+    async def stream(self, state: AgentState):
+        """Yield (node_name, update) after each node execution."""
+        async for chunk in self.graph.astream(state, stream_mode="updates"):
+            for node_name, update in chunk.items():
+                yield node_name, update
 
     async def run(self, state: AgentState) -> dict:
-        final_state = None
-
-        async for state_snapshot in self.graph.astream(
-            state,
-            stream_mode="values",
-        ):
-            print(state_snapshot)
-            final_state = state_snapshot
-
-        return final_state
+        return await self.graph.ainvoke(state)

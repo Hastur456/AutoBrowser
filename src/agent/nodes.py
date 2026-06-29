@@ -97,11 +97,17 @@ async def reflect_node(state: AgentState, llm: BaseChatModel, max_retries: int =
         *state.get("messages", []),
         HumanMessage(content=context),
     ]
-    
-    # Временное изменение на обычный ainvoke для теста провайдера
 
-    # decision: ReflectDecision = await llm.with_structured_output(ReflectDecision).ainvoke(messages)
-    # return {"reflection": decision.action}
+    _VALID_ACTIONS = ("continue", "replan", "retry", "done", "fatal", "human")
 
-    decision = await llm.ainvoke(messages)
-    return {"reflection": decision.content}
+    try:
+        decision: ReflectDecision = await llm.with_structured_output(ReflectDecision).ainvoke(messages)
+        return {"reflection": decision.action}
+    except Exception:
+        # Fallback: ищем ключевое слово в сыром тексте модели
+        raw = await llm.ainvoke(messages)
+        text = raw.content.lower()
+        for action in _VALID_ACTIONS:
+            if action in text:
+                return {"reflection": action}
+        return {"reflection": "done"}

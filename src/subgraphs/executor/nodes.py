@@ -6,6 +6,7 @@ import random
 from langchain.messages import (
     ToolMessage,
 )
+from langchain_core.tools.base import ToolException
 
 from . import ExecutorState
 
@@ -81,6 +82,26 @@ async def mcp_invoke_node(state: ExecutorState, tools):
             responses.append(
                 ToolMessage(
                     content=f"Runtime error: {str(exc)}",
+                    tool_call_id=tool_id,
+                )
+            )
+
+        except ToolException as exc:
+            had_error = True
+
+            responses.append(
+                ToolMessage(
+                    content=f"Tool error: {str(exc)}",
+                    tool_call_id=tool_id,
+                )
+            )
+
+        except Exception as exc:
+            had_error = True
+
+            responses.append(
+                ToolMessage(
+                    content=f"Unexpected error: {type(exc).__name__}: {str(exc)}",
                     tool_call_id=tool_id,
                 )
             )

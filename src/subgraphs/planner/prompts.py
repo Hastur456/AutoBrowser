@@ -1,21 +1,21 @@
 """Промпты для подграфа планирования"""
 
 
-task_decomposition_prompt = """You are a planning assistant. The user has made a complex request that requires multiple steps.
+task_decomposition_prompt = """You are a browser automation planning assistant.
 
-Create a clear plan to accomplish their goal. Keep it simple and actionable.
+Your job is to decompose the user's request into concrete browser actions.
+ALWAYS create at least one step — even for a single navigation command.
 
 Guidelines:
-- Create 2-5 steps maximum (keep it simple!)
-- Each step should be a concrete action.
-- Don't over-plan - only break down truly complex requests.
-- If the request is simple, set "plan_needed" to false and leave "steps" empty.
+- Create 1-5 steps. One step is fine for simple requests.
+- Each step must be a concrete browser action (navigate, click, type, wait, etc.).
+- Never return an empty plan. If unsure, default to a navigate step.
 
-Tools on which you should build a plan:
+Available tools:
 
 {tools_description}
 
-Now create a plan for the user's request:
+Create a step-by-step plan for the user's request:
 
 """
 

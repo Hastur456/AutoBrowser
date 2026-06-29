@@ -53,6 +53,82 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+_NODE_LABELS = {
+    "plan": "PLAN",
+    "execute": "EXECUTE",
+    "mcp": "MCP",
+    "observe": "OBSERVE",
+    "vision": "VISION",
+    "reflect": "REFLECT",
+    "backoff": "BACKOFF",
+    "human_input": "HUMAN",
+}
+
+
+def _format_messages(messages: list) -> str:
+    parts = []
+    for m in messages[-3:]:  # последние 3, чтобы не заливать консоль
+        role = type(m).__name__.replace("Message", "").upper()
+        content = str(getattr(m, "content", ""))
+        tool_calls = getattr(m, "tool_calls", None)
+        if tool_calls:
+            calls = ", ".join(
+                f"{tc['name']}({tc.get('args', {})})" for tc in tool_calls
+            )
+            content = f"[tool_calls] {calls}"
+        parts.append(f"  {role}: {content[:200]}")
+    return "\n".join(parts)
+
+
+def print_step(node_name: str, update: dict) -> None:
+    label = _NODE_LABELS.get(node_name, node_name.upper())
+    separator = "─" * 60
+    print(f"\n┌─ [{label}] {separator[:max(0, 58 - len(label))]}")
+
+    if node_name == "plan":
+        steps = update.get("plan_steps")
+        if steps and hasattr(steps, "steps"):
+            for s in steps.steps:
+                print(f"│  {s.step_id}. [{s.action_type}] {s.description}")
+        elif steps:
+            print(f"│  {steps}")
+
+    elif node_name == "execute":
+        messages = update.get("messages", [])
+        print(_format_messages(messages))
+
+    elif node_name == "mcp":
+        messages = update.get("messages", [])
+        for m in messages:
+            content = str(getattr(m, "content", ""))
+            print(f"│  {content[:300]}")
+        err = update.get("last_error_type")
+        if err:
+            print(f"│  error_type={err}  retry_attempts={update.get('retry_attempts', '?')}")
+
+    elif node_name == "observe":
+        obs = update.get("observation", "")
+        print(f"│  {str(obs)[:200]}")
+
+    elif node_name == "vision":
+        print(f"│  {update.get('perception', '')[:300]}")
+
+    elif node_name == "reflect":
+        print(f"│  decision → {update.get('reflection', '?')}")
+
+    elif node_name == "backoff":
+        print(f"│  retrying (attempt {update.get('retry_attempts', '?')})")
+
+    elif node_name == "human_input":
+        messages = update.get("messages", [])
+        print(_format_messages(messages))
+
+    else:
+        print(f"│  {update}")
+
+    print(f"└{'─' * 62}")
+
+
 async def run_task(agent: AgentWorkflow, task: str) -> dict:
     state = AgentState(
         messages=[HumanMessage(content=task)],
@@ -61,12 +137,19 @@ async def run_task(agent: AgentWorkflow, task: str) -> dict:
         total_tool_calls=0,
         last_error_type=None,
         last_action=None,
+        plan_steps=None,
         observation=None,
         perception=None,
         reflection=None,
         replan_count=0,
     )
-    return await agent.run(state)
+
+    final_update: dict = {}
+    async for node_name, update in agent.stream(state):
+        print_step(node_name, update)
+        final_update.update(update)
+
+    return final_update
 
 
 async def main():

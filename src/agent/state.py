@@ -12,6 +12,8 @@ from langchain.messages import (
 )
 from langgraph.graph.message import add_messages
 
+from ..subgraphs.planner.state import PlanSteps
+
 
 class AgentState(TypedDict):
     messages: Annotated[
@@ -23,6 +25,7 @@ class AgentState(TypedDict):
     total_tool_calls: int
     last_error_type: str | None
     last_action: Any
+    plan_steps: PlanSteps | None
     observation: str | None
     perception: str | None
     reflection: str | None
