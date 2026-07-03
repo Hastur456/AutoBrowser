@@ -41,3 +41,48 @@
 
 - Нужно аккуратно совместить новую реализацию с текущими несвязанными изменениями в рабочем дереве.
 - Нельзя запускать тесты без отдельного разрешения пользователя согласно `CLAUDE.md`.
+
+## Desired Graph (Mermaid)
+
+```mermaid
+---
+config:
+  flowchart:
+    curve: linear
+---
+flowchart TD
+
+  Start([START])
+
+  Plan["plan<br/>Planner (one-shot)"]
+
+  Agent["agent<br/>Reason + Tool Selection"]
+
+  Policy["policy<br/>Human approval / Safety"]
+
+  Executor["executor<br/>Execute MCP tool"]
+
+  Observe["observe<br/>Browser Snapshot"]
+
+  End([END])
+
+  Start --> Plan
+
+  Plan --> Agent
+
+  Agent -->|tool_call| Policy
+
+  Agent -->|replan| Plan
+
+  Agent -->|done| End
+
+  Policy -->|approved| Executor
+
+  Policy -->|human required| Human["human_input"]
+
+  Human --> Executor
+
+  Executor --> Observe
+
+  Observe --> Agent
+```
