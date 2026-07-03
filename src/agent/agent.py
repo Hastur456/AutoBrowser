@@ -41,7 +41,7 @@ def build_agent_graph(
     graph = StateGraph(AgentState)
 
     graph.add_node("plan", create_plan_node(model))
-    graph.add_node("agent", create_agent_node(model))
+    graph.add_node("agent", create_agent_node(model, tools=tools))
     graph.add_node("policy", policy_node)
     graph.add_node("human_input", human_input_node)
     graph.add_node(

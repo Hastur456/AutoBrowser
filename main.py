@@ -63,6 +63,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print state updates after each graph node runs.",
     )
     parser.add_argument(
+        "--show-tools",
+        action="store_true",
+        help="Print MCP tool names after loading them.",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Print state as JSON instead of a readable Python representation.",
@@ -159,6 +164,17 @@ async def load_browser_tools(port: int) -> list[Any]:
     return list(await setup_mcp())
 
 
+def print_tools(tools: list[Any]) -> None:
+    """Print loaded MCP tool names."""
+
+    print("MCP tools:")
+    if not tools:
+        print("- none")
+        return
+    for tool in tools:
+        print(f"- {getattr(tool, 'name', tool)}")
+
+
 def format_state(value: Any, as_json: bool = False) -> str:
     """Format a graph state value for terminal output."""
 
@@ -222,6 +238,8 @@ async def run_agent(args: argparse.Namespace) -> int:
         await wait_for_port(args.cdp_port, args.cdp_timeout)
         print("=== Сервер подключен ===")
         tools = await load_browser_tools(args.cdp_port)
+        if args.show_tools:
+            print_tools(tools)
 
     graph = build_agent_graph(llm=llm, tools=tools)
     config = {"recursion_limit": args.recursion_limit}

@@ -44,6 +44,7 @@ def make_args(**overrides: Any) -> argparse.Namespace:
         "model": "fake-model",
         "temperature": 0,
         "show_state": False,
+        "show_tools": False,
         "json": False,
         "no_mcp": True,
         "chrome_path": "chrome.exe",
@@ -67,6 +68,7 @@ def test_parser_accepts_cli_flags() -> None:
             "explicit task",
             "--loop",
             "--show-state",
+            "--show-tools",
             "--json",
             "--no-mcp",
             "--chrome-path",
@@ -86,6 +88,7 @@ def test_parser_accepts_cli_flags() -> None:
     assert args.task_text == "explicit task"
     assert args.loop is True
     assert args.show_state is True
+    assert args.show_tools is True
     assert args.json is True
     assert args.no_mcp is True
     assert args.chrome_path == "chrome.exe"
@@ -97,6 +100,15 @@ def test_parser_accepts_cli_flags() -> None:
 
 def test_format_state_json() -> None:
     assert main.format_state({"text": "привет"}, as_json=True) == '{\n  "text": "привет"\n}'
+
+
+def test_print_tools(capsys) -> None:
+    main.print_tools([FakeTool("browser_navigate"), FakeTool("browser_snapshot")])
+
+    output = capsys.readouterr().out
+    assert "MCP tools:" in output
+    assert "- browser_navigate" in output
+    assert "- browser_snapshot" in output
 
 
 def test_resolve_task_prefers_positional() -> None:
@@ -213,7 +225,9 @@ async def test_mcp_mode_starts_chrome_and_passes_tools(monkeypatch) -> None:
     monkeypatch.setattr(main, "load_browser_tools", fake_load)
     monkeypatch.setattr(main, "build_agent_graph", fake_build_agent_graph)
 
-    exit_code = await main.run_agent(make_args(no_mcp=False, cdp_port=9555))
+    exit_code = await main.run_agent(
+        make_args(no_mcp=False, cdp_port=9555, show_tools=True)
+    )
 
     assert exit_code == 0
     assert ("start", "chrome.exe", "profile", 9555) in events

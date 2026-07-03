@@ -74,11 +74,12 @@ def create_executor_node(
         tools_by_name = await registry.get()
         tool = tools_by_name.get(tool_name)
         if tool is None:
+            available = ", ".join(sorted(tools_by_name)) or "none"
             result = {
                 "name": tool_name,
                 "status": "error",
                 "content": "",
-                "error": f"Unknown tool: {tool_name}",
+                "error": f"Unknown tool: {tool_name}. Available tools: {available}",
             }
             return {"tool_result": result, "error": result["error"]}
 

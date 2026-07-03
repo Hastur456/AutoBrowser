@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.types import interrupt
 
 from src.agent.prompts import AGENT_SYSTEM_PROMPT, AGENT_USER_PROMPT
-from src.agent.state import AgentDecision, AgentState, ToolRequest
+from src.agent.state import AgentState, ToolRequest
 
 
 def _message_content(response: Any) -> str:
@@ -50,14 +50,45 @@ def _normalize_tool_request(raw_request: Any) -> ToolRequest:
     }
 
 
-def create_agent_node(llm: Any) -> Callable[[AgentState], Any]:
+def _bind_tools(llm: Any, tools: Sequence[Any] | None) -> Any:
+    if not tools or not hasattr(llm, "bind_tools"):
+        return llm
+    try:
+        return llm.bind_tools(tools)
+    except NotImplementedError:
+        return llm
+
+
+def _tool_call_to_request(tool_call: Any) -> ToolRequest:
+    if isinstance(tool_call, dict):
+        args = tool_call.get("args")
+        return {
+            "name": str(tool_call.get("name", "")).strip(),
+            "args": args if isinstance(args, dict) else {},
+            "reason": "Selected by bound tool call.",
+        }
+
+    args = getattr(tool_call, "args", None)
+    return {
+        "name": str(getattr(tool_call, "name", "")).strip(),
+        "args": args if isinstance(args, dict) else {},
+        "reason": "Selected by bound tool call.",
+    }
+
+
+def create_agent_node(
+    llm: Any,
+    tools: Sequence[Any] | None = None,
+) -> Callable[[AgentState], Any]:
     """Create the reasoning node bound to an LLM."""
+
+    tool_bound_llm = _bind_tools(llm, tools)
 
     async def agent_node(state: AgentState) -> dict[str, Any]:
         if not state.get("plan"):
             return {"decision": "replan", "observation": "No plan is available."}
 
-        response = await llm.ainvoke(
+        response = await tool_bound_llm.ainvoke(
             [
                 SystemMessage(content=AGENT_SYSTEM_PROMPT),
                 HumanMessage(
@@ -71,6 +102,17 @@ def create_agent_node(llm: Any) -> Callable[[AgentState], Any]:
                 ),
             ]
         )
+
+        tool_calls = getattr(response, "tool_calls", None) or []
+        if tool_calls:
+            tool_request = _tool_call_to_request(tool_calls[0])
+            if tool_request.get("name"):
+                return {
+                    "decision": "tool_call",
+                    "tool_request": tool_request,
+                    "policy_decision": "",
+                    "error": "",
+                }
 
         content = _message_content(response)
         data = _json_object(content)

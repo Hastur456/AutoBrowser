@@ -6,15 +6,6 @@ from typing import Any
 
 from src.agent.state import AgentState, PolicyDecision, ToolRequest
 
-READ_ONLY_TOOL_MARKERS = (
-    "snapshot",
-    "screenshot",
-    "get",
-    "list",
-    "read",
-    "console",
-)
-
 BLOCKED_TOOL_MARKERS = (
     "payment",
     "purchase",
@@ -33,10 +24,7 @@ def classify_tool_request(request: ToolRequest | None) -> tuple[PolicyDecision, 
     if any(marker in name for marker in BLOCKED_TOOL_MARKERS):
         return "blocked", f"Tool requires a stronger policy before use: {request['name']}"
 
-    if any(marker in name for marker in READ_ONLY_TOOL_MARKERS):
-        return "approved", "Read-only browser inspection tool."
-
-    return "needs_human", f"Human approval required for tool: {request['name']}"
+    return "approved", f"Tool approved: {request['name']}"
 
 
 def policy_node(state: AgentState) -> dict[str, Any]:

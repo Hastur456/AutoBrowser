@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import pytest
+from langchain_core.messages import AIMessage
+from langchain_core.runnables import RunnableLambda
 from langchain_core.language_models.fake import FakeListLLM
 from langchain_core.tools import tool
 
 from src.agent.agent import build_agent_graph
+from src.agent.nodes import create_agent_node
 from src.agent.policy import classify_tool_request
 from src.agent.routers import (
     route_agent_decision,
@@ -30,8 +33,59 @@ def test_policy_routes() -> None:
 
 def test_policy_classification() -> None:
     assert classify_tool_request({"name": "browser_snapshot", "args": {}})[0] == "approved"
-    assert classify_tool_request({"name": "browser_click", "args": {}})[0] == "needs_human"
+    assert classify_tool_request({"name": "browser_click", "args": {}})[0] == "approved"
+    assert classify_tool_request({"name": "browser_navigate", "args": {}})[0] == "approved"
     assert classify_tool_request({"name": "payment_submit", "args": {}})[0] == "blocked"
+
+
+class ToolCallingFakeLLM:
+    def __init__(self, response: AIMessage) -> None:
+        self.response = response
+        self.bound_tools = None
+
+    def bind_tools(self, tools):
+        self.bound_tools = tools
+
+        async def invoke(_messages):
+            return self.response
+
+        return RunnableLambda(invoke)
+
+
+@pytest.mark.asyncio
+async def test_agent_node_uses_bound_tool_calls() -> None:
+    @tool
+    def browser_navigate(url: str) -> str:
+        """Navigate browser to a URL."""
+
+        return url
+
+    llm = ToolCallingFakeLLM(
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "browser_navigate",
+                    "args": {"url": "https://habr.com"},
+                    "id": "call_1",
+                }
+            ],
+        )
+    )
+    node = create_agent_node(llm, tools=[browser_navigate])
+
+    result = await node(
+        {
+            "task": "Перейди на habr",
+            "plan": [{"id": 1, "description": "Navigate to Habr", "status": "pending"}],
+            "current_step": 0,
+        }
+    )
+
+    assert llm.bound_tools == [browser_navigate]
+    assert result["decision"] == "tool_call"
+    assert result["tool_request"]["name"] == "browser_navigate"
+    assert result["tool_request"]["args"] == {"url": "https://habr.com"}
 
 
 @pytest.mark.asyncio
@@ -56,6 +110,7 @@ async def test_executor_unknown_tool() -> None:
 
     assert result["tool_result"]["status"] == "error"
     assert "Unknown tool" in result["tool_result"]["error"]
+    assert "Available tools: none" in result["tool_result"]["error"]
 
 
 @pytest.mark.asyncio
