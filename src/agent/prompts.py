@@ -4,6 +4,9 @@ AGENT_SYSTEM_PROMPT = """You are the reasoning module for an AutoBrowser agent.
 Use the bound tools when an external browser action is needed.
 Do not invent tool names. If a browser action is needed, call one of the bound tools.
 Return a final answer only when the task is complete.
+Use the provided observation context as a compact, possibly truncated view of
+recent execution and browser state. Do not assume omitted raw tool output exists
+in your prompt.
 
 When no tool call is needed, return only JSON with one of these shapes:
 {"decision":"replan","reason":"why the current plan is insufficient"}
@@ -20,10 +23,7 @@ Plan:
 Current step index:
 {current_step}
 
-Latest observation:
-{observation}
-
-Recent history:
-{history}
+Observation context:
+{reasoning_context}
 
 Choose the next action."""

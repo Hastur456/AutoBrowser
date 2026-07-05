@@ -7,7 +7,8 @@ from langchain_core.language_models.fake import FakeListLLM
 from langchain_core.tools import tool
 
 from src.agent.agent import build_agent_graph
-from src.agent.nodes import create_agent_node
+from src.agent.nodes import create_agent_node, observe_node
+from src.agent.observe import MAX_CONTENT_PREVIEW_CHARS, MAX_EXECUTION_EVENTS
 from src.agent.policy import classify_tool_request
 from src.agent.routers import (
     route_agent_decision,
@@ -52,6 +53,15 @@ class ToolCallingFakeLLM:
         return RunnableLambda(invoke)
 
 
+class RecordingLLM:
+    def __init__(self) -> None:
+        self.messages = None
+
+    async def ainvoke(self, messages):
+        self.messages = messages
+        return AIMessage(content='{"decision":"done","final_answer":"ok"}')
+
+
 @pytest.mark.asyncio
 async def test_agent_node_uses_bound_tool_calls() -> None:
     @tool
@@ -89,6 +99,29 @@ async def test_agent_node_uses_bound_tool_calls() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_node_uses_reasoning_context_in_prompt() -> None:
+    llm = RecordingLLM()
+    node = create_agent_node(llm)
+
+    result = await node(
+        {
+            "task": "Inspect",
+            "plan": [{"id": 1, "description": "Inspect page", "status": "pending"}],
+            "current_step": 0,
+            "reasoning_context": "compact context",
+            "observation": "raw observation",
+            "history": ["raw history"],
+        }
+    )
+
+    prompt = llm.messages[1].content
+    assert result["final_answer"] == "ok"
+    assert "compact context" in prompt
+    assert "raw observation" not in prompt
+    assert "raw history" not in prompt
+
+
+@pytest.mark.asyncio
 async def test_executor_success() -> None:
     @tool
     def browser_snapshot() -> str:
@@ -111,6 +144,98 @@ async def test_executor_unknown_tool() -> None:
     assert result["tool_result"]["status"] == "error"
     assert "Unknown tool" in result["tool_result"]["error"]
     assert "Available tools: none" in result["tool_result"]["error"]
+
+
+def test_observe_node_compiles_structured_observation() -> None:
+    result = observe_node(
+        {
+            "tool_result": {
+                "name": "browser_snapshot",
+                "status": "success",
+                "content": "page snapshot",
+                "error": "",
+            }
+        }
+    )
+
+    assert result["latest_observation"]["outcome"] == "success"
+    assert result["browser_context"]["page_summary"] == "page snapshot"
+    assert result["recovery_signal"]["action"] == "none"
+    assert result["execution_events"][0]["summary"] == (
+        "browser_snapshot returned success: page snapshot"
+    )
+    assert result["observation"] == result["reasoning_context"]
+
+
+def test_observe_node_compacts_large_tool_output() -> None:
+    large_content = "x" * (MAX_CONTENT_PREVIEW_CHARS + 500)
+
+    result = observe_node(
+        {
+            "tool_result": {
+                "name": "browser_snapshot",
+                "status": "success",
+                "content": large_content,
+                "error": "",
+            }
+        }
+    )
+
+    preview = result["latest_observation"]["content_preview"]
+    assert len(preview) <= MAX_CONTENT_PREVIEW_CHARS
+    assert "truncated" in preview
+    assert len(result["reasoning_context"]) < len(large_content)
+
+
+def test_observe_node_classifies_repeated_tool_failures() -> None:
+    first = observe_node(
+        {
+            "tool_result": {
+                "name": "browser_click",
+                "status": "error",
+                "content": "",
+                "error": "Element not found",
+            }
+        }
+    )
+    second = observe_node(
+        {
+            "execution_events": first["execution_events"],
+            "tool_result": {
+                "name": "browser_click",
+                "status": "error",
+                "content": "",
+                "error": "Element not found",
+            },
+        }
+    )
+
+    assert first["recovery_signal"]["action"] == "retry"
+    assert first["recovery_signal"]["repeat_count"] == 1
+    assert second["recovery_signal"]["action"] == "replan"
+    assert second["recovery_signal"]["repeat_count"] == 2
+
+
+def test_observe_node_bounds_execution_events() -> None:
+    state = {}
+    for index in range(MAX_EXECUTION_EVENTS + 3):
+        state = observe_node(
+            {
+                "execution_events": state.get("execution_events", []),
+                "history": state.get("history", []),
+                "tool_result": {
+                    "name": "browser_snapshot",
+                    "status": "success",
+                    "content": f"snapshot {index}",
+                    "error": "",
+                },
+            }
+        )
+
+    assert len(state["execution_events"]) == MAX_EXECUTION_EVENTS
+    assert len(state["history"]) == MAX_EXECUTION_EVENTS
+    assert state["execution_events"][0]["sequence"] == 4
+    assert state["execution_events"][-1]["sequence"] == MAX_EXECUTION_EVENTS + 3
 
 
 @pytest.mark.asyncio
@@ -152,3 +277,5 @@ async def test_graph_tool_path() -> None:
 
     assert result["final_answer"] == "observed"
     assert "browser_snapshot returned success" in result["observation"]
+    assert result["latest_observation"]["outcome"] == "success"
+    assert result["recovery_signal"]["action"] == "none"

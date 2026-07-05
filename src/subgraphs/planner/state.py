@@ -12,5 +12,6 @@ class PlannerState(TypedDict, total=False):
 
     task: str
     observation: str
+    reasoning_context: str
     plan: list[PlanStep]
     current_step: int

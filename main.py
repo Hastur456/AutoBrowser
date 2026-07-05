@@ -203,10 +203,14 @@ def print_step(node_name: str, update: Any, as_json: bool = False) -> None:
         "policy_decision",
         "tool_result",
         "observation",
+        "reasoning_context",
+        "recovery_signal",
         "final_answer",
         "error",
     ):
         value = update.get(key)
+        if key == "reasoning_context" and value == update.get("observation"):
+            continue
         if value not in (None, "", [], {}):
             print(f"{key}: {format_state(value)}")
 

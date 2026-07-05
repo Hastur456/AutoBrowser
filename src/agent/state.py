@@ -8,6 +8,15 @@ from typing import Any, Literal, NotRequired, TypedDict
 AgentDecision = Literal["tool_call", "replan", "done"]
 PolicyDecision = Literal["approved", "needs_human", "blocked"]
 ToolStatus = Literal["success", "error"]
+ObservationOutcome = Literal[
+    "success",
+    "no_output",
+    "invalid_request",
+    "unknown_tool",
+    "transient_error",
+    "blocked_error",
+]
+RecoveryAction = Literal["none", "retry", "replan", "ask_human", "stop"]
 
 
 class PlanStep(TypedDict, total=False):
@@ -35,6 +44,44 @@ class ToolResult(TypedDict, total=False):
     error: str
 
 
+class ExecutionEvent(TypedDict, total=False):
+    """Compact append-only record of a tool execution."""
+
+    sequence: int
+    tool_name: str
+    status: ToolStatus
+    outcome: ObservationOutcome
+    summary: str
+
+
+class StructuredObservation(TypedDict, total=False):
+    """Deterministic observation derived from the latest tool result."""
+
+    tool_name: str
+    status: ToolStatus
+    outcome: ObservationOutcome
+    summary: str
+    content_preview: str
+    error: str
+
+
+class BrowserContext(TypedDict, total=False):
+    """Compact browser facts for the next reasoning turn."""
+
+    last_tool: str
+    last_status: ToolStatus
+    page_summary: str
+
+
+class RecoverySignal(TypedDict, total=False):
+    """Structured failure signal for later retry and recovery routing."""
+
+    category: ObservationOutcome
+    action: RecoveryAction
+    reason: str
+    repeat_count: int
+
+
 class AgentState(TypedDict, total=False):
     """Top-level graph state.
 
@@ -50,6 +97,11 @@ class AgentState(TypedDict, total=False):
     tool_result: ToolResult
     policy_decision: PolicyDecision
     observation: str
+    latest_observation: StructuredObservation
+    browser_context: BrowserContext
+    reasoning_context: str
+    recovery_signal: RecoverySignal
+    execution_events: list[ExecutionEvent]
     final_answer: str
     error: str
     history: list[str]

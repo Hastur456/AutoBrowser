@@ -9,6 +9,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.types import interrupt
 
+from src.agent.observe import compile_observation
 from src.agent.prompts import AGENT_SYSTEM_PROMPT, AGENT_USER_PROMPT
 from src.agent.state import AgentState, ToolRequest
 
@@ -96,8 +97,10 @@ def create_agent_node(
                         task=state.get("task", ""),
                         plan=_format_plan(state),
                         current_step=state.get("current_step", 0),
-                        observation=state.get("observation", "No observation yet."),
-                        history="\n".join(state.get("history", [])[-5:]) or "No history yet.",
+                        reasoning_context=state.get(
+                            "reasoning_context",
+                            state.get("observation", "No observation yet."),
+                        ),
                     )
                 ),
             ]
@@ -153,24 +156,9 @@ def create_agent_node(
 
 
 def observe_node(state: AgentState) -> dict[str, Any]:
-    """Convert executor output into an observation for the next reasoning turn."""
+    """Compile executor output into bounded observation state."""
 
-    result = state.get("tool_result") or {}
-    tool_name = result.get("name", "tool")
-    status = result.get("status", "error")
-    content = result.get("content") or result.get("error") or "No tool output."
-    observation = f"{tool_name} returned {status}: {content}"
-
-    history = list(state.get("history", []))
-    history.append(observation)
-
-    return {
-        "observation": observation,
-        "history": history,
-        "decision": "tool_call",
-        "policy_decision": "",
-        "tool_request": {},
-    }
+    return compile_observation(state)
 
 
 def human_input_node(state: AgentState) -> dict[str, Any]:
