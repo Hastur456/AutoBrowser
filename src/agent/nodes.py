@@ -19,7 +19,16 @@ from src.agent.history import (
 from src.agent.observer_llm import compress_tool_result
 from src.agent.observe import compile_observation
 from src.agent.prompts import AGENT_USER_PROMPT
-from src.agent.state import AgentState, ToolRequest
+from src.agent.state import (
+    MAX_CONSECUTIVE_FAILURES,
+    MAX_REPLANS,
+    MAX_SNAPSHOT_RECOVERIES,
+    AgentState,
+    ToolRequest,
+)
+
+
+SNAPSHOT_RECOVERY_DEPTH = 4
 
 
 def _message_content(response: Any) -> str:
@@ -59,12 +68,90 @@ def _normalize_tool_request(raw_request: Any) -> ToolRequest:
     }
 
 
+def _blocked_response(state: AgentState, reason: str) -> dict[str, Any]:
+    messages = ensure_message_history(state)
+    return {
+        "decision": "done",
+        "final_answer": reason,
+        "observation": reason,
+        "error": reason,
+        "messages": append_final_ai_response(messages, reason),
+    }
+
+
+def _terminal_guard(state: AgentState) -> dict[str, Any] | None:
+    replan_count = int(state.get("replan_count", 0) or 0)
+    if replan_count >= MAX_REPLANS:
+        observation = str(state.get("observation", "") or "No observation available.")
+        return _blocked_response(
+            state,
+            (
+                f"Blocked: replanning reached the limit of {MAX_REPLANS}. "
+                f"Last observation: {observation}"
+            ),
+        )
+
+    failures = int(state.get("consecutive_failures", 0) or 0)
+    if failures >= MAX_CONSECUTIVE_FAILURES:
+        error = str(state.get("error", "") or "Unknown tool failure.")
+        return _blocked_response(
+            state,
+            (
+                "Blocked: tool execution failed "
+                f"{MAX_CONSECUTIVE_FAILURES} consecutive times. Last error: {error}"
+            ),
+        )
+
+    return None
+
+
+def _int_value(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _snapshot_recovery_request(state: AgentState, request: ToolRequest) -> ToolRequest | None:
+    if request.get("name") != "browser_snapshot":
+        return None
+    if int(state.get("snapshot_recovery_count", 0) or 0) >= MAX_SNAPSHOT_RECOVERIES:
+        return None
+
+    args = dict(request.get("args") or {})
+    current_depth = _int_value(args.get("depth"), 0)
+    args["depth"] = max(SNAPSHOT_RECOVERY_DEPTH, current_depth + 2)
+    return with_tool_call_id(
+        {
+            "name": "browser_snapshot",
+            "args": args,
+            "reason": (
+                "Recovery after repeated identical snapshots: capture a deeper "
+                "Playwright MCP snapshot before replanning."
+            ),
+        }
+    )
+
+
 def _guard_tool_request(state: AgentState, request: ToolRequest) -> dict[str, Any] | None:
     if (
         state.get("last_tool") == request.get("name")
         and state.get("last_args", {}) == request.get("args", {})
         and int(state.get("repeat_count", 0) or 0) >= 2
     ):
+        recovery_request = _snapshot_recovery_request(state, request)
+        if recovery_request is not None:
+            return {
+                "decision": "tool_call",
+                "tool_request": recovery_request,
+                "policy_decision": "",
+                "error": "",
+                "snapshot_recovery_count": (
+                    int(state.get("snapshot_recovery_count", 0) or 0) + 1
+                ),
+                **_request_tracking_update(state, recovery_request),
+            }
+
         return {
             "decision": "replan",
             "observation": (
@@ -90,6 +177,39 @@ def _request_tracking_update(state: AgentState, request: ToolRequest) -> dict[st
         "last_tool": tool_name,
         "last_args": args,
         "repeat_count": repeat_count,
+    }
+
+
+def _tool_request_update(
+    state: AgentState,
+    messages: list[Any],
+    tool_request: ToolRequest,
+) -> dict[str, Any]:
+    guarded = _guard_tool_request(state, tool_request)
+    if guarded is not None:
+        guarded_request = guarded.get("tool_request")
+        if guarded.get("decision") == "tool_call" and isinstance(guarded_request, dict):
+            guarded["messages"] = append_ai_tool_call(messages, guarded_request)
+            return guarded
+
+        messages_with_call = append_ai_tool_call(messages, tool_request)
+        guarded["messages"] = append_tool_message(
+            messages_with_call,
+            tool_request,
+            (
+                f"{tool_request.get('name', '')}\n\n"
+                f"{guarded.get('observation', '')}"
+            ),
+        )
+        return guarded
+
+    return {
+        "decision": "tool_call",
+        "tool_request": tool_request,
+        "policy_decision": "",
+        "error": "",
+        "messages": append_ai_tool_call(messages, tool_request),
+        **_request_tracking_update(state, tool_request),
     }
 
 
@@ -130,6 +250,10 @@ def create_agent_node(
     tool_bound_llm = _bind_tools(llm, tools)
 
     async def agent_node(state: AgentState) -> dict[str, Any]:
+        terminal = _terminal_guard(state)
+        if terminal is not None:
+            return terminal
+
         if not state.get("plan"):
             return {"decision": "replan", "observation": "No plan is available."}
 
@@ -154,26 +278,7 @@ def create_agent_node(
         if tool_calls:
             tool_request = with_tool_call_id(_tool_call_to_request(tool_calls[0]))
             if tool_request.get("name"):
-                messages_with_call = append_ai_tool_call(messages, tool_request)
-                guarded = _guard_tool_request(state, tool_request)
-                if guarded is not None:
-                    guarded["messages"] = append_tool_message(
-                        messages_with_call,
-                        tool_request,
-                        (
-                            f"{tool_request.get('name', '')}\n\n"
-                            f"{guarded.get('observation', '')}"
-                        ),
-                    )
-                    return guarded
-                return {
-                    "decision": "tool_call",
-                    "tool_request": tool_request,
-                    "policy_decision": "",
-                    "error": "",
-                    "messages": messages_with_call,
-                    **_request_tracking_update(state, tool_request),
-                }
+                return _tool_request_update(state, messages, tool_request)
 
         content = _message_content(response)
         data = _json_object(content)
@@ -188,26 +293,7 @@ def create_agent_node(
                     "decision": "replan",
                     "observation": "The model selected a tool call without a tool name.",
                 }
-            messages_with_call = append_ai_tool_call(messages, tool_request)
-            guarded = _guard_tool_request(state, tool_request)
-            if guarded is not None:
-                guarded["messages"] = append_tool_message(
-                    messages_with_call,
-                    tool_request,
-                    (
-                        f"{tool_request.get('name', '')}\n\n"
-                        f"{guarded.get('observation', '')}"
-                    ),
-                )
-                return guarded
-            return {
-                "decision": "tool_call",
-                "tool_request": tool_request,
-                "policy_decision": "",
-                "error": "",
-                "messages": messages_with_call,
-                **_request_tracking_update(state, tool_request),
-            }
+            return _tool_request_update(state, messages, tool_request)
 
         if decision == "replan":
             return {
