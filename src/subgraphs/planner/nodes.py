@@ -55,6 +55,8 @@ def create_plan_node(llm: Any) -> Callable[[AgentState], Any]:
         task = state.get("task", "").strip()
         observation = state.get("observation", "")
         messages = ensure_message_history(state)
+        prior_replans = int(state.get("replan_count", 0) or 0)
+        replan_count = prior_replans + 1 if state.get("plan") else prior_replans
         response = await llm.ainvoke(
             [
                 *messages,
@@ -78,6 +80,7 @@ def create_plan_node(llm: Any) -> Callable[[AgentState], Any]:
             "plan": plan,
             "current_step": 0,
             "decision": "replan",
+            "replan_count": replan_count,
             "error": "",
             "messages": messages,
         }

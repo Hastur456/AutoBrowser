@@ -11,6 +11,10 @@ AgentDecision = Literal["tool_call", "replan", "done"]
 PolicyDecision = Literal["approved", "needs_human", "blocked"]
 ToolStatus = Literal["success", "error"]
 
+MAX_REPLANS = 3
+MAX_CONSECUTIVE_FAILURES = 3
+MAX_SNAPSHOT_RECOVERIES = 1
+
 
 class PlanStep(TypedDict, total=False):
     """Single planner step."""
@@ -68,6 +72,9 @@ class AgentState(TypedDict, total=False):
     last_tool: str
     last_args: dict[str, Any]
     repeat_count: int
+    replan_count: int
+    consecutive_failures: int
+    snapshot_recovery_count: int
 
     final_answer: str
     error: str

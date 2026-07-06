@@ -230,7 +230,11 @@ def compile_observation(
         current_step = int(state.get("current_step", 0) or 0)
         updates.update(_plan_completion_update(plan, current_step, compact))
         updates["error"] = ""
+        updates["consecutive_failures"] = 0
     else:
         updates["error"] = str(result.get("error", "") or "")
+        updates["consecutive_failures"] = (
+            int(state.get("consecutive_failures", 0) or 0) + 1
+        )
 
     return updates

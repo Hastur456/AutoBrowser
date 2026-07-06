@@ -136,7 +136,7 @@ async def test_agent_node_uses_observation_snapshot_and_refs_in_prompt() -> None
 
 
 @pytest.mark.asyncio
-async def test_agent_node_replans_on_third_identical_tool_request() -> None:
+async def test_agent_node_deepens_snapshot_on_third_identical_snapshot_request() -> None:
     llm = FakeListLLM(
         responses=[
             (
@@ -158,12 +158,72 @@ async def test_agent_node_replans_on_third_identical_tool_request() -> None:
         }
     )
 
+    assert result["decision"] == "tool_call"
+    assert result["tool_request"]["name"] == "browser_snapshot"
+    assert result["tool_request"]["args"] == {"depth": 4}
+    assert result["snapshot_recovery_count"] == 1
+    assert result["repeat_count"] == 1
+    assert result["messages"][-1].type == "ai"
+    assert result["messages"][-1].tool_calls[0]["args"] == {"depth": 4}
+
+
+@pytest.mark.asyncio
+async def test_agent_node_replans_after_snapshot_recovery_is_exhausted() -> None:
+    llm = FakeListLLM(
+        responses=[
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_snapshot","args":{},"reason":"Inspect again"}}'
+            )
+        ]
+    )
+    node = create_agent_node(llm)
+
+    result = await node(
+        {
+            "task": "Inspect",
+            "plan": [{"id": 1, "description": "Inspect page", "status": "pending"}],
+            "current_step": 0,
+            "last_tool": "browser_snapshot",
+            "last_args": {},
+            "repeat_count": 2,
+            "snapshot_recovery_count": 1,
+        }
+    )
+
     assert result["decision"] == "replan"
     assert result["repeat_count"] == 3
     assert "three consecutive times" in result["observation"]
     assert result["messages"][-1].type == "tool"
     assert "three consecutive times" in result["messages"][-1].content
-    assert "recovery_signal" not in result
+
+
+@pytest.mark.asyncio
+async def test_agent_node_replans_on_third_identical_non_snapshot_tool_request() -> None:
+    llm = FakeListLLM(
+        responses=[
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_click","args":{"ref":"e1"},"reason":"Click again"}}'
+            )
+        ]
+    )
+    node = create_agent_node(llm)
+
+    result = await node(
+        {
+            "task": "Click",
+            "plan": [{"id": 1, "description": "Click button", "status": "pending"}],
+            "current_step": 0,
+            "last_tool": "browser_click",
+            "last_args": {"ref": "e1"},
+            "repeat_count": 2,
+        }
+    )
+
+    assert result["decision"] == "replan"
+    assert result["repeat_count"] == 3
+    assert "three consecutive times" in result["observation"]
 
 
 @pytest.mark.asyncio
@@ -483,6 +543,66 @@ async def test_graph_done_path() -> None:
     result = await graph.ainvoke({"task": "Finish"})
 
     assert result["final_answer"] == "finished"
+
+
+@pytest.mark.asyncio
+async def test_graph_stops_after_replan_limit() -> None:
+    llm = FakeListLLM(
+        responses=[
+            '{"steps":[{"id":1,"description":"Inspect page","status":"pending"}]}',
+            '{"decision":"replan","reason":"Need a different plan."}',
+            '{"steps":[{"id":1,"description":"Inspect page again","status":"pending"}]}',
+            '{"decision":"replan","reason":"Still not enough context."}',
+            '{"steps":[{"id":1,"description":"Inspect page again","status":"pending"}]}',
+            '{"decision":"replan","reason":"Still stuck."}',
+            '{"steps":[{"id":1,"description":"Inspect page again","status":"pending"}]}',
+        ]
+    )
+    graph = build_agent_graph(llm=llm, tools=[])
+
+    result = await graph.ainvoke({"task": "Inspect"}, {"recursion_limit": 20})
+
+    assert result["decision"] == "done"
+    assert result["replan_count"] == 3
+    assert "Blocked: replanning reached the limit of 3" in result["final_answer"]
+
+
+@pytest.mark.asyncio
+async def test_graph_stops_after_consecutive_tool_failures() -> None:
+    @tool
+    def browser_snapshot() -> str:
+        """Return a browser snapshot."""
+
+        raise ConnectionError("connect ECONNREFUSED ::1:9222")
+
+    llm = FakeListLLM(
+        responses=[
+            '{"steps":[{"id":1,"description":"Inspect page","status":"pending"}]}',
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_snapshot","args":{},"reason":"Inspect page"}}'
+            ),
+            '{"summary":"failed","visible_state":"","important_refs":[],"errors":["down"],"next_observation_hint":""}',
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_snapshot","args":{"depth":4},"reason":"Inspect deeper"}}'
+            ),
+            '{"summary":"failed","visible_state":"","important_refs":[],"errors":["down"],"next_observation_hint":""}',
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_snapshot","args":{"depth":6},"reason":"Inspect deeper"}}'
+            ),
+            '{"summary":"failed","visible_state":"","important_refs":[],"errors":["down"],"next_observation_hint":""}',
+        ]
+    )
+    graph = build_agent_graph(llm=llm, tools=[browser_snapshot])
+
+    result = await graph.ainvoke({"task": "Inspect"}, {"recursion_limit": 20})
+
+    assert result["decision"] == "done"
+    assert result["consecutive_failures"] == 3
+    assert "Blocked: tool execution failed 3 consecutive times" in result["final_answer"]
+    assert "connect ECONNREFUSED ::1:9222" in result["final_answer"]
 
 
 @pytest.mark.asyncio
