@@ -31,6 +31,8 @@ _NODE_LABELS = {
     "observe": "OBSERVE",
 }
 
+_mcp_client = None
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
@@ -157,11 +159,19 @@ async def wait_for_port(port: int, timeout_seconds: float) -> None:
         await asyncio.sleep(0.5)
 
 
+async def get_mcp_client(port: int):
+    global _mcp_client
+    if _mcp_client is None:
+        os.environ["PORT"] = str(port)
+        _mcp_client = await setup_mcp()
+    return _mcp_client
+
+
 async def load_browser_tools(port: int) -> list[Any]:
     """Load all Playwright MCP tools for the selected CDP port."""
 
     os.environ["PORT"] = str(port)
-    return list(await setup_mcp())
+    return list(await get_mcp_client(port))
 
 
 def print_tools(tools: list[Any]) -> None:
