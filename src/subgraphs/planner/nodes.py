@@ -52,7 +52,7 @@ def create_plan_node(llm: Any) -> Callable[[AgentState], Any]:
 
     async def plan_node(state: AgentState) -> dict[str, Any]:
         task = state.get("task", "").strip()
-        observation = state.get("reasoning_context") or state.get("observation", "")
+        observation = state.get("observation", "")
         response = await llm.ainvoke(
             [
                 SystemMessage(content=PLANNER_SYSTEM_PROMPT),

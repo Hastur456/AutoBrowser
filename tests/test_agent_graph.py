@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import pytest
+from langchain_core.language_models.fake import FakeListLLM
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
-from langchain_core.language_models.fake import FakeListLLM
 from langchain_core.tools import tool
 
 from src.agent.agent import build_agent_graph
-from src.agent.nodes import create_agent_node, observe_node
-from src.agent.observe import MAX_CONTENT_PREVIEW_CHARS, MAX_EXECUTION_EVENTS
+from src.agent.nodes import create_agent_node, create_observe_node, observe_node
+from src.agent.observe import MAX_CONTENT_PREVIEW_CHARS
 from src.agent.policy import classify_tool_request
 from src.agent.routers import (
     route_agent_decision,
@@ -62,6 +62,16 @@ class RecordingLLM:
         return AIMessage(content='{"decision":"done","final_answer":"ok"}')
 
 
+class RecordingObserverLLM:
+    def __init__(self, response: str) -> None:
+        self.response = response
+        self.messages = None
+
+    async def ainvoke(self, messages):
+        self.messages = messages
+        return AIMessage(content=self.response)
+
+
 @pytest.mark.asyncio
 async def test_agent_node_uses_bound_tool_calls() -> None:
     @tool
@@ -86,7 +96,7 @@ async def test_agent_node_uses_bound_tool_calls() -> None:
 
     result = await node(
         {
-            "task": "Перейди на habr",
+            "task": "Navigate to Habr",
             "plan": [{"id": 1, "description": "Navigate to Habr", "status": "pending"}],
             "current_step": 0,
         }
@@ -96,10 +106,12 @@ async def test_agent_node_uses_bound_tool_calls() -> None:
     assert result["decision"] == "tool_call"
     assert result["tool_request"]["name"] == "browser_navigate"
     assert result["tool_request"]["args"] == {"url": "https://habr.com"}
+    assert result["last_tool"] == "browser_navigate"
+    assert result["repeat_count"] == 1
 
 
 @pytest.mark.asyncio
-async def test_agent_node_uses_reasoning_context_in_prompt() -> None:
+async def test_agent_node_uses_observation_snapshot_and_refs_in_prompt() -> None:
     llm = RecordingLLM()
     node = create_agent_node(llm)
 
@@ -108,17 +120,46 @@ async def test_agent_node_uses_reasoning_context_in_prompt() -> None:
             "task": "Inspect",
             "plan": [{"id": 1, "description": "Inspect page", "status": "pending"}],
             "current_step": 0,
-            "reasoning_context": "compact context",
-            "observation": "raw observation",
-            "history": ["raw history"],
+            "observation": "Search box found.",
+            "snapshot": '- textbox "Search" ref=e8',
+            "refs": ["e8"],
         }
     )
 
     prompt = llm.messages[1].content
     assert result["final_answer"] == "ok"
-    assert "compact context" in prompt
-    assert "raw observation" not in prompt
-    assert "raw history" not in prompt
+    assert "Search box found." in prompt
+    assert 'textbox "Search" ref=e8' in prompt
+    assert "e8" in prompt
+
+
+@pytest.mark.asyncio
+async def test_agent_node_replans_on_third_identical_tool_request() -> None:
+    llm = FakeListLLM(
+        responses=[
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_snapshot","args":{},"reason":"Inspect again"}}'
+            )
+        ]
+    )
+    node = create_agent_node(llm)
+
+    result = await node(
+        {
+            "task": "Inspect",
+            "plan": [{"id": 1, "description": "Inspect page", "status": "pending"}],
+            "current_step": 0,
+            "last_tool": "browser_snapshot",
+            "last_args": {},
+            "repeat_count": 2,
+        }
+    )
+
+    assert result["decision"] == "replan"
+    assert result["repeat_count"] == 3
+    assert "three consecutive times" in result["observation"]
+    assert "recovery_signal" not in result
 
 
 @pytest.mark.asyncio
@@ -146,29 +187,98 @@ async def test_executor_unknown_tool() -> None:
     assert "Available tools: none" in result["tool_result"]["error"]
 
 
-def test_observe_node_compiles_structured_observation() -> None:
+def test_observe_node_translates_snapshot_and_advances_plan() -> None:
+    snapshot = '- button "Search" ref=e7\n- textbox "Query" ref=e8'
     result = observe_node(
         {
+            "plan": [
+                {"id": 1, "description": "Inspect page", "status": "pending"},
+                {"id": 2, "description": "Click search", "status": "pending"},
+            ],
+            "current_step": 0,
             "tool_result": {
                 "name": "browser_snapshot",
                 "status": "success",
-                "content": "page snapshot",
+                "content": snapshot,
                 "error": "",
-            }
+            },
         }
     )
 
-    assert result["latest_observation"]["outcome"] == "success"
-    assert result["browser_context"]["page_summary"] == "page snapshot"
-    assert result["recovery_signal"]["action"] == "none"
-    assert result["execution_events"][0]["summary"] == (
-        "browser_snapshot returned success: page snapshot"
+    assert result["snapshot"] == snapshot
+    assert result["refs"] == ["e7", "e8"]
+    assert "Refs:" in result["observation"]
+    assert result["current_step"] == 1
+    assert result["plan"][0]["status"] == "done"
+    assert result["plan"][1]["status"] == "in_progress"
+    assert "latest_observation" not in result
+    assert "browser_context" not in result
+    assert "recovery_signal" not in result
+    assert "execution_events" not in result
+
+
+def test_observe_node_replaces_snapshot_refs() -> None:
+    result = observe_node(
+        {
+            "snapshot": '- button "Old" ref=e1',
+            "refs": ["e1"],
+            "tool_result": {
+                "name": "browser_snapshot",
+                "status": "success",
+                "content": '- button "New" ref=e2',
+                "error": "",
+            },
+        }
     )
-    assert result["observation"] == result["reasoning_context"]
+
+    assert result["snapshot"] == '- button "New" ref=e2'
+    assert result["refs"] == ["e2"]
+    assert "e1" not in result["observation"]
 
 
-def test_observe_node_compacts_large_tool_output() -> None:
-    large_content = "x" * (MAX_CONTENT_PREVIEW_CHARS + 500)
+def test_observe_node_clears_snapshot_after_browser_action() -> None:
+    result = observe_node(
+        {
+            "snapshot": '- button "Search" ref=e7',
+            "refs": ["e7"],
+            "tool_result": {
+                "name": "browser_click",
+                "status": "success",
+                "content": "Clicked.",
+                "error": "",
+            },
+        }
+    )
+
+    assert result["snapshot"] == ""
+    assert result["refs"] == []
+    assert "Clicked" in result["observation"]
+
+
+def test_observe_node_invalid_ref_is_plain_observation() -> None:
+    result = observe_node(
+        {
+            "snapshot": '- button "Old" ref=e119',
+            "refs": ["e119"],
+            "tool_result": {
+                "name": "browser_click",
+                "status": "error",
+                "content": "",
+                "error": "Ref e119 not found",
+            },
+        }
+    )
+
+    assert result["snapshot"] == ""
+    assert result["refs"] == []
+    assert result["error"] == "Ref e119 not found"
+    assert "Tool failed." in result["observation"]
+    assert "Ref not found" in result["observation"]
+    assert "fresh browser_snapshot" in result["observation"]
+
+
+def test_observe_node_preserves_large_browser_snapshot_but_compacts_observation() -> None:
+    large_content = '- button "Save" ref=e42\n' + ("x" * (MAX_CONTENT_PREVIEW_CHARS + 500))
 
     result = observe_node(
         {
@@ -181,61 +291,59 @@ def test_observe_node_compacts_large_tool_output() -> None:
         }
     )
 
-    preview = result["latest_observation"]["content_preview"]
-    assert len(preview) <= MAX_CONTENT_PREVIEW_CHARS
-    assert "truncated" in preview
-    assert len(result["reasoning_context"]) < len(large_content)
+    assert result["snapshot"] == large_content
+    assert result["refs"] == ["e42"]
+    assert len(result["observation"]) < len(large_content)
 
 
-def test_observe_node_classifies_repeated_tool_failures() -> None:
-    first = observe_node(
-        {
-            "tool_result": {
-                "name": "browser_click",
-                "status": "error",
-                "content": "",
-                "error": "Element not found",
-            }
-        }
+@pytest.mark.asyncio
+async def test_observe_node_llm_receives_only_tool_result() -> None:
+    observer_llm = RecordingObserverLLM(
+        (
+            '{"summary":"Snapshot compressed","visible_state":"Search box visible",'
+            '"important_refs":["e8"],"errors":[],"next_observation_hint":""}'
+        )
     )
-    second = observe_node(
+    node = create_observe_node(observer_llm)
+
+    result = await node(
         {
-            "execution_events": first["execution_events"],
+            "task": "secret task",
+            "plan": [{"id": 1, "description": "secret plan", "status": "pending"}],
             "tool_result": {
-                "name": "browser_click",
-                "status": "error",
-                "content": "",
-                "error": "Element not found",
+                "name": "browser_snapshot",
+                "status": "success",
+                "content": '- textbox "Search" ref=e8',
+                "error": "",
             },
         }
     )
 
-    assert first["recovery_signal"]["action"] == "retry"
-    assert first["recovery_signal"]["repeat_count"] == 1
-    assert second["recovery_signal"]["action"] == "replan"
-    assert second["recovery_signal"]["repeat_count"] == 2
+    payload = observer_llm.messages[1].content
+    assert "browser_snapshot" in payload
+    assert "secret task" not in payload
+    assert "secret plan" not in payload
+    assert "Snapshot compressed" in result["observation"]
+    assert result["refs"] == ["e8"]
 
 
-def test_observe_node_bounds_execution_events() -> None:
-    state = {}
-    for index in range(MAX_EXECUTION_EVENTS + 3):
-        state = observe_node(
-            {
-                "execution_events": state.get("execution_events", []),
-                "history": state.get("history", []),
-                "tool_result": {
-                    "name": "browser_snapshot",
-                    "status": "success",
-                    "content": f"snapshot {index}",
-                    "error": "",
-                },
+@pytest.mark.asyncio
+async def test_observe_node_invalid_llm_json_falls_back() -> None:
+    observer_llm = RecordingObserverLLM("not json")
+    node = create_observe_node(observer_llm)
+
+    result = await node(
+        {
+            "tool_result": {
+                "name": "browser_network_requests",
+                "status": "success",
+                "content": "GET https://example.test 200",
+                "error": "",
             }
-        )
+        }
+    )
 
-    assert len(state["execution_events"]) == MAX_EXECUTION_EVENTS
-    assert len(state["history"]) == MAX_EXECUTION_EVENTS
-    assert state["execution_events"][0]["sequence"] == 4
-    assert state["execution_events"][-1]["sequence"] == MAX_EXECUTION_EVENTS + 3
+    assert "browser_network_requests returned success" in result["observation"]
 
 
 @pytest.mark.asyncio
@@ -268,6 +376,10 @@ async def test_graph_tool_path() -> None:
                 '{"decision":"tool_call","tool_request":'
                 '{"name":"browser_snapshot","args":{},"reason":"Inspect page"}}'
             ),
+            (
+                '{"summary":"Snapshot compressed","visible_state":"snapshot text",'
+                '"important_refs":[],"errors":[],"next_observation_hint":""}'
+            ),
             '{"decision":"done","final_answer":"observed"}',
         ]
     )
@@ -276,6 +388,7 @@ async def test_graph_tool_path() -> None:
     result = await graph.ainvoke({"task": "Inspect"})
 
     assert result["final_answer"] == "observed"
-    assert "browser_snapshot returned success" in result["observation"]
-    assert result["latest_observation"]["outcome"] == "success"
-    assert result["recovery_signal"]["action"] == "none"
+    assert "Snapshot compressed" in result["observation"]
+    assert result["snapshot"] == "snapshot text"
+    assert result["current_step"] == 1
+    assert "recovery_signal" not in result

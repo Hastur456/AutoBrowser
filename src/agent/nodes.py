@@ -9,6 +9,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.types import interrupt
 
+from src.agent.observer_llm import compress_tool_result
 from src.agent.observe import compile_observation
 from src.agent.prompts import AGENT_SYSTEM_PROMPT, AGENT_USER_PROMPT
 from src.agent.state import AgentState, ToolRequest
@@ -48,6 +49,40 @@ def _normalize_tool_request(raw_request: Any) -> ToolRequest:
         "name": str(raw_request.get("name", "")).strip(),
         "args": args if isinstance(args, dict) else {},
         "reason": str(raw_request.get("reason", "")).strip(),
+    }
+
+
+def _guard_tool_request(state: AgentState, request: ToolRequest) -> dict[str, Any] | None:
+    if (
+        state.get("last_tool") == request.get("name")
+        and state.get("last_args", {}) == request.get("args", {})
+        and int(state.get("repeat_count", 0) or 0) >= 2
+    ):
+        return {
+            "decision": "replan",
+            "observation": (
+                "The same tool with the same arguments was requested three "
+                "consecutive times. Replan before trying another action."
+            ),
+            "last_tool": request.get("name", ""),
+            "last_args": request.get("args", {}),
+            "repeat_count": 3,
+        }
+
+    return None
+
+
+def _request_tracking_update(state: AgentState, request: ToolRequest) -> dict[str, Any]:
+    tool_name = request.get("name", "")
+    args = request.get("args", {})
+    if state.get("last_tool") == tool_name and state.get("last_args", {}) == args:
+        repeat_count = int(state.get("repeat_count", 0) or 0) + 1
+    else:
+        repeat_count = 1
+    return {
+        "last_tool": tool_name,
+        "last_args": args,
+        "repeat_count": repeat_count,
     }
 
 
@@ -97,10 +132,9 @@ def create_agent_node(
                         task=state.get("task", ""),
                         plan=_format_plan(state),
                         current_step=state.get("current_step", 0),
-                        reasoning_context=state.get(
-                            "reasoning_context",
-                            state.get("observation", "No observation yet."),
-                        ),
+                        observation=state.get("observation", "No observation yet."),
+                        snapshot=state.get("snapshot", ""),
+                        refs=", ".join(state.get("refs", [])) or "none",
                     )
                 ),
             ]
@@ -110,11 +144,15 @@ def create_agent_node(
         if tool_calls:
             tool_request = _tool_call_to_request(tool_calls[0])
             if tool_request.get("name"):
+                guarded = _guard_tool_request(state, tool_request)
+                if guarded is not None:
+                    return guarded
                 return {
                     "decision": "tool_call",
                     "tool_request": tool_request,
                     "policy_decision": "",
                     "error": "",
+                    **_request_tracking_update(state, tool_request),
                 }
 
         content = _message_content(response)
@@ -128,11 +166,15 @@ def create_agent_node(
                     "decision": "replan",
                     "observation": "The model selected a tool call without a tool name.",
                 }
+            guarded = _guard_tool_request(state, tool_request)
+            if guarded is not None:
+                return guarded
             return {
                 "decision": "tool_call",
                 "tool_request": tool_request,
                 "policy_decision": "",
                 "error": "",
+                **_request_tracking_update(state, tool_request),
             }
 
         if decision == "replan":
@@ -156,9 +198,20 @@ def create_agent_node(
 
 
 def observe_node(state: AgentState) -> dict[str, Any]:
-    """Compile executor output into bounded observation state."""
+    """Compile executor output into MCP-aware observation state without an LLM."""
 
     return compile_observation(state)
+
+
+def create_observe_node(observer_llm: Any | None = None) -> Callable[[AgentState], Any]:
+    """Create an observer node whose LLM only sees the latest ToolResult."""
+
+    async def _observe_node(state: AgentState) -> dict[str, Any]:
+        result = state.get("tool_result") or {}
+        compact_observation = await compress_tool_result(result, observer_llm)
+        return compile_observation(state, compact_observation)
+
+    return _observe_node
 
 
 def human_input_node(state: AgentState) -> dict[str, Any]:

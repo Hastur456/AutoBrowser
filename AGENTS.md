@@ -34,6 +34,32 @@ Use `pytest` and `pytest-asyncio` for asynchronous graph or MCP behavior. Name t
 
 Recent history uses short messages and Conventional Commit-style prefixes such as `feat(agent): ...` and `fix(execute): ...`. Use imperative, scoped commit subjects when possible. Pull requests should describe the behavioral change, list tests run, mention any MCP/Ollama assumptions, and include screenshots or logs only when UI or browser-observation behavior changes.
 
-## Agent-Specific Instructions
+# Playwright MCP Development Rules
 
-Read `CLAUDE.md` before planning or editing. Use `plans/` for non-trivial task notes. On PowerShell, read Russian UTF-8 files with explicit UTF-8 output encoding as documented in `CLAUDE.md`.
+This project is NOT a traditional Playwright project.
+
+The browser agent must follow Playwright MCP semantics.
+
+Source of truth:
+- browser_snapshot
+
+Element identity:
+- ref=e123
+
+Preferred interaction:
+- browser_click(ref)
+- browser_type(ref)
+- browser_hover(ref)
+
+Do NOT:
+- guess CSS selectors
+- generate XPath
+- rely on class names
+- assume DOM structure
+
+If the snapshot does not expose the needed element:
+1. Capture another snapshot.
+2. Increase snapshot depth if appropriate.
+3. Use browser_evaluate only if the snapshot cannot answer the question.
+
+The agent is snapshot-driven, not selector-driven.

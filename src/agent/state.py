@@ -8,15 +8,6 @@ from typing import Any, Literal, NotRequired, TypedDict
 AgentDecision = Literal["tool_call", "replan", "done"]
 PolicyDecision = Literal["approved", "needs_human", "blocked"]
 ToolStatus = Literal["success", "error"]
-ObservationOutcome = Literal[
-    "success",
-    "no_output",
-    "invalid_request",
-    "unknown_tool",
-    "transient_error",
-    "blocked_error",
-]
-RecoveryAction = Literal["none", "retry", "replan", "ask_human", "stop"]
 
 
 class PlanStep(TypedDict, total=False):
@@ -44,65 +35,36 @@ class ToolResult(TypedDict, total=False):
     error: str
 
 
-class ExecutionEvent(TypedDict, total=False):
-    """Compact append-only record of a tool execution."""
+class CompactToolObservation(TypedDict, total=False):
+    """Stateless LLM compression of a single tool result."""
 
-    sequence: int
-    tool_name: str
-    status: ToolStatus
-    outcome: ObservationOutcome
     summary: str
-
-
-class StructuredObservation(TypedDict, total=False):
-    """Deterministic observation derived from the latest tool result."""
-
-    tool_name: str
-    status: ToolStatus
-    outcome: ObservationOutcome
-    summary: str
-    content_preview: str
-    error: str
-
-
-class BrowserContext(TypedDict, total=False):
-    """Compact browser facts for the next reasoning turn."""
-
-    last_tool: str
-    last_status: ToolStatus
-    page_summary: str
-
-
-class RecoverySignal(TypedDict, total=False):
-    """Structured failure signal for later retry and recovery routing."""
-
-    category: ObservationOutcome
-    action: RecoveryAction
-    reason: str
-    repeat_count: int
+    visible_state: str
+    important_refs: list[str]
+    errors: list[str]
+    next_observation_hint: str
 
 
 class AgentState(TypedDict, total=False):
-    """Top-level graph state.
-
-    Nodes should return partial updates only. Lists are explicitly copied and
-    appended by the node that owns the update to keep merge behavior obvious.
-    """
+    """Top-level graph state for the Plan -> Execute -> Observe loop."""
 
     task: str
     plan: list[PlanStep]
     current_step: int
+
     decision: AgentDecision
     tool_request: ToolRequest
     tool_result: ToolResult
     policy_decision: PolicyDecision
+
     observation: str
-    latest_observation: StructuredObservation
-    browser_context: BrowserContext
-    reasoning_context: str
-    recovery_signal: RecoverySignal
-    execution_events: list[ExecutionEvent]
+    snapshot: str
+    refs: list[str]
+
+    last_tool: str
+    last_args: dict[str, Any]
+    repeat_count: int
+
     final_answer: str
     error: str
-    history: list[str]
     human_approval: NotRequired[Any]
