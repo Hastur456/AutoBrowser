@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Literal, NotRequired, TypedDict
 
+from langchain_core.messages import BaseMessage
+
 
 AgentDecision = Literal["tool_call", "replan", "done"]
 PolicyDecision = Literal["approved", "needs_human", "blocked"]
@@ -24,6 +26,7 @@ class ToolRequest(TypedDict, total=False):
     name: str
     args: dict[str, Any]
     reason: str
+    id: str
 
 
 class ToolResult(TypedDict, total=False):
@@ -60,6 +63,7 @@ class AgentState(TypedDict, total=False):
     observation: str
     snapshot: str
     refs: list[str]
+    messages: list[BaseMessage]
 
     last_tool: str
     last_args: dict[str, Any]

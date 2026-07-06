@@ -5,16 +5,65 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from src.agent.history import append_tool_message, tool_result_message_content
 from src.agent.observer_llm import fallback_compact_observation
 from src.agent.state import AgentState, CompactToolObservation, PlanStep, ToolResult
 
 MAX_CONTENT_PREVIEW_CHARS = 1200
 MAX_REFS_IN_OBSERVATION = 25
 REF_PATTERN = re.compile(r"\bref=([A-Za-z][A-Za-z0-9_-]*)\b")
+WORD_PATTERN = re.compile(r"[a-z0-9]+")
 INVALID_REF_PATTERN = re.compile(
     r"\bRef\s+[A-Za-z][A-Za-z0-9_-]*\s+not\s+found\b",
     re.IGNORECASE,
 )
+COMPLETION_EVIDENCE_TERMS = {
+    "appeared",
+    "appears",
+    "available",
+    "displayed",
+    "found",
+    "loaded",
+    "located",
+    "opened",
+    "present",
+    "shown",
+    "visible",
+}
+NEGATIVE_EVIDENCE_TERMS = {
+    "failed",
+    "missing",
+    "not available",
+    "not found",
+    "not located",
+    "not present",
+    "not shown",
+    "not visible",
+    "unavailable",
+}
+STEP_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "button",
+    "click",
+    "enter",
+    "find",
+    "for",
+    "go",
+    "input",
+    "inspect",
+    "locate",
+    "navigate",
+    "open",
+    "page",
+    "press",
+    "search",
+    "submit",
+    "the",
+    "to",
+    "type",
+}
 
 
 def compact_text(value: Any, limit: int = MAX_CONTENT_PREVIEW_CHARS) -> str:
@@ -97,6 +146,50 @@ def _advance_plan(plan: list[PlanStep], current_step: int) -> tuple[list[PlanSte
     return updated_plan, next_step
 
 
+def _step_keywords(description: str) -> set[str]:
+    words = set(WORD_PATTERN.findall(description.lower()))
+    keywords = {word for word in words if len(word) > 2 and word not in STEP_STOPWORDS}
+    return keywords or {word for word in words if len(word) > 2}
+
+
+def _has_step_completion_evidence(
+    step: PlanStep,
+    compact: CompactToolObservation,
+) -> bool:
+    """Return true only when observation text supports the step goal."""
+
+    evidence_text = " ".join(
+        str(compact.get(key, "") or "") for key in ("summary", "visible_state")
+    ).lower()
+    if not evidence_text:
+        return False
+
+    if any(term in evidence_text for term in NEGATIVE_EVIDENCE_TERMS):
+        return False
+
+    if not any(term in evidence_text for term in COMPLETION_EVIDENCE_TERMS):
+        return False
+
+    keywords = _step_keywords(str(step.get("description", "") or ""))
+    evidence_words = set(WORD_PATTERN.findall(evidence_text))
+    return bool(keywords & evidence_words)
+
+
+def _plan_completion_update(
+    plan: list[PlanStep],
+    current_step: int,
+    compact: CompactToolObservation,
+) -> dict[str, Any]:
+    if current_step < 0 or current_step >= len(plan):
+        return {}
+
+    if not _has_step_completion_evidence(plan[current_step], compact):
+        return {}
+
+    updated_plan, next_step = _advance_plan(plan, current_step)
+    return {"plan": updated_plan, "current_step": next_step}
+
+
 def compile_observation(
     state: AgentState,
     compact_observation: CompactToolObservation | None = None,
@@ -113,12 +206,16 @@ def compile_observation(
     is_snapshot = tool_name == "browser_snapshot" and status == "success"
     refs = extract_element_refs(content) if is_snapshot else []
     observation = "\n\n".join(_observation_lines(result, compact, refs))
+    request = state.get("tool_request") or {}
+    messages = list(state.get("messages") or [])
+    tool_message = tool_result_message_content(result, compact, refs, observation)
 
     updates: dict[str, Any] = {
         "observation": observation,
         "decision": "tool_call",
         "policy_decision": "",
         "tool_request": {},
+        "messages": append_tool_message(messages, request, tool_message),
     }
 
     if is_snapshot:
@@ -131,9 +228,7 @@ def compile_observation(
     if status == "success":
         plan = state.get("plan") or []
         current_step = int(state.get("current_step", 0) or 0)
-        updated_plan, next_step = _advance_plan(plan, current_step)
-        updates["plan"] = updated_plan
-        updates["current_step"] = next_step
+        updates.update(_plan_completion_update(plan, current_step, compact))
         updates["error"] = ""
     else:
         updates["error"] = str(result.get("error", "") or "")

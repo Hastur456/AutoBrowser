@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import pytest
 from langchain_core.language_models.fake import FakeListLLM
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.runnables import RunnableLambda
 from langchain_core.tools import tool
 
 from src.agent.agent import build_agent_graph
 from src.agent.nodes import create_agent_node, create_observe_node, observe_node
-from src.agent.observe import MAX_CONTENT_PREVIEW_CHARS
+from src.agent.observe import MAX_CONTENT_PREVIEW_CHARS, compile_observation
 from src.agent.policy import classify_tool_request
 from src.agent.routers import (
     route_agent_decision,
@@ -126,11 +126,13 @@ async def test_agent_node_uses_observation_snapshot_and_refs_in_prompt() -> None
         }
     )
 
-    prompt = llm.messages[1].content
+    prompt = llm.messages[-1].content
     assert result["final_answer"] == "ok"
+    assert "Original user request:\nInspect" in llm.messages[1].content
     assert "Search box found." in prompt
     assert 'textbox "Search" ref=e8' in prompt
     assert "e8" in prompt
+    assert all('textbox "Search" ref=e8' not in message.content for message in result["messages"])
 
 
 @pytest.mark.asyncio
@@ -159,6 +161,8 @@ async def test_agent_node_replans_on_third_identical_tool_request() -> None:
     assert result["decision"] == "replan"
     assert result["repeat_count"] == 3
     assert "three consecutive times" in result["observation"]
+    assert result["messages"][-1].type == "tool"
+    assert "three consecutive times" in result["messages"][-1].content
     assert "recovery_signal" not in result
 
 
@@ -187,7 +191,7 @@ async def test_executor_unknown_tool() -> None:
     assert "Available tools: none" in result["tool_result"]["error"]
 
 
-def test_observe_node_translates_snapshot_and_advances_plan() -> None:
+def test_observe_node_translates_snapshot_without_advancing_plan_on_tool_success() -> None:
     snapshot = '- button "Search" ref=e7\n- textbox "Query" ref=e8'
     result = observe_node(
         {
@@ -208,13 +212,89 @@ def test_observe_node_translates_snapshot_and_advances_plan() -> None:
     assert result["snapshot"] == snapshot
     assert result["refs"] == ["e7", "e8"]
     assert "Refs:" in result["observation"]
-    assert result["current_step"] == 1
-    assert result["plan"][0]["status"] == "done"
-    assert result["plan"][1]["status"] == "in_progress"
+    assert "current_step" not in result
+    assert "plan" not in result
     assert "latest_observation" not in result
     assert "browser_context" not in result
     assert "recovery_signal" not in result
     assert "execution_events" not in result
+
+
+def test_observe_node_advances_plan_only_with_step_completion_evidence() -> None:
+    result = compile_observation(
+        {
+            "plan": [
+                {"id": 1, "description": "Locate search input", "status": "pending"},
+                {"id": 2, "description": "Type query", "status": "pending"},
+            ],
+            "current_step": 0,
+            "tool_result": {
+                "name": "browser_snapshot",
+                "status": "success",
+                "content": '- textbox "Search" ref=e8',
+                "error": "",
+            },
+        },
+        {
+            "summary": "Search input found.",
+            "visible_state": "Search input is visible.",
+            "important_refs": ["e8"],
+            "errors": [],
+            "next_observation_hint": "",
+        },
+    )
+
+    assert result["current_step"] == 1
+    assert result["plan"][0]["status"] == "done"
+    assert result["plan"][1]["status"] == "in_progress"
+
+
+def test_observe_node_does_not_advance_plan_for_unrelated_successful_actions() -> None:
+    for tool_name, content, description in [
+        ("browser_snapshot", '- textbox "Search" ref=e8', "Locate search input"),
+        ("browser_click", "Clicked.", "Search products"),
+        ("browser_navigate", "Navigated.", "Inspect results"),
+    ]:
+        result = compile_observation(
+            {
+                "plan": [{"id": 1, "description": description, "status": "pending"}],
+                "current_step": 0,
+                "tool_result": {
+                    "name": tool_name,
+                    "status": "success",
+                    "content": content,
+                    "error": "",
+                },
+            }
+        )
+
+        assert "current_step" not in result
+        assert "plan" not in result
+
+
+def test_observe_node_does_not_advance_plan_on_negative_evidence() -> None:
+    result = compile_observation(
+        {
+            "plan": [{"id": 1, "description": "Locate search input", "status": "pending"}],
+            "current_step": 0,
+            "tool_result": {
+                "name": "browser_snapshot",
+                "status": "success",
+                "content": '- text "No search form" ref=e8',
+                "error": "",
+            },
+        },
+        {
+            "summary": "Search input not found.",
+            "visible_state": "Search input is not visible.",
+            "important_refs": [],
+            "errors": [],
+            "next_observation_hint": "A different page may show the search input.",
+        },
+    )
+
+    assert "current_step" not in result
+    assert "plan" not in result
 
 
 def test_observe_node_replaces_snapshot_refs() -> None:
@@ -328,6 +408,50 @@ async def test_observe_node_llm_receives_only_tool_result() -> None:
 
 
 @pytest.mark.asyncio
+async def test_observe_node_appends_compact_tool_message_without_raw_snapshot() -> None:
+    observer_llm = RecordingObserverLLM(
+        (
+            '{"summary":"Search input found.","visible_state":"Search input visible",'
+            '"important_refs":["e8"],"errors":[],"next_observation_hint":""}'
+        )
+    )
+    node = create_observe_node(observer_llm)
+    raw_snapshot = '- textbox "SECRET RAW SNAPSHOT" ref=e8'
+
+    result = await node(
+        {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"name": "browser_snapshot", "args": {}, "id": "call_1"}
+                    ],
+                )
+            ],
+            "tool_request": {
+                "name": "browser_snapshot",
+                "args": {},
+                "id": "call_1",
+            },
+            "tool_result": {
+                "name": "browser_snapshot",
+                "status": "success",
+                "content": raw_snapshot,
+                "error": "",
+            },
+        }
+    )
+
+    tool_message = result["messages"][-1]
+    assert isinstance(tool_message, ToolMessage)
+    assert tool_message.name == "browser_snapshot"
+    assert "Search input found." in tool_message.content
+    assert "Refs:" in tool_message.content
+    assert "e8" in tool_message.content
+    assert "SECRET RAW SNAPSHOT" not in tool_message.content
+
+
+@pytest.mark.asyncio
 async def test_observe_node_invalid_llm_json_falls_back() -> None:
     observer_llm = RecordingObserverLLM("not json")
     node = create_observe_node(observer_llm)
@@ -390,5 +514,11 @@ async def test_graph_tool_path() -> None:
     assert result["final_answer"] == "observed"
     assert "Snapshot compressed" in result["observation"]
     assert result["snapshot"] == "snapshot text"
-    assert result["current_step"] == 1
+    assert result.get("current_step", 0) == 0
+    assert result["messages"][0].type == "system"
+    assert "Original user request:\nInspect" in result["messages"][1].content
+    assert result["messages"][2].tool_calls[0]["name"] == "browser_snapshot"
+    assert result["messages"][3].type == "tool"
+    assert "Snapshot compressed" in result["messages"][3].content
+    assert result["messages"][-1].content == "observed"
     assert "recovery_signal" not in result

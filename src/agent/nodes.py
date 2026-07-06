@@ -6,12 +6,19 @@ import json
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from langgraph.types import interrupt
 
+from src.agent.history import (
+    append_ai_tool_call,
+    append_final_ai_response,
+    append_tool_message,
+    ensure_message_history,
+    with_tool_call_id,
+)
 from src.agent.observer_llm import compress_tool_result
 from src.agent.observe import compile_observation
-from src.agent.prompts import AGENT_SYSTEM_PROMPT, AGENT_USER_PROMPT
+from src.agent.prompts import AGENT_USER_PROMPT
 from src.agent.state import AgentState, ToolRequest
 
 
@@ -101,6 +108,7 @@ def _tool_call_to_request(tool_call: Any) -> ToolRequest:
         return {
             "name": str(tool_call.get("name", "")).strip(),
             "args": args if isinstance(args, dict) else {},
+            "id": str(tool_call.get("id", "")).strip(),
             "reason": "Selected by bound tool call.",
         }
 
@@ -108,6 +116,7 @@ def _tool_call_to_request(tool_call: Any) -> ToolRequest:
     return {
         "name": str(getattr(tool_call, "name", "")).strip(),
         "args": args if isinstance(args, dict) else {},
+        "id": str(getattr(tool_call, "id", "")).strip(),
         "reason": "Selected by bound tool call.",
     }
 
@@ -124,9 +133,10 @@ def create_agent_node(
         if not state.get("plan"):
             return {"decision": "replan", "observation": "No plan is available."}
 
+        messages = ensure_message_history(state)
         response = await tool_bound_llm.ainvoke(
             [
-                SystemMessage(content=AGENT_SYSTEM_PROMPT),
+                *messages,
                 HumanMessage(
                     content=AGENT_USER_PROMPT.format(
                         task=state.get("task", ""),
@@ -142,16 +152,26 @@ def create_agent_node(
 
         tool_calls = getattr(response, "tool_calls", None) or []
         if tool_calls:
-            tool_request = _tool_call_to_request(tool_calls[0])
+            tool_request = with_tool_call_id(_tool_call_to_request(tool_calls[0]))
             if tool_request.get("name"):
+                messages_with_call = append_ai_tool_call(messages, tool_request)
                 guarded = _guard_tool_request(state, tool_request)
                 if guarded is not None:
+                    guarded["messages"] = append_tool_message(
+                        messages_with_call,
+                        tool_request,
+                        (
+                            f"{tool_request.get('name', '')}\n\n"
+                            f"{guarded.get('observation', '')}"
+                        ),
+                    )
                     return guarded
                 return {
                     "decision": "tool_call",
                     "tool_request": tool_request,
                     "policy_decision": "",
                     "error": "",
+                    "messages": messages_with_call,
                     **_request_tracking_update(state, tool_request),
                 }
 
@@ -160,20 +180,32 @@ def create_agent_node(
         decision = str(data.get("decision", "")).strip()
 
         if decision == "tool_call":
-            tool_request = _normalize_tool_request(data.get("tool_request"))
+            tool_request = with_tool_call_id(
+                _normalize_tool_request(data.get("tool_request"))
+            )
             if not tool_request.get("name"):
                 return {
                     "decision": "replan",
                     "observation": "The model selected a tool call without a tool name.",
                 }
+            messages_with_call = append_ai_tool_call(messages, tool_request)
             guarded = _guard_tool_request(state, tool_request)
             if guarded is not None:
+                guarded["messages"] = append_tool_message(
+                    messages_with_call,
+                    tool_request,
+                    (
+                        f"{tool_request.get('name', '')}\n\n"
+                        f"{guarded.get('observation', '')}"
+                    ),
+                )
                 return guarded
             return {
                 "decision": "tool_call",
                 "tool_request": tool_request,
                 "policy_decision": "",
                 "error": "",
+                "messages": messages_with_call,
                 **_request_tracking_update(state, tool_request),
             }
 
@@ -184,14 +216,17 @@ def create_agent_node(
             }
 
         if decision == "done":
+            final_answer = str(data.get("final_answer", "") or content)
             return {
                 "decision": "done",
-                "final_answer": str(data.get("final_answer", "") or content),
+                "final_answer": final_answer,
+                "messages": append_final_ai_response(messages, final_answer),
             }
 
         return {
             "decision": "done",
             "final_answer": content,
+            "messages": append_final_ai_response(messages, content),
         }
 
     return agent_node
@@ -245,4 +280,9 @@ def human_input_node(state: AgentState) -> dict[str, Any]:
         "human_approval": approval,
         "observation": reason,
         "error": reason,
+        "messages": append_tool_message(
+            list(state.get("messages") or []),
+            request,
+            f"{request.get('name', '')}\n\n{reason}",
+        ),
     }
