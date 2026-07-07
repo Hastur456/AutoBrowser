@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.agent.history import append_tool_message
 from src.agent.state import AgentState, PolicyDecision, ToolRequest
 
 BLOCKED_TOOL_MARKERS = (
@@ -37,4 +38,10 @@ def policy_node(state: AgentState) -> dict[str, Any]:
     }
     if decision == "blocked":
         updates["error"] = reason
+        request = state.get("tool_request") or {}
+        updates["messages"] = append_tool_message(
+            list(state.get("messages") or []),
+            request,
+            f"{request.get('name', '')}\n\n{reason}",
+        )
     return updates

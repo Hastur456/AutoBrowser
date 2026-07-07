@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 import main
+from src.mcp import mcp_setup
 
 
 class FakeChatOllama:
@@ -47,6 +48,7 @@ def make_args(**overrides: Any) -> argparse.Namespace:
         "show_tools": False,
         "json": False,
         "no_mcp": True,
+        "compress_tools": False,
         "chrome_path": "chrome.exe",
         "user_data_dir": "profile",
         "cdp_port": 9222,
@@ -71,6 +73,7 @@ def test_parser_accepts_cli_flags() -> None:
             "--show-tools",
             "--json",
             "--no-mcp",
+            "--compress-tools",
             "--chrome-path",
             "chrome.exe",
             "--user-data-dir",
@@ -91,6 +94,7 @@ def test_parser_accepts_cli_flags() -> None:
     assert args.show_tools is True
     assert args.json is True
     assert args.no_mcp is True
+    assert args.compress_tools is True
     assert args.chrome_path == "chrome.exe"
     assert args.user_data_dir == "profile"
     assert args.cdp_port == 9333
@@ -109,6 +113,28 @@ def test_print_tools(capsys) -> None:
     assert "MCP tools:" in output
     assert "- browser_navigate" in output
     assert "- browser_snapshot" in output
+
+
+def test_configure_langsmith_tracing_enables_legacy_vars(monkeypatch) -> None:
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    monkeypatch.setenv("LANGSMITH_PROJECT", "browser-runs")
+    monkeypatch.delenv("LANGCHAIN_TRACING_V2", raising=False)
+    monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
+
+    assert main.configure_langsmith_tracing() is True
+    assert main.os.environ["LANGCHAIN_TRACING_V2"] == "true"
+    assert main.os.environ["LANGCHAIN_PROJECT"] == "browser-runs"
+
+
+def test_configure_langsmith_tracing_sets_default_project(monkeypatch) -> None:
+    monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
+    monkeypatch.delenv("LANGCHAIN_TRACING_V2", raising=False)
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
+
+    assert main.configure_langsmith_tracing() is False
+    assert main.os.environ["LANGSMITH_PROJECT"] == "autobrowser"
+    assert main.os.environ["LANGCHAIN_PROJECT"] == "autobrowser"
 
 
 def test_resolve_task_prefers_positional() -> None:
@@ -157,7 +183,31 @@ async def test_load_browser_tools_returns_all_tools(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_setup_mcp_uses_latest_playwright_mcp(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeMCPClient:
+        def __init__(self, servers: dict[str, Any]) -> None:
+            captured["servers"] = servers
+
+        async def get_tools(self) -> list[Any]:
+            return []
+
+    monkeypatch.setenv("PORT", "9777")
+    monkeypatch.setattr(mcp_setup, "MultiServerMCPClient", FakeMCPClient)
+
+    await mcp_setup.setup_mcp()
+
+    args = captured["servers"]["browser"]["args"]
+    assert args[:2] == ["-y", "@playwright/mcp@latest"]
+    assert "mcp-server-playwright" not in args
+    assert "http://localhost:9777" in args
+
+
+@pytest.mark.asyncio
 async def test_run_agent_prints_final_answer(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
     monkeypatch.setattr(main, "ChatOllama", FakeChatOllama)
     monkeypatch.setattr(main, "build_agent_graph", lambda **kwargs: FakeGraph())
     args = make_args()
@@ -166,6 +216,7 @@ async def test_run_agent_prints_final_answer(monkeypatch, capsys) -> None:
 
     assert exit_code == 0
     assert capsys.readouterr().out.strip() == "done: inspect page"
+    assert main.os.environ["LANGSMITH_PROJECT"] == "autobrowser"
 
 
 @pytest.mark.asyncio
@@ -217,6 +268,7 @@ async def test_mcp_mode_starts_chrome_and_passes_tools(monkeypatch) -> None:
 
     def fake_build_agent_graph(**kwargs: Any) -> FakeGraph:
         events.append(("tools", kwargs["tools"]))
+        events.append(("compress_tools", kwargs["compress_tools"]))
         return FakeGraph()
 
     monkeypatch.setattr(main, "ChatOllama", FakeChatOllama)
@@ -234,3 +286,4 @@ async def test_mcp_mode_starts_chrome_and_passes_tools(monkeypatch) -> None:
     assert ("wait", 9555, 1) in events
     assert ("load", 9555) in events
     assert ("tools", tools) in events
+    assert ("compress_tools", False) in events

@@ -6,8 +6,9 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 
+from src.agent.history import ensure_message_history
 from src.agent.state import AgentState, PlanStep
 from src.subgraphs.planner.prompts import PLANNER_SYSTEM_PROMPT, PLANNER_USER_PROMPT
 
@@ -53,13 +54,21 @@ def create_plan_node(llm: Any) -> Callable[[AgentState], Any]:
     async def plan_node(state: AgentState) -> dict[str, Any]:
         task = state.get("task", "").strip()
         observation = state.get("observation", "")
+        messages = ensure_message_history(state)
+        prior_replans = int(state.get("replan_count", 0) or 0)
+        replan_count = prior_replans + 1 if state.get("plan") else prior_replans
         response = await llm.ainvoke(
             [
-                SystemMessage(content=PLANNER_SYSTEM_PROMPT),
+                *messages,
                 HumanMessage(
-                    content=PLANNER_USER_PROMPT.format(
-                        task=task,
-                        observation=observation or "No observation yet.",
+                    content="\n\n".join(
+                        [
+                            PLANNER_SYSTEM_PROMPT,
+                            PLANNER_USER_PROMPT.format(
+                                task=task,
+                                observation=observation or "No observation yet.",
+                            ),
+                        ]
                     )
                 ),
             ]
@@ -71,7 +80,9 @@ def create_plan_node(llm: Any) -> Callable[[AgentState], Any]:
             "plan": plan,
             "current_step": 0,
             "decision": "replan",
+            "replan_count": replan_count,
             "error": "",
+            "messages": messages,
         }
 
     return plan_node
