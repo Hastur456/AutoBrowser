@@ -21,6 +21,7 @@ load_dotenv()
 DEFAULT_CDP_PORT = int(os.getenv("PORT", "9222"))
 DEFAULT_CHROME_PATH = os.getenv("CHROME_PATH", "")
 DEFAULT_USER_DATA_DIR = os.getenv("USER_DATA_DIR", "")
+DEFAULT_LANGSMITH_PROJECT = "autobrowser"
 
 _NODE_LABELS = {
     "plan": "PLAN",
@@ -226,6 +227,32 @@ def print_step(node_name: str, update: Any, as_json: bool = False) -> None:
             print(f"{key}: {format_state(value)}")
 
 
+def configure_langsmith_tracing() -> bool:
+    """Normalize LangSmith tracing environment variables.
+
+    LangChain/LangGraph read tracing settings from environment variables. This
+    keeps the supported LangSmith names and legacy LangChain names in sync so a
+    project .env can use either convention.
+    """
+
+    tracing = os.getenv("LANGSMITH_TRACING") or os.getenv("LANGCHAIN_TRACING_V2")
+    enabled = str(tracing).lower() in {"1", "true", "yes", "on"}
+
+    if enabled:
+        os.environ.setdefault("LANGSMITH_TRACING", "true")
+        os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
+
+    project = (
+        os.getenv("LANGSMITH_PROJECT")
+        or os.getenv("LANGCHAIN_PROJECT")
+        or DEFAULT_LANGSMITH_PROJECT
+    )
+    os.environ.setdefault("LANGSMITH_PROJECT", project)
+    os.environ.setdefault("LANGCHAIN_PROJECT", project)
+
+    return enabled
+
+
 def _print_final_state(result: Any, as_json: bool) -> None:
     if as_json:
         print(format_state(result, as_json=True))
@@ -245,6 +272,7 @@ def _print_final_state(result: Any, as_json: bool) -> None:
 async def run_agent(args: argparse.Namespace) -> int:
     """Run the agent with parsed CLI arguments."""
 
+    tracing_enabled = configure_langsmith_tracing()
     llm = ChatOllama(model=args.model, temperature=args.temperature)
     if args.no_mcp:
         tools: list[Any] = []
@@ -257,7 +285,20 @@ async def run_agent(args: argparse.Namespace) -> int:
             print_tools(tools)
 
     graph = build_agent_graph(llm=llm, tools=tools)
-    config = {"recursion_limit": args.recursion_limit}
+    config = {
+        "recursion_limit": args.recursion_limit,
+        "run_name": "AutoBrowser CLI task",
+        "metadata": {
+            "model": args.model,
+            "temperature": args.temperature,
+            "show_state": args.show_state,
+            "langsmith_tracing": tracing_enabled,
+        },
+        "tags": [
+            "autobrowser",
+            "cli",
+        ],
+    }
 
     if args.loop:
         print("Интерактивный режим. Введите 'quit' для выхода.\n")

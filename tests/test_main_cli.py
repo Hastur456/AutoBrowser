@@ -111,6 +111,28 @@ def test_print_tools(capsys) -> None:
     assert "- browser_snapshot" in output
 
 
+def test_configure_langsmith_tracing_enables_legacy_vars(monkeypatch) -> None:
+    monkeypatch.setenv("LANGSMITH_TRACING", "true")
+    monkeypatch.setenv("LANGSMITH_PROJECT", "browser-runs")
+    monkeypatch.delenv("LANGCHAIN_TRACING_V2", raising=False)
+    monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
+
+    assert main.configure_langsmith_tracing() is True
+    assert main.os.environ["LANGCHAIN_TRACING_V2"] == "true"
+    assert main.os.environ["LANGCHAIN_PROJECT"] == "browser-runs"
+
+
+def test_configure_langsmith_tracing_sets_default_project(monkeypatch) -> None:
+    monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
+    monkeypatch.delenv("LANGCHAIN_TRACING_V2", raising=False)
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
+
+    assert main.configure_langsmith_tracing() is False
+    assert main.os.environ["LANGSMITH_PROJECT"] == "autobrowser"
+    assert main.os.environ["LANGCHAIN_PROJECT"] == "autobrowser"
+
+
 def test_resolve_task_prefers_positional() -> None:
     args = make_args(task=["open", "site"], task_text="ignored")
 
@@ -158,6 +180,8 @@ async def test_load_browser_tools_returns_all_tools(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_run_agent_prints_final_answer(monkeypatch, capsys) -> None:
+    monkeypatch.delenv("LANGSMITH_PROJECT", raising=False)
+    monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
     monkeypatch.setattr(main, "ChatOllama", FakeChatOllama)
     monkeypatch.setattr(main, "build_agent_graph", lambda **kwargs: FakeGraph())
     args = make_args()
@@ -166,6 +190,7 @@ async def test_run_agent_prints_final_answer(monkeypatch, capsys) -> None:
 
     assert exit_code == 0
     assert capsys.readouterr().out.strip() == "done: inspect page"
+    assert main.os.environ["LANGSMITH_PROJECT"] == "autobrowser"
 
 
 @pytest.mark.asyncio
