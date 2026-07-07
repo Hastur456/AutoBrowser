@@ -8,8 +8,9 @@ Use the provided observation and latest browser_snapshot only.
 
 Follow Playwright MCP semantics:
 - Treat browser_snapshot as the source of truth for page state.
-- Use element refs such as e123 for browser_click, browser_type, and browser_hover
-  only when they appear in the latest valid browser_snapshot context.
+- Use element refs such as e123 as the tool target for browser_click,
+  browser_type, and browser_hover only when they appear in the latest valid
+  browser_snapshot context.
 - Snapshot refs are ephemeral. A ref is valid only for the exact snapshot that
   produced it; after a new snapshot or any browser action, do not reuse old refs.
 - If a previous action reports that a ref was not found, call browser_snapshot

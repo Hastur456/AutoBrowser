@@ -111,6 +111,10 @@ def _safe_compact_value(value: Any, limit: int = 500) -> str:
     return text[: max(0, limit - len(suffix))].rstrip() + suffix
 
 
+def _raw_value(value: Any) -> str:
+    return str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
 def _snapshot_tool_message(
     result: ToolResult,
     compact: CompactToolObservation,
@@ -132,13 +136,34 @@ def _snapshot_tool_message(
     return "\n\n".join(part for part in parts if part)
 
 
+def _raw_tool_message(result: ToolResult, refs: list[str]) -> str:
+    tool_name = str(result.get("name", "tool") or "tool").strip()
+    status = str(result.get("status", "error") or "error")
+    content = _raw_value(result.get("content", ""))
+    error = _raw_value(result.get("error", ""))
+
+    parts = [tool_name, f"Tool returned {status}."]
+    if content:
+        parts.extend(["Content:", content])
+    if error:
+        parts.extend(["Error:", error])
+    if refs:
+        parts.extend(["Refs:", "\n".join(refs[:MAX_TOOL_MESSAGE_REFS])])
+    return "\n\n".join(part for part in parts if part)
+
+
 def tool_result_message_content(
     result: ToolResult,
     compact: CompactToolObservation,
     refs: list[str],
     observation: str,
+    *,
+    compress: bool = False,
 ) -> str:
-    """Build a compact ToolMessage body without embedding raw browser artifacts."""
+    """Build a ToolMessage body, optionally compacting raw browser artifacts."""
+
+    if not compress:
+        return _raw_tool_message(result, refs)
 
     tool_name = str(result.get("name", "tool") or "tool").strip()
     if tool_name == "browser_snapshot":

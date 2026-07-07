@@ -62,6 +62,11 @@ class RecordingLLM:
         return AIMessage(content='{"decision":"done","final_answer":"ok"}')
 
 
+class FailingLLM:
+    async def ainvoke(self, _messages):
+        raise AssertionError("LLM should not be called")
+
+
 class RecordingObserverLLM:
     def __init__(self, response: str) -> None:
         self.response = response
@@ -70,6 +75,19 @@ class RecordingObserverLLM:
     async def ainvoke(self, messages):
         self.messages = messages
         return AIMessage(content=self.response)
+
+
+class ScriptedToolLLM:
+    def __init__(self, responses: list[str]) -> None:
+        self.responses = list(responses)
+        self.calls = 0
+
+    async def ainvoke(self, _messages):
+        if self.calls >= len(self.responses):
+            return AIMessage(content=self.responses[-1])
+        response = self.responses[self.calls]
+        self.calls += 1
+        return AIMessage(content=response)
 
 
 @pytest.mark.asyncio
@@ -133,6 +151,49 @@ async def test_agent_node_uses_observation_snapshot_and_refs_in_prompt() -> None
     assert 'textbox "Search" ref=e8' in prompt
     assert "e8" in prompt
     assert all('textbox "Search" ref=e8' not in message.content for message in result["messages"])
+
+
+@pytest.mark.asyncio
+async def test_agent_node_forces_snapshot_after_invalid_ref() -> None:
+    node = create_agent_node(FailingLLM())
+
+    result = await node(
+        {
+            "task": "Click catalog",
+            "plan": [{"id": 1, "description": "Click catalog", "status": "pending"}],
+            "current_step": 0,
+            "needs_fresh_snapshot": True,
+            "observation": "Tool failed.\n\nRef not found\n\nA fresh browser_snapshot is required.",
+        }
+    )
+
+    assert result["decision"] == "tool_call"
+    assert result["tool_request"]["name"] == "browser_snapshot"
+    assert result["tool_request"]["args"] == {}
+    assert result["needs_fresh_snapshot"] is False
+    assert result["invalid_ref_recovery_count"] == 1
+    assert result["messages"][-1].tool_calls[0]["name"] == "browser_snapshot"
+
+
+@pytest.mark.asyncio
+async def test_agent_node_replans_after_invalid_ref_recovery_limit() -> None:
+    node = create_agent_node(FailingLLM())
+
+    result = await node(
+        {
+            "task": "Click catalog",
+            "plan": [{"id": 1, "description": "Click catalog", "status": "pending"}],
+            "current_step": 0,
+            "needs_fresh_snapshot": True,
+            "invalid_ref_recovery_count": 1,
+        }
+    )
+
+    assert result["decision"] == "replan"
+    assert result["needs_fresh_snapshot"] is False
+    assert result["snapshot"] == ""
+    assert result["refs"] == []
+    assert "fresh snapshot recovery" in result["observation"]
 
 
 @pytest.mark.asyncio
@@ -249,6 +310,52 @@ async def test_executor_unknown_tool() -> None:
     assert result["tool_result"]["status"] == "error"
     assert "Unknown tool" in result["tool_result"]["error"]
     assert "Available tools: none" in result["tool_result"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_executor_maps_browser_ref_to_latest_mcp_target() -> None:
+    calls: list[dict[str, str]] = []
+
+    @tool
+    def browser_click(target: str) -> str:
+        """Click a browser element."""
+
+        calls.append({"target": target})
+        return "Clicked."
+
+    node = create_executor_node(tools=[browser_click])
+    result = await node(
+        {
+            "snapshot": '- button "Catalog" ref=e14',
+            "tool_request": {"name": "browser_click", "args": {"ref": "e14"}},
+        }
+    )
+
+    assert result["tool_result"]["status"] == "success"
+    assert calls == [{"target": "e14"}]
+
+
+@pytest.mark.asyncio
+async def test_executor_adds_element_for_legacy_ref_based_mcp_tool() -> None:
+    calls: list[dict[str, str]] = []
+
+    @tool
+    def browser_click(element: str, ref: str) -> str:
+        """Click a browser element."""
+
+        calls.append({"element": element, "ref": ref})
+        return "Clicked."
+
+    node = create_executor_node(tools=[browser_click])
+    result = await node(
+        {
+            "snapshot": '- button "Catalog" ref=e14',
+            "tool_request": {"name": "browser_click", "args": {"ref": "e14"}},
+        }
+    )
+
+    assert result["tool_result"]["status"] == "success"
+    assert calls == [{"element": 'button "Catalog"', "ref": "e14"}]
 
 
 def test_observe_node_translates_snapshot_without_advancing_plan_on_tool_success() -> None:
@@ -411,13 +518,14 @@ def test_observe_node_invalid_ref_is_plain_observation() -> None:
 
     assert result["snapshot"] == ""
     assert result["refs"] == []
+    assert result["needs_fresh_snapshot"] is True
     assert result["error"] == "Ref e119 not found"
     assert "Tool failed." in result["observation"]
     assert "Ref not found" in result["observation"]
     assert "fresh browser_snapshot" in result["observation"]
 
 
-def test_observe_node_preserves_large_browser_snapshot_but_compacts_observation() -> None:
+def test_observe_node_preserves_large_browser_snapshot_without_default_compression() -> None:
     large_content = '- button "Save" ref=e42\n' + ("x" * (MAX_CONTENT_PREVIEW_CHARS + 500))
 
     result = observe_node(
@@ -433,6 +541,26 @@ def test_observe_node_preserves_large_browser_snapshot_but_compacts_observation(
 
     assert result["snapshot"] == large_content
     assert result["refs"] == ["e42"]
+    assert large_content in result["observation"]
+
+
+def test_observe_node_can_compact_large_browser_snapshot() -> None:
+    large_content = '- button "Save" ref=e42\n' + ("x" * (MAX_CONTENT_PREVIEW_CHARS + 500))
+
+    result = compile_observation(
+        {
+            "tool_result": {
+                "name": "browser_snapshot",
+                "status": "success",
+                "content": large_content,
+                "error": "",
+            },
+        },
+        compress_tool_output=True,
+    )
+
+    assert result["snapshot"] == large_content
+    assert result["refs"] == ["e42"]
     assert len(result["observation"]) < len(large_content)
 
 
@@ -444,7 +572,7 @@ async def test_observe_node_llm_receives_only_tool_result() -> None:
             '"important_refs":["e8"],"errors":[],"next_observation_hint":""}'
         )
     )
-    node = create_observe_node(observer_llm)
+    node = create_observe_node(observer_llm, compress_tools=True)
 
     result = await node(
         {
@@ -475,7 +603,7 @@ async def test_observe_node_appends_compact_tool_message_without_raw_snapshot() 
             '"important_refs":["e8"],"errors":[],"next_observation_hint":""}'
         )
     )
-    node = create_observe_node(observer_llm)
+    node = create_observe_node(observer_llm, compress_tools=True)
     raw_snapshot = '- textbox "SECRET RAW SNAPSHOT" ref=e8'
 
     result = await node(
@@ -514,7 +642,7 @@ async def test_observe_node_appends_compact_tool_message_without_raw_snapshot() 
 @pytest.mark.asyncio
 async def test_observe_node_invalid_llm_json_falls_back() -> None:
     observer_llm = RecordingObserverLLM("not json")
-    node = create_observe_node(observer_llm)
+    node = create_observe_node(observer_llm, compress_tools=True)
 
     result = await node(
         {
@@ -595,7 +723,7 @@ async def test_graph_stops_after_consecutive_tool_failures() -> None:
             '{"summary":"failed","visible_state":"","important_refs":[],"errors":["down"],"next_observation_hint":""}',
         ]
     )
-    graph = build_agent_graph(llm=llm, tools=[browser_snapshot])
+    graph = build_agent_graph(llm=llm, tools=[browser_snapshot], compress_tools=True)
 
     result = await graph.ainvoke({"task": "Inspect"}, {"recursion_limit": 20})
 
@@ -603,6 +731,65 @@ async def test_graph_stops_after_consecutive_tool_failures() -> None:
     assert result["consecutive_failures"] == 3
     assert "Blocked: tool execution failed 3 consecutive times" in result["final_answer"]
     assert "connect ECONNREFUSED ::1:9222" in result["final_answer"]
+
+
+@pytest.mark.asyncio
+async def test_graph_breaks_invalid_ref_snapshot_loop() -> None:
+    @tool
+    def browser_snapshot() -> str:
+        """Return a browser snapshot."""
+
+        return '- button "Catalog" ref=e14'
+
+    @tool
+    def browser_click(element: str, ref: str, button: str = "left") -> str:
+        """Click a browser element."""
+
+        raise RuntimeError(
+            f"Ref {ref} not found in the current page snapshot. "
+            "Try capturing new snapshot."
+        )
+
+    llm = ScriptedToolLLM(
+        [
+            '{"steps":[{"id":1,"description":"Click catalog","status":"pending"}]}',
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_snapshot","args":{},"reason":"Inspect page"}}'
+            ),
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_click","args":{"element":"Catalog","ref":"e14","button":"left"},'
+                '"reason":"Click catalog"}}'
+            ),
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_click","args":{"element":"Catalog","ref":"e14","button":"left"},'
+                '"reason":"Click catalog again"}}'
+            ),
+            '{"steps":[{"id":1,"description":"Try another way to open catalog","status":"pending"}]}',
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_snapshot","args":{},"reason":"Inspect again"}}'
+            ),
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_click","args":{"element":"Catalog","ref":"e14","button":"left"},'
+                '"reason":"Click catalog again"}}'
+            ),
+            '{"steps":[{"id":1,"description":"Try another way to open catalog","status":"pending"}]}',
+            '{"decision":"replan","reason":"Still stuck on invalid refs."}',
+            '{"steps":[{"id":1,"description":"Try another way to open catalog","status":"pending"}]}',
+        ]
+    )
+    graph = build_agent_graph(llm=llm, tools=[browser_snapshot, browser_click])
+
+    result = await graph.ainvoke({"task": "Open catalog"}, {"recursion_limit": 40})
+
+    assert result["decision"] == "done"
+    assert result["replan_count"] == 3
+    assert result["invalid_ref_recovery_count"] == 1
+    assert "Blocked: replanning reached the limit of 3" in result["final_answer"]
 
 
 @pytest.mark.asyncio
@@ -627,7 +814,7 @@ async def test_graph_tool_path() -> None:
             '{"decision":"done","final_answer":"observed"}',
         ]
     )
-    graph = build_agent_graph(llm=llm, tools=[browser_snapshot])
+    graph = build_agent_graph(llm=llm, tools=[browser_snapshot], compress_tools=True)
 
     result = await graph.ainvoke({"task": "Inspect"})
 
@@ -642,3 +829,31 @@ async def test_graph_tool_path() -> None:
     assert "Snapshot compressed" in result["messages"][3].content
     assert result["messages"][-1].content == "observed"
     assert "recovery_signal" not in result
+
+
+@pytest.mark.asyncio
+async def test_graph_tool_path_does_not_compress_by_default() -> None:
+    @tool
+    def browser_snapshot() -> str:
+        """Return a browser snapshot."""
+
+        return '- button "Save" ref=e42'
+
+    llm = FakeListLLM(
+        responses=[
+            '{"steps":[{"id":1,"description":"Inspect page","status":"pending"}]}',
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_snapshot","args":{},"reason":"Inspect page"}}'
+            ),
+            '{"decision":"done","final_answer":"observed raw"}',
+        ]
+    )
+    graph = build_agent_graph(llm=llm, tools=[browser_snapshot])
+
+    result = await graph.ainvoke({"task": "Inspect"})
+
+    assert result["final_answer"] == "observed raw"
+    assert result["snapshot"] == '- button "Save" ref=e42'
+    assert '- button "Save" ref=e42' in result["observation"]
+    assert '- button "Save" ref=e42' in result["messages"][3].content

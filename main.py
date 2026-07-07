@@ -81,6 +81,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run without loading MCP tools. Useful for dry CLI checks.",
     )
     parser.add_argument(
+        "--compress-tools",
+        action="store_true",
+        help="Compress tool outputs and snapshots with the observer LLM.",
+    )
+    parser.add_argument(
         "--chrome-path",
         default=DEFAULT_CHROME_PATH,
         help="Path to Chrome executable. Defaults to CHROME_PATH from .env.",
@@ -284,7 +289,11 @@ async def run_agent(args: argparse.Namespace) -> int:
         if args.show_tools:
             print_tools(tools)
 
-    graph = build_agent_graph(llm=llm, tools=tools)
+    graph = build_agent_graph(
+        llm=llm,
+        tools=tools,
+        compress_tools=args.compress_tools,
+    )
     config = {
         "recursion_limit": args.recursion_limit,
         "run_name": "AutoBrowser CLI task",
@@ -293,6 +302,7 @@ async def run_agent(args: argparse.Namespace) -> int:
             "temperature": args.temperature,
             "show_state": args.show_state,
             "langsmith_tracing": tracing_enabled,
+            "compress_tools": args.compress_tools,
         },
         "tags": [
             "autobrowser",

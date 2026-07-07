@@ -21,6 +21,7 @@ from src.agent.observe import compile_observation
 from src.agent.prompts import AGENT_USER_PROMPT
 from src.agent.state import (
     MAX_CONSECUTIVE_FAILURES,
+    MAX_INVALID_REF_RECOVERIES,
     MAX_REPLANS,
     MAX_SNAPSHOT_RECOVERIES,
     AgentState,
@@ -213,6 +214,45 @@ def _tool_request_update(
     }
 
 
+def _fresh_snapshot_request(state: AgentState, messages: list[Any]) -> dict[str, Any]:
+    recovery_count = int(state.get("invalid_ref_recovery_count", 0) or 0)
+    if recovery_count >= MAX_INVALID_REF_RECOVERIES:
+        return {
+            "decision": "replan",
+            "observation": (
+                "A browser ref was not found after a fresh snapshot recovery. "
+                "Replan before attempting another ref-based browser action."
+            ),
+            "needs_fresh_snapshot": False,
+            "invalid_ref_recovery_count": recovery_count,
+            "snapshot": "",
+            "refs": [],
+        }
+
+    request = with_tool_call_id(
+        {
+            "name": "browser_snapshot",
+            "args": {},
+            "reason": (
+                "Previous browser ref no longer exists in Playwright MCP. "
+                "Capture a fresh snapshot before any ref-based action."
+            ),
+        }
+    )
+    return {
+        "decision": "tool_call",
+        "tool_request": request,
+        "policy_decision": "",
+        "error": "",
+        "needs_fresh_snapshot": False,
+        "invalid_ref_recovery_count": recovery_count + 1,
+        "messages": append_ai_tool_call(messages, request),
+        "last_tool": request["name"],
+        "last_args": request["args"],
+        "repeat_count": 1,
+    }
+
+
 def _bind_tools(llm: Any, tools: Sequence[Any] | None) -> Any:
     if not tools or not hasattr(llm, "bind_tools"):
         return llm
@@ -258,6 +298,9 @@ def create_agent_node(
             return {"decision": "replan", "observation": "No plan is available."}
 
         messages = ensure_message_history(state)
+        if state.get("needs_fresh_snapshot"):
+            return _fresh_snapshot_request(state, messages)
+
         response = await tool_bound_llm.ainvoke(
             [
                 *messages,
@@ -324,13 +367,23 @@ def observe_node(state: AgentState) -> dict[str, Any]:
     return compile_observation(state)
 
 
-def create_observe_node(observer_llm: Any | None = None) -> Callable[[AgentState], Any]:
+def create_observe_node(
+    observer_llm: Any | None = None,
+    *,
+    compress_tools: bool = False,
+) -> Callable[[AgentState], Any]:
     """Create an observer node whose LLM only sees the latest ToolResult."""
 
     async def _observe_node(state: AgentState) -> dict[str, Any]:
         result = state.get("tool_result") or {}
-        compact_observation = await compress_tool_result(result, observer_llm)
-        return compile_observation(state, compact_observation)
+        compact_observation = None
+        if compress_tools:
+            compact_observation = await compress_tool_result(result, observer_llm)
+        return compile_observation(
+            state,
+            compact_observation,
+            compress_tool_output=compress_tools,
+        )
 
     return _observe_node
 

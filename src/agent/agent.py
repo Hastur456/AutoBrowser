@@ -35,6 +35,7 @@ def build_agent_graph(
     tools: Sequence[Any] | None = None,
     tool_loader: Callable[[], Awaitable[Sequence[Any]]] | None = None,
     checkpointer: Any | None = None,
+    compress_tools: bool = False,
 ) -> Any:
     """Build and compile the AutoBrowser graph."""
 
@@ -49,7 +50,13 @@ def build_agent_graph(
         "executor",
         create_executor_node(tools=tools, tool_loader=tool_loader or setup_mcp),
     )
-    graph.add_node("observe", create_observe_node(observer_llm or model))
+    graph.add_node(
+        "observe",
+        create_observe_node(
+            (observer_llm or model) if compress_tools else None,
+            compress_tools=compress_tools,
+        ),
+    )
 
     graph.add_edge(START, "plan")
     graph.add_edge("plan", "agent")
@@ -86,6 +93,7 @@ class AgentWorkflow:
         tools: Sequence[Any] | None = None,
         tool_loader: Callable[[], Awaitable[Sequence[Any]]] | None = None,
         checkpointer: Any | None = None,
+        compress_tools: bool = False,
     ) -> None:
         self.graph = build_agent_graph(
             llm=llm,
@@ -93,4 +101,5 @@ class AgentWorkflow:
             tools=tools,
             tool_loader=tool_loader,
             checkpointer=checkpointer,
+            compress_tools=compress_tools,
         )

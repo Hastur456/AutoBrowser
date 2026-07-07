@@ -83,6 +83,12 @@ def compact_text(value: Any, limit: int = MAX_CONTENT_PREVIEW_CHARS) -> str:
     return text[: max(0, limit - len(suffix))].rstrip() + suffix
 
 
+def raw_text(value: Any) -> str:
+    """Return normalized text without truncating tool output."""
+
+    return str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
 def extract_element_refs(snapshot: str) -> list[str]:
     """Extract Playwright MCP element refs while preserving snapshot order."""
 
@@ -96,14 +102,22 @@ def extract_element_refs(snapshot: str) -> list[str]:
     return refs
 
 
-def _clean_invalid_ref_text(value: Any) -> str:
-    return INVALID_REF_PATTERN.sub("Ref not found", compact_text(value))
+def _clean_invalid_ref_text(value: Any, *, compress: bool) -> str:
+    text = compact_text(value) if compress else raw_text(value)
+    return INVALID_REF_PATTERN.sub("Ref not found", text)
+
+
+def _has_invalid_ref_error(result: ToolResult) -> bool:
+    payload = str(result.get("error", "") or result.get("content", "") or "")
+    return bool(INVALID_REF_PATTERN.search(payload))
 
 
 def _observation_lines(
     result: ToolResult,
     compact: CompactToolObservation,
     refs: list[str],
+    *,
+    compress: bool,
 ) -> list[str]:
     tool_name = str(result.get("name", "tool") or "tool").strip()
     status = result.get("status", "error")
@@ -113,12 +127,21 @@ def _observation_lines(
 
     if status == "error":
         lines = ["Tool failed."]
-        cleaned_error = _clean_invalid_ref_text(error or payload)
+        cleaned_error = _clean_invalid_ref_text(error or payload, compress=compress)
         if cleaned_error:
             lines.append(cleaned_error)
         if INVALID_REF_PATTERN.search(error or payload):
             lines.append("A fresh browser_snapshot is required.")
         return lines
+
+    if not compress:
+        lines = [f"{tool_name} returned success."]
+        if payload:
+            lines.append(raw_text(payload))
+        if refs:
+            shown_refs = "\n".join(refs[:MAX_REFS_IN_OBSERVATION])
+            lines.extend(["Refs:", shown_refs])
+        return [line for line in lines if line]
 
     summary = compact.get("summary") or f"{tool_name} completed."
     visible_state = compact.get("visible_state") or payload
@@ -193,6 +216,8 @@ def _plan_completion_update(
 def compile_observation(
     state: AgentState,
     compact_observation: CompactToolObservation | None = None,
+    *,
+    compress_tool_output: bool = False,
 ) -> dict[str, Any]:
     """Translate the latest ToolResult into a plain observation string."""
 
@@ -204,11 +229,20 @@ def compile_observation(
 
     is_browser_tool = tool_name.startswith("browser_")
     is_snapshot = tool_name == "browser_snapshot" and status == "success"
+    has_invalid_ref_error = status == "error" and _has_invalid_ref_error(result)
     refs = extract_element_refs(content) if is_snapshot else []
-    observation = "\n\n".join(_observation_lines(result, compact, refs))
+    observation = "\n\n".join(
+        _observation_lines(result, compact, refs, compress=compress_tool_output)
+    )
     request = state.get("tool_request") or {}
     messages = list(state.get("messages") or [])
-    tool_message = tool_result_message_content(result, compact, refs, observation)
+    tool_message = tool_result_message_content(
+        result,
+        compact,
+        refs,
+        observation,
+        compress=compress_tool_output,
+    )
 
     updates: dict[str, Any] = {
         "observation": observation,
@@ -221,9 +255,12 @@ def compile_observation(
     if is_snapshot:
         updates["snapshot"] = content
         updates["refs"] = refs
+        updates["needs_fresh_snapshot"] = False
     elif is_browser_tool:
         updates["snapshot"] = ""
         updates["refs"] = []
+        if has_invalid_ref_error:
+            updates["needs_fresh_snapshot"] = True
 
     if status == "success":
         plan = state.get("plan") or []
