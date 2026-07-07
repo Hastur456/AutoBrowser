@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import AsyncExitStack
 import json
 import os
 import socket
@@ -11,16 +12,21 @@ import subprocess
 from typing import Any
 
 from dotenv import load_dotenv
+from langchain_mcp_adapters.tools import load_mcp_tools
 from langchain_ollama import ChatOllama
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 from src.agent.agent import DEFAULT_OLLAMA_MODEL, build_agent_graph
-from src.mcp.mcp_setup import setup_mcp
 
 load_dotenv()
 
 DEFAULT_CDP_PORT = int(os.getenv("PORT", "9222"))
-DEFAULT_CHROME_PATH = os.getenv("CHROME_PATH", "")
-DEFAULT_USER_DATA_DIR = os.getenv("USER_DATA_DIR", "")
+DEFAULT_CHROME_PATH = os.getenv(
+    "CHROME_PATH",
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+)
+DEFAULT_USER_DATA_DIR = os.getenv("USER_DATA_DIR", r"C:\temp\chrome_debug_profile")
 DEFAULT_LANGSMITH_PROJECT = "autobrowser"
 
 _NODE_LABELS = {
@@ -32,7 +38,36 @@ _NODE_LABELS = {
     "observe": "OBSERVE",
 }
 
-_mcp_client = None
+class MCPRuntime:
+    """Keep the stdio MCP process and ClientSession alive while tools run."""
+
+    def __init__(self, port: int) -> None:
+        self.port = port
+        self._stack = AsyncExitStack()
+        self.session: ClientSession | None = None
+
+    async def start(self) -> ClientSession:
+        params = StdioServerParameters(
+            command="npx",
+            args=[
+                "-y",
+                "@playwright/mcp@latest",
+                "--cdp-endpoint",
+                f"http://localhost:{self.port}",
+            ],
+        )
+        read, write = await self._stack.enter_async_context(stdio_client(params))
+        session = await self._stack.enter_async_context(ClientSession(read, write))
+        await session.initialize()
+        self.session = session
+        return session
+
+    async def close(self) -> None:
+        await self._stack.aclose()
+        self.session = None
+
+
+_mcp_runtime: MCPRuntime | None = None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -110,7 +145,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--recursion-limit",
         type=int,
-        default=25,
+        default=50,
         help="LangGraph recursion limit. Default: 25",
     )
     return parser
@@ -146,10 +181,8 @@ def start_chrome_cdp(
             chrome_path,
             f"--remote-debugging-port={port}",
             f"--user-data-dir={user_data_dir}",
-            "--remote-allow-origins=*",
-            "--disable-features=IsolateOrigins,site-per-process",
-            "--disable-dev-shm-usage",
-            "--no-sandbox",
+            "--no-first-run",
+            "--no-default-browser-check",
         ]
     )
 
@@ -165,19 +198,37 @@ async def wait_for_port(port: int, timeout_seconds: float) -> None:
         await asyncio.sleep(0.5)
 
 
-async def get_mcp_client(port: int):
-    global _mcp_client
-    if _mcp_client is None:
+async def get_mcp_session(port: int) -> ClientSession:
+    """Create or reuse a direct Playwright MCP ClientSession."""
+
+    global _mcp_runtime
+    if _mcp_runtime is None or _mcp_runtime.port != port:
+        if _mcp_runtime is not None:
+            await _mcp_runtime.close()
         os.environ["PORT"] = str(port)
-        _mcp_client = await setup_mcp()
-    return _mcp_client
+        _mcp_runtime = MCPRuntime(port)
+        return await _mcp_runtime.start()
+
+    if _mcp_runtime.session is None:
+        return await _mcp_runtime.start()
+    return _mcp_runtime.session
+
+
+async def close_mcp_session() -> None:
+    """Close the direct MCP session and stdio server process."""
+
+    global _mcp_runtime
+    if _mcp_runtime is not None:
+        await _mcp_runtime.close()
+        _mcp_runtime = None
 
 
 async def load_browser_tools(port: int) -> list[Any]:
-    """Load all Playwright MCP tools for the selected CDP port."""
+    """Load Playwright MCP tools from a direct ClientSession."""
 
     os.environ["PORT"] = str(port)
-    return list(await get_mcp_client(port))
+    session = await get_mcp_session(port)
+    return list(await load_mcp_tools(session))
 
 
 def print_tools(tools: list[Any]) -> None:
