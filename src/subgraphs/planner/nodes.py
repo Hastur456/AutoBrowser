@@ -82,6 +82,9 @@ def create_plan_node(llm: Any) -> Callable[[AgentState], Any]:
             "decision": "replan",
             "replan_count": replan_count,
             "error": "",
+            "stale_snapshot_retries": 0,
+            "invalid_ref_recovery_count": 0,
+            "needs_fresh_snapshot": False,
             "messages": messages,
         }
 

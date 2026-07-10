@@ -33,10 +33,25 @@ def test_policy_routes() -> None:
 
 
 def test_policy_classification() -> None:
-    assert classify_tool_request({"name": "browser_snapshot", "args": {}})[0] == "approved"
-    assert classify_tool_request({"name": "browser_click", "args": {}})[0] == "approved"
-    assert classify_tool_request({"name": "browser_navigate", "args": {}})[0] == "approved"
-    assert classify_tool_request({"name": "payment_submit", "args": {}})[0] == "blocked"
+    assert (
+        classify_tool_request(
+            {"needs_fresh_snapshot": True},
+            {"name": "browser_snapshot", "args": {}},
+        )[0]
+        == "approved"
+    )
+    assert (
+        classify_tool_request(
+            {"snapshot": '- button "Search" ref=e7', "needs_fresh_snapshot": False},
+            {"name": "browser_snapshot", "args": {}},
+        )[0]
+        == "blocked"
+    )
+    assert classify_tool_request({}, {"name": "browser_click", "args": {}})[0] == "approved"
+    assert (
+        classify_tool_request({}, {"name": "browser_navigate", "args": {}})[0] == "approved"
+    )
+    assert classify_tool_request({}, {"name": "payment_submit", "args": {}})[0] == "blocked"
 
 
 class ToolCallingFakeLLM:
@@ -163,6 +178,7 @@ async def test_agent_node_forces_snapshot_after_invalid_ref() -> None:
             "plan": [{"id": 1, "description": "Click catalog", "status": "pending"}],
             "current_step": 0,
             "needs_fresh_snapshot": True,
+            "error": "Ref e14 not found",
             "observation": "Tool failed.\n\nRef not found\n\nA fresh browser_snapshot is required.",
         }
     )
@@ -172,11 +188,12 @@ async def test_agent_node_forces_snapshot_after_invalid_ref() -> None:
     assert result["tool_request"]["args"] == {}
     assert result["needs_fresh_snapshot"] is False
     assert result["invalid_ref_recovery_count"] == 1
+    assert result["error"] == "Ref e14 not found"
     assert result["messages"][-1].tool_calls[0]["name"] == "browser_snapshot"
 
 
 @pytest.mark.asyncio
-async def test_agent_node_replans_after_invalid_ref_recovery_limit() -> None:
+async def test_agent_node_tracks_stale_snapshot_retry_after_recovery() -> None:
     node = create_agent_node(FailingLLM())
 
     result = await node(
@@ -185,15 +202,41 @@ async def test_agent_node_replans_after_invalid_ref_recovery_limit() -> None:
             "plan": [{"id": 1, "description": "Click catalog", "status": "pending"}],
             "current_step": 0,
             "needs_fresh_snapshot": True,
+            "error": "Ref e14 not found",
             "invalid_ref_recovery_count": 1,
         }
     )
 
+    assert result["decision"] == "tool_call"
+    assert result["tool_request"]["name"] == "browser_snapshot"
+    assert result["needs_fresh_snapshot"] is False
+    assert result["stale_snapshot_retries"] == 1
+    assert result["invalid_ref_recovery_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_agent_node_replans_after_second_stale_snapshot_retry() -> None:
+    node = create_agent_node(FailingLLM())
+
+    result = await node(
+        {
+            "task": "Click catalog",
+            "plan": [{"id": 1, "description": "Click catalog", "status": "pending"}],
+            "current_step": 0,
+            "needs_fresh_snapshot": True,
+            "error": "Ref e14 not found",
+            "invalid_ref_recovery_count": 2,
+            "stale_snapshot_retries": 1,
+        }
+    )
+
     assert result["decision"] == "replan"
+    assert result["stale_snapshot_retries"] == 0
+    assert result["invalid_ref_recovery_count"] == 0
     assert result["needs_fresh_snapshot"] is False
     assert result["snapshot"] == ""
     assert result["refs"] == []
-    assert "fresh snapshot recovery" in result["observation"]
+    assert "did not resolve the invalid ref twice" in result["observation"]
 
 
 @pytest.mark.asyncio
@@ -502,6 +545,26 @@ def test_observe_node_clears_snapshot_after_browser_action() -> None:
     assert "Clicked" in result["observation"]
 
 
+def test_observe_node_resets_snapshot_retry_counters_after_successful_browser_action() -> None:
+    result = observe_node(
+        {
+            "snapshot": '- button "Search" ref=e7',
+            "refs": ["e7"],
+            "stale_snapshot_retries": 1,
+            "invalid_ref_recovery_count": 2,
+            "tool_result": {
+                "name": "browser_click",
+                "status": "success",
+                "content": "Clicked.",
+                "error": "",
+            },
+        }
+    )
+
+    assert result["stale_snapshot_retries"] == 0
+    assert result["invalid_ref_recovery_count"] == 0
+
+
 def test_observe_node_invalid_ref_is_plain_observation() -> None:
     result = observe_node(
         {
@@ -767,19 +830,18 @@ async def test_graph_breaks_invalid_ref_snapshot_loop() -> None:
                 '{"name":"browser_click","args":{"element":"Catalog","ref":"e14","button":"left"},'
                 '"reason":"Click catalog again"}}'
             ),
-            '{"steps":[{"id":1,"description":"Try another way to open catalog","status":"pending"}]}',
-            (
-                '{"decision":"tool_call","tool_request":'
-                '{"name":"browser_snapshot","args":{},"reason":"Inspect again"}}'
-            ),
             (
                 '{"decision":"tool_call","tool_request":'
                 '{"name":"browser_click","args":{"element":"Catalog","ref":"e14","button":"left"},'
                 '"reason":"Click catalog again"}}'
             ),
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_click","args":{"element":"Catalog","ref":"e14","button":"left"},'
+                '"reason":"Click catalog third time"}}'
+            ),
             '{"steps":[{"id":1,"description":"Try another way to open catalog","status":"pending"}]}',
-            '{"decision":"replan","reason":"Still stuck on invalid refs."}',
-            '{"steps":[{"id":1,"description":"Try another way to open catalog","status":"pending"}]}',
+            '{"decision":"done","final_answer":"Need another strategy for catalog."}',
         ]
     )
     graph = build_agent_graph(llm=llm, tools=[browser_snapshot, browser_click])
@@ -787,9 +849,11 @@ async def test_graph_breaks_invalid_ref_snapshot_loop() -> None:
     result = await graph.ainvoke({"task": "Open catalog"}, {"recursion_limit": 40})
 
     assert result["decision"] == "done"
-    assert result["replan_count"] == 3
-    assert result["invalid_ref_recovery_count"] == 1
-    assert "Blocked: replanning reached the limit of 3" in result["final_answer"]
+    assert result["replan_count"] == 1
+    assert result["invalid_ref_recovery_count"] == 0
+    assert result["stale_snapshot_retries"] == 0
+    assert result["needs_fresh_snapshot"] is False
+    assert result["final_answer"]
 
 
 @pytest.mark.asyncio

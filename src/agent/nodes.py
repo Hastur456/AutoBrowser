@@ -16,12 +16,12 @@ from src.agent.history import (
     ensure_message_history,
     with_tool_call_id,
 )
+from src.agent.observe import has_invalid_ref_text
 from src.agent.observer_llm import compress_tool_result
 from src.agent.observe import compile_observation
 from src.agent.prompts import AGENT_USER_PROMPT
 from src.agent.state import (
     MAX_CONSECUTIVE_FAILURES,
-    MAX_INVALID_REF_RECOVERIES,
     MAX_REPLANS,
     MAX_SNAPSHOT_RECOVERIES,
     AgentState,
@@ -78,6 +78,17 @@ def _blocked_response(state: AgentState, reason: str) -> dict[str, Any]:
         "error": reason,
         "messages": append_final_ai_response(messages, reason),
     }
+
+
+def _replan_response(observation: str, **updates: Any) -> dict[str, Any]:
+    response = {
+        "decision": "replan",
+        "observation": observation,
+        "stale_snapshot_retries": 0,
+        "needs_fresh_snapshot": False,
+    }
+    response.update(updates)
+    return response
 
 
 def _terminal_guard(state: AgentState) -> dict[str, Any] | None:
@@ -154,8 +165,7 @@ def _guard_tool_request(state: AgentState, request: ToolRequest) -> dict[str, An
             }
 
         return {
-            "decision": "replan",
-            "observation": (
+            **_replan_response(
                 "The same tool with the same arguments was requested three "
                 "consecutive times. Replan before trying another action."
             ),
@@ -216,19 +226,6 @@ def _tool_request_update(
 
 def _fresh_snapshot_request(state: AgentState, messages: list[Any]) -> dict[str, Any]:
     recovery_count = int(state.get("invalid_ref_recovery_count", 0) or 0)
-    if recovery_count >= MAX_INVALID_REF_RECOVERIES:
-        return {
-            "decision": "replan",
-            "observation": (
-                "A browser ref was not found after a fresh snapshot recovery. "
-                "Replan before attempting another ref-based browser action."
-            ),
-            "needs_fresh_snapshot": False,
-            "invalid_ref_recovery_count": recovery_count,
-            "snapshot": "",
-            "refs": [],
-        }
-
     request = with_tool_call_id(
         {
             "name": "browser_snapshot",
@@ -243,7 +240,7 @@ def _fresh_snapshot_request(state: AgentState, messages: list[Any]) -> dict[str,
         "decision": "tool_call",
         "tool_request": request,
         "policy_decision": "",
-        "error": "",
+        "error": str(state.get("error", "") or ""),
         "needs_fresh_snapshot": False,
         "invalid_ref_recovery_count": recovery_count + 1,
         "messages": append_ai_tool_call(messages, request),
@@ -251,6 +248,32 @@ def _fresh_snapshot_request(state: AgentState, messages: list[Any]) -> dict[str,
         "last_args": request["args"],
         "repeat_count": 1,
     }
+
+
+def _stale_snapshot_retry_update(state: AgentState) -> dict[str, Any]:
+    if not state.get("needs_fresh_snapshot"):
+        return {"stale_snapshot_retries": 0}
+
+    if not has_invalid_ref_text(state.get("error", "")):
+        return {"stale_snapshot_retries": 0}
+
+    if int(state.get("invalid_ref_recovery_count", 0) or 0) <= 0:
+        return {"stale_snapshot_retries": 0}
+
+    retries = int(state.get("stale_snapshot_retries", 0) or 0) + 1
+    if retries >= 2:
+        return _replan_response(
+            (
+                "A fresh browser_snapshot did not resolve the invalid ref twice. "
+                "Replan before attempting another ref-based browser action."
+            ),
+            stale_snapshot_retries=0,
+            invalid_ref_recovery_count=0,
+            snapshot="",
+            refs=[],
+        )
+
+    return {"stale_snapshot_retries": retries}
 
 
 def _bind_tools(llm: Any, tools: Sequence[Any] | None) -> Any:
@@ -295,11 +318,16 @@ def create_agent_node(
             return terminal
 
         if not state.get("plan"):
-            return {"decision": "replan", "observation": "No plan is available."}
+            return _replan_response("No plan is available.")
 
         messages = ensure_message_history(state)
+        stale_snapshot_update = _stale_snapshot_retry_update(state)
+        if stale_snapshot_update.get("decision") == "replan":
+            return stale_snapshot_update
         if state.get("needs_fresh_snapshot"):
-            return _fresh_snapshot_request(state, messages)
+            snapshot_request = _fresh_snapshot_request(state, messages)
+            snapshot_request.update(stale_snapshot_update)
+            return snapshot_request
 
         response = await tool_bound_llm.ainvoke(
             [
@@ -333,16 +361,12 @@ def create_agent_node(
             )
             if not tool_request.get("name"):
                 return {
-                    "decision": "replan",
-                    "observation": "The model selected a tool call without a tool name.",
+                    **_replan_response("The model selected a tool call without a tool name."),
                 }
             return _tool_request_update(state, messages, tool_request)
 
         if decision == "replan":
-            return {
-                "decision": "replan",
-                "observation": str(data.get("reason", "Replanning requested.")),
-            }
+            return _replan_response(str(data.get("reason", "Replanning requested.")))
 
         if decision == "done":
             final_answer = str(data.get("final_answer", "") or content)

@@ -107,9 +107,15 @@ def _clean_invalid_ref_text(value: Any, *, compress: bool) -> str:
     return INVALID_REF_PATTERN.sub("Ref not found", text)
 
 
+def has_invalid_ref_text(value: Any) -> bool:
+    """Return true when the payload contains a Playwright MCP invalid ref error."""
+
+    return bool(INVALID_REF_PATTERN.search(str(value or "")))
+
+
 def _has_invalid_ref_error(result: ToolResult) -> bool:
     payload = str(result.get("error", "") or result.get("content", "") or "")
-    return bool(INVALID_REF_PATTERN.search(payload))
+    return has_invalid_ref_text(payload)
 
 
 def _observation_lines(
@@ -268,6 +274,9 @@ def compile_observation(
         updates.update(_plan_completion_update(plan, current_step, compact))
         updates["error"] = ""
         updates["consecutive_failures"] = 0
+        if tool_name != "browser_snapshot":
+            updates["stale_snapshot_retries"] = 0
+            updates["invalid_ref_recovery_count"] = 0
     else:
         updates["error"] = str(result.get("error", "") or "")
         updates["consecutive_failures"] = (

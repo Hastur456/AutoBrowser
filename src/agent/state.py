@@ -14,7 +14,6 @@ ToolStatus = Literal["success", "error"]
 MAX_REPLANS = 3
 MAX_CONSECUTIVE_FAILURES = 3
 MAX_SNAPSHOT_RECOVERIES = 1
-MAX_INVALID_REF_RECOVERIES = 1
 
 
 class PlanStep(TypedDict, total=False):
@@ -77,6 +76,7 @@ class AgentState(TypedDict, total=False):
     consecutive_failures: int
     snapshot_recovery_count: int
     invalid_ref_recovery_count: int
+    stale_snapshot_retries: int
     needs_fresh_snapshot: bool
 
     final_answer: str
