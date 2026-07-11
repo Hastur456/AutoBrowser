@@ -1,34 +1,20 @@
-"""Промпты для подграфа планирования"""
+"""Prompts for task planning."""
 
+PLANNER_SYSTEM_PROMPT = """You are the planning module for a browser automation agent.
+Create a short, practical plan for completing the user's browser task.
+Return only JSON with this shape:
+{"steps":[{"id":1,"description":"...","status":"pending"}]}
+Keep steps concrete and avoid tool names unless the user explicitly asked for them.
+The observation context is compact and may omit raw tool details.
 
-task_decomposition_prompt = """You are a browser automation planning assistant.
+Playwright MCP refs such as e123 are ephemeral. They are valid only for the
+browser_snapshot that produced them. If observation says a ref was not found,
+plan for obtaining a fresh browser_snapshot before any ref-based action."""
 
-Your job is to decompose the user's request into concrete browser actions.
-ALWAYS create at least one step — even for a single navigation command.
+PLANNER_USER_PROMPT = """Task:
+{task}
 
-Guidelines:
-- Create 1-5 steps. One step is fine for simple requests.
-- Each step must be a concrete browser action (navigate, click, type, wait, etc.).
-- Never return an empty plan. If unsure, default to a navigate step.
+Observation context:
+{observation}
 
-Available tools:
-
-{tools_description}
-
-Create a step-by-step plan for the user's request:
-
-"""
-
-get_list_of_tools_prompt = """
-    "You are a specialized Action Planner. Your ONLY job is to generate a JSON list of steps. "
-    "DO NOT explain anything. DO NOT say you are an AI. DO NOT give advice. "
-    "If you understand, respond ONLY with valid JSON following the schema
-
-    Available Tools:
-
-    {tools_description}
-
-    IMPORTANT: You must return a JSON list of steps following the provided schema.
-    Do NOT use 'tool' or 'arguments' keys. Use 'step_id', 'description', action_type, estimated_tool, is_sensitive
-
-"""
+Create or revise the plan."""

@@ -1,0 +1,88 @@
+# Агент LangGraph на ChatOllama с нуля
+
+## Цель задачи
+
+Реализовать новый агент на `langgraph`/`langchain` с LLM-адаптером `ChatOllama(model="gpt-oss:20b-cloud", temperature=0)` и графом:
+
+`START -> plan -> agent -> policy -> executor -> observe -> agent`, с ветками `agent -> plan` для `replan`, `agent -> END` для `done`, `policy -> human_input -> executor` для подтверждения человеком.
+
+## Исходный контекст
+
+- Инструкции проекта прочитаны из `CLAUDE.md`.
+- В проекте используется `langgraph==1.0.7`, `langchain==1.2.7`, `langchain-ollama==1.0.1`, `langchain-mcp-adapters==0.2.1`.
+- В рабочем дереве уже есть несвязанные изменения и удаления; их нельзя откатывать.
+- Ранее обнаруженный несвязанный `plans/multi-adapter.md` не трогаем.
+
+## Принятые решения
+
+- Писать новую верхнеуровневую реализацию агента с нуля.
+- Сохранить публичную точку сборки графа через `build_agent_graph`.
+- LLM по умолчанию создавать внутри фабрики, но разрешить подмену для тестов.
+- MCP-инструменты исполнять только в узле `executor`; узел `agent` только выбирает действие.
+- `human_input` реализовать через LangGraph `interrupt`.
+
+## Пошаговый план
+
+1. Проверить текущие публичные импорты и форму модулей агента.
+2. Реализовать состояние, prompts, nodes, routers и сборку графа.
+3. Обновить экспорт пакета агента.
+4. Обновить этот план фактическими изменениями.
+5. Проверки запускать только если они не нарушают инструкции проекта; тесты без отдельного разрешения не запускать.
+
+## Выполненные изменения
+
+Пока создан файл плана задачи.
+
+## Проверка и результаты тестов
+
+Пока не выполнялись.
+
+## Открытые вопросы или риски
+
+- Нужно аккуратно совместить новую реализацию с текущими несвязанными изменениями в рабочем дереве.
+- Нельзя запускать тесты без отдельного разрешения пользователя согласно `CLAUDE.md`.
+
+## Desired Graph (Mermaid)
+
+```mermaid
+---
+config:
+  flowchart:
+    curve: linear
+---
+flowchart TD
+
+  Start([START])
+
+  Plan["plan<br/>Planner (one-shot)"]
+
+  Agent["agent<br/>Reason + Tool Selection"]
+
+  Policy["policy<br/>Human approval / Safety"]
+
+  Executor["executor<br/>Execute MCP tool"]
+
+  Observe["observe<br/>Browser Snapshot"]
+
+  End([END])
+
+  Start --> Plan
+
+  Plan --> Agent
+
+  Agent -->|tool_call| Policy
+
+  Agent -->|replan| Plan
+
+  Agent -->|done| End
+
+  Policy -->|approved| Executor
+
+  Policy -->|human required| Human["human_input"]
+
+  Human --> Executor
+
+  Executor --> Observe
+
+  Observe --> Agent
+```

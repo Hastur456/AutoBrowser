@@ -1,36 +1,15 @@
-"""State of executor subgraph"""
+"""Executor state contracts."""
+
+from __future__ import annotations
+
+from typing import TypedDict
+
+from src.agent.state import ToolRequest, ToolResult
 
 
-from typing import (
-    Annotated,
-    TypedDict,
-    List,
-    Any
-)
-from langchain.messages import (
-    SystemMessage,
-    HumanMessage,
-    AIMessage,
-    ToolMessage,
-)
-from langgraph.graph.message import add_messages
+class ExecutorState(TypedDict, total=False):
+    """State accepted and returned by the executor subgraph."""
 
-
-class ExecutorState(TypedDict):
-    """
-    Executor's state:
-
-    messages: list of BaseMessages interfaces whose are answers of LLM provider
-    error_count: number of errrors when calling tools
-    retry_attemps: number of retries when calling tools 
-    last_action: last tool calling action
-    """
-    messages: Annotated[
-        List[SystemMessage | HumanMessage | AIMessage | ToolMessage],
-        add_messages
-    ]
-    error_count: int
-    retry_attempts: int
-    total_tool_calls: int
-    last_error_type: str | None
-    last_action: Any | None
+    tool_request: ToolRequest
+    tool_result: ToolResult
+    error: str

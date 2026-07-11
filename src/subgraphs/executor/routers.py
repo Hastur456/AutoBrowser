@@ -1,14 +1,14 @@
-from . import ExecutorState
+"""Executor routers."""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from src.subgraphs.executor.state import ExecutorState
 
 
-def retry_router(state: ExecutorState, max_retries: int):
-    error_type = state.get("last_error_type")
-    attempts = state.get("retry_attempts", 0)
+def route_executor_result(state: ExecutorState) -> Literal["success", "error"]:
+    """Route based on the normalized tool result."""
 
-    if error_type == "fatal":
-        return "abort"
-
-    if error_type == "retryable" and attempts < max_retries:
-        return "backoff"
-
-    return "abort"
+    result = state.get("tool_result") or {}
+    return "success" if result.get("status") == "success" else "error"

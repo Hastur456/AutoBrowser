@@ -1,21 +1,39 @@
+"""Top-level graph routing functions."""
+
+from __future__ import annotations
+
+from typing import Literal
+
 from langgraph.graph import END
 
-from .state import AgentState
-
-MAX_REPLANS = 2
-MAX_HUMAN_INPUTS = 5
+from src.agent.state import AgentState
 
 
-def reflect_router(state: AgentState) -> str:
-    action = state.get("reflection")
-    replan_count = state.get("replan_count", 0)
+def route_agent_decision(state: AgentState) -> Literal["policy", "plan", "__end__"]:
+    """Route after the reasoning node."""
 
-    if action == "continue":
-        return "execute"
-    if action == "replan" and replan_count < MAX_REPLANS:
+    decision = state.get("decision")
+    if decision == "tool_call":
+        return "policy"
+    if decision == "replan":
         return "plan"
-    if action == "retry":
-        return "backoff"
-    if action == "human":
-        return "human_input"
     return END
+
+
+def route_policy_decision(state: AgentState) -> Literal["executor", "human_input", "agent"]:
+    """Route after policy classification."""
+
+    decision = state.get("policy_decision")
+    if decision == "approved":
+        return "executor"
+    if decision == "needs_human":
+        return "human_input"
+    return "agent"
+
+
+def route_human_decision(state: AgentState) -> Literal["executor", "agent"]:
+    """Route after a human approval interrupt resumes."""
+
+    if state.get("policy_decision") == "approved":
+        return "executor"
+    return "agent"
