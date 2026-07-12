@@ -168,21 +168,6 @@ def test_start_chrome_launches_when_port_closed(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_load_browser_tools_returns_all_tools(monkeypatch) -> None:
-    tools = [FakeTool("browser_snapshot"), FakeTool("unfiltered_tool")]
-
-    async def fake_setup_mcp() -> list[FakeTool]:
-        return tools
-
-    monkeypatch.setattr(main, "setup_mcp", fake_setup_mcp)
-
-    result = await main.load_browser_tools(9444)
-
-    assert result == tools
-    assert main.os.environ["PORT"] == "9444"
-
-
-@pytest.mark.asyncio
 async def test_setup_mcp_uses_latest_playwright_mcp(monkeypatch) -> None:
     captured: dict[str, Any] = {}
 

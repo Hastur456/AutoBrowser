@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.agent.observe import has_invalid_ref_text
+from src.subgraphs.observer.utils import has_invalid_ref_text
 
 from src.agent.history import append_tool_message
 from src.agent.state import AgentState, PolicyDecision, ToolRequest
