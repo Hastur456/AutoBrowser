@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.agent.history import append_tool_message, tool_result_message_content
-from src.subgraphs.observer.observer_llm import fallback_compact_observation
+from src.agent.subgraphs.observer.observer_llm import fallback_compact_observation
 from src.agent.state import AgentState, CompactToolObservation
 from .utils import (
     extract_element_refs,

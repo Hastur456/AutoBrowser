@@ -9,7 +9,7 @@ from langchain_ollama import ChatOllama
 from langgraph.graph import END, START, StateGraph
 
 from src.agent.nodes import create_agent_node, create_observe_node, human_input_node
-from src.agent.policy import policy_node
+from src.harness.policy import policy_node
 from src.agent.routers import (
     route_agent_decision,
     route_human_decision,
@@ -17,8 +17,8 @@ from src.agent.routers import (
 )
 from src.agent.state import AgentState
 from src.mcp.mcp_setup import setup_mcp
-from src.subgraphs.executor.nodes import create_executor_node
-from src.subgraphs.planner.nodes import create_plan_node
+from src.agent.subgraphs.executor.nodes import create_executor_node
+from src.agent.subgraphs.planner.nodes import create_plan_node
 
 DEFAULT_OLLAMA_MODEL = "gpt-oss:20b-cloud"
 

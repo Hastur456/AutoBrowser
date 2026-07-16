@@ -8,15 +8,15 @@ from langchain_core.tools import tool
 
 from src.agent.agent import build_agent_graph
 from src.agent.nodes import create_agent_node, create_observe_node, observe_node
-from src.subgraphs.observer.utils import MAX_CONTENT_PREVIEW_CHARS
-from src.subgraphs.observer.nodes import compile_observation
+from src.agent.subgraphs.observer.utils import MAX_CONTENT_PREVIEW_CHARS
+from src.agent.subgraphs.observer.nodes import compile_observation
 from src.agent.policy import classify_tool_request
 from src.agent.routers import (
     route_agent_decision,
     route_human_decision,
     route_policy_decision,
 )
-from src.subgraphs.executor.nodes import create_executor_node
+from src.agent.subgraphs.executor.nodes import create_executor_node
 
 
 def test_agent_routes() -> None:

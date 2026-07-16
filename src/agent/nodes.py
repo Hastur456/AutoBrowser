@@ -14,8 +14,8 @@ from src.agent.history import (
     ensure_message_history,
     with_tool_call_id,
 )
-from src.subgraphs.observer.observer_llm import compress_tool_result
-from src.subgraphs.observer.nodes import compile_observation
+from src.agent.subgraphs.observer.observer_llm import compress_tool_result
+from src.agent.subgraphs.observer.nodes import compile_observation
 from src.agent.prompts import AGENT_USER_PROMPT
 from src.agent.state import (
     AgentState,

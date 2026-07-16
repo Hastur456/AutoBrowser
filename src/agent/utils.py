@@ -11,7 +11,7 @@ from src.agent.history import (
     ensure_message_history,
     with_tool_call_id,
 )
-from src.subgraphs.observer.utils import has_invalid_ref_text
+from src.agent.subgraphs.observer.utils import has_invalid_ref_text
 from src.agent.state import (
     MAX_CONSECUTIVE_FAILURES,
     MAX_REPLANS,

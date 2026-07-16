@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from src.subgraphs.planner.state import PlannerState
+from src.agent.subgraphs.planner.state import PlannerState
 
 
 def route_planner_done(state: PlannerState) -> Literal["done"]:

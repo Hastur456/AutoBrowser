@@ -10,7 +10,7 @@ from langchain_core.messages import HumanMessage
 
 from src.agent.history import ensure_message_history
 from src.agent.state import AgentState, PlanStep
-from src.subgraphs.planner.prompts import PLANNER_SYSTEM_PROMPT, PLANNER_USER_PROMPT
+from src.agent.subgraphs.planner.prompts import PLANNER_SYSTEM_PROMPT, PLANNER_USER_PROMPT
 
 
 def _message_content(response: Any) -> str:
