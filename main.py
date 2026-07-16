@@ -18,7 +18,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from src.agent.agent import DEFAULT_OLLAMA_MODEL, build_agent_graph
-from src.harness.context import ContextBuilder
+from src.harness.runtime import BrowserHarness
 
 load_dotenv()
 
@@ -341,7 +341,8 @@ async def run_agent(args: argparse.Namespace) -> int:
         if args.show_tools:
             print_tools(tools)
 
-    graph = build_agent_graph(
+    harness = BrowserHarness(
+        build_agent_graph,
         llm=llm,
         tools=tools,
         compress_tools=args.compress_tools,
@@ -374,12 +375,12 @@ async def run_agent(args: argparse.Namespace) -> int:
                 continue
             if task.lower() in {"quit", "exit", "выход"}:
                 return 0
-            await run_task(graph, task, args, config)
+            await run_task(harness, task, args, config)
             print()
         return 0
 
     task = resolve_task(args)
-    await run_task(graph, task, args, config)
+    await run_task(harness, task, args, config)
     return 0
 
 
@@ -395,21 +396,18 @@ def resolve_task(args: argparse.Namespace) -> str:
 
 
 async def run_task(
-    graph: Any,
+    harness: BrowserHarness,
     task: str,
     args: argparse.Namespace,
     config: dict[str, Any],
 ) -> Any:
-    """Run one task on an already built graph."""
-
-    initial_state = ContextBuilder().build_initial_state(task)
+    """Run one task on an already built harness."""
 
     if args.show_state:
         final_update: Any = None
-        async for chunk in graph.astream(
-            initial_state,
+        async for chunk in harness.stream_updates(
+            task,
             config=config,
-            stream_mode="updates",
         ):
             final_update = chunk
             for node_name, update in chunk.items():
@@ -419,7 +417,7 @@ async def run_task(
             print("Agent finished without state updates.")
         return final_update
 
-    result = await graph.ainvoke(initial_state, config=config)
+    result = await harness.run(task, config=config)
     _print_final_state(result, args.json)
     return result
 
