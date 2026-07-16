@@ -18,6 +18,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from src.agent.agent import DEFAULT_OLLAMA_MODEL, build_agent_graph
+from src.harness.context import ContextBuilder
 
 load_dotenv()
 
@@ -401,10 +402,12 @@ async def run_task(
 ) -> Any:
     """Run one task on an already built graph."""
 
+    initial_state = ContextBuilder().build_initial_state(task)
+
     if args.show_state:
         final_update: Any = None
         async for chunk in graph.astream(
-            {"task": task},
+            initial_state,
             config=config,
             stream_mode="updates",
         ):
@@ -416,7 +419,7 @@ async def run_task(
             print("Agent finished without state updates.")
         return final_update
 
-    result = await graph.ainvoke({"task": task}, config=config)
+    result = await graph.ainvoke(initial_state, config=config)
     _print_final_state(result, args.json)
     return result
 

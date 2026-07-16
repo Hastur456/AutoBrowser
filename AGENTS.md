@@ -2,7 +2,21 @@
 
 ## Project Structure & Module Organization
 
-This is a Python repository for an AutoBrowser/LangGraph agent. Core code lives in `src/`. The main agent modules are in `src/agent/`, MCP integration is in `src/mcp/`, and reusable graph pieces are under `src/subgraphs/` with `planner` and `executor` packages. Tests should live in `tests/`; the directory currently exists but has no committed test files. Runtime or local-only folders such as `.venv/`, `.pytest_cache/`, `node_modules/`, `.codegraph/`, and `profile/` should not be treated as source.
+This is a Python repository for an AutoBrowser/LangGraph agent. Core code lives in `src/`. The agent loop lives in `src/agent/`, harness-owned infrastructure lives in `src/harness/`, MCP integration lives in `src/mcp/`, and reusable graph pieces are under `src/agent/subgraphs/` with `planner` and `executor` packages. Tests should live in `tests/`. Runtime or local-only folders such as `.venv/`, `.pytest_cache/`, `node_modules/`, `.codegraph/`, and `profile/` should not be treated as source.
+
+## Harness Architecture
+
+The project is migrating to a Harness architecture. LangGraph should own only the agent loop: planning, reasoning, routing, execution, and observation nodes. Infrastructure belongs in `src/harness/` and is injected into the compiled graph.
+
+Harness responsibilities:
+- `runtime.py`: entry point that assembles harness components and compiles/runs the graph.
+- `context.py`: context and initial state construction, including system prompt injection.
+- `memory.py`: checkpoint saver ownership and durable conversation history helpers.
+- `tools.py`: pluggable tool registry for generic MCP clients and toolsets.
+- `policy.py`: policy checks and policy engine boundary.
+- `telemetry.py`: tracing/logging boundary for future LangSmith integration.
+
+Do not hardcode `playwright-mcp` into the agent loop. Browser-specific MCP clients and toolsets should be registered through the harness/tool registry so tools can be swapped or mocked in CI. Keep planner, observer, and core state definitions stable unless a migration step explicitly requires changing them.
 
 ## Build, Test, and Development Commands
 
@@ -24,7 +38,7 @@ Run targeted tests with `python -m pytest tests\path\to_test.py`. If adding a lo
 
 ## Coding Style & Naming Conventions
 
-Use Python 3.12-compatible code. Follow PEP 8 with 4-space indentation, snake_case for functions and modules, PascalCase for classes, and UPPER_SNAKE_CASE for constants. Keep graph node, router, state, and prompt code in the existing `nodes.py`, `routers.py`, `state.py`, and `prompts.py` pattern. Add type hints for public functions and graph state structures.
+Use Python 3.12-compatible code. Follow PEP 8 with 4-space indentation, snake_case for functions and modules, PascalCase for classes, and UPPER_SNAKE_CASE for constants. Keep graph node, router, state, and prompt code in the existing `nodes.py`, `routers.py`, `state.py`, and `prompts.py` pattern. Put infrastructure abstractions in `src/harness/` instead of expanding graph nodes. Add type hints for public functions and graph state structures.
 
 ## Testing Guidelines
 

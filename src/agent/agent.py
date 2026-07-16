@@ -16,9 +16,9 @@ from src.agent.routers import (
     route_policy_decision,
 )
 from src.agent.state import AgentState
-from src.mcp.mcp_setup import setup_mcp
 from src.agent.subgraphs.executor.nodes import create_executor_node
 from src.agent.subgraphs.planner.nodes import create_plan_node
+from src.harness.tools import ToolRegistry
 
 DEFAULT_OLLAMA_MODEL = "gpt-oss:20b-cloud"
 
@@ -34,6 +34,7 @@ def build_agent_graph(
     observer_llm: Any | None = None,
     tools: Sequence[Any] | None = None,
     tool_loader: Callable[[], Awaitable[Sequence[Any]]] | None = None,
+    tool_registry: ToolRegistry | None = None,
     checkpointer: Any | None = None,
     compress_tools: bool = False,
 ) -> Any:
@@ -48,7 +49,11 @@ def build_agent_graph(
     graph.add_node("human_input", human_input_node)
     graph.add_node(
         "executor",
-        create_executor_node(tools=tools, tool_loader=tool_loader or setup_mcp),
+        create_executor_node(
+            tools=tools,
+            tool_loader=tool_loader,
+            tool_registry=tool_registry,
+        ),
     )
     graph.add_node(
         "observe",
@@ -92,6 +97,7 @@ class AgentWorkflow:
         observer_llm: Any | None = None,
         tools: Sequence[Any] | None = None,
         tool_loader: Callable[[], Awaitable[Sequence[Any]]] | None = None,
+        tool_registry: ToolRegistry | None = None,
         checkpointer: Any | None = None,
         compress_tools: bool = False,
     ) -> None:
@@ -100,6 +106,7 @@ class AgentWorkflow:
             observer_llm=observer_llm,
             tools=tools,
             tool_loader=tool_loader,
+            tool_registry=tool_registry,
             checkpointer=checkpointer,
             compress_tools=compress_tools,
         )

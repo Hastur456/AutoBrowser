@@ -18,8 +18,8 @@ try:
 except ImportError:  # pragma: no cover - compatibility with older LangGraph releases
     from langgraph.checkpoint.memory import MemorySaver as _DefaultCheckpointSaver
 
-from src.agent.prompts import AGENT_SYSTEM_PROMPT
 from src.agent.state import AgentState, CompactToolObservation, ToolRequest, ToolResult
+from src.harness.context import ContextBuilder
 
 MAX_TOOL_MESSAGE_REFS = 25
 
@@ -44,7 +44,7 @@ def ensure_message_history(state: AgentState) -> list[BaseMessage]:
     messages = list(state.get("messages") or [])
     task = str(state.get("task", "") or "Complete the task.").strip()
     if not any(message.type == "system" for message in messages):
-        messages.insert(0, SystemMessage(content=AGENT_SYSTEM_PROMPT))
+        messages.insert(0, SystemMessage(content=ContextBuilder().get_system_prompt()))
     if not any(
         message.type == "human"
         and str(message.content).startswith("Original user request:\n")

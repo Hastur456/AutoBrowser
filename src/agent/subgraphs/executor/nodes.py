@@ -4,17 +4,11 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from src.agent.state import AgentState, ToolRequest, ToolResult
-from src.mcp.mcp_setup import setup_mcp
-
-ToolLoader = Callable[[], Awaitable[Sequence[Any]]]
-
-
-def _tool_name(tool: Any) -> str:
-    return str(getattr(tool, "name", getattr(tool, "__name__", "")))
+from src.harness.tools import ToolLoader, ToolRegistry
 
 
 def _stringify_result(value: Any) -> str:
@@ -111,23 +105,6 @@ def _normalize_tool_args(tool: Any, request: ToolRequest, state: AgentState) -> 
     return args
 
 
-class ToolRegistry:
-    """Lazy registry for LangChain/MCP tools."""
-
-    def __init__(
-        self,
-        tools: Sequence[Any] | None = None,
-        tool_loader: ToolLoader | None = None,
-    ) -> None:
-        self._tools = list(tools) if tools is not None else None
-        self._tool_loader = tool_loader or setup_mcp
-
-    async def get(self) -> dict[str, Any]:
-        if self._tools is None:
-            self._tools = list(await self._tool_loader())
-        return {_tool_name(tool): tool for tool in self._tools if _tool_name(tool)}
-
-
 async def _invoke_tool(tool: Any, request: ToolRequest, state: AgentState) -> Any:
     args = _normalize_tool_args(tool, request, state)
     if hasattr(tool, "ainvoke"):
@@ -140,10 +117,11 @@ async def _invoke_tool(tool: Any, request: ToolRequest, state: AgentState) -> An
 def create_executor_node(
     tools: Sequence[Any] | None = None,
     tool_loader: ToolLoader | None = None,
+    tool_registry: ToolRegistry | None = None,
 ) -> Callable[[AgentState], Any]:
     """Create an async node that executes approved tool requests."""
 
-    registry = ToolRegistry(tools=tools, tool_loader=tool_loader)
+    registry = tool_registry or ToolRegistry(tools=tools, tool_loader=tool_loader)
 
     async def executor_node(state: AgentState) -> dict[str, Any]:
         request = state.get("tool_request") or {}
