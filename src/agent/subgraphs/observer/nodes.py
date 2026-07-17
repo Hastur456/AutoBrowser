@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.agent.history import append_tool_message, tool_result_message_content
+from src.harness.memory import append_tool_message, tool_result_message_content
 from src.agent.subgraphs.observer.observer_llm import fallback_compact_observation
 from src.agent.state import AgentState, CompactToolObservation
 from .utils import (

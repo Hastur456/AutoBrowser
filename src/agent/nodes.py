@@ -8,7 +8,7 @@ from typing import Any
 from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.types import interrupt
 
-from src.agent.history import (
+from src.harness.memory import (
     append_final_ai_response,
     append_tool_message,
     ensure_message_history,

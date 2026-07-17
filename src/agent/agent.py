@@ -9,9 +9,9 @@ from langchain_core.messages import BaseMessage
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, START, StateGraph
 
-from src.agent.history import ensure_message_history
+from src.harness.memory import ensure_message_history
 from src.agent.nodes import create_agent_node, create_observe_node, human_input_node
-from src.agent.policy import policy_node as default_policy_node
+from src.harness.policy import policy_node as default_policy_node
 from src.agent.routers import (
     route_agent_decision,
     route_human_decision,

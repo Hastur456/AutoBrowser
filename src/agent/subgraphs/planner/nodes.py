@@ -8,7 +8,7 @@ from typing import Any
 
 from langchain_core.messages import BaseMessage, HumanMessage
 
-from src.agent.history import ensure_message_history
+from src.harness.memory import ensure_message_history
 from src.agent.state import AgentState, PlanStep
 from src.agent.subgraphs.planner.prompts import PLANNER_SYSTEM_PROMPT, PLANNER_USER_PROMPT
 
