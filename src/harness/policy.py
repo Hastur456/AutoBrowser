@@ -31,7 +31,8 @@ class PolicyEngine:
     def node(self, state: AgentState) -> dict[str, Any]:
         """Apply policy to the selected tool request."""
 
-        return policy_node(state)
+        decision, reason = self.classify_tool_request(state, state.get("tool_request"))
+        return _policy_updates(state, decision, reason)
 
 
 def classify_tool_request(
@@ -65,6 +66,16 @@ def policy_node(state: AgentState) -> dict[str, Any]:
     """Apply policy to the selected tool request."""
 
     decision, reason = classify_tool_request(state, state.get("tool_request"))
+    return _policy_updates(state, decision, reason)
+
+
+def _policy_updates(
+    state: AgentState,
+    decision: PolicyDecision,
+    reason: str,
+) -> dict[str, Any]:
+    """Build state updates for a policy decision."""
+
     updates: dict[str, Any] = {
         "policy_decision": decision,
         "observation": reason,

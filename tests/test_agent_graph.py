@@ -55,6 +55,29 @@ def test_policy_classification() -> None:
     assert classify_tool_request({}, {"name": "payment_submit", "args": {}})[0] == "blocked"
 
 
+@pytest.mark.asyncio
+async def test_graph_uses_injected_policy_node() -> None:
+    def custom_policy_node(_state):
+        return {"policy_decision": "blocked", "observation": "custom policy"}
+
+    llm = FakeListLLM(
+        responses=[
+            '{"steps":[{"id":1,"description":"Inspect page","status":"pending"}]}',
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_snapshot","args":{},"reason":"Inspect page"}}'
+            ),
+            '{"decision":"done","final_answer":"policy handled"}',
+        ]
+    )
+    graph = build_agent_graph(llm=llm, tools=[], policy_node=custom_policy_node)
+
+    result = await graph.ainvoke({"task": "Inspect"}, {"recursion_limit": 10})
+
+    assert result["final_answer"] == "policy handled"
+    assert result["observation"] == "custom policy"
+
+
 class ToolCallingFakeLLM:
     def __init__(self, response: AIMessage) -> None:
         self.response = response

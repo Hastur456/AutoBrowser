@@ -7,7 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from src.harness.context import ContextBuilder
-from src.harness.memory import MemoryManager
+from src.harness.memory import MemoryManager, ensure_message_history
 from src.harness.policy import PolicyEngine
 from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolLoader, ToolRegistry
@@ -43,9 +43,9 @@ class BrowserHarness:
         self.graph = graph_builder(
             llm=llm,
             observer_llm=observer_llm,
-            tools=tools,
-            tool_loader=tool_loader,
             tool_registry=self.tools,
+            policy_node=self.policy.node,
+            history_builder=self._message_history,
             checkpointer=self.memory.get_checkpoint_saver(),
             compress_tools=compress_tools,
             **dict(graph_options or {}),
@@ -107,6 +107,14 @@ class BrowserHarness:
         configurable.setdefault("thread_id", thread_id or f"task-{uuid4().hex}")
         run_config["configurable"] = configurable
         return run_config
+
+    def _message_history(self, state: Mapping[str, Any]) -> list[Any]:
+        """Build message history with the harness-owned system prompt."""
+
+        return ensure_message_history(
+            state,
+            system_prompt=self.context.get_system_prompt(),
+        )
 
 
 __all__ = ["BrowserHarness", "GraphBuilder"]

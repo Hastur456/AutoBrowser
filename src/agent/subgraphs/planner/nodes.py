@@ -6,7 +6,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 
 from src.agent.history import ensure_message_history
 from src.agent.state import AgentState, PlanStep
@@ -48,13 +48,16 @@ def _normalize_steps(raw_steps: Any, task: str) -> list[PlanStep]:
     return steps or [{"id": 1, "description": task, "status": "pending"}]
 
 
-def create_plan_node(llm: Any) -> Callable[[AgentState], Any]:
+def create_plan_node(
+    llm: Any,
+    history_builder: Callable[[AgentState], list[BaseMessage]] = ensure_message_history,
+) -> Callable[[AgentState], Any]:
     """Create an async planner node bound to an LLM."""
 
     async def plan_node(state: AgentState) -> dict[str, Any]:
         task = state.get("task", "").strip()
         observation = state.get("observation", "")
-        messages = ensure_message_history(state)
+        messages = history_builder(state)
         prior_replans = int(state.get("replan_count", 0) or 0)
         replan_count = prior_replans + 1 if state.get("plan") else prior_replans
         response = await llm.ainvoke(

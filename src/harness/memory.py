@@ -38,13 +38,22 @@ class MemoryManager:
         return self._checkpoint_saver
 
 
-def ensure_message_history(state: AgentState) -> list[BaseMessage]:
+def ensure_message_history(
+    state: AgentState,
+    *,
+    system_prompt: str | None = None,
+) -> list[BaseMessage]:
     """Return existing history or initialize it with system and original user task."""
 
     messages = list(state.get("messages") or [])
     task = str(state.get("task", "") or "Complete the task.").strip()
     if not any(message.type == "system" for message in messages):
-        messages.insert(0, SystemMessage(content=ContextBuilder().get_system_prompt()))
+        prompt = (
+            system_prompt
+            if system_prompt is not None
+            else ContextBuilder().get_system_prompt()
+        )
+        messages.insert(0, SystemMessage(content=prompt))
     if not any(
         message.type == "human"
         and str(message.content).startswith("Original user request:\n")

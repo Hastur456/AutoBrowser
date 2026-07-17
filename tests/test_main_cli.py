@@ -252,7 +252,9 @@ async def test_mcp_mode_starts_chrome_and_passes_tools(monkeypatch) -> None:
         return tools
 
     def fake_build_agent_graph(**kwargs: Any) -> FakeGraph:
-        events.append(("tools", kwargs["tools"]))
+        events.append(("tool_registry", kwargs["tool_registry"]))
+        events.append(("policy_node", kwargs["policy_node"]))
+        events.append(("history_builder", kwargs["history_builder"]))
         events.append(("compress_tools", kwargs["compress_tools"]))
         return FakeGraph()
 
@@ -270,5 +272,14 @@ async def test_mcp_mode_starts_chrome_and_passes_tools(monkeypatch) -> None:
     assert ("start", "chrome.exe", "profile", 9555) in events
     assert ("wait", 9555, 1) in events
     assert ("load", 9555) in events
-    assert ("tools", tools) in events
+    registry = next(event[1] for event in events if event[0] == "tool_registry")
+    assert await registry.get_all() == tools
+    assert any(
+        event[0] == "policy_node" and callable(event[1])
+        for event in events
+    )
+    assert any(
+        event[0] == "history_builder" and callable(event[1])
+        for event in events
+    )
     assert ("compress_tools", False) in events

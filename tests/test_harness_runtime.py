@@ -3,8 +3,11 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.harness.runtime import BrowserHarness
+from src.harness.context import ContextBuilder
+from src.harness.policy import PolicyEngine
 from src.harness.tools import ToolRegistry
 
 
@@ -38,27 +41,47 @@ class FakeTool:
     name = "fake_tool"
 
 
+class CustomPolicyEngine(PolicyEngine):
+    def classify_tool_request(self, state, request):  # type: ignore[override]
+        return "blocked", "custom policy"
+
+
 @pytest.mark.asyncio
 async def test_browser_harness_injects_tools_and_memory() -> None:
     graph = FakeGraph()
     captured: dict[str, Any] = {}
     tools = [FakeTool()]
+    context_builder = ContextBuilder(system_prompt="HARNESS PROMPT")
 
     def graph_builder(**kwargs: Any) -> FakeGraph:
         captured.update(kwargs)
         return graph
 
-    harness = BrowserHarness(graph_builder, tools=tools, compress_tools=True)
+    harness = BrowserHarness(
+        graph_builder,
+        tools=tools,
+        context_builder=context_builder,
+        policy_engine=CustomPolicyEngine(),
+        compress_tools=True,
+    )
 
     result = await harness.run("inspect page", thread_id="test-thread")
 
     assert result["final_answer"] == "done"
-    assert captured["tools"] == tools
     assert isinstance(captured["tool_registry"], ToolRegistry)
+    assert await captured["tool_registry"].get_all() == tools
+    assert captured["policy_node"]({"tool_request": {"name": "browser_snapshot"}})[
+        "observation"
+    ] == "custom policy"
     assert captured["checkpointer"] is harness.memory.get_checkpoint_saver()
     assert captured["compress_tools"] is True
     assert graph.calls[0][0] == {"task": "inspect page"}
     assert graph.calls[0][1]["configurable"]["thread_id"] == "test-thread"
+
+    history = captured["history_builder"]({"task": "inspect page"})
+    assert isinstance(history[0], SystemMessage)
+    assert history[0].content == "HARNESS PROMPT"
+    assert isinstance(history[1], HumanMessage)
 
 
 @pytest.mark.asyncio
