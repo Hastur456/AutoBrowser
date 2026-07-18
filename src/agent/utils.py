@@ -4,14 +4,14 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
-from src.agent.history import (
+from src.harness.memory import (
     append_ai_tool_call,
     append_final_ai_response,
     append_tool_message,
     ensure_message_history,
     with_tool_call_id,
 )
-from src.subgraphs.observer.utils import has_invalid_ref_text
+from src.agent.subgraphs.observer.utils import has_invalid_ref_text
 from src.agent.state import (
     MAX_CONSECUTIVE_FAILURES,
     MAX_REPLANS,

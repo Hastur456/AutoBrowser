@@ -1,4 +1,4 @@
-"""Conversation history helpers for the AutoBrowser agent."""
+"""Memory and conversation history helpers for the AutoBrowser harness."""
 
 from __future__ import annotations
 
@@ -13,19 +13,47 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from src.agent.prompts import AGENT_SYSTEM_PROMPT
+try:
+    from langgraph.checkpoint.memory import InMemorySaver as _DefaultCheckpointSaver
+except ImportError:  # pragma: no cover - compatibility with older LangGraph releases
+    from langgraph.checkpoint.memory import MemorySaver as _DefaultCheckpointSaver
+
 from src.agent.state import AgentState, CompactToolObservation, ToolRequest, ToolResult
+from src.harness.context import ContextBuilder
 
 MAX_TOOL_MESSAGE_REFS = 25
 
 
-def ensure_message_history(state: AgentState) -> list[BaseMessage]:
+class MemoryManager:
+    """Own checkpoint saver creation for the harness runtime."""
+
+    def __init__(self, checkpoint_saver: Any | None = None) -> None:
+        self._checkpoint_saver = checkpoint_saver
+
+    def get_checkpoint_saver(self) -> Any:
+        """Return the configured checkpoint saver, creating an in-memory one if needed."""
+
+        if self._checkpoint_saver is None:
+            self._checkpoint_saver = _DefaultCheckpointSaver()
+        return self._checkpoint_saver
+
+
+def ensure_message_history(
+    state: AgentState,
+    *,
+    system_prompt: str | None = None,
+) -> list[BaseMessage]:
     """Return existing history or initialize it with system and original user task."""
 
     messages = list(state.get("messages") or [])
     task = str(state.get("task", "") or "Complete the task.").strip()
     if not any(message.type == "system" for message in messages):
-        messages.insert(0, SystemMessage(content=AGENT_SYSTEM_PROMPT))
+        prompt = (
+            system_prompt
+            if system_prompt is not None
+            else ContextBuilder().get_system_prompt()
+        )
+        messages.insert(0, SystemMessage(content=prompt))
     if not any(
         message.type == "human"
         and str(message.content).startswith("Original user request:\n")
@@ -176,3 +204,14 @@ def tool_result_message_content(
 
     summary = _safe_compact_value(compact.get("summary") or observation, 500)
     return "\n\n".join(part for part in [tool_name, summary] if part)
+
+
+__all__ = [
+    "MemoryManager",
+    "append_ai_tool_call",
+    "append_final_ai_response",
+    "append_tool_message",
+    "ensure_message_history",
+    "tool_result_message_content",
+    "with_tool_call_id",
+]

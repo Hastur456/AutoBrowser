@@ -5,21 +5,22 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.types import interrupt
 
-from src.agent.history import (
+from src.harness.memory import (
     append_final_ai_response,
     append_tool_message,
     ensure_message_history,
     with_tool_call_id,
 )
-from src.subgraphs.observer.observer_llm import compress_tool_result
-from src.subgraphs.observer.nodes import compile_observation
+from src.agent.subgraphs.observer.observer_llm import compress_tool_result
+from src.agent.subgraphs.observer.nodes import compile_observation
 from src.agent.prompts import AGENT_USER_PROMPT
 from src.agent.state import (
     AgentState,
 )
+from src.harness.tools import ToolRegistry
 from .utils import (
     _replan_response,
     _message_content,
@@ -38,12 +39,20 @@ from .utils import (
 def create_agent_node(
     llm: Any,
     tools: Sequence[Any] | None = None,
+    tool_registry: ToolRegistry | None = None,
+    history_builder: Callable[[AgentState], list[BaseMessage]] = ensure_message_history,
 ) -> Callable[[AgentState], Any]:
     """Create the reasoning node bound to an LLM."""
 
-    tool_bound_llm = _bind_tools(llm, tools)
+    registry = tool_registry or ToolRegistry(tools=tools)
+    tool_bound_llm = None
 
     async def agent_node(state: AgentState) -> dict[str, Any]:
+        nonlocal tool_bound_llm
+
+        if tool_bound_llm is None:
+            tool_bound_llm = _bind_tools(llm, await registry.get_all())
+
         terminal = _terminal_guard(state)
         if terminal is not None:
             return terminal
@@ -51,7 +60,7 @@ def create_agent_node(
         if not state.get("plan"):
             return _replan_response("No plan is available.")
 
-        messages = ensure_message_history(state)
+        messages = history_builder(state)
         stale_snapshot_update = _stale_snapshot_retry_update(state)
         if stale_snapshot_update.get("decision") == "replan":
             return stale_snapshot_update

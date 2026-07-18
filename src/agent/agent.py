@@ -5,20 +5,22 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
+from langchain_core.messages import BaseMessage
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, START, StateGraph
 
+from src.harness.memory import ensure_message_history
 from src.agent.nodes import create_agent_node, create_observe_node, human_input_node
-from src.agent.policy import policy_node
+from src.harness.policy import policy_node as default_policy_node
 from src.agent.routers import (
     route_agent_decision,
     route_human_decision,
     route_policy_decision,
 )
 from src.agent.state import AgentState
-from src.mcp.mcp_setup import setup_mcp
-from src.subgraphs.executor.nodes import create_executor_node
-from src.subgraphs.planner.nodes import create_plan_node
+from src.agent.subgraphs.executor.nodes import create_executor_node
+from src.agent.subgraphs.planner.nodes import create_plan_node
+from src.harness.tools import ToolRegistry
 
 DEFAULT_OLLAMA_MODEL = "gpt-oss:20b-cloud"
 
@@ -34,21 +36,32 @@ def build_agent_graph(
     observer_llm: Any | None = None,
     tools: Sequence[Any] | None = None,
     tool_loader: Callable[[], Awaitable[Sequence[Any]]] | None = None,
+    tool_registry: ToolRegistry | None = None,
+    policy_node: Callable[[AgentState], dict[str, Any]] = default_policy_node,
+    history_builder: Callable[[AgentState], list[BaseMessage]] = ensure_message_history,
     checkpointer: Any | None = None,
     compress_tools: bool = False,
 ) -> Any:
     """Build and compile the AutoBrowser graph."""
 
     model = llm or create_default_llm()
+    registry = tool_registry or ToolRegistry(tools=tools, tool_loader=tool_loader)
     graph = StateGraph(AgentState)
 
-    graph.add_node("plan", create_plan_node(model))
-    graph.add_node("agent", create_agent_node(model, tools=tools))
+    graph.add_node("plan", create_plan_node(model, history_builder=history_builder))
+    graph.add_node(
+        "agent",
+        create_agent_node(
+            model,
+            tool_registry=registry,
+            history_builder=history_builder,
+        ),
+    )
     graph.add_node("policy", policy_node)
     graph.add_node("human_input", human_input_node)
     graph.add_node(
         "executor",
-        create_executor_node(tools=tools, tool_loader=tool_loader or setup_mcp),
+        create_executor_node(tool_registry=registry),
     )
     graph.add_node(
         "observe",
@@ -92,6 +105,9 @@ class AgentWorkflow:
         observer_llm: Any | None = None,
         tools: Sequence[Any] | None = None,
         tool_loader: Callable[[], Awaitable[Sequence[Any]]] | None = None,
+        tool_registry: ToolRegistry | None = None,
+        policy_node: Callable[[AgentState], dict[str, Any]] = default_policy_node,
+        history_builder: Callable[[AgentState], list[BaseMessage]] = ensure_message_history,
         checkpointer: Any | None = None,
         compress_tools: bool = False,
     ) -> None:
@@ -100,6 +116,9 @@ class AgentWorkflow:
             observer_llm=observer_llm,
             tools=tools,
             tool_loader=tool_loader,
+            tool_registry=tool_registry,
+            policy_node=policy_node,
+            history_builder=history_builder,
             checkpointer=checkpointer,
             compress_tools=compress_tools,
         )

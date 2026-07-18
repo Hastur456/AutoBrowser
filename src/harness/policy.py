@@ -1,13 +1,12 @@
-"""Policy checks for tool execution."""
+"""Policy checks owned by the AutoBrowser harness."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from src.subgraphs.observer.utils import has_invalid_ref_text
-
-from src.agent.history import append_tool_message
 from src.agent.state import AgentState, PolicyDecision, ToolRequest
+from src.agent.subgraphs.observer.utils import has_invalid_ref_text
+from src.harness.memory import append_tool_message
 
 BLOCKED_TOOL_MARKERS = (
     "payment",
@@ -15,6 +14,25 @@ BLOCKED_TOOL_MARKERS = (
     "delete_account",
     "credential",
 )
+
+
+class PolicyEngine:
+    """Harness-facing policy boundary for tool execution decisions."""
+
+    def classify_tool_request(
+        self,
+        state: AgentState,
+        request: ToolRequest | None,
+    ) -> tuple[PolicyDecision, str]:
+        """Classify whether a tool call may execute automatically."""
+
+        return classify_tool_request(state, request)
+
+    def node(self, state: AgentState) -> dict[str, Any]:
+        """Apply policy to the selected tool request."""
+
+        decision, reason = self.classify_tool_request(state, state.get("tool_request"))
+        return _policy_updates(state, decision, reason)
 
 
 def classify_tool_request(
@@ -48,6 +66,16 @@ def policy_node(state: AgentState) -> dict[str, Any]:
     """Apply policy to the selected tool request."""
 
     decision, reason = classify_tool_request(state, state.get("tool_request"))
+    return _policy_updates(state, decision, reason)
+
+
+def _policy_updates(
+    state: AgentState,
+    decision: PolicyDecision,
+    reason: str,
+) -> dict[str, Any]:
+    """Build state updates for a policy decision."""
+
     updates: dict[str, Any] = {
         "policy_decision": decision,
         "observation": reason,
@@ -61,3 +89,11 @@ def policy_node(state: AgentState) -> dict[str, Any]:
             f"{request.get('name', '')}\n\n{reason}",
         )
     return updates
+
+
+__all__ = [
+    "BLOCKED_TOOL_MARKERS",
+    "PolicyEngine",
+    "classify_tool_request",
+    "policy_node",
+]
