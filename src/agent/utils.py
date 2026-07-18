@@ -175,9 +175,11 @@ def _request_tracking_update(state: AgentState, request: ToolRequest) -> dict[st
         repeat_count = int(state.get("repeat_count", 0) or 0) + 1
     else:
         repeat_count = 1
+    tool_request = {**request, "args": args}
     return {
         "last_tool": tool_name,
         "last_args": args,
+        "last_tool_request": tool_request,
         "repeat_count": repeat_count,
     }
 
@@ -237,6 +239,7 @@ def _fresh_snapshot_request(state: AgentState, messages: list[Any]) -> dict[str,
         "messages": append_ai_tool_call(messages, request),
         "last_tool": request["name"],
         "last_args": request["args"],
+        "last_tool_request": request,
         "repeat_count": 1,
     }
 
@@ -261,7 +264,6 @@ def _stale_snapshot_retry_update(state: AgentState) -> dict[str, Any]:
             stale_snapshot_retries=0,
             invalid_ref_recovery_count=0,
             snapshot="",
-            refs=[],
         )
 
     return {"stale_snapshot_retries": retries}

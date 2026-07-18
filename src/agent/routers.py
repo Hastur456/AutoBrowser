@@ -9,7 +9,7 @@ from langgraph.graph import END
 from src.agent.state import AgentState
 
 
-def route_agent_decision(state: AgentState) -> Literal["policy", "plan", "__end__"]:
+def route_agent_decision(state: AgentState) -> Literal["policy", "plan", "done", "__end__"]:
     """Route after the reasoning node."""
 
     decision = state.get("decision")
@@ -17,6 +17,8 @@ def route_agent_decision(state: AgentState) -> Literal["policy", "plan", "__end_
         return "policy"
     if decision == "replan":
         return "plan"
+    if decision == "done":
+        return "done"
     return END
 
 

@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from src.harness.memory import append_tool_message, tool_result_message_content
-from src.agent.subgraphs.observer.observer_llm import fallback_compact_observation
+from src.agent.subgraphs.observer.observer_llm import (
+    compress_tool_result,
+    fallback_compact_observation,
+)
 from src.agent.state import AgentState, CompactToolObservation
 from .utils import (
     extract_element_refs,
@@ -57,11 +60,9 @@ def compile_observation(
 
     if is_snapshot:
         updates["snapshot"] = content
-        updates["refs"] = refs
         updates["needs_fresh_snapshot"] = False
     elif is_browser_tool:
         updates["snapshot"] = ""
-        updates["refs"] = []
         if has_invalid_ref_error:
             updates["needs_fresh_snapshot"] = True
 
@@ -81,3 +82,30 @@ def compile_observation(
         )
 
     return updates
+
+
+def observe_node(state: AgentState) -> dict[str, Any]:
+    """Compile executor output into MCP-aware observation state without an LLM."""
+
+    return compile_observation(state)
+
+
+def create_observe_node(
+    observer_llm: Any | None = None,
+    *,
+    compress_tools: bool = False,
+) -> Any:
+    """Create an observer node whose LLM only sees the latest ToolResult."""
+
+    async def _observe_node(state: AgentState) -> dict[str, Any]:
+        result = state.get("tool_result") or {}
+        compact_observation = None
+        if compress_tools:
+            compact_observation = await compress_tool_result(result, observer_llm)
+        return compile_observation(
+            state,
+            compact_observation,
+            compress_tool_output=compress_tools,
+        )
+
+    return _observe_node

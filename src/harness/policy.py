@@ -46,7 +46,7 @@ def classify_tool_request(
 
     name = request["name"].lower()
     if any(marker in name for marker in BLOCKED_TOOL_MARKERS):
-        return "blocked", f"Tool requires a stronger policy before use: {request['name']}"
+        return "needs_human", f"Tool requires human approval before use: {request['name']}"
 
     if name == "browser_snapshot":
         needs_fresh_snapshot = bool(state.get("needs_fresh_snapshot"))
@@ -79,6 +79,11 @@ def _policy_updates(
     updates: dict[str, Any] = {
         "policy_decision": decision,
         "observation": reason,
+        "policy_event": {
+            "decision": decision,
+            "reason": reason,
+            "tool_request": state.get("tool_request") or {},
+        },
     }
     if decision == "blocked":
         updates["error"] = reason
@@ -88,6 +93,8 @@ def _policy_updates(
             request,
             f"{request.get('name', '')}\n\n{reason}",
         )
+    elif decision == "needs_human":
+        updates["error"] = ""
     return updates
 
 

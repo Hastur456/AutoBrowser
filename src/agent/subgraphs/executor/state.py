@@ -10,6 +10,7 @@ from src.agent.state import ToolRequest, ToolResult
 class ExecutorState(TypedDict, total=False):
     """State accepted and returned by the executor subgraph."""
 
+    snapshot: str
     tool_request: ToolRequest
     tool_result: ToolResult
     error: str
