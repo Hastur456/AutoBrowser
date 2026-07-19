@@ -6,6 +6,8 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 from uuid import uuid4
 
+from langgraph.errors import GraphRecursionError
+
 from src.harness.context import ContextBuilder
 from src.harness.memory import MemoryManager, ensure_message_history
 from src.harness.policy import PolicyEngine
@@ -67,6 +69,12 @@ class BrowserHarness:
 
         try:
             return await self.graph.ainvoke(initial_state, config=run_config)
+        except GraphRecursionError as exc:
+            completed_state = await self._completed_state_after_recursion_limit(run_config)
+            if completed_state is not None:
+                return completed_state
+            self.telemetry.log_error(exc, metadata={"task_name": trace.task_name})
+            raise
         except Exception as exc:
             self.telemetry.log_error(exc, metadata={"task_name": trace.task_name})
             raise
@@ -85,13 +93,23 @@ class BrowserHarness:
         run_config = self._run_config(config, thread_id=thread_id or f"task-{uuid4().hex}")
         initial_state = self.context.build_initial_state(task, state_overrides)
 
+        yielded_done = False
         try:
             async for chunk in self.graph.astream(
                 initial_state,
                 config=run_config,
                 stream_mode="updates",
             ):
+                yielded_done = yielded_done or _chunk_contains_done(chunk)
                 yield chunk
+        except GraphRecursionError as exc:
+            completed_state = await self._completed_state_after_recursion_limit(run_config)
+            if completed_state is not None:
+                if not yielded_done:
+                    yield {"agent": completed_state}
+                return
+            self.telemetry.log_error(exc, metadata={"task_name": trace.task_name})
+            raise
         except Exception as exc:
             self.telemetry.log_error(exc, metadata={"task_name": trace.task_name})
             raise
@@ -115,6 +133,33 @@ class BrowserHarness:
             state,
             system_prompt=self.context.get_system_prompt(),
         )
+
+    async def _completed_state_after_recursion_limit(
+        self,
+        run_config: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        """Return the latest checkpoint if it already contains a final answer."""
+
+        if not hasattr(self.graph, "aget_state"):
+            return None
+
+        snapshot = await self.graph.aget_state(run_config)
+        values = getattr(snapshot, "values", None)
+        if not isinstance(values, dict):
+            return None
+
+        if values.get("decision") == "done" and values.get("final_answer"):
+            return values
+        return None
+
+
+def _chunk_contains_done(chunk: Any) -> bool:
+    if not isinstance(chunk, Mapping):
+        return False
+    for update in chunk.values():
+        if isinstance(update, Mapping) and update.get("decision") == "done":
+            return True
+    return False
 
 
 __all__ = ["BrowserHarness", "GraphBuilder"]

@@ -14,6 +14,29 @@ INVALID_REF_PATTERN = re.compile(
     r"\bRef\s+[A-Za-z][A-Za-z0-9_-]*\s+not\s+found\b",
     re.IGNORECASE,
 )
+REF_INTERACTION_TOOLS = {
+    "browser_click",
+    "browser_type",
+    "browser_hover",
+    "browser_select",
+    "browser_press",
+    "browser_drag",
+}
+BROWSER_ACTION_TOOLS = REF_INTERACTION_TOOLS
+STALE_OR_MISSING_ELEMENT_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bnot\s+found\b",
+        r"\bnot\s+visible\b",
+        r"\bnot\s+attached\b",
+        r"\bdetached\b",
+        r"\bnot\s+editable\b",
+        r"\bnot\s+enabled\b",
+        r"\belement\s+is\s+not\b",
+        r"\bunable\s+to\s+(?:click|type|fill|hover)\b",
+        r"\bcannot\s+(?:click|type|fill|hover)\b",
+    )
+)
 COMPLETION_EVIDENCE_TERMS = {
     "appeared",
     "appears",
@@ -110,9 +133,26 @@ def has_invalid_ref_text(value: Any) -> bool:
     return bool(INVALID_REF_PATTERN.search(str(value or "")))
 
 
+def has_stale_or_missing_element_text(value: Any) -> bool:
+    """Return true when a browser error suggests the snapshot is stale."""
+
+    payload = str(value or "")
+    return any(pattern.search(payload) for pattern in STALE_OR_MISSING_ELEMENT_PATTERNS)
+
+
 def _has_invalid_ref_error(result: ToolResult) -> bool:
     payload = str(result.get("error", "") or result.get("content", "") or "")
     return has_invalid_ref_text(payload)
+
+
+def _needs_fresh_snapshot_after_error(result: ToolResult) -> bool:
+    tool_name = str(result.get("name", "") or "")
+    payload = str(result.get("error", "") or result.get("content", "") or "")
+    if has_invalid_ref_text(payload):
+        return True
+    return tool_name in REF_INTERACTION_TOOLS and has_stale_or_missing_element_text(
+        payload
+    )
 
 
 def _observation_lines(
@@ -135,6 +175,14 @@ def _observation_lines(
             lines.append(cleaned_error)
         if INVALID_REF_PATTERN.search(error or payload):
             lines.append("A fresh browser_snapshot is required.")
+        elif (
+            tool_name in REF_INTERACTION_TOOLS
+            and has_stale_or_missing_element_text(error or payload)
+        ):
+            lines.append(
+                "The current element/page structure may be stale; take a fresh "
+                "browser_snapshot before the next ref-based action."
+            )
         return lines
 
     if not compress:

@@ -105,8 +105,13 @@ class AgentState(TypedDict, total=False):
     snapshot_recovery_count: int
     invalid_ref_recovery_count: int
     stale_snapshot_retries: int
+    ineffective_action_count: int
     needs_fresh_snapshot: bool
     counters: RecoveryCounters
+
+    snapshot_before_last_browser_action: str
+    last_browser_action: ToolRequest
+    ineffective_browser_action: ToolRequest
 
     final_answer: str
     error: str

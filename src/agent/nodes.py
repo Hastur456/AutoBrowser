@@ -81,6 +81,8 @@ def create_agent_node(
                         plan=_format_plan(state),
                         current_step=state.get("current_step", 0),
                         observation=state.get("observation", "No observation yet."),
+                        consecutive_failures=state.get("consecutive_failures", 0),
+                        repeat_count=state.get("repeat_count", 0),
                         snapshot=state.get("snapshot", ""),
                         refs=", ".join(
                             extract_element_refs(str(state.get("snapshot", "") or ""))

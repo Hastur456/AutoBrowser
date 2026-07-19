@@ -52,11 +52,24 @@ def classify_tool_request(
         needs_fresh_snapshot = bool(state.get("needs_fresh_snapshot"))
         has_active_invalid_ref = has_invalid_ref_text(state.get("error", ""))
         has_current_snapshot = bool(str(state.get("snapshot", "") or "").strip())
-        if has_current_snapshot and not needs_fresh_snapshot and not has_active_invalid_ref:
+        requested_args = request.get("args") or {}
+        last_snapshot_args = (
+            state.get("last_args", {})
+            if state.get("last_tool") == "browser_snapshot"
+            else {}
+        )
+        is_same_snapshot_request = requested_args == last_snapshot_args
+        if (
+            has_current_snapshot
+            and not needs_fresh_snapshot
+            and not has_active_invalid_ref
+            and is_same_snapshot_request
+        ):
             return (
                 "blocked",
                 "browser_snapshot is already current. Reuse the existing snapshot "
-                "and refs instead of requesting another snapshot.",
+                "and refs instead of requesting the same snapshot again. Request a "
+                "deeper snapshot or replan if the visible structure is insufficient.",
             )
 
     return "approved", f"Tool approved: {request['name']}"
@@ -87,6 +100,9 @@ def _policy_updates(
     }
     if decision == "blocked":
         updates["error"] = reason
+        updates["consecutive_failures"] = (
+            int(state.get("consecutive_failures", 0) or 0) + 1
+        )
         request = state.get("tool_request") or {}
         updates["messages"] = append_tool_message(
             list(state.get("messages") or []),

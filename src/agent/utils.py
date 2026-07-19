@@ -136,7 +136,47 @@ def _snapshot_recovery_request(state: AgentState, request: ToolRequest) -> ToolR
     )
 
 
+def _browser_action_key(action: ToolRequest | dict[str, Any]) -> tuple[str, tuple[tuple[str, Any], ...]]:
+    name = str(action.get("name", "") or "").lower()
+    args = dict(action.get("args") or {})
+    target = args.pop("ref", None) or args.pop("target", None)
+    if target is not None:
+        args["target"] = str(target)
+    return name, tuple(sorted(args.items()))
+
+
+def _ineffective_action_repeat_update(
+    state: AgentState,
+    request: ToolRequest,
+) -> dict[str, Any] | None:
+    ineffective_action = state.get("ineffective_browser_action") or {}
+    if not ineffective_action:
+        return None
+
+    count = int(state.get("ineffective_action_count", 0) or 0)
+    if count <= 0:
+        return None
+
+    if _browser_action_key(ineffective_action) != _browser_action_key(request):
+        return None
+
+    return _replan_response(
+        (
+            f"{request.get('name', 'browser action')} with the same target did not "
+            "change the visible browser_snapshot. Replan before trying another "
+            "action: choose a different visible control/ref, request a deeper "
+            "snapshot, use evaluate only if the snapshot cannot expose the "
+            "control, or use a fallback route."
+        ),
+        ineffective_action_count=count,
+    )
+
+
 def _guard_tool_request(state: AgentState, request: ToolRequest) -> dict[str, Any] | None:
+    ineffective_repeat = _ineffective_action_repeat_update(state, request)
+    if ineffective_repeat is not None:
+        return ineffective_repeat
+
     if (
         state.get("last_tool") == request.get("name")
         and state.get("last_args", {}) == request.get("args", {})

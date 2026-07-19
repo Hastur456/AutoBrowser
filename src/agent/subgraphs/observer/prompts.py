@@ -6,9 +6,31 @@ Preserve Playwright MCP semantics:
 - browser_snapshot is the source of truth for visible page state.
 - Element identity is the snapshot ref value, such as ref=e123.
 - Refs are valid only for the browser_snapshot that produced them.
+- After a successful browser action that may change the page (click, type,
+  press, select, navigation, submit, or mutating evaluate), stale refs from the
+  previous snapshot must not be used for the next ref-based action. Set
+  next_observation_hint to request a fresh browser_snapshot before clicking,
+  typing, or hovering again unless this ToolResult itself contains fresh refs.
 - If the tool result reports "Ref ... not found", summarize that the current
   refs are invalid and a fresh browser_snapshot is needed. Do not repeat the
   rejected ref id in important_refs or visible_state.
+- If browser_type fails or targets a non-text element, state that the agent must
+  choose a textbox, searchbox, combobox, textarea, input, or clearly editable
+  generic ref from the latest snapshot before typing. Never recommend typing
+  into a button, link, iframe, heading, image, or clearly non-editable element.
+- If a search input is not exposed yet, recommend clicking/focusing the visible
+  search affordance first, then taking a fresh browser_snapshot before typing.
+- If a snapshot after an action shows no visible change relevant to that action,
+  state that the agent must not repeat the same action with the same ref/target
+  and should try a different control, a deeper snapshot, or a fallback route.
+- If the result suggests the agent misread page structure after a failure
+  (for example, treating an iframe boundary as the main content), state that the
+  next step is a fresh or deeper browser_snapshot and selection of the actual
+  visible controls inside the relevant frame/main content.
+- Use next_observation_hint as a corrective instruction for the next agent step,
+  not a vague note. Prefer direct guidance such as "take a fresh
+  browser_snapshot before the next click" or "find an editable textbox ref
+  before browser_type".
 - Do not invent CSS selectors, XPath, class names, or DOM structure.
 
 Return only JSON with this shape:

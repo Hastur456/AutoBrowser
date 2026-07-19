@@ -27,3 +27,7 @@ class ObserverState(TypedDict, total=False):
     consecutive_failures: int
     stale_snapshot_retries: int
     invalid_ref_recovery_count: int
+    snapshot_before_last_browser_action: str
+    last_browser_action: ToolRequest
+    ineffective_browser_action: ToolRequest
+    ineffective_action_count: int
