@@ -102,6 +102,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print state updates after each graph node runs.",
     )
     parser.add_argument(
+        "--hide-snapshot",
+        action="store_true",
+        help="Redact browser snapshots from printed state updates.",
+    )
+    parser.add_argument(
         "--show-tools",
         action="store_true",
         help="Print MCP tool names after loading them.",
@@ -243,6 +248,37 @@ def print_tools(tools: list[Any]) -> None:
         print(f"- {getattr(tool, 'name', tool)}")
 
 
+SNAPSHOT_REDACTION = "[browser_snapshot hidden]"
+
+
+def _redact_snapshot_value(value: Any, *, parent_key: str = "") -> Any:
+    """Return a terminal-safe copy with browser snapshots removed."""
+
+    if parent_key == "snapshot":
+        return SNAPSHOT_REDACTION
+
+    if isinstance(value, dict):
+        redacted: dict[Any, Any] = {}
+        is_snapshot_result = str(value.get("name", "") or "") == "browser_snapshot"
+        has_snapshot_field = bool(str(value.get("snapshot", "") or "").strip())
+        for key, item in value.items():
+            key_text = str(key)
+            if key_text == "snapshot":
+                redacted[key] = SNAPSHOT_REDACTION
+            elif key_text == "content" and is_snapshot_result:
+                redacted[key] = SNAPSHOT_REDACTION
+            elif key_text == "observation" and has_snapshot_field:
+                redacted[key] = SNAPSHOT_REDACTION
+            else:
+                redacted[key] = _redact_snapshot_value(item, parent_key=key_text)
+        return redacted
+
+    if isinstance(value, list):
+        return [_redact_snapshot_value(item, parent_key=parent_key) for item in value]
+
+    return value
+
+
 def format_state(value: Any, as_json: bool = False) -> str:
     """Format a graph state value for terminal output."""
 
@@ -251,17 +287,24 @@ def format_state(value: Any, as_json: bool = False) -> str:
     return repr(value)
 
 
-def print_step(node_name: str, update: Any, as_json: bool = False) -> None:
+def print_step(
+    node_name: str,
+    update: Any,
+    as_json: bool = False,
+    *,
+    hide_snapshot: bool = False,
+) -> None:
     """Print a compact node update after a graph step."""
 
     label = _NODE_LABELS.get(node_name, node_name.upper())
+    printable_update = _redact_snapshot_value(update) if hide_snapshot else update
     if as_json:
-        print(f"[{label}] {format_state(update, as_json=True)}")
+        print(f"[{label}] {format_state(printable_update, as_json=True)}")
         return
 
     print(f"\n[{label}]")
-    if not isinstance(update, dict):
-        print(format_state(update))
+    if not isinstance(printable_update, dict):
+        print(format_state(printable_update))
         return
 
     for key in (
@@ -279,7 +322,7 @@ def print_step(node_name: str, update: Any, as_json: bool = False) -> None:
         "final_answer",
         "error",
     ):
-        value = update.get(key)
+        value = printable_update.get(key)
         if value not in (None, "", [], {}):
             print(f"{key}: {format_state(value)}")
 
@@ -354,6 +397,7 @@ async def run_agent(args: argparse.Namespace) -> int:
             "model": args.model,
             "temperature": args.temperature,
             "show_state": args.show_state,
+            "hide_snapshot": args.hide_snapshot,
             "langsmith_tracing": tracing_enabled,
             "compress_tools": args.compress_tools,
         },
@@ -411,7 +455,12 @@ async def run_task(
         ):
             final_update = chunk
             for node_name, update in chunk.items():
-                print_step(node_name, update, args.json)
+                print_step(
+                    node_name,
+                    update,
+                    args.json,
+                    hide_snapshot=args.hide_snapshot,
+                )
 
         if final_update is None:
             print("Agent finished without state updates.")

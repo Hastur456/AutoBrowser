@@ -20,9 +20,21 @@ Preserve Playwright MCP semantics:
   into a button, link, iframe, heading, image, or clearly non-editable element.
 - If a search input is not exposed yet, recommend clicking/focusing the visible
   search affordance first, then taking a fresh browser_snapshot before typing.
+- When a browser_snapshot exposes a search textbox/searchbox, preserve whether
+  it appears empty, already aligned with the requested search, or filled with an
+  unrelated query when that is visible in the tool result. If a search submit
+  appears to have no visible effect, make the next_observation_hint tell the
+  agent to inspect and correct the search input before submitting again.
+- If the current result already gives the agent enough to continue, keep the
+  hint short and avoid asking for another snapshot unless fresh refs or missing
+  result data are actually required.
 - If a snapshot after an action shows no visible change relevant to that action,
   state that the agent must not repeat the same action with the same ref/target
   and should try a different control, a deeper snapshot, or a fallback route.
+- If the unchanged action was clicking a Search button/search affordance during
+  a search task, make the next_observation_hint prefer direct search URL
+  navigation or typing into a visible editable search field. Never hint toward a
+  repeated click or double-click on the same Search control.
 - If the result suggests the agent misread page structure after a failure
   (for example, treating an iframe boundary as the main content), state that the
   next step is a fresh or deeper browser_snapshot and selection of the actual

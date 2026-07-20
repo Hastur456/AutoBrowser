@@ -34,6 +34,19 @@ class FakeGraph:
         stream_mode: str,
     ):
         yield {"plan": {"task": state["task"], "stream_mode": stream_mode}}
+        yield {
+            "observe": {
+                "tool_result": {
+                    "name": "browser_snapshot",
+                    "status": "success",
+                    "content": '- textbox "Search" ref=e8',
+                    "error": "",
+                },
+                "observation": 'browser_snapshot returned success.\n\n- textbox "Search" ref=e8',
+                "snapshot": '- textbox "Search" ref=e8',
+                "config": config,
+            }
+        }
         yield {"agent": {"final_answer": "done", "config": config}}
 
 
@@ -45,6 +58,7 @@ def make_args(**overrides: Any) -> argparse.Namespace:
         "model": "fake-model",
         "temperature": 0,
         "show_state": False,
+        "hide_snapshot": False,
         "show_tools": False,
         "json": False,
         "no_mcp": True,
@@ -70,6 +84,7 @@ def test_parser_accepts_cli_flags() -> None:
             "explicit task",
             "--loop",
             "--show-state",
+            "--hide-snapshot",
             "--show-tools",
             "--json",
             "--no-mcp",
@@ -91,6 +106,7 @@ def test_parser_accepts_cli_flags() -> None:
     assert args.task_text == "explicit task"
     assert args.loop is True
     assert args.show_state is True
+    assert args.hide_snapshot is True
     assert args.show_tools is True
     assert args.json is True
     assert args.no_mcp is True
@@ -216,6 +232,22 @@ async def test_run_agent_prints_node_state(monkeypatch, capsys) -> None:
     assert exit_code == 0
     assert "[PLAN]" in output
     assert "[AGENT]" in output
+
+
+@pytest.mark.asyncio
+async def test_run_agent_can_hide_snapshots_from_node_state(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(main, "ChatOllama", FakeChatOllama)
+    monkeypatch.setattr(main, "build_agent_graph", lambda **kwargs: FakeGraph())
+    args = make_args(task=["inspect"], show_state=True, hide_snapshot=True)
+
+    exit_code = await main.run_agent(args)
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "[OBSERVE]" in output
+    assert "[browser_snapshot hidden]" in output
+    assert 'textbox "Search"' not in output
+    assert "final_answer" in output
 
 
 @pytest.mark.asyncio
