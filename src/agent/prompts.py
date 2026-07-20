@@ -181,4 +181,11 @@ Latest browser_snapshot:
 Available refs:
 {refs}
 
+Snapshot reuse rule:
+If the latest observation says browser_snapshot is already current or says to
+reuse the existing snapshot/refs, do not call browser_snapshot again with any
+depth. Continue from Latest browser_snapshot and Available refs. If the visible
+snapshot is insufficient for the next step, prefer browser_find or
+browser_evaluate; otherwise replan.
+
 Choose the next action."""

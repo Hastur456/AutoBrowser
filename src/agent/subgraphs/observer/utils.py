@@ -84,6 +84,14 @@ STEP_STOPWORDS = {
     "to",
     "type",
 }
+SNAPSHOT_COMPLETION_STEP_TERMS = {
+    "capture",
+    "inspect",
+    "observe",
+    "read",
+    "snapshot",
+    "view",
+}
 
 
 def compact_text(value: Any, limit: int = MAX_CONTENT_PREVIEW_CHARS) -> str:
@@ -249,15 +257,29 @@ def _has_step_completion_evidence(
     return bool(keywords & evidence_words)
 
 
+def _snapshot_completes_step(step: PlanStep) -> bool:
+    description_words = set(
+        WORD_PATTERN.findall(str(step.get("description", "") or "").lower())
+    )
+    return bool(description_words & SNAPSHOT_COMPLETION_STEP_TERMS)
+
+
 def _plan_completion_update(
     plan: list[PlanStep],
     current_step: int,
     compact: CompactToolObservation,
+    *,
+    tool_name: str = "",
 ) -> dict[str, Any]:
     if current_step < 0 or current_step >= len(plan):
         return {}
 
-    if not _has_step_completion_evidence(plan[current_step], compact):
+    current_plan_step = plan[current_step]
+    if tool_name == "browser_snapshot" and _snapshot_completes_step(current_plan_step):
+        updated_plan, next_step = _advance_plan(plan, current_step)
+        return {"plan": updated_plan, "current_step": next_step}
+
+    if not _has_step_completion_evidence(current_plan_step, compact):
         return {}
 
     updated_plan, next_step = _advance_plan(plan, current_step)

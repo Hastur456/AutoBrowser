@@ -121,6 +121,25 @@ def test_policy_allows_deeper_snapshot_when_current_snapshot_exists() -> None:
     assert "browser_snapshot" in reason
 
 
+def test_policy_blocks_snapshot_with_varied_depth_after_reuse_block() -> None:
+    decision, reason = classify_tool_request(
+        {
+            "snapshot": '- generic "Catalog" ref=e7',
+            "needs_fresh_snapshot": False,
+            "last_tool": "browser_snapshot",
+            "last_args": {"depth": 10},
+            "observation": (
+                "browser_snapshot is already current. Reuse the existing snapshot "
+                "and refs instead of requesting another snapshot."
+            ),
+        },
+        {"name": "browser_snapshot", "args": {"depth": 15}},
+    )
+
+    assert decision == "blocked"
+    assert "varied depth" in reason
+
+
 def test_policy_does_not_classify_ineffective_browser_actions() -> None:
     decision, reason = classify_tool_request(
         {
@@ -348,6 +367,8 @@ async def test_agent_node_uses_observation_snapshot_and_refs_in_prompt() -> None
     assert "Search box found." in prompt
     assert 'textbox "Search" ref=e8' in prompt
     assert "e8" in prompt
+    assert "[pending] Inspect page" in prompt
+    assert "do not call browser_snapshot again with any\ndepth" in prompt
     assert all('textbox "Search" ref=e8' not in message.content for message in result["messages"])
 
 
@@ -485,6 +506,72 @@ async def test_agent_node_replans_after_snapshot_recovery_is_exhausted() -> None
 
 
 @pytest.mark.asyncio
+async def test_agent_node_replans_repeated_snapshot_with_varied_depth() -> None:
+    llm = FakeListLLM(
+        responses=[
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_snapshot","args":{"depth":15},"reason":"Inspect deeper"}}'
+            )
+        ]
+    )
+    node = create_agent_node(llm)
+
+    result = await node(
+        {
+            "task": "Inspect",
+            "plan": [{"id": 1, "description": "Inspect page", "status": "pending"}],
+            "current_step": 0,
+            "snapshot": '- heading "Alan Turing" ref=e1',
+            "last_tool": "browser_snapshot",
+            "last_args": {"depth": 10},
+            "repeat_count": 2,
+        }
+    )
+
+    assert result["decision"] == "replan"
+    assert result["repeat_count"] == 3
+    assert "three consecutive times" in result["observation"]
+
+
+@pytest.mark.asyncio
+async def test_agent_node_replans_snapshot_after_reuse_policy_block() -> None:
+    llm = FakeListLLM(
+        responses=[
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_snapshot","args":{"depth":15},"reason":"Inspect deeper"}}'
+            )
+        ]
+    )
+    node = create_agent_node(llm)
+
+    result = await node(
+        {
+            "task": "Inspect",
+            "plan": [{"id": 1, "description": "Inspect page", "status": "pending"}],
+            "current_step": 0,
+            "snapshot": '- heading "Alan Turing" ref=e1',
+            "last_tool": "browser_snapshot",
+            "last_args": {"depth": 10},
+            "repeat_count": 1,
+            "observation": (
+                "browser_snapshot is already current. Reuse the existing snapshot "
+                "and refs instead of requesting another snapshot."
+            ),
+            "policy_event": {
+                "decision": "blocked",
+                "reason": "browser_snapshot is already current.",
+                "tool_request": {"name": "browser_snapshot", "args": {"depth": 10}},
+            },
+        }
+    )
+
+    assert result["decision"] == "replan"
+    assert "current snapshot is already reusable" in result["observation"]
+
+
+@pytest.mark.asyncio
 async def test_agent_node_replans_on_third_identical_non_snapshot_tool_request() -> None:
     llm = FakeListLLM(
         responses=[
@@ -583,7 +670,7 @@ async def test_executor_adds_element_for_legacy_ref_based_mcp_tool() -> None:
     assert calls == [{"element": 'button "Catalog"', "ref": "e14"}]
 
 
-def test_observe_node_translates_snapshot_without_advancing_plan_on_tool_success() -> None:
+def test_observe_node_translates_snapshot_and_advances_inspection_plan() -> None:
     snapshot = '- button "Search" ref=e7\n- textbox "Query" ref=e8'
     result = observe_node(
         {
@@ -605,8 +692,9 @@ def test_observe_node_translates_snapshot_without_advancing_plan_on_tool_success
     assert "refs" not in result
     assert extract_element_refs(result["snapshot"]) == ["e7", "e8"]
     assert "Refs:" in result["observation"]
-    assert "current_step" not in result
-    assert "plan" not in result
+    assert result["current_step"] == 1
+    assert result["plan"][0]["status"] == "done"
+    assert result["plan"][1]["status"] == "in_progress"
     assert "latest_observation" not in result
     assert "browser_context" not in result
     assert "recovery_signal" not in result
@@ -1253,7 +1341,7 @@ async def test_graph_tool_path() -> None:
     assert result["final_answer"] == "observed"
     assert "Snapshot compressed" in result["observation"]
     assert result["snapshot"] == "snapshot text"
-    assert result.get("current_step", 0) == 0
+    assert result.get("current_step", 0) == 1
     assert result["messages"][0].type == "system"
     assert "Original user request:\nInspect" in result["messages"][1].content
     assert result["messages"][2].tool_calls[0]["name"] == "browser_snapshot"

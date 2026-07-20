@@ -14,6 +14,16 @@ BLOCKED_TOOL_MARKERS = (
     "delete_account",
     "credential",
 )
+SNAPSHOT_REUSE_MARKER = "browser_snapshot is already current"
+
+
+def _snapshot_reuse_was_blocked(state: AgentState) -> bool:
+    policy_event = state.get("policy_event") or {}
+    reason = str(policy_event.get("reason", "") or "")
+    observation = str(state.get("observation", "") or "")
+    error = str(state.get("error", "") or "")
+    payload = "\n".join([reason, observation, error]).lower()
+    return SNAPSHOT_REUSE_MARKER in payload
 
 
 class PolicyEngine:
@@ -63,13 +73,14 @@ def classify_tool_request(
             has_current_snapshot
             and not needs_fresh_snapshot
             and not has_active_invalid_ref
-            and is_same_snapshot_request
+            and (is_same_snapshot_request or _snapshot_reuse_was_blocked(state))
         ):
             return (
                 "blocked",
                 "browser_snapshot is already current. Reuse the existing snapshot "
-                "and refs instead of requesting the same snapshot again. Request a "
-                "deeper snapshot or replan if the visible structure is insufficient.",
+                "and refs instead of requesting another snapshot with varied depth. "
+                "Use browser_find or browser_evaluate only if the visible structure "
+                "is insufficient, or replan.",
             )
 
     return "approved", f"Tool approved: {request['name']}"

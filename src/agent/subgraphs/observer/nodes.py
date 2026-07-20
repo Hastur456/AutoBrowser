@@ -110,6 +110,7 @@ def compile_observation(
                 updates["last_browser_action"] = _action_identity(request, tool_name)
             updates["snapshot"] = ""
         if needs_fresh_after_error:
+            updates["snapshot"] = ""
             updates["needs_fresh_snapshot"] = True
 
     observation = "\n\n".join(observation_lines)
@@ -126,7 +127,14 @@ def compile_observation(
     if status == "success":
         plan = state.get("plan") or []
         current_step = int(state.get("current_step", 0) or 0)
-        updates.update(_plan_completion_update(plan, current_step, compact))
+        updates.update(
+            _plan_completion_update(
+                plan,
+                current_step,
+                compact,
+                tool_name=tool_name,
+            )
+        )
         updates["error"] = ""
         updates["consecutive_failures"] = 0
         if tool_name != "browser_snapshot":
