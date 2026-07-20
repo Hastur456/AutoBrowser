@@ -14,6 +14,16 @@ BLOCKED_TOOL_MARKERS = (
     "delete_account",
     "credential",
 )
+SNAPSHOT_REUSE_MARKER = "browser_snapshot is already current"
+
+
+def _snapshot_reuse_was_blocked(state: AgentState) -> bool:
+    policy_event = state.get("policy_event") or {}
+    reason = str(policy_event.get("reason", "") or "")
+    observation = str(state.get("observation", "") or "")
+    error = str(state.get("error", "") or "")
+    payload = "\n".join([reason, observation, error]).lower()
+    return SNAPSHOT_REUSE_MARKER in payload
 
 
 class PolicyEngine:
@@ -46,17 +56,31 @@ def classify_tool_request(
 
     name = request["name"].lower()
     if any(marker in name for marker in BLOCKED_TOOL_MARKERS):
-        return "blocked", f"Tool requires a stronger policy before use: {request['name']}"
+        return "needs_human", f"Tool requires human approval before use: {request['name']}"
 
     if name == "browser_snapshot":
         needs_fresh_snapshot = bool(state.get("needs_fresh_snapshot"))
         has_active_invalid_ref = has_invalid_ref_text(state.get("error", ""))
         has_current_snapshot = bool(str(state.get("snapshot", "") or "").strip())
-        if has_current_snapshot and not needs_fresh_snapshot and not has_active_invalid_ref:
+        requested_args = request.get("args") or {}
+        last_snapshot_args = (
+            state.get("last_args", {})
+            if state.get("last_tool") == "browser_snapshot"
+            else {}
+        )
+        is_same_snapshot_request = requested_args == last_snapshot_args
+        if (
+            has_current_snapshot
+            and not needs_fresh_snapshot
+            and not has_active_invalid_ref
+            and (is_same_snapshot_request or _snapshot_reuse_was_blocked(state))
+        ):
             return (
                 "blocked",
                 "browser_snapshot is already current. Reuse the existing snapshot "
-                "and refs instead of requesting another snapshot.",
+                "and refs instead of requesting another snapshot with varied depth. "
+                "Use browser_find or browser_evaluate only if the visible structure "
+                "is insufficient, or replan.",
             )
 
     return "approved", f"Tool approved: {request['name']}"
@@ -79,15 +103,25 @@ def _policy_updates(
     updates: dict[str, Any] = {
         "policy_decision": decision,
         "observation": reason,
+        "policy_event": {
+            "decision": decision,
+            "reason": reason,
+            "tool_request": state.get("tool_request") or {},
+        },
     }
     if decision == "blocked":
         updates["error"] = reason
+        updates["consecutive_failures"] = (
+            int(state.get("consecutive_failures", 0) or 0) + 1
+        )
         request = state.get("tool_request") or {}
         updates["messages"] = append_tool_message(
             list(state.get("messages") or []),
             request,
             f"{request.get('name', '')}\n\n{reason}",
         )
+    elif decision == "needs_human":
+        updates["error"] = ""
     return updates
 
 

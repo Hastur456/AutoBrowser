@@ -14,6 +14,29 @@ INVALID_REF_PATTERN = re.compile(
     r"\bRef\s+[A-Za-z][A-Za-z0-9_-]*\s+not\s+found\b",
     re.IGNORECASE,
 )
+REF_INTERACTION_TOOLS = {
+    "browser_click",
+    "browser_type",
+    "browser_hover",
+    "browser_select",
+    "browser_press",
+    "browser_drag",
+}
+BROWSER_ACTION_TOOLS = REF_INTERACTION_TOOLS
+STALE_OR_MISSING_ELEMENT_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bnot\s+found\b",
+        r"\bnot\s+visible\b",
+        r"\bnot\s+attached\b",
+        r"\bdetached\b",
+        r"\bnot\s+editable\b",
+        r"\bnot\s+enabled\b",
+        r"\belement\s+is\s+not\b",
+        r"\bunable\s+to\s+(?:click|type|fill|hover)\b",
+        r"\bcannot\s+(?:click|type|fill|hover)\b",
+    )
+)
 COMPLETION_EVIDENCE_TERMS = {
     "appeared",
     "appears",
@@ -60,6 +83,14 @@ STEP_STOPWORDS = {
     "the",
     "to",
     "type",
+}
+SNAPSHOT_COMPLETION_STEP_TERMS = {
+    "capture",
+    "inspect",
+    "observe",
+    "read",
+    "snapshot",
+    "view",
 }
 
 
@@ -110,9 +141,26 @@ def has_invalid_ref_text(value: Any) -> bool:
     return bool(INVALID_REF_PATTERN.search(str(value or "")))
 
 
+def has_stale_or_missing_element_text(value: Any) -> bool:
+    """Return true when a browser error suggests the snapshot is stale."""
+
+    payload = str(value or "")
+    return any(pattern.search(payload) for pattern in STALE_OR_MISSING_ELEMENT_PATTERNS)
+
+
 def _has_invalid_ref_error(result: ToolResult) -> bool:
     payload = str(result.get("error", "") or result.get("content", "") or "")
     return has_invalid_ref_text(payload)
+
+
+def _needs_fresh_snapshot_after_error(result: ToolResult) -> bool:
+    tool_name = str(result.get("name", "") or "")
+    payload = str(result.get("error", "") or result.get("content", "") or "")
+    if has_invalid_ref_text(payload):
+        return True
+    return tool_name in REF_INTERACTION_TOOLS and has_stale_or_missing_element_text(
+        payload
+    )
 
 
 def _observation_lines(
@@ -135,6 +183,14 @@ def _observation_lines(
             lines.append(cleaned_error)
         if INVALID_REF_PATTERN.search(error or payload):
             lines.append("A fresh browser_snapshot is required.")
+        elif (
+            tool_name in REF_INTERACTION_TOOLS
+            and has_stale_or_missing_element_text(error or payload)
+        ):
+            lines.append(
+                "The current element/page structure may be stale; take a fresh "
+                "browser_snapshot before the next ref-based action."
+            )
         return lines
 
     if not compress:
@@ -201,15 +257,29 @@ def _has_step_completion_evidence(
     return bool(keywords & evidence_words)
 
 
+def _snapshot_completes_step(step: PlanStep) -> bool:
+    description_words = set(
+        WORD_PATTERN.findall(str(step.get("description", "") or "").lower())
+    )
+    return bool(description_words & SNAPSHOT_COMPLETION_STEP_TERMS)
+
+
 def _plan_completion_update(
     plan: list[PlanStep],
     current_step: int,
     compact: CompactToolObservation,
+    *,
+    tool_name: str = "",
 ) -> dict[str, Any]:
     if current_step < 0 or current_step >= len(plan):
         return {}
 
-    if not _has_step_completion_evidence(plan[current_step], compact):
+    current_plan_step = plan[current_step]
+    if tool_name == "browser_snapshot" and _snapshot_completes_step(current_plan_step):
+        updated_plan, next_step = _advance_plan(plan, current_step)
+        return {"plan": updated_plan, "current_step": next_step}
+
+    if not _has_step_completion_evidence(current_plan_step, compact):
         return {}
 
     updated_plan, next_step = _advance_plan(plan, current_step)

@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.errors import GraphRecursionError
 
 from src.harness.runtime import BrowserHarness
 from src.harness.context import ContextBuilder
@@ -35,6 +36,32 @@ class StreamingGraph(FakeGraph):
         self.calls.append((state, config))
         yield {"plan": {"task": state["task"], "stream_mode": stream_mode}}
         yield {"agent": {"final_answer": "done"}}
+
+
+class FakeStateSnapshot:
+    def __init__(self, values: dict[str, Any]) -> None:
+        self.values = values
+
+
+class RecursionAfterDoneGraph:
+    def __init__(self) -> None:
+        self.values = {"decision": "done", "final_answer": "finished"}
+
+    async def ainvoke(self, state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+        raise GraphRecursionError("Recursion limit reached")
+
+    async def astream(
+        self,
+        state: dict[str, Any],
+        config: dict[str, Any],
+        stream_mode: str,
+    ):
+        yield {"plan": {"task": state["task"], "stream_mode": stream_mode}}
+        yield {"agent": self.values}
+        raise GraphRecursionError("Recursion limit reached")
+
+    async def aget_state(self, config: dict[str, Any]) -> FakeStateSnapshot:
+        return FakeStateSnapshot(self.values)
 
 
 class FakeTool:
@@ -128,3 +155,29 @@ async def test_browser_harness_logs_graph_errors(caplog) -> None:
         await harness.run("inspect page", thread_id="test-thread")
 
     assert "Harness error: graph failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_browser_harness_returns_completed_state_after_recursion_boundary() -> None:
+    graph = RecursionAfterDoneGraph()
+    harness = BrowserHarness(lambda **kwargs: graph)
+
+    result = await harness.run("inspect page", thread_id="test-thread")
+
+    assert result == {"decision": "done", "final_answer": "finished"}
+
+
+@pytest.mark.asyncio
+async def test_browser_harness_stream_suppresses_recursion_after_done() -> None:
+    graph = RecursionAfterDoneGraph()
+    harness = BrowserHarness(lambda **kwargs: graph)
+
+    chunks = [
+        chunk
+        async for chunk in harness.stream_updates("inspect page", thread_id="test-thread")
+    ]
+
+    assert chunks == [
+        {"plan": {"task": "inspect page", "stream_mode": "updates"}},
+        {"agent": {"decision": "done", "final_answer": "finished"}},
+    ]

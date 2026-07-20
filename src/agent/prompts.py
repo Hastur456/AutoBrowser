@@ -3,6 +3,9 @@ Use the bound tools when an external browser action is needed.
 Do not invent tool names. If a browser action is needed, call one of the bound tools.
 Return a final answer only when the task is complete.
 Use the provided observation and latest browser_snapshot only.
+Prefer the fewest actions that can satisfy the task. Do not take a fresh
+browser_snapshot after every successful action; request one only when you need
+fresh refs, the visible page changed, or you must confirm newly loaded results.
 
 Follow Playwright MCP semantics:
 - Treat browser_snapshot as the source of truth for page state.
@@ -11,28 +14,107 @@ Follow Playwright MCP semantics:
   browser_snapshot context.
 - Snapshot refs are ephemeral. A ref is valid only for the exact snapshot that
   produced it; after a new snapshot or any browser action, do not reuse old refs.
+- After any successful browser action that can change visible page state
+  (click, type, press, select, navigation, submit, or evaluate that mutates the
+  page), call browser_snapshot before the next ref-based click/type/hover unless
+  the tool result itself contains the fresh target ref. Do not click using refs
+  from the pre-action page.
 - If a previous action reports that a ref was not found, call browser_snapshot
   next to obtain fresh refs before any ref-based browser action.
+- If browser_snapshot was blocked as "already current", reuse it only when no
+  browser action has changed the page since it was captured. If the page changed
+  or the last ref failed, explain the need for a fresh snapshot in the next tool
+  reason and request browser_snapshot again instead of continuing with stale
+  refs.
+- Before browser_type, verify from the latest snapshot that the chosen ref is
+  editable: textbox, searchbox, combobox, textarea, input, or a generic element
+  whose accessible name/placeholder/visible label clearly indicates an editable
+  search or input control. Never type into a button, link, iframe, heading,
+  image, or clearly non-editable container; first find the nested editable ref,
+  focus/open the control, or take a deeper/fresh snapshot.
+- For search tasks, locate a textbox/searchbox first, type the query into that
+  text input, then submit the search. Do not click a Search button before the
+  query is entered, and never call browser_type on a button ref.
+- On dynamic commerce/search home pages, the input may appear only after
+  focusing a search area or clicking a search icon/button. If no editable input
+  is visible, click the search affordance first, then take a fresh
+  browser_snapshot and type into the newly exposed editable ref.
+- Do this search-affordance click at most once. If the next snapshot still does
+  not expose an editable search field or the visible page is unchanged, do not
+  click the same Search button again. Use a different visible editable control
+  if one exists, or navigate directly to the site's search results URL.
+- For Ozon specifically, direct search navigation is an acceptable fallback:
+  https://www.ozon.ru/search/?text=<url-encoded query>. Use it immediately
+  after one failed attempt to expose/use the homepage search input.
 - Do not invent CSS selectors, XPath, class names, or DOM structure.
 - If the snapshot does not expose the needed element, request another snapshot
   or use browser_evaluate only when the snapshot cannot answer the question.
+- Treat iframe entries in a snapshot as frame boundaries, not as proof that the
+  iframe itself is the main interactive content. After a failed click/type or an
+  unexpected page shape, take a fresh or deeper snapshot and identify the actual
+  visible controls inside the relevant frame/main content before acting.
+- Follow observer correction hints. When the observation says a fresh snapshot,
+  deeper snapshot, different frame/main-content interpretation, or different
+  element type is needed, do that before attempting another ref-based action.
+- If the observation or policy says the last browser action did not change the
+  visible snapshot, do not repeat the same action with the same ref/target.
+  Choose a different visible control, request a deeper snapshot, use
+  browser_evaluate only if the snapshot cannot expose the control, or replan to
+  a fallback route such as direct search URL navigation when appropriate.
+- If that unchanged action was a click on a Search button/search icon during a
+  search task, direct search URL navigation is the preferred next action. Do not
+  spend more steps on browser_find for "search", "input", "textbox", or
+  repeated clicks/double-clicks on the same control.
+- For search or find tasks, inspect the current search input value in the latest
+  snapshot before submitting anything. If the field is empty or does not contain
+  the user's query, type or replace the query first. Prefer Enter after typing;
+  use a search button only as fallback. A submit is not progress unless the page
+  shows results or some other visible effect after it.
+- If the snapshot contains both a search submit button (for example button
+  "Поиск" or button "Search") and an editable search control (textbox,
+  searchbox, combobox, textarea, or input), choose the editable control for
+  browser_type. Do not click the submit button first.
+- If the snapshot already shows a relevant query in the search field, do not
+  retype it just to satisfy the step. Submit only after verifying the field is
+  aligned with the user request.
+- For search or result-list tasks, keep the loop tight: use one snapshot to
+  orient yourself, type into the visible editable search field if present, and
+  move straight to results extraction once the page changes. Do not add extra
+  snapshot calls for a stable page unless they are needed for fresh refs or
+  missing result details.
+- If a search textbox/searchbox is visible, use browser_type directly instead
+  of clicking the search button first. If typing can also submit, prefer that
+  over a separate click.
+- If the repeated tool request count is non-zero for the same Search button or
+  search affordance, treat another click on that target as non-progress and
+  choose direct search URL navigation or results extraction instead.
 
 **Critical rules for task completion:**
 - After submitting a search query, the task is not complete until you have
   extracted the list of results (titles and URLs) and presented them in the
   final answer. Do not stop after just navigating to the search results page.
-- To extract article titles and links from a search results page, use:
-  * `browser_snapshot` with `depth` set to at least 3 (e.g., `{"depth": 5}`)
-    to get a detailed YAML view that includes all visible articles.
-  * If the snapshot still does not contain the needed data, use `browser_evaluate`
-    with a JavaScript snippet that extracts the titles and href attributes
-    from the article elements (e.g., `document.querySelectorAll('article a')`).
+- Prefer extracting results from `browser_snapshot` whenever it contains enough
+  visible result data.
+- Use `browser_snapshot` with `depth` set to at least 3 (e.g., `{"depth": 5}`)
+  to get a detailed YAML view that includes visible results. If the current snapshot already shows the required results (titles, links, prices), 
+  do not request a deeper snapshot solely for formatting. A depth of 5 is usually sufficient. Only increase depth if specific child elements are missing.
+- Use `browser_evaluate` only as a last resort after snapshot and plain-text
+  search are insufficient. Do not use `browser_evaluate` merely to improve
+  formatting if the visible page already contains relevant results.
 - Avoid using `browser_find` with regular expressions to locate links or
   attributes; it is designed for plain text search and does not reliably
   extract structured data. If you must use it, use simple text strings, not regex.
 - If you have performed a search and the results page loads, update the plan
   (use `{"decision":"replan", ...}`) to mark the search step as done and
   add a step for extracting results. Do not stay stuck on the same step.
+- **If you have successfully extracted at least one relevant result (e.g., an article title and URL) and the search results page is loaded, you must immediately consider the task complete and return a final answer with the extracted items. You do not need to extract all items unless the user explicitly asked for all. A representative sample (e.g., 5-10 items) is sufficient for tasks like "find articles".**
+- **Once you have data that satisfies the user request, do not perform additional verification steps, do not attempt to improve the extraction, and do not wait for more data. Immediately set decision: 'done' and present the data.**
+- **If you used browser_evaluate to extract data and received a non-empty array, you can safely assume the extraction succeeded and proceed to final answer, even if the plan still shows pending steps.**
+- For product/search-result tasks, if the page shows relevant result names,
+  prices, snippets, or visible links, a representative sample is sufficient
+  unless the user explicitly asks for exhaustive extraction. If URLs are not
+  directly available from the snapshot, do not block completion solely to obtain
+  URLs.
 
 **Preventing infinite loops:**
 - If you call the same tool with the same arguments more than twice without
@@ -43,6 +125,25 @@ Follow Playwright MCP semantics:
      explaining what you found and why you cannot proceed (e.g., "No articles found").
 - Do not repeatedly call `browser_find` with failing patterns; it wastes steps
   and may hit the recursion limit.
+- Do not search snapshots for literal implementation words such as "input" or
+  "textbox" after the visible search UI is already unclear. After two failed UI
+  attempts to expose or use search, replan to a robust fallback such as direct
+  navigation to a search URL when the site supports query parameters.
+- For commerce sites with a known search URL pattern, use that fallback after
+  one failed search-control attempt, not after several repeated clicks.
+- Do not use browser_find for generic English implementation words such as
+  "search", "input", "textbox", or "button" on localized pages. Use the visible
+  roles and refs already present in browser_snapshot.
+- If policy says `browser_snapshot` is already current, do not request another
+  snapshot and do not restart the search flow. Reuse the current snapshot to
+  extract visible results or return a final answer with what is visible.
+- If `browser_evaluate` fails with JavaScript syntax, escaping, selector, or
+  parsing errors twice in the same task phase, stop using `browser_evaluate`
+  for that phase. Switch to `browser_snapshot`/`browser_find`, replan with a
+  non-JavaScript extraction strategy, or return a final answer with the
+  relevant data already visible. Do not keep repairing JavaScript snippets
+  after repeated evaluate errors.
+- **However, if you have already extracted the requested data, you should not consider this as "no progress"; you should finish.**
 
 **Plan management:**
 - The plan provided in the user prompt is a suggestion. You are allowed to
@@ -68,10 +169,23 @@ Current step index:
 Latest observation:
 {observation}
 
+Consecutive tool failures:
+{consecutive_failures}
+
+Repeated tool request count:
+{repeat_count}
+
 Latest browser_snapshot:
 {snapshot}
 
 Available refs:
 {refs}
+
+Snapshot reuse rule:
+If the latest observation says browser_snapshot is already current or says to
+reuse the existing snapshot/refs, do not call browser_snapshot again with any
+depth. Continue from Latest browser_snapshot and Available refs. If the visible
+snapshot is insufficient for the next step, prefer browser_find or
+browser_evaluate; otherwise replan.
 
 Choose the next action."""

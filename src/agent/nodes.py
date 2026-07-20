@@ -14,8 +14,11 @@ from src.harness.memory import (
     ensure_message_history,
     with_tool_call_id,
 )
-from src.agent.subgraphs.observer.observer_llm import compress_tool_result
-from src.agent.subgraphs.observer.nodes import compile_observation
+from src.agent.subgraphs.observer.nodes import (
+    create_observe_node,
+    observe_node,
+)
+from src.agent.subgraphs.observer.utils import extract_element_refs
 from src.agent.prompts import AGENT_USER_PROMPT
 from src.agent.state import (
     AgentState,
@@ -78,8 +81,13 @@ def create_agent_node(
                         plan=_format_plan(state),
                         current_step=state.get("current_step", 0),
                         observation=state.get("observation", "No observation yet."),
+                        consecutive_failures=state.get("consecutive_failures", 0),
+                        repeat_count=state.get("repeat_count", 0),
                         snapshot=state.get("snapshot", ""),
-                        refs=", ".join(state.get("refs", [])) or "none",
+                        refs=", ".join(
+                            extract_element_refs(str(state.get("snapshot", "") or ""))
+                        )
+                        or "none",
                     )
                 ),
             ]
@@ -125,33 +133,6 @@ def create_agent_node(
     return agent_node
 
 
-def observe_node(state: AgentState) -> dict[str, Any]:
-    """Compile executor output into MCP-aware observation state without an LLM."""
-
-    return compile_observation(state)
-
-
-def create_observe_node(
-    observer_llm: Any | None = None,
-    *,
-    compress_tools: bool = False,
-) -> Callable[[AgentState], Any]:
-    """Create an observer node whose LLM only sees the latest ToolResult."""
-
-    async def _observe_node(state: AgentState) -> dict[str, Any]:
-        result = state.get("tool_result") or {}
-        compact_observation = None
-        if compress_tools:
-            compact_observation = await compress_tool_result(result, observer_llm)
-        return compile_observation(
-            state,
-            compact_observation,
-            compress_tool_output=compress_tools,
-        )
-
-    return _observe_node
-
-
 def human_input_node(state: AgentState) -> dict[str, Any]:
     """Ask a human to approve a risky tool call through LangGraph interrupt."""
 
@@ -173,14 +154,24 @@ def human_input_node(state: AgentState) -> dict[str, Any]:
     if approved:
         return {
             "policy_decision": "approved",
-            "human_approval": approval,
+            "policy_event": {
+                "decision": "approved",
+                "reason": "Human approval was granted.",
+                "tool_request": request,
+                "human_response": approval,
+            },
             "error": "",
         }
 
     reason = "Human approval was denied."
     return {
         "policy_decision": "blocked",
-        "human_approval": approval,
+        "policy_event": {
+            "decision": "blocked",
+            "reason": reason,
+            "tool_request": request,
+            "human_response": approval,
+        },
         "observation": reason,
         "error": reason,
         "messages": append_tool_message(

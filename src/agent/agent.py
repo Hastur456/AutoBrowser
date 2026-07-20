@@ -10,7 +10,7 @@ from langchain_ollama import ChatOllama
 from langgraph.graph import END, START, StateGraph
 
 from src.harness.memory import ensure_message_history
-from src.agent.nodes import create_agent_node, create_observe_node, human_input_node
+from src.agent.nodes import create_agent_node, human_input_node
 from src.harness.policy import policy_node as default_policy_node
 from src.agent.routers import (
     route_agent_decision,
@@ -18,8 +18,9 @@ from src.agent.routers import (
     route_policy_decision,
 )
 from src.agent.state import AgentState
-from src.agent.subgraphs.executor.nodes import create_executor_node
-from src.agent.subgraphs.planner.nodes import create_plan_node
+from src.agent.subgraphs.executor.workflow import build_executor_graph
+from src.agent.subgraphs.observer.workflow import build_observer_graph
+from src.agent.subgraphs.planner.workflow import build_planner_graph
 from src.harness.tools import ToolRegistry
 
 DEFAULT_OLLAMA_MODEL = "gpt-oss:20b-cloud"
@@ -48,7 +49,7 @@ def build_agent_graph(
     registry = tool_registry or ToolRegistry(tools=tools, tool_loader=tool_loader)
     graph = StateGraph(AgentState)
 
-    graph.add_node("plan", create_plan_node(model, history_builder=history_builder))
+    graph.add_node("plan", build_planner_graph(model, history_builder=history_builder))
     graph.add_node(
         "agent",
         create_agent_node(
@@ -61,12 +62,16 @@ def build_agent_graph(
     graph.add_node("human_input", human_input_node)
     graph.add_node(
         "executor",
-        create_executor_node(tool_registry=registry),
+        build_executor_graph(
+            tools=tools,
+            tool_loader=tool_loader,
+            tool_registry=registry,
+        ),
     )
     graph.add_node(
         "observe",
-        create_observe_node(
-            (observer_llm or model) if compress_tools else None,
+        build_observer_graph(
+            observer_llm=(observer_llm or model) if compress_tools else None,
             compress_tools=compress_tools,
         ),
     )
@@ -76,7 +81,7 @@ def build_agent_graph(
     graph.add_conditional_edges(
         "agent",
         route_agent_decision,
-        {"policy": "policy", "plan": "plan", END: END},
+        {"policy": "policy", "plan": "plan", "done": END, END: END},
     )
     graph.add_conditional_edges(
         "policy",

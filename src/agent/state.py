@@ -52,6 +52,33 @@ class CompactToolObservation(TypedDict, total=False):
     next_observation_hint: str
 
 
+class BrowserState(TypedDict, total=False):
+    """Browser context owned by observation state."""
+
+    snapshot: str
+    needs_fresh_snapshot: bool
+
+
+class RecoveryCounters(TypedDict, total=False):
+    """Retry and recovery counters that protect the agent loop."""
+
+    replan_count: int
+    consecutive_failures: int
+    repeat_count: int
+    snapshot_recovery_count: int
+    invalid_ref_recovery_count: int
+    stale_snapshot_retries: int
+
+
+class PolicyEvent(TypedDict, total=False):
+    """Auditable policy decision context."""
+
+    decision: PolicyDecision
+    reason: str
+    tool_request: ToolRequest
+    human_response: Any
+
+
 class AgentState(TypedDict, total=False):
     """Top-level graph state for the Plan -> Execute -> Observe loop."""
 
@@ -66,19 +93,26 @@ class AgentState(TypedDict, total=False):
 
     observation: str
     snapshot: str
-    refs: list[str]
+    browser: BrowserState
     messages: list[BaseMessage]
 
     last_tool: str
     last_args: dict[str, Any]
+    last_tool_request: ToolRequest
     repeat_count: int
     replan_count: int
     consecutive_failures: int
     snapshot_recovery_count: int
     invalid_ref_recovery_count: int
     stale_snapshot_retries: int
+    ineffective_action_count: int
     needs_fresh_snapshot: bool
+    counters: RecoveryCounters
+
+    snapshot_before_last_browser_action: str
+    last_browser_action: ToolRequest
+    ineffective_browser_action: ToolRequest
 
     final_answer: str
     error: str
-    human_approval: NotRequired[Any]
+    policy_event: NotRequired[PolicyEvent]

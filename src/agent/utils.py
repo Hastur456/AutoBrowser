@@ -21,6 +21,7 @@ from src.agent.state import (
 )
 
 SNAPSHOT_RECOVERY_DEPTH = 4
+SNAPSHOT_REUSE_MARKER = "browser_snapshot is already current"
 
 
 def _message_content(response: Any) -> str:
@@ -44,7 +45,11 @@ def _format_plan(state: AgentState) -> str:
     if not plan:
         return "No plan yet."
     return "\n".join(
-        f"{step.get('id', index)}. {step.get('description', '')}"
+        (
+            f"{step.get('id', index)}. "
+            f"[{step.get('status', 'pending')}] "
+            f"{step.get('description', '')}"
+        )
         for index, step in enumerate(plan, start=1)
     )
 
@@ -118,6 +123,8 @@ def _int_value(value: Any, default: int = 0) -> int:
 def _snapshot_recovery_request(state: AgentState, request: ToolRequest) -> ToolRequest | None:
     if request.get("name") != "browser_snapshot":
         return None
+    if _has_reusable_current_snapshot(state):
+        return None
     if int(state.get("snapshot_recovery_count", 0) or 0) >= MAX_SNAPSHOT_RECOVERIES:
         return None
 
@@ -136,14 +143,94 @@ def _snapshot_recovery_request(state: AgentState, request: ToolRequest) -> ToolR
     )
 
 
+def _has_reusable_current_snapshot(state: AgentState) -> bool:
+    return (
+        bool(str(state.get("snapshot", "") or "").strip())
+        and not bool(state.get("needs_fresh_snapshot"))
+        and not has_invalid_ref_text(state.get("error", ""))
+    )
+
+
+def _snapshot_reuse_was_blocked(state: AgentState) -> bool:
+    policy_event = state.get("policy_event") or {}
+    reason = str(policy_event.get("reason", "") or "")
+    observation = str(state.get("observation", "") or "")
+    error = str(state.get("error", "") or "")
+    payload = "\n".join([reason, observation, error]).lower()
+    return SNAPSHOT_REUSE_MARKER in payload
+
+
+def _snapshot_reuse_replan_update(state: AgentState) -> dict[str, Any]:
+    return _replan_response(
+        (
+            "browser_snapshot was just blocked because the current snapshot is "
+            "already reusable. Continue from the existing snapshot and refs; use "
+            "browser_find or browser_evaluate only if the current snapshot cannot "
+            "answer the next step. Do not request another browser_snapshot just "
+            "to vary depth."
+        ),
+        last_tool=state.get("last_tool", ""),
+        last_args=state.get("last_args", {}),
+        repeat_count=int(state.get("repeat_count", 0) or 0),
+    )
+
+
+def _browser_action_key(action: ToolRequest | dict[str, Any]) -> tuple[str, tuple[tuple[str, Any], ...]]:
+    name = str(action.get("name", "") or "").lower()
+    args = dict(action.get("args") or {})
+    target = args.pop("ref", None) or args.pop("target", None)
+    if target is not None:
+        args["target"] = str(target)
+    return name, tuple(sorted(args.items()))
+
+
+def _ineffective_action_repeat_update(
+    state: AgentState,
+    request: ToolRequest,
+) -> dict[str, Any] | None:
+    ineffective_action = state.get("ineffective_browser_action") or {}
+    if not ineffective_action:
+        return None
+
+    count = int(state.get("ineffective_action_count", 0) or 0)
+    if count <= 0:
+        return None
+
+    if _browser_action_key(ineffective_action) != _browser_action_key(request):
+        return None
+
+    return _replan_response(
+        (
+            f"{request.get('name', 'browser action')} with the same target did not "
+            "change the visible browser_snapshot. Replan before trying another "
+            "action: choose a different visible control/ref, request a deeper "
+            "snapshot, use evaluate only if the snapshot cannot expose the "
+            "control, or use a fallback route."
+        ),
+        ineffective_action_count=count,
+    )
+
+
 def _guard_tool_request(state: AgentState, request: ToolRequest) -> dict[str, Any] | None:
+    ineffective_repeat = _ineffective_action_repeat_update(state, request)
+    if ineffective_repeat is not None:
+        return ineffective_repeat
+
     if (
-        state.get("last_tool") == request.get("name")
-        and state.get("last_args", {}) == request.get("args", {})
+        request.get("name") == "browser_snapshot"
+        and _has_reusable_current_snapshot(state)
+        and _snapshot_reuse_was_blocked(state)
+    ):
+        return _snapshot_reuse_replan_update(state)
+
+    if (
+        _repeat_tracking_key(state.get("last_tool", ""), state.get("last_args", {}))
+        == _repeat_tracking_key(request.get("name", ""), request.get("args", {}))
         and int(state.get("repeat_count", 0) or 0) >= 2
     ):
         recovery_request = _snapshot_recovery_request(state, request)
         if recovery_request is not None:
+            tracking = _request_tracking_update(state, recovery_request)
             return {
                 "decision": "tool_call",
                 "tool_request": recovery_request,
@@ -152,7 +239,8 @@ def _guard_tool_request(state: AgentState, request: ToolRequest) -> dict[str, An
                 "snapshot_recovery_count": (
                     int(state.get("snapshot_recovery_count", 0) or 0) + 1
                 ),
-                **_request_tracking_update(state, recovery_request),
+                **tracking,
+                "repeat_count": 1,
             }
 
         return {
@@ -168,16 +256,31 @@ def _guard_tool_request(state: AgentState, request: ToolRequest) -> dict[str, An
     return None
 
 
+def _repeat_tracking_key(
+    tool_name: Any,
+    args: dict[str, Any] | None,
+) -> tuple[str, tuple[tuple[str, Any], ...]]:
+    name = str(tool_name or "")
+    normalized_args = dict(args or {})
+    if name == "browser_snapshot":
+        normalized_args.pop("depth", None)
+    return name, tuple(sorted(normalized_args.items()))
+
+
 def _request_tracking_update(state: AgentState, request: ToolRequest) -> dict[str, Any]:
     tool_name = request.get("name", "")
     args = request.get("args", {})
-    if state.get("last_tool") == tool_name and state.get("last_args", {}) == args:
+    if _repeat_tracking_key(state.get("last_tool", ""), state.get("last_args", {})) == (
+        _repeat_tracking_key(tool_name, args)
+    ):
         repeat_count = int(state.get("repeat_count", 0) or 0) + 1
     else:
         repeat_count = 1
+    tool_request = {**request, "args": args}
     return {
         "last_tool": tool_name,
         "last_args": args,
+        "last_tool_request": tool_request,
         "repeat_count": repeat_count,
     }
 
@@ -237,6 +340,7 @@ def _fresh_snapshot_request(state: AgentState, messages: list[Any]) -> dict[str,
         "messages": append_ai_tool_call(messages, request),
         "last_tool": request["name"],
         "last_args": request["args"],
+        "last_tool_request": request,
         "repeat_count": 1,
     }
 
@@ -261,7 +365,6 @@ def _stale_snapshot_retry_update(state: AgentState) -> dict[str, Any]:
             stale_snapshot_retries=0,
             invalid_ref_recovery_count=0,
             snapshot="",
-            refs=[],
         )
 
     return {"stale_snapshot_retries": retries}
