@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from src.harness.memory import append_tool_message, tool_result_message_content
+from src.agent.subgraphs.executor.nodes import _element_description_from_snapshot
 from src.agent.subgraphs.observer.observer_llm import (
     compress_tool_result,
     fallback_compact_observation,
@@ -27,16 +28,27 @@ def _snapshot_fingerprint(snapshot: str) -> str:
     lines = []
     for line in snapshot.splitlines():
         normalized = re.sub(r"\s+\[(?:active|focused)\]", "", line.strip())
+        normalized = re.sub(r"\[ref=[^\]]+\]", "[ref]", normalized)
+        normalized = re.sub(r"\bref=[A-Za-z][A-Za-z0-9_-]*\b", "ref", normalized)
         if normalized:
             lines.append(normalized)
     return "\n".join(lines)
 
 
-def _action_identity(request: dict[str, Any], tool_name: str) -> dict[str, Any]:
-    return {
+def _action_identity(
+    request: dict[str, Any],
+    tool_name: str,
+    snapshot: str = "",
+) -> dict[str, Any]:
+    args = dict(request.get("args") or {})
+    action: dict[str, Any] = {
         "name": tool_name,
-        "args": dict(request.get("args") or {}),
+        "args": args,
     }
+    ref = str(args.get("ref") or args.get("target") or "")
+    if ref and snapshot:
+        action["target_description"] = _element_description_from_snapshot(snapshot, ref)
+    return action
 
 
 def _same_action(left: Any, right: Any) -> bool:
@@ -101,7 +113,12 @@ def compile_observation(
             if current_fingerprint == previous_fingerprint:
                 prior_ineffective = state.get("ineffective_browser_action") or {}
                 prior_count = int(state.get("ineffective_action_count", 0) or 0)
+                prior_history = list(state.get("ineffective_browser_actions") or [])
                 updates["ineffective_browser_action"] = last_action
+                updates["ineffective_browser_actions"] = [
+                    *prior_history,
+                    last_action,
+                ][-5:]
                 updates["ineffective_action_count"] = (
                     prior_count + 1 if _same_action(prior_ineffective, last_action) else 1
                 )
@@ -112,15 +129,19 @@ def compile_observation(
                 )
             else:
                 updates["ineffective_browser_action"] = {}
+                updates["ineffective_browser_actions"] = []
                 updates["ineffective_action_count"] = 0
         updates["snapshot_before_last_browser_action"] = ""
     elif is_browser_tool and (status == "success" or needs_fresh_after_error):
         if status == "success":
             if is_browser_action:
-                updates["snapshot_before_last_browser_action"] = str(
-                    state.get("snapshot", "") or ""
+                action_snapshot = str(state.get("snapshot", "") or "")
+                updates["snapshot_before_last_browser_action"] = action_snapshot
+                updates["last_browser_action"] = _action_identity(
+                    request,
+                    tool_name,
+                    action_snapshot,
                 )
-                updates["last_browser_action"] = _action_identity(request, tool_name)
             updates["snapshot"] = ""
             updates["unchanged_snapshot_count"] = 0
         if needs_fresh_after_error:
@@ -142,20 +163,29 @@ def compile_observation(
     if status == "success":
         plan = state.get("plan") or []
         current_step = int(state.get("current_step", 0) or 0)
-        updates.update(
-            _plan_completion_update(
-                plan,
-                current_step,
-                compact,
-                tool_name=tool_name,
-            )
+        plan_update = _plan_completion_update(
+            plan,
+            current_step,
+            compact,
+            tool_name=tool_name,
         )
+        updates.update(plan_update)
+        if plan_update:
+            updates["steps_without_plan_advance"] = 0
+        elif plan and current_step < len(plan):
+            updates["steps_without_plan_advance"] = (
+                int(state.get("steps_without_plan_advance", 0) or 0) + 1
+            )
         updates["error"] = ""
         updates["consecutive_failures"] = 0
         if tool_name != "browser_snapshot":
             updates["stale_snapshot_retries"] = 0
             updates["invalid_ref_recovery_count"] = 0
-        if is_snapshot and int(updates.get("unchanged_snapshot_count", 0) or 0) >= MAX_UNCHANGED_SNAPSHOTS:
+        if (
+            is_snapshot
+            and int(updates.get("unchanged_snapshot_count", 0) or 0)
+            >= MAX_UNCHANGED_SNAPSHOTS
+        ):
             final_answer = (
                 "Stopped because browser_snapshot returned the same visible state "
                 "three consecutive times. Latest observation:\n\n"

@@ -58,6 +58,15 @@ def classify_tool_request(
     if any(marker in name for marker in BLOCKED_TOOL_MARKERS):
         return "needs_human", f"Tool requires human approval before use: {request['name']}"
 
+    ineffective_action_count = int(state.get("ineffective_action_count", 0) or 0)
+    if ineffective_action_count >= 3:
+        return (
+            "blocked",
+            "The last browser actions repeatedly did not change the visible page. "
+            "Replan with a different control, a direct URL fallback, or finish with "
+            "the visible result instead of continuing UI retries.",
+        )
+
     if name == "browser_snapshot":
         needs_fresh_snapshot = bool(state.get("needs_fresh_snapshot"))
         has_active_invalid_ref = has_invalid_ref_text(state.get("error", ""))

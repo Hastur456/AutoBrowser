@@ -11,10 +11,12 @@ from src.harness.memory import (
     ensure_message_history,
     with_tool_call_id,
 )
+from src.agent.subgraphs.executor.nodes import _element_description_from_snapshot
 from src.agent.subgraphs.observer.utils import has_invalid_ref_text
 from src.agent.state import (
     MAX_CONSECUTIVE_FAILURES,
     MAX_REPLANS,
+    MAX_STEPS_WITHOUT_PLAN_ADVANCE,
     AgentState,
     ToolRequest,
 )
@@ -144,6 +146,18 @@ def _terminal_guard(state: AgentState) -> dict[str, Any] | None:
             ),
         )
 
+    steps_without_plan_advance = int(state.get("steps_without_plan_advance", 0) or 0)
+    if steps_without_plan_advance >= MAX_STEPS_WITHOUT_PLAN_ADVANCE:
+        observation = str(state.get("observation", "") or "No observation available.")
+        return _blocked_response(
+            state,
+            (
+                "Blocked: the current plan step did not advance after "
+                f"{MAX_STEPS_WITHOUT_PLAN_ADVANCE} successful tool steps. "
+                f"Last observation: {observation}"
+            ),
+        )
+
     return None
 
 
@@ -179,12 +193,18 @@ def _snapshot_reuse_replan_update(state: AgentState) -> dict[str, Any]:
     )
 
 
-def _browser_action_key(action: ToolRequest | dict[str, Any]) -> tuple[str, tuple[tuple[str, Any], ...]]:
+def _browser_action_key(
+    action: ToolRequest | dict[str, Any],
+    snapshot: str = "",
+) -> tuple[str, tuple[tuple[str, Any], ...]]:
     name = str(action.get("name", "") or "").lower()
     args = dict(action.get("args") or {})
     target = args.pop("ref", None) or args.pop("target", None)
     if target is not None:
-        args["target"] = str(target)
+        target_description = str(action.get("target_description", "") or "")
+        if not target_description and snapshot:
+            target_description = _element_description_from_snapshot(snapshot, str(target))
+        args["target"] = target_description or str(target)
     return name, tuple(sorted(args.items()))
 
 
@@ -192,15 +212,19 @@ def _ineffective_action_repeat_update(
     state: AgentState,
     request: ToolRequest,
 ) -> dict[str, Any] | None:
+    ineffective_actions = list(state.get("ineffective_browser_actions") or [])
     ineffective_action = state.get("ineffective_browser_action") or {}
-    if not ineffective_action:
+    if ineffective_action:
+        ineffective_actions.append(ineffective_action)
+    if not ineffective_actions:
         return None
 
     count = int(state.get("ineffective_action_count", 0) or 0)
     if count <= 0:
         return None
 
-    if _browser_action_key(ineffective_action) != _browser_action_key(request):
+    request_key = _browser_action_key(request, str(state.get("snapshot", "") or ""))
+    if not any(_browser_action_key(action) == request_key for action in ineffective_actions):
         return None
 
     return _replan_response(
@@ -227,9 +251,14 @@ def _guard_tool_request(state: AgentState, request: ToolRequest) -> dict[str, An
     ):
         return _snapshot_reuse_replan_update(state)
 
+    snapshot = str(state.get("snapshot", "") or "")
     if (
-        _repeat_tracking_key(state.get("last_tool", ""), state.get("last_args", {}))
-        == _repeat_tracking_key(request.get("name", ""), request.get("args", {}))
+        _repeat_tracking_key(
+            state.get("last_tool", ""),
+            state.get("last_args", {}),
+            snapshot,
+        )
+        == _repeat_tracking_key(request.get("name", ""), request.get("args", {}), snapshot)
         and int(state.get("repeat_count", 0) or 0) >= 2
     ):
         if request.get("name") == "browser_snapshot":
@@ -262,19 +291,27 @@ def _guard_tool_request(state: AgentState, request: ToolRequest) -> dict[str, An
 def _repeat_tracking_key(
     tool_name: Any,
     args: dict[str, Any] | None,
+    snapshot: str = "",
 ) -> tuple[str, tuple[tuple[str, Any], ...]]:
     name = str(tool_name or "")
     normalized_args = dict(args or {})
     if name == "browser_snapshot":
         normalized_args.pop("depth", None)
+    target = normalized_args.pop("ref", None) or normalized_args.pop("target", None)
+    if target is not None:
+        target_description = (
+            _element_description_from_snapshot(snapshot, str(target)) if snapshot else ""
+        )
+        normalized_args["target"] = target_description or str(target)
     return name, tuple(sorted(normalized_args.items()))
 
 
 def _request_tracking_update(state: AgentState, request: ToolRequest) -> dict[str, Any]:
     tool_name = request.get("name", "")
     args = request.get("args", {})
-    if _repeat_tracking_key(state.get("last_tool", ""), state.get("last_args", {})) == (
-        _repeat_tracking_key(tool_name, args)
+    snapshot = str(state.get("snapshot", "") or "")
+    if _repeat_tracking_key(state.get("last_tool", ""), state.get("last_args", {}), snapshot) == (
+        _repeat_tracking_key(tool_name, args, snapshot)
     ):
         repeat_count = int(state.get("repeat_count", 0) or 0) + 1
     else:

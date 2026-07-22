@@ -156,6 +156,16 @@ def test_policy_does_not_classify_ineffective_browser_actions() -> None:
     assert "browser_click" in reason
 
 
+def test_policy_blocks_accumulated_ineffective_browser_actions() -> None:
+    decision, reason = classify_tool_request(
+        {"ineffective_action_count": 3},
+        {"name": "browser_click", "args": {"target": "f1e38"}},
+    )
+
+    assert decision == "blocked"
+    assert "did not change" in reason
+
+
 @pytest.mark.asyncio
 async def test_agent_node_replans_repeated_ineffective_browser_action() -> None:
     llm = FakeListLLM(
@@ -177,6 +187,40 @@ async def test_agent_node_replans_repeated_ineffective_browser_action() -> None:
                 "name": "browser_click",
                 "args": {"target": "f1e38"},
             },
+            "ineffective_action_count": 1,
+        }
+    )
+
+    assert result["decision"] == "replan"
+    assert "did not change" in result["observation"]
+
+
+@pytest.mark.asyncio
+async def test_agent_node_replans_ineffective_action_when_ref_changes() -> None:
+    llm = FakeListLLM(
+        responses=[
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_type","args":{"ref":"e19","text":"2000"},'
+                '"reason":"Try price again"}}'
+            )
+        ]
+    )
+    node = create_agent_node(llm)
+
+    result = await node(
+        {
+            "task": "Set price filter",
+            "plan": [{"id": 1, "description": "Apply price filter", "status": "pending"}],
+            "current_step": 0,
+            "snapshot": '- textbox "Цена от" [ref=e19]',
+            "ineffective_browser_actions": [
+                {
+                    "name": "browser_type",
+                    "args": {"ref": "e5", "text": "2000"},
+                    "target_description": 'textbox "Цена от"',
+                }
+            ],
             "ineffective_action_count": 1,
         }
     )
@@ -866,6 +910,7 @@ def test_observe_node_marks_action_ineffective_when_next_snapshot_is_unchanged()
     assert snapshot_result["ineffective_browser_action"] == {
         "name": "browser_click",
         "args": {"target": "f1e38"},
+        "target_description": 'button "Search"',
     }
     assert snapshot_result["ineffective_action_count"] == 1
     assert "did not change" in snapshot_result["observation"]
@@ -904,6 +949,7 @@ async def test_observer_graph_preserves_ineffective_action_fields() -> None:
     assert snapshot_result["ineffective_browser_action"] == {
         "name": "browser_click",
         "args": {"target": "f1e38"},
+        "target_description": 'button "Search"',
     }
     assert snapshot_result["ineffective_action_count"] == 1
 
@@ -964,6 +1010,48 @@ def test_observe_node_stops_after_three_unchanged_snapshots() -> None:
     assert result["decision"] == "done"
     assert result["unchanged_snapshot_count"] == 3
     assert "same visible state" in result["final_answer"]
+
+
+def test_observe_node_treats_snapshot_with_new_refs_as_unchanged() -> None:
+    result = observe_node(
+        {
+            "snapshot": '- textbox "Цена от" [ref=e5]\n- link "Item" ref=e6',
+            "unchanged_snapshot_count": 1,
+            "tool_result": {
+                "name": "browser_snapshot",
+                "status": "success",
+                "content": '- textbox "Цена от" [ref=e19]\n- link "Item" ref=e27',
+                "error": "",
+            },
+        }
+    )
+
+    assert result["unchanged_snapshot_count"] == 2
+
+
+def test_observe_node_records_ineffective_action_when_only_ref_changes() -> None:
+    result = observe_node(
+        {
+            "snapshot": '- textbox "Цена от" [ref=e19]',
+            "snapshot_before_last_browser_action": '- textbox "Цена от" [ref=e5]',
+            "last_browser_action": {
+                "name": "browser_type",
+                "args": {"ref": "e5", "text": "2000"},
+                "target_description": 'textbox "Цена от"',
+            },
+            "tool_result": {
+                "name": "browser_snapshot",
+                "status": "success",
+                "content": '- textbox "Цена от" [ref=e19]',
+                "error": "",
+            },
+        }
+    )
+
+    assert result["ineffective_action_count"] == 1
+    assert result["ineffective_browser_actions"][0]["target_description"] == (
+        'textbox "Цена от"'
+    )
 
 
 def test_observe_node_preserves_snapshot_after_non_ref_browser_error() -> None:
@@ -1294,6 +1382,24 @@ async def test_graph_stops_after_consecutive_tool_failures() -> None:
     assert result["consecutive_failures"] == 3
     assert "Blocked: tool execution failed 3 consecutive times" in result["final_answer"]
     assert "connect ECONNREFUSED ::1:9222" in result["final_answer"]
+
+
+@pytest.mark.asyncio
+async def test_agent_node_stops_after_successful_steps_without_plan_advance() -> None:
+    node = create_agent_node(FailingLLM())
+
+    result = await node(
+        {
+            "task": "Apply price filter",
+            "plan": [{"id": 1, "description": "Apply price filter", "status": "pending"}],
+            "current_step": 0,
+            "steps_without_plan_advance": 8,
+            "observation": "browser_find returned success.\n\nNo matches.",
+        }
+    )
+
+    assert result["decision"] == "done"
+    assert "did not advance after 8 successful tool steps" in result["final_answer"]
 
 
 @pytest.mark.asyncio
