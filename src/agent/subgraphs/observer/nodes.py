@@ -20,6 +20,9 @@ from .utils import (
 )
 
 
+MAX_UNCHANGED_SNAPSHOTS = 3
+
+
 def _snapshot_fingerprint(snapshot: str) -> str:
     lines = []
     for line in snapshot.splitlines():
@@ -78,12 +81,22 @@ def compile_observation(
     }
 
     if is_snapshot:
+        prior_unchanged_snapshots = int(state.get("unchanged_snapshot_count", 0) or 0)
+        previous_browser_snapshot = str(state.get("snapshot", "") or "")
+        current_fingerprint = _snapshot_fingerprint(content)
+        previous_browser_fingerprint = _snapshot_fingerprint(previous_browser_snapshot)
+
+        if previous_browser_fingerprint and current_fingerprint == previous_browser_fingerprint:
+            unchanged_snapshot_count = prior_unchanged_snapshots + 1
+        else:
+            unchanged_snapshot_count = 1
+
         updates["snapshot"] = content
         updates["needs_fresh_snapshot"] = False
+        updates["unchanged_snapshot_count"] = unchanged_snapshot_count
         previous_snapshot = str(state.get("snapshot_before_last_browser_action", "") or "")
         last_action = state.get("last_browser_action") or {}
         if previous_snapshot and last_action:
-            current_fingerprint = _snapshot_fingerprint(content)
             previous_fingerprint = _snapshot_fingerprint(previous_snapshot)
             if current_fingerprint == previous_fingerprint:
                 prior_ineffective = state.get("ineffective_browser_action") or {}
@@ -109,9 +122,11 @@ def compile_observation(
                 )
                 updates["last_browser_action"] = _action_identity(request, tool_name)
             updates["snapshot"] = ""
+            updates["unchanged_snapshot_count"] = 0
         if needs_fresh_after_error:
             updates["snapshot"] = ""
             updates["needs_fresh_snapshot"] = True
+            updates["unchanged_snapshot_count"] = 0
 
     observation = "\n\n".join(observation_lines)
     updates["observation"] = observation
@@ -140,6 +155,15 @@ def compile_observation(
         if tool_name != "browser_snapshot":
             updates["stale_snapshot_retries"] = 0
             updates["invalid_ref_recovery_count"] = 0
+        if is_snapshot and int(updates.get("unchanged_snapshot_count", 0) or 0) >= MAX_UNCHANGED_SNAPSHOTS:
+            final_answer = (
+                "Stopped because browser_snapshot returned the same visible state "
+                "three consecutive times. Latest observation:\n\n"
+                f"{observation}"
+            )
+            updates["decision"] = "done"
+            updates["final_answer"] = final_answer
+            updates["observation"] = final_answer
     else:
         updates["error"] = str(result.get("error", "") or "")
         updates["consecutive_failures"] = (

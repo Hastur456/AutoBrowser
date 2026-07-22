@@ -31,3 +31,4 @@ class ObserverState(TypedDict, total=False):
     last_browser_action: ToolRequest
     ineffective_browser_action: ToolRequest
     ineffective_action_count: int
+    unchanged_snapshot_count: int

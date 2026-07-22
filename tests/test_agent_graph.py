@@ -443,7 +443,7 @@ async def test_agent_node_replans_after_second_stale_snapshot_retry() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_node_deepens_snapshot_on_third_identical_snapshot_request() -> None:
+async def test_agent_node_stops_on_third_identical_snapshot_request() -> None:
     llm = FakeListLLM(
         responses=[
             (
@@ -462,20 +462,18 @@ async def test_agent_node_deepens_snapshot_on_third_identical_snapshot_request()
             "last_tool": "browser_snapshot",
             "last_args": {},
             "repeat_count": 2,
+            "unchanged_snapshot_count": 2,
         }
     )
 
-    assert result["decision"] == "tool_call"
-    assert result["tool_request"]["name"] == "browser_snapshot"
-    assert result["tool_request"]["args"] == {"depth": 4}
-    assert result["snapshot_recovery_count"] == 1
-    assert result["repeat_count"] == 1
-    assert result["messages"][-1].type == "ai"
-    assert result["messages"][-1].tool_calls[0]["args"] == {"depth": 4}
+    assert result["decision"] == "done"
+    assert "three consecutive times" in result["final_answer"]
+    assert result["repeat_count"] == 3
+    assert result["plan"][0]["status"] == "completed"
 
 
 @pytest.mark.asyncio
-async def test_agent_node_replans_after_snapshot_recovery_is_exhausted() -> None:
+async def test_agent_node_stops_repeated_snapshot_even_after_prior_recovery() -> None:
     llm = FakeListLLM(
         responses=[
             (
@@ -495,14 +493,14 @@ async def test_agent_node_replans_after_snapshot_recovery_is_exhausted() -> None
             "last_args": {},
             "repeat_count": 2,
             "snapshot_recovery_count": 1,
+            "unchanged_snapshot_count": 2,
         }
     )
 
-    assert result["decision"] == "replan"
+    assert result["decision"] == "done"
     assert result["repeat_count"] == 3
-    assert "three consecutive times" in result["observation"]
-    assert result["messages"][-1].type == "tool"
-    assert "three consecutive times" in result["messages"][-1].content
+    assert "three consecutive times" in result["final_answer"]
+    assert result["plan"][0]["status"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -526,12 +524,13 @@ async def test_agent_node_replans_repeated_snapshot_with_varied_depth() -> None:
             "last_tool": "browser_snapshot",
             "last_args": {"depth": 10},
             "repeat_count": 2,
+            "unchanged_snapshot_count": 2,
         }
     )
 
-    assert result["decision"] == "replan"
+    assert result["decision"] == "done"
     assert result["repeat_count"] == 3
-    assert "three consecutive times" in result["observation"]
+    assert "three consecutive times" in result["final_answer"]
 
 
 @pytest.mark.asyncio
@@ -693,7 +692,7 @@ def test_observe_node_translates_snapshot_and_advances_inspection_plan() -> None
     assert extract_element_refs(result["snapshot"]) == ["e7", "e8"]
     assert "Refs:" in result["observation"]
     assert result["current_step"] == 1
-    assert result["plan"][0]["status"] == "done"
+    assert result["plan"][0]["status"] == "completed"
     assert result["plan"][1]["status"] == "in_progress"
     assert "latest_observation" not in result
     assert "browser_context" not in result
@@ -726,7 +725,29 @@ def test_observe_node_advances_plan_only_with_step_completion_evidence() -> None
     )
 
     assert result["current_step"] == 1
-    assert result["plan"][0]["status"] == "done"
+    assert result["plan"][0]["status"] == "completed"
+    assert result["plan"][1]["status"] == "in_progress"
+
+
+def test_observe_node_advances_plan_for_unicode_find_evidence() -> None:
+    result = compile_observation(
+        {
+            "plan": [
+                {"id": 1, "description": "Найти осенние куртки", "status": "pending"},
+                {"id": 2, "description": "Extract product results", "status": "pending"},
+            ],
+            "current_step": 0,
+            "tool_result": {
+                "name": "browser_find",
+                "status": "success",
+                "content": 'Found 22 matches for "куртка"',
+                "error": "",
+            },
+        }
+    )
+
+    assert result["current_step"] == 1
+    assert result["plan"][0]["status"] == "completed"
     assert result["plan"][1]["status"] == "in_progress"
 
 
@@ -920,6 +941,29 @@ def test_observe_node_clears_ineffective_action_when_snapshot_changes() -> None:
 
     assert snapshot_result["ineffective_browser_action"] == {}
     assert snapshot_result["ineffective_action_count"] == 0
+
+
+def test_observe_node_stops_after_three_unchanged_snapshots() -> None:
+    snapshot = '- button "Search" ref=e7'
+
+    result = observe_node(
+        {
+            "snapshot": snapshot,
+            "unchanged_snapshot_count": 2,
+            "plan": [{"id": 1, "description": "Inspect page", "status": "pending"}],
+            "current_step": 0,
+            "tool_result": {
+                "name": "browser_snapshot",
+                "status": "success",
+                "content": snapshot,
+                "error": "",
+            },
+        }
+    )
+
+    assert result["decision"] == "done"
+    assert result["unchanged_snapshot_count"] == 3
+    assert "same visible state" in result["final_answer"]
 
 
 def test_observe_node_preserves_snapshot_after_non_ref_browser_error() -> None:

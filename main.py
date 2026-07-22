@@ -64,8 +64,13 @@ class MCPRuntime:
         return session
 
     async def close(self) -> None:
-        await self._stack.aclose()
-        self.session = None
+        try:
+            await self._stack.aclose()
+        except GeneratorExit:
+            pass
+        finally:
+            self.session = None
+            self._stack = AsyncExitStack()
 
 
 _mcp_runtime: MCPRuntime | None = None
@@ -374,58 +379,63 @@ async def run_agent(args: argparse.Namespace) -> int:
 
     tracing_enabled = configure_langsmith_tracing()
     llm = ChatOllama(model=args.model, temperature=args.temperature)
-    if args.no_mcp:
-        tools: list[Any] = []
-    else:
-        start_chrome_cdp(args.chrome_path, args.user_data_dir, args.cdp_port)
-        await wait_for_port(args.cdp_port, args.cdp_timeout)
-        print("=== Сервер подключен ===")
-        tools = await load_browser_tools(args.cdp_port)
-        if args.show_tools:
-            print_tools(tools)
+    mcp_enabled = not args.no_mcp
+    try:
+        if args.no_mcp:
+            tools: list[Any] = []
+        else:
+            start_chrome_cdp(args.chrome_path, args.user_data_dir, args.cdp_port)
+            await wait_for_port(args.cdp_port, args.cdp_timeout)
+            print("=== Сервер подключен ===")
+            tools = await load_browser_tools(args.cdp_port)
+            if args.show_tools:
+                print_tools(tools)
 
-    harness = BrowserHarness(
-        build_agent_graph,
-        llm=llm,
-        tools=tools,
-        compress_tools=args.compress_tools,
-    )
-    config = {
-        "recursion_limit": args.recursion_limit,
-        "run_name": "AutoBrowser CLI task",
-        "metadata": {
-            "model": args.model,
-            "temperature": args.temperature,
-            "show_state": args.show_state,
-            "hide_snapshot": args.hide_snapshot,
-            "langsmith_tracing": tracing_enabled,
-            "compress_tools": args.compress_tools,
-        },
-        "tags": [
-            "autobrowser",
-            "cli",
-        ],
-    }
+        harness = BrowserHarness(
+            build_agent_graph,
+            llm=llm,
+            tools=tools,
+            compress_tools=args.compress_tools,
+        )
+        config = {
+            "recursion_limit": args.recursion_limit,
+            "run_name": "AutoBrowser CLI task",
+            "metadata": {
+                "model": args.model,
+                "temperature": args.temperature,
+                "show_state": args.show_state,
+                "hide_snapshot": args.hide_snapshot,
+                "langsmith_tracing": tracing_enabled,
+                "compress_tools": args.compress_tools,
+            },
+            "tags": [
+                "autobrowser",
+                "cli",
+            ],
+        }
 
-    if args.loop:
-        print("Интерактивный режим. Введите 'quit' для выхода.\n")
-        while True:
-            try:
-                task = input("Задача> ").strip()
-            except (KeyboardInterrupt, EOFError):
-                print("\nВыход.")
-                return 0
-            if not task:
-                continue
-            if task.lower() in {"quit", "exit", "выход"}:
-                return 0
-            await run_task(harness, task, args, config)
-            print()
+        if args.loop:
+            print("Интерактивный режим. Введите 'quit' для выхода.\n")
+            while True:
+                try:
+                    task = input("Задача> ").strip()
+                except (KeyboardInterrupt, EOFError):
+                    print("\nВыход.")
+                    return 0
+                if not task:
+                    continue
+                if task.lower() in {"quit", "exit", "выход"}:
+                    return 0
+                await run_task(harness, task, args, config)
+                print()
+            return 0
+
+        task = resolve_task(args)
+        await run_task(harness, task, args, config)
         return 0
-
-    task = resolve_task(args)
-    await run_task(harness, task, args, config)
-    return 0
+    finally:
+        if mcp_enabled:
+            await close_mcp_session()
 
 
 def resolve_task(args: argparse.Namespace) -> str:

@@ -21,7 +21,7 @@ class PlanStep(TypedDict, total=False):
 
     id: int
     description: str
-    status: Literal["pending", "in_progress", "done"]
+    status: Literal["pending", "in_progress", "completed"]
 
 
 class ToolRequest(TypedDict, total=False):
@@ -106,6 +106,7 @@ class AgentState(TypedDict, total=False):
     invalid_ref_recovery_count: int
     stale_snapshot_retries: int
     ineffective_action_count: int
+    unchanged_snapshot_count: int
     needs_fresh_snapshot: bool
     counters: RecoveryCounters
 

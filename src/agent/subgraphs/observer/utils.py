@@ -9,7 +9,7 @@ from src.agent.state import CompactToolObservation, PlanStep, ToolResult
 MAX_CONTENT_PREVIEW_CHARS = 1200
 MAX_REFS_IN_OBSERVATION = 25
 REF_PATTERN = re.compile(r"\bref=([A-Za-z][A-Za-z0-9_-]*)\b")
-WORD_PATTERN = re.compile(r"[a-z0-9]+")
+WORD_PATTERN = re.compile(r"[\w]+", re.UNICODE)
 INVALID_REF_PATTERN = re.compile(
     r"\bRef\s+[A-Za-z][A-Za-z0-9_-]*\s+not\s+found\b",
     re.IGNORECASE,
@@ -38,6 +38,8 @@ STALE_OR_MISSING_ELEMENT_PATTERNS = tuple(
     )
 )
 COMPLETION_EVIDENCE_TERMS = {
+    "completed",
+    "extracted",
     "appeared",
     "appears",
     "available",
@@ -221,7 +223,7 @@ def _advance_plan(plan: list[PlanStep], current_step: int) -> tuple[list[PlanSte
         return plan, current_step
 
     updated_plan: list[PlanStep] = [dict(step) for step in plan]
-    updated_plan[current_step]["status"] = "done"
+    updated_plan[current_step]["status"] = "completed"
     next_step = current_step + 1
     if next_step < len(updated_plan):
         updated_plan[next_step]["status"] = "in_progress"
@@ -232,6 +234,18 @@ def _step_keywords(description: str) -> set[str]:
     words = set(WORD_PATTERN.findall(description.lower()))
     keywords = {word for word in words if len(word) > 2 and word not in STEP_STOPWORDS}
     return keywords or {word for word in words if len(word) > 2}
+
+
+def _has_keyword_match(keywords: set[str], evidence_words: set[str]) -> bool:
+    for keyword in keywords:
+        if keyword in evidence_words:
+            return True
+        if len(keyword) < 5:
+            continue
+        keyword_prefix = keyword[:5]
+        if any(len(word) >= 5 and word[:5] == keyword_prefix for word in evidence_words):
+            return True
+    return False
 
 
 def _has_step_completion_evidence(
@@ -254,7 +268,7 @@ def _has_step_completion_evidence(
 
     keywords = _step_keywords(str(step.get("description", "") or ""))
     evidence_words = set(WORD_PATTERN.findall(evidence_text))
-    return bool(keywords & evidence_words)
+    return _has_keyword_match(keywords, evidence_words)
 
 
 def _snapshot_completes_step(step: PlanStep) -> bool:
