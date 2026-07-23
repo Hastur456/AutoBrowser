@@ -12,6 +12,8 @@ snapshots and element refs instead of CSS selectors or DOM assumptions.
 - Loads Playwright MCP tools and connects them to Chrome over CDP.
 - Executes tool calls through a harness-owned registry and policy layer.
 - Observes tool output and browser snapshots before deciding the next action.
+- Keeps a process-long session alive so multiple tasks can run without
+  restarting the application.
 - Supports dry CLI runs without browser/MCP tools for development checks.
 
 ## Requirements
@@ -56,16 +58,19 @@ Dry run without MCP browser tools:
 python main.py --no-mcp --task "inspect page"
 ```
 
+After the startup task completes, the CLI remains in the session prompt for the
+next task. Exit with `quit`, `exit`, Ctrl+C, or EOF.
+
 Run with browser tools enabled:
 
 ```powershell
 python main.py --task "open the target page"
 ```
 
-Interactive mode:
+Start directly at the session prompt:
 
 ```powershell
-python main.py --loop
+python main.py
 ```
 
 Show graph state updates while debugging:
@@ -74,10 +79,10 @@ Show graph state updates while debugging:
 python main.py --show-state --hide-snapshot --task "inspect page"
 ```
 
-Useful flags include `--loop`, `--show-state`, `--show-tools`, `--json`,
+Useful flags include `--show-state`, `--show-tools`, `--json`,
 `--hide-snapshot`, `--compress-tools`, `--model`, `--temperature`,
 `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, and
-`--recursion-limit`.
+`--recursion-limit`. `--loop` is still accepted for compatibility.
 
 ## Test
 
@@ -103,12 +108,12 @@ python -m pytest tests\test_prompts.py
 
 | Path | Purpose |
 | --- | --- |
-| `main.py` | CLI parsing, model setup, Chrome/CDP startup, MCP tool loading, task execution. |
+| `main.py` | CLI parsing and wiring the process into the session runtime. |
 | `src/agent/` | LangGraph graph assembly, state, prompts, reasoning node, and routers. |
 | `src/agent/subgraphs/planner/` | Planning graph and planner prompt. |
 | `src/agent/subgraphs/executor/` | Tool execution graph and Playwright MCP argument normalization. |
 | `src/agent/subgraphs/observer/` | Tool-result observation, snapshot handling, and compact summaries. |
-| `src/harness/` | Runtime, context, memory, tools, policy, and telemetry boundaries. |
+| `src/harness/` | Session runtime, graph harness, context, memory, tools, policy, and telemetry boundaries. |
 | `src/mcp/` | MCP session and Playwright MCP integration helpers. |
 | `tests/` | Pytest coverage for graph behavior, harness boundaries, CLI, prompts, and tools. |
 | `scripts/` | Utility scripts, including graph visualization helpers. |
@@ -124,8 +129,9 @@ START -> plan -> agent -> policy -> executor -> observe -> agent
 
 The `agent` node can route back to `plan` for replanning or finish when a final
 answer is available. The runtime infrastructure is injected through
-`BrowserHarness` in `src/harness/runtime.py`, keeping browser tooling, memory,
-policy, telemetry, and context outside the core agent loop.
+`SessionRuntime` and `BrowserHarness` in `src/harness/`, keeping browser
+tooling, memory, policy, telemetry, context, and interaction lifecycle outside
+the core agent loop.
 
 ## Browser Interaction Rules
 

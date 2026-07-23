@@ -1,11 +1,16 @@
 # Harness Boundaries
 
-This diagram shows how `BrowserHarness` composes runtime infrastructure around
-the LangGraph agent loop.
+This diagram shows how `SessionRuntime` owns process-lifetime resources and
+uses `BrowserHarness` to compose runtime infrastructure around one task
+execution.
 
 ```mermaid
 flowchart LR
-  CLI[main.py CLI] --> Harness[BrowserHarness]
+  CLI[main.py CLI] --> Session[SessionRuntime]
+  Session --> LLM[Chat model]
+  Session --> Chrome[Chrome/CDP]
+  Session --> MCPRuntime[MCP session]
+  Session --> Harness[BrowserHarness]
   Harness --> Context[ContextBuilder]
   Harness --> Memory[MemoryManager]
   Harness --> Tools[ToolRegistry]
@@ -21,6 +26,6 @@ flowchart LR
   Graph --> Observer[Observer subgraph]
 ```
 
-The boundary is intentional: browser-specific clients and toolsets should be
-registered through `ToolRegistry` or injected through `BrowserHarness`, while
-the agent graph owns reasoning and state transitions.
+The boundary is intentional: `SessionRuntime` owns interaction lifecycle and
+long-lived resources, `BrowserHarness` injects per-task runtime dependencies,
+and the agent graph owns reasoning and state transitions.

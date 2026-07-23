@@ -73,6 +73,10 @@ def make_args(**overrides: Any) -> argparse.Namespace:
     return argparse.Namespace(**values)
 
 
+def exit_session_after_initial_task(monkeypatch) -> None:
+    monkeypatch.setattr(main, "input", lambda _prompt="": "quit", raising=False)
+
+
 def test_parser_accepts_cli_flags() -> None:
     parser = main.build_parser()
 
@@ -211,12 +215,15 @@ async def test_run_agent_prints_final_answer(monkeypatch, capsys) -> None:
     monkeypatch.delenv("LANGCHAIN_PROJECT", raising=False)
     monkeypatch.setattr(main, "ChatOllama", FakeChatOllama)
     monkeypatch.setattr(main, "build_agent_graph", lambda **kwargs: FakeGraph())
+    exit_session_after_initial_task(monkeypatch)
     args = make_args()
 
     exit_code = await main.run_agent(args)
 
     assert exit_code == 0
-    assert capsys.readouterr().out.strip() == "done: inspect page"
+    output = capsys.readouterr().out
+    assert "done: inspect page" in output
+    assert "Interactive mode" in output
     assert main.os.environ["LANGSMITH_PROJECT"] == "autobrowser"
 
 
@@ -224,6 +231,7 @@ async def test_run_agent_prints_final_answer(monkeypatch, capsys) -> None:
 async def test_run_agent_prints_node_state(monkeypatch, capsys) -> None:
     monkeypatch.setattr(main, "ChatOllama", FakeChatOllama)
     monkeypatch.setattr(main, "build_agent_graph", lambda **kwargs: FakeGraph())
+    exit_session_after_initial_task(monkeypatch)
     args = make_args(task=["inspect"], show_state=True)
 
     exit_code = await main.run_agent(args)
@@ -238,6 +246,7 @@ async def test_run_agent_prints_node_state(monkeypatch, capsys) -> None:
 async def test_run_agent_can_hide_snapshots_from_node_state(monkeypatch, capsys) -> None:
     monkeypatch.setattr(main, "ChatOllama", FakeChatOllama)
     monkeypatch.setattr(main, "build_agent_graph", lambda **kwargs: FakeGraph())
+    exit_session_after_initial_task(monkeypatch)
     args = make_args(task=["inspect"], show_state=True, hide_snapshot=True)
 
     exit_code = await main.run_agent(args)
@@ -262,6 +271,7 @@ async def test_no_mcp_does_not_start_chrome_or_load_tools(monkeypatch) -> None:
     monkeypatch.setattr(main, "build_agent_graph", lambda **kwargs: FakeGraph())
     monkeypatch.setattr(main, "start_chrome_cdp", fail_start)
     monkeypatch.setattr(main, "load_browser_tools", fail_load_tools)
+    exit_session_after_initial_task(monkeypatch)
 
     exit_code = await main.run_agent(make_args(no_mcp=True))
 
@@ -295,6 +305,7 @@ async def test_mcp_mode_starts_chrome_and_passes_tools(monkeypatch) -> None:
     monkeypatch.setattr(main, "wait_for_port", fake_wait)
     monkeypatch.setattr(main, "load_browser_tools", fake_load)
     monkeypatch.setattr(main, "build_agent_graph", fake_build_agent_graph)
+    exit_session_after_initial_task(monkeypatch)
 
     exit_code = await main.run_agent(
         make_args(no_mcp=False, cdp_port=9555, show_tools=True)
@@ -315,3 +326,27 @@ async def test_mcp_mode_starts_chrome_and_passes_tools(monkeypatch) -> None:
         for event in events
     )
     assert ("compress_tools", False) in events
+
+
+@pytest.mark.asyncio
+async def test_run_agent_keeps_session_alive_for_prompted_task(monkeypatch, capsys) -> None:
+    graphs: list[FakeGraph] = []
+    prompts = iter(["second task", "quit"])
+
+    def fake_build_agent_graph(**_kwargs: Any) -> FakeGraph:
+        graph = FakeGraph()
+        graphs.append(graph)
+        return graph
+
+    monkeypatch.setattr(main, "ChatOllama", FakeChatOllama)
+    monkeypatch.setattr(main, "build_agent_graph", fake_build_agent_graph)
+    monkeypatch.setattr(main, "input", lambda _prompt="": next(prompts), raising=False)
+
+    exit_code = await main.run_agent(make_args(task=["first", "task"]))
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert output.count("done:") == 2
+    assert "done: first task" in output
+    assert "done: second task" in output
+    assert len(graphs) == 1

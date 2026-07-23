@@ -2,7 +2,8 @@
 
 AutoBrowser is a Python 3.12 browser automation agent built around LangGraph.
 The command-line entry point is `main.py`; the core agent graph lives under
-`src/agent/`; runtime infrastructure is injected from `src/harness/`.
+`src/agent/`; session and runtime infrastructure are managed from
+`src/harness/`.
 
 ## Goals
 
@@ -23,12 +24,12 @@ structure.
 
 | Path | Responsibility |
 | --- | --- |
-| `main.py` | CLI parsing, LLM setup, optional browser tool loading, task execution. |
+| `main.py` | CLI parsing and wiring the process into `SessionRuntime`. |
 | `src/agent/` | LangGraph graph assembly, shared state, prompts, reasoning node, routers. |
 | `src/agent/subgraphs/planner/` | One-shot planning graph and planning prompts. |
 | `src/agent/subgraphs/executor/` | Tool execution graph and Playwright MCP argument normalization. |
 | `src/agent/subgraphs/observer/` | Tool-result observation, snapshot handling, compact result summaries. |
-| `src/harness/` | Runtime, context, memory, tools, policy, and telemetry boundaries. |
+| `src/harness/` | Session runtime, graph harness, context, memory, tools, policy, and telemetry boundaries. |
 | `src/mcp/` | MCP session and Playwright MCP integration helpers. |
 | `tests/` | Pytest coverage for graph behavior, harness boundaries, CLI, prompts, and tools. |
 | `scripts/` | Utility scripts, including graph visualization helpers. |
@@ -49,8 +50,20 @@ and `observe` routes back to `agent`.
 
 ## Runtime Boundary
 
+`SessionRuntime` in `src/harness/session.py` owns the long-lived application
+lifecycle. It starts process-scoped resources once, including the model,
+optional Chrome/CDP connection, MCP tools, task config, and `BrowserHarness`.
+Each user request is delegated as an independent task. When the agent reaches a
+terminal state, only that task ends; the session returns to the input prompt and
+keeps the same runtime resources alive until the process exits.
+
+The session layer is intentionally not a task solver. It manages interaction
+lifecycle and resource ownership, while `BrowserHarness` and the compiled
+LangGraph agent continue to handle one task execution at a time.
+
 `BrowserHarness` in `src/harness/runtime.py` is the composition root for runtime
-infrastructure. It receives a graph builder and injects:
+infrastructure used by one task execution. It receives a graph builder and
+injects:
 
 - `ContextBuilder`: builds initial graph state and owns system prompt injection.
 - `MemoryManager`: owns checkpoint saver and durable message history helpers.
@@ -58,8 +71,9 @@ infrastructure. It receives a graph builder and injects:
 - `PolicyEngine`: classifies tool requests before execution.
 - `TelemetryObserver`: logs local trace metadata and errors.
 
-This keeps the graph focused on reasoning/control flow and keeps runtime
-concerns replaceable in tests.
+This keeps the graph focused on reasoning/control flow, keeps task lifecycle
+separate from session lifecycle, and keeps runtime concerns replaceable in
+tests.
 
 ## Planner
 

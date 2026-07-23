@@ -23,5 +23,8 @@
 | Playwright MCP | Browser automation tool provider whose snapshot refs drive interactions. |
 | PolicyEngine | Harness boundary that classifies tool requests as approved, needing human input, or blocked. |
 | ref | Ephemeral Playwright MCP element identifier such as `e123`; valid only for the snapshot that produced it. |
+| SessionConfig | Args-derived configuration used to initialize a long-lived `SessionRuntime` and shared task config. |
+| SessionRuntime | Process-lifetime runtime that owns interaction lifecycle and long-lived resources, then delegates each task to `BrowserHarness`. |
 | Snapshot depth | Tool argument that controls how much visible hierarchy `browser_snapshot` returns. |
+| Task lifecycle | One user request delegated to the agent, ending when the compiled graph reaches a terminal task state. |
 | ToolRegistry | Lazy registry that exposes tools from static lists, providers, or MCP clients. |
