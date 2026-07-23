@@ -4,6 +4,7 @@
 | --- | --- |
 | Agent graph | The compiled LangGraph state machine assembled by `build_agent_graph`. |
 | Agent node | The reasoning node that chooses a tool call, replans, or returns a final answer. |
+| ArtifactRegistry | Session-owned registry for durable outputs such as screenshots, downloads, reports, or extracted files. |
 | AutoBrowser | The browser automation agent implemented in this repository. |
 | BrowserHarness | Runtime composition wrapper that injects context, tools, memory, policy, and telemetry into the graph. |
 | `browser_evaluate` | Browser tool fallback for cases where snapshots cannot expose required information. |
@@ -24,7 +25,13 @@
 | PolicyEngine | Harness boundary that classifies tool requests as approved, needing human input, or blocked. |
 | ref | Ephemeral Playwright MCP element identifier such as `e123`; valid only for the snapshot that produced it. |
 | SessionConfig | Args-derived configuration used to initialize a long-lived `SessionRuntime` and shared task config. |
-| SessionRuntime | Process-lifetime runtime that owns interaction lifecycle and long-lived resources, then delegates each task to `BrowserHarness`. |
+| SessionContext | Root object for one process-scoped session; owns session state, task history, workspace, artifacts, events, and runtime handles. |
+| SessionEventBus | Minimal synchronous event bus for session lifecycle events such as task start, task finish, and session close. |
+| SessionMetadata | Session-owned metadata such as started time, last activity, task count, and runtime version. |
+| SessionRuntime | Process-lifetime coordinator that runs the session loop, delegates lifecycle state to `SessionContext`, and sends each task to `BrowserHarness`. |
+| SessionState | Mutable mapping wrapper for shared session-level state that should not require a dedicated typed field yet. |
+| Session workspace | Runtime-local directory under `.autobrowser/sessions/<session_id>/workspace/` for downloads, screenshots, temp files, and artifacts. |
 | Snapshot depth | Tool argument that controls how much visible hierarchy `browser_snapshot` returns. |
+| TaskRecord | Session history entry for one user task, including task text, result, start time, and finish time. |
 | Task lifecycle | One user request delegated to the agent, ending when the compiled graph reaches a terminal task state. |
 | ToolRegistry | Lazy registry that exposes tools from static lists, providers, or MCP clients. |

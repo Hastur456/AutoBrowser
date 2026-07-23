@@ -13,12 +13,27 @@ This note records the code changes from the long-lived session runtime update.
 
 ## Runtime Behavior
 
-- `SessionRuntime.start()` initializes the model, optional Chrome/CDP and MCP
-  tools, task config, and one `BrowserHarness`.
+- `SessionRuntime.start()` delegates initialization to `SessionContext`, which
+  creates the model, optional Chrome/CDP and MCP tools, memory, tool registry,
+  telemetry, workspace, and one `BrowserHarness`.
 - `SessionRuntime.run_forever()` delegates each user request to the existing
   agent implementation and then prompts again.
-- `SessionRuntime.close()` closes the MCP session when browser tools were
-  enabled.
+- `SessionRuntime.run_task()` records a task-oriented `TaskRecord`, updates
+  `current_task`, and records success or failure through the context lifecycle.
+- `SessionRuntime.close()` delegates cleanup to `SessionContext.close()` and
+  closes the MCP session when browser tools were enabled.
+
+## 2026-07-24 Follow-Up
+
+- Added `SessionContext` as the root object for one process session.
+- Added `SessionState`, `SessionMetadata`, `TaskRecord`, `WorkspaceContext`,
+  `ArtifactRegistry`, and `SessionEventBus`.
+- Added the runtime-local workspace layout:
+  `.autobrowser/sessions/<session_id>/workspace/`.
+- Kept `BrowserHarness` as the graph composition boundary and kept LangGraph
+  state contracts unchanged.
+- Avoided `ConversationContext` and service locator patterns; session activity
+  is task-oriented.
 
 ## Verification
 
@@ -30,4 +45,6 @@ python -m pytest
 python -m py_compile main.py src\harness\session.py
 ```
 
-At the time of this change, the full suite passed with 91 tests.
+At the time of the 2026-07-23 change, the full suite passed with 91 tests.
+After the 2026-07-24 `SessionContext` update, the full suite passed with 97
+tests.

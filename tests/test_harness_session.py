@@ -1,0 +1,226 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from src.harness.session import (
+    ArtifactRegistry,
+    SessionConfig,
+    SessionContext,
+    SessionEventBus,
+    SessionRuntime,
+    SessionState,
+    WorkspaceContext,
+)
+from src.harness.tools import ToolRegistry
+
+
+class FakeLLM:
+    pass
+
+
+class FakeTool:
+    name = "browser_snapshot"
+
+
+class FakeHarness:
+    def __init__(self, graph_builder: Any, **kwargs: Any) -> None:
+        self.graph_builder = graph_builder
+        self.kwargs = kwargs
+
+
+def make_config(**overrides: Any) -> SessionConfig:
+    values = {
+        "model": "test-model",
+        "temperature": 0.1,
+        "no_mcp": True,
+        "show_state": False,
+        "hide_snapshot": False,
+        "show_tools": False,
+        "as_json": False,
+        "compress_tools": False,
+        "chrome_path": "chrome.exe",
+        "user_data_dir": "profile",
+        "cdp_port": 9555,
+        "cdp_timeout": 1.0,
+        "recursion_limit": 10,
+        "tracing_enabled": False,
+    }
+    values.update(overrides)
+    return SessionConfig(**values)
+
+
+async def noop_wait(_port: int, _timeout: float) -> None:
+    return None
+
+
+async def no_tools(_port: int) -> list[Any]:
+    return []
+
+
+async def noop_close() -> None:
+    return None
+
+
+def no_start(_chrome_path: str, _user_data_dir: str, _port: int) -> None:
+    return None
+
+
+def llm_factory(**_kwargs: Any) -> FakeLLM:
+    return FakeLLM()
+
+
+def test_session_state_wraps_mapping_operations() -> None:
+    state = SessionState()
+
+    state.set("retry_count", 1)
+    state["current_url"] = "https://example.test"
+    removed = state.pop("retry_count")
+
+    assert removed == 1
+    assert state.get("current_url") == "https://example.test"
+    assert list(state.items()) == [("current_url", "https://example.test")]
+    state.clear()
+    assert len(state) == 0
+
+
+def test_workspace_context_creates_standard_directories(tmp_path: Path) -> None:
+    workspace = WorkspaceContext(tmp_path / "workspace")
+
+    workspace.initialize()
+
+    assert workspace.root.is_dir()
+    assert workspace.downloads.is_dir()
+    assert workspace.screenshots.is_dir()
+    assert workspace.temp.is_dir()
+    assert workspace.artifacts.is_dir()
+
+
+def test_artifact_registry_tracks_latest_artifact_by_kind(tmp_path: Path) -> None:
+    registry = ArtifactRegistry()
+    first = registry.register("first.png", tmp_path / "first.png", kind="screenshot")
+    second = registry.register("report.csv", tmp_path / "report.csv", kind="table")
+
+    assert registry.latest() == second
+    assert registry.latest("screenshot") == first
+    assert registry.latest("missing") is None
+    assert registry.all() == [first, second]
+
+
+def test_session_event_bus_emits_to_subscribers_in_registration_order() -> None:
+    bus = SessionEventBus()
+    events: list[tuple[str, object | None, str]] = []
+
+    bus.emit("task.started", {"task": "ignored"})
+    bus.subscribe("task.started", lambda name, payload: events.append((name, payload, "a")))
+    bus.subscribe("task.started", lambda name, payload: events.append((name, payload, "b")))
+
+    payload = {"task": "inspect"}
+    bus.emit("task.started", payload)
+
+    assert events == [
+        ("task.started", payload, "a"),
+        ("task.started", payload, "b"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_session_context_lifecycle_initializes_tracks_tasks_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    context = SessionContext(make_config())
+    events: list[str] = []
+    context.events.subscribe("session.started", lambda name, _payload: events.append(name))
+    context.events.subscribe("task.started", lambda name, _payload: events.append(name))
+    context.events.subscribe("task.finished", lambda name, _payload: events.append(name))
+    context.events.subscribe("session.closed", lambda name, _payload: events.append(name))
+
+    await context.initialize(
+        graph_builder=lambda **_kwargs: object(),
+        llm_factory=llm_factory,
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        load_browser_tools=no_tools,
+        output_fn=lambda *_args, **_kwargs: None,
+        print_tools=None,
+        harness_factory=FakeHarness,
+    )
+
+    assert context.initialized is True
+    assert isinstance(context.harness, FakeHarness)
+    assert context.workspace is not None
+    assert context.workspace.root == tmp_path / ".autobrowser" / "sessions" / context.session_id / "workspace"
+    assert context.workspace.artifacts.is_dir()
+    assert context.metadata.started_at is not None
+
+    record = context.reset_task("inspect page")
+    assert context.current_task == "inspect page"
+    assert context.tasks == [record]
+
+    result = {"final_answer": "done"}
+    context.finish_task(record, result)
+    assert record.result == result
+    assert record.finished_at is not None
+    assert context.current_task is None
+    assert context.metadata.task_count == 1
+
+    await context.close()
+    assert context.initialized is False
+    assert context.harness is None
+    assert context.llm is None
+    assert events == [
+        "session.started",
+        "task.started",
+        "task.finished",
+        "session.closed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_session_runtime_reuses_context_and_records_task_history(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    calls: list[Any] = []
+
+    async def task_runner(
+        harness: Any,
+        task: str,
+        config: SessionConfig,
+        task_config: dict[str, Any],
+    ) -> dict[str, Any]:
+        calls.append((harness, task, config, task_config))
+        return {"final_answer": f"done: {task}"}
+
+    runtime = SessionRuntime(
+        make_config(),
+        graph_builder=lambda **_kwargs: object(),
+        llm_factory=llm_factory,
+        task_runner=task_runner,
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        load_browser_tools=no_tools,
+        close_mcp_session=noop_close,
+        harness_factory=FakeHarness,
+    )
+
+    await runtime.start()
+    first_harness = runtime.harness
+    await runtime.start()
+    result = await runtime.run_task("inspect page")
+
+    assert runtime.harness is first_harness
+    assert result == {"final_answer": "done: inspect page"}
+    assert len(calls) == 1
+    assert calls[0][1] == "inspect page"
+    assert calls[0][3]["metadata"]["model"] == "test-model"
+    assert runtime.context.current_task is None
+    assert runtime.context.metadata.task_count == 1
+    assert runtime.context.tasks[0].task == "inspect page"
+    assert runtime.context.tasks[0].result == result
+    assert isinstance(runtime.context.tool_registry, ToolRegistry)
