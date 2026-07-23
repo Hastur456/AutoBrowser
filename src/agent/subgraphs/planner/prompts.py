@@ -21,7 +21,15 @@ For search/find/show tasks, always include the search contract in the plan:
 locate the search input, inspect the current value, type or replace the query
 only if needed, submit the search, then verify and extract visible results. Do
 not plan to submit a search button before the query is confirmed in the input.
-Never plan repeated clicks or double-clicks on the same Search button."""
+Never plan repeated clicks or double-clicks on the same Search button.
+
+For commerce filters such as price, include a filter contract in the plan:
+set the visible filter value only if needed, confirm it with Enter or the
+visible apply/submit control, then verify that the result list or selected
+filter state changed. Typing into a filter field alone is not a completed
+step. For Ozon, if one UI filter attempt leaves the result list unchanged,
+plan a direct URL fallback using price parameters instead of repeating the
+same filter interaction."""
 
 PLANNER_USER_PROMPT = """Task:
 {task}

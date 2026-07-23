@@ -9,7 +9,6 @@ from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.types import interrupt
 
 from src.harness.memory import (
-    append_final_ai_response,
     append_tool_message,
     ensure_message_history,
     with_tool_call_id,
@@ -32,6 +31,7 @@ from .utils import (
     _normalize_tool_request,
     _terminal_guard,
     _tool_request_update,
+    _done_response,
     _fresh_snapshot_request,
     _stale_snapshot_retry_update,
     _bind_tools,
@@ -118,17 +118,9 @@ def create_agent_node(
 
         if decision == "done":
             final_answer = str(data.get("final_answer", "") or content)
-            return {
-                "decision": "done",
-                "final_answer": final_answer,
-                "messages": append_final_ai_response(messages, final_answer),
-            }
+            return _done_response(state, final_answer, messages=messages)
 
-        return {
-            "decision": "done",
-            "final_answer": content,
-            "messages": append_final_ai_response(messages, content),
-        }
+        return _done_response(state, content, messages=messages)
 
     return agent_node
 

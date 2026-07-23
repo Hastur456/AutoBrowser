@@ -88,6 +88,15 @@ Follow Playwright MCP semantics:
 - If the repeated tool request count is non-zero for the same Search button or
   search affordance, treat another click on that target as non-progress and
   choose direct search URL navigation or results extraction instead.
+- For commerce filters such as price, typing a value into a filter field is not
+  enough to complete the step. After entering the value, confirm it with Enter
+  or a visible Apply/submit control, then use a fresh snapshot to verify that
+  the result list, count, selected filter chip, URL, or visible product prices
+  changed.
+- If one price-filter UI attempt does not change the visible result list, do
+  not keep retyping the same value into the same filter field. Replan to a
+  different visible control or a direct URL fallback. For Ozon, a direct URL
+  with price parameters is preferred over repeated UI filter interactions.
 
 **Critical rules for task completion:**
 - After submitting a search query, the task is not complete until you have

@@ -16,6 +16,8 @@ def test_agent_prompt_requires_search_input_inspection_before_submit() -> None:
     assert "do this search-affordance click at most once" in prompt
     assert "https://www.ozon.ru/search/?text=<url-encoded query>" in prompt
     assert "repeated clicks/double-clicks" in prompt
+    assert "typing a value into a filter field is not" in prompt
+    assert "one price-filter ui attempt" in prompt
 
 
 def test_planner_prompt_includes_search_contract_steps() -> None:
@@ -27,6 +29,8 @@ def test_planner_prompt_includes_search_contract_steps() -> None:
     assert "never plan repeated clicks or double-clicks" in prompt
     assert "locate the search input" in prompt
     assert "verify and extract visible results" in prompt
+    assert "filter contract" in prompt
+    assert "typing into a filter field alone is not" in prompt
 
 
 def test_observer_prompt_reports_search_field_alignment() -> None:

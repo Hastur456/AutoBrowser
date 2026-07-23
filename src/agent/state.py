@@ -14,6 +14,7 @@ ToolStatus = Literal["success", "error"]
 MAX_REPLANS = 3
 MAX_CONSECUTIVE_FAILURES = 3
 MAX_SNAPSHOT_RECOVERIES = 1
+MAX_STEPS_WITHOUT_PLAN_ADVANCE = 8
 
 
 class PlanStep(TypedDict, total=False):
@@ -21,7 +22,7 @@ class PlanStep(TypedDict, total=False):
 
     id: int
     description: str
-    status: Literal["pending", "in_progress", "done"]
+    status: Literal["pending", "in_progress", "completed"]
 
 
 class ToolRequest(TypedDict, total=False):
@@ -68,6 +69,7 @@ class RecoveryCounters(TypedDict, total=False):
     snapshot_recovery_count: int
     invalid_ref_recovery_count: int
     stale_snapshot_retries: int
+    steps_without_plan_advance: int
 
 
 class PolicyEvent(TypedDict, total=False):
@@ -106,12 +108,14 @@ class AgentState(TypedDict, total=False):
     invalid_ref_recovery_count: int
     stale_snapshot_retries: int
     ineffective_action_count: int
+    unchanged_snapshot_count: int
     needs_fresh_snapshot: bool
     counters: RecoveryCounters
 
     snapshot_before_last_browser_action: str
     last_browser_action: ToolRequest
     ineffective_browser_action: ToolRequest
+    ineffective_browser_actions: list[ToolRequest]
 
     final_answer: str
     error: str

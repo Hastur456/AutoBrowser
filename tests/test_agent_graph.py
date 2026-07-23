@@ -156,6 +156,16 @@ def test_policy_does_not_classify_ineffective_browser_actions() -> None:
     assert "browser_click" in reason
 
 
+def test_policy_blocks_accumulated_ineffective_browser_actions() -> None:
+    decision, reason = classify_tool_request(
+        {"ineffective_action_count": 3},
+        {"name": "browser_click", "args": {"target": "f1e38"}},
+    )
+
+    assert decision == "blocked"
+    assert "did not change" in reason
+
+
 @pytest.mark.asyncio
 async def test_agent_node_replans_repeated_ineffective_browser_action() -> None:
     llm = FakeListLLM(
@@ -177,6 +187,40 @@ async def test_agent_node_replans_repeated_ineffective_browser_action() -> None:
                 "name": "browser_click",
                 "args": {"target": "f1e38"},
             },
+            "ineffective_action_count": 1,
+        }
+    )
+
+    assert result["decision"] == "replan"
+    assert "did not change" in result["observation"]
+
+
+@pytest.mark.asyncio
+async def test_agent_node_replans_ineffective_action_when_ref_changes() -> None:
+    llm = FakeListLLM(
+        responses=[
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_type","args":{"ref":"e19","text":"2000"},'
+                '"reason":"Try price again"}}'
+            )
+        ]
+    )
+    node = create_agent_node(llm)
+
+    result = await node(
+        {
+            "task": "Set price filter",
+            "plan": [{"id": 1, "description": "Apply price filter", "status": "pending"}],
+            "current_step": 0,
+            "snapshot": '- textbox "Цена от" [ref=e19]',
+            "ineffective_browser_actions": [
+                {
+                    "name": "browser_type",
+                    "args": {"ref": "e5", "text": "2000"},
+                    "target_description": 'textbox "Цена от"',
+                }
+            ],
             "ineffective_action_count": 1,
         }
     )
@@ -443,7 +487,7 @@ async def test_agent_node_replans_after_second_stale_snapshot_retry() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_node_deepens_snapshot_on_third_identical_snapshot_request() -> None:
+async def test_agent_node_stops_on_third_identical_snapshot_request() -> None:
     llm = FakeListLLM(
         responses=[
             (
@@ -462,20 +506,18 @@ async def test_agent_node_deepens_snapshot_on_third_identical_snapshot_request()
             "last_tool": "browser_snapshot",
             "last_args": {},
             "repeat_count": 2,
+            "unchanged_snapshot_count": 2,
         }
     )
 
-    assert result["decision"] == "tool_call"
-    assert result["tool_request"]["name"] == "browser_snapshot"
-    assert result["tool_request"]["args"] == {"depth": 4}
-    assert result["snapshot_recovery_count"] == 1
-    assert result["repeat_count"] == 1
-    assert result["messages"][-1].type == "ai"
-    assert result["messages"][-1].tool_calls[0]["args"] == {"depth": 4}
+    assert result["decision"] == "done"
+    assert "three consecutive times" in result["final_answer"]
+    assert result["repeat_count"] == 3
+    assert result["plan"][0]["status"] == "completed"
 
 
 @pytest.mark.asyncio
-async def test_agent_node_replans_after_snapshot_recovery_is_exhausted() -> None:
+async def test_agent_node_stops_repeated_snapshot_even_after_prior_recovery() -> None:
     llm = FakeListLLM(
         responses=[
             (
@@ -495,14 +537,14 @@ async def test_agent_node_replans_after_snapshot_recovery_is_exhausted() -> None
             "last_args": {},
             "repeat_count": 2,
             "snapshot_recovery_count": 1,
+            "unchanged_snapshot_count": 2,
         }
     )
 
-    assert result["decision"] == "replan"
+    assert result["decision"] == "done"
     assert result["repeat_count"] == 3
-    assert "three consecutive times" in result["observation"]
-    assert result["messages"][-1].type == "tool"
-    assert "three consecutive times" in result["messages"][-1].content
+    assert "three consecutive times" in result["final_answer"]
+    assert result["plan"][0]["status"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -526,12 +568,13 @@ async def test_agent_node_replans_repeated_snapshot_with_varied_depth() -> None:
             "last_tool": "browser_snapshot",
             "last_args": {"depth": 10},
             "repeat_count": 2,
+            "unchanged_snapshot_count": 2,
         }
     )
 
-    assert result["decision"] == "replan"
+    assert result["decision"] == "done"
     assert result["repeat_count"] == 3
-    assert "three consecutive times" in result["observation"]
+    assert "three consecutive times" in result["final_answer"]
 
 
 @pytest.mark.asyncio
@@ -693,7 +736,7 @@ def test_observe_node_translates_snapshot_and_advances_inspection_plan() -> None
     assert extract_element_refs(result["snapshot"]) == ["e7", "e8"]
     assert "Refs:" in result["observation"]
     assert result["current_step"] == 1
-    assert result["plan"][0]["status"] == "done"
+    assert result["plan"][0]["status"] == "completed"
     assert result["plan"][1]["status"] == "in_progress"
     assert "latest_observation" not in result
     assert "browser_context" not in result
@@ -726,7 +769,29 @@ def test_observe_node_advances_plan_only_with_step_completion_evidence() -> None
     )
 
     assert result["current_step"] == 1
-    assert result["plan"][0]["status"] == "done"
+    assert result["plan"][0]["status"] == "completed"
+    assert result["plan"][1]["status"] == "in_progress"
+
+
+def test_observe_node_advances_plan_for_unicode_find_evidence() -> None:
+    result = compile_observation(
+        {
+            "plan": [
+                {"id": 1, "description": "Найти осенние куртки", "status": "pending"},
+                {"id": 2, "description": "Extract product results", "status": "pending"},
+            ],
+            "current_step": 0,
+            "tool_result": {
+                "name": "browser_find",
+                "status": "success",
+                "content": 'Found 22 matches for "куртка"',
+                "error": "",
+            },
+        }
+    )
+
+    assert result["current_step"] == 1
+    assert result["plan"][0]["status"] == "completed"
     assert result["plan"][1]["status"] == "in_progress"
 
 
@@ -845,6 +910,7 @@ def test_observe_node_marks_action_ineffective_when_next_snapshot_is_unchanged()
     assert snapshot_result["ineffective_browser_action"] == {
         "name": "browser_click",
         "args": {"target": "f1e38"},
+        "target_description": 'button "Search"',
     }
     assert snapshot_result["ineffective_action_count"] == 1
     assert "did not change" in snapshot_result["observation"]
@@ -883,6 +949,7 @@ async def test_observer_graph_preserves_ineffective_action_fields() -> None:
     assert snapshot_result["ineffective_browser_action"] == {
         "name": "browser_click",
         "args": {"target": "f1e38"},
+        "target_description": 'button "Search"',
     }
     assert snapshot_result["ineffective_action_count"] == 1
 
@@ -920,6 +987,71 @@ def test_observe_node_clears_ineffective_action_when_snapshot_changes() -> None:
 
     assert snapshot_result["ineffective_browser_action"] == {}
     assert snapshot_result["ineffective_action_count"] == 0
+
+
+def test_observe_node_stops_after_three_unchanged_snapshots() -> None:
+    snapshot = '- button "Search" ref=e7'
+
+    result = observe_node(
+        {
+            "snapshot": snapshot,
+            "unchanged_snapshot_count": 2,
+            "plan": [{"id": 1, "description": "Inspect page", "status": "pending"}],
+            "current_step": 0,
+            "tool_result": {
+                "name": "browser_snapshot",
+                "status": "success",
+                "content": snapshot,
+                "error": "",
+            },
+        }
+    )
+
+    assert result["decision"] == "done"
+    assert result["unchanged_snapshot_count"] == 3
+    assert "same visible state" in result["final_answer"]
+
+
+def test_observe_node_treats_snapshot_with_new_refs_as_unchanged() -> None:
+    result = observe_node(
+        {
+            "snapshot": '- textbox "Цена от" [ref=e5]\n- link "Item" ref=e6',
+            "unchanged_snapshot_count": 1,
+            "tool_result": {
+                "name": "browser_snapshot",
+                "status": "success",
+                "content": '- textbox "Цена от" [ref=e19]\n- link "Item" ref=e27',
+                "error": "",
+            },
+        }
+    )
+
+    assert result["unchanged_snapshot_count"] == 2
+
+
+def test_observe_node_records_ineffective_action_when_only_ref_changes() -> None:
+    result = observe_node(
+        {
+            "snapshot": '- textbox "Цена от" [ref=e19]',
+            "snapshot_before_last_browser_action": '- textbox "Цена от" [ref=e5]',
+            "last_browser_action": {
+                "name": "browser_type",
+                "args": {"ref": "e5", "text": "2000"},
+                "target_description": 'textbox "Цена от"',
+            },
+            "tool_result": {
+                "name": "browser_snapshot",
+                "status": "success",
+                "content": '- textbox "Цена от" [ref=e19]',
+                "error": "",
+            },
+        }
+    )
+
+    assert result["ineffective_action_count"] == 1
+    assert result["ineffective_browser_actions"][0]["target_description"] == (
+        'textbox "Цена от"'
+    )
 
 
 def test_observe_node_preserves_snapshot_after_non_ref_browser_error() -> None:
@@ -1250,6 +1382,24 @@ async def test_graph_stops_after_consecutive_tool_failures() -> None:
     assert result["consecutive_failures"] == 3
     assert "Blocked: tool execution failed 3 consecutive times" in result["final_answer"]
     assert "connect ECONNREFUSED ::1:9222" in result["final_answer"]
+
+
+@pytest.mark.asyncio
+async def test_agent_node_stops_after_successful_steps_without_plan_advance() -> None:
+    node = create_agent_node(FailingLLM())
+
+    result = await node(
+        {
+            "task": "Apply price filter",
+            "plan": [{"id": 1, "description": "Apply price filter", "status": "pending"}],
+            "current_step": 0,
+            "steps_without_plan_advance": 8,
+            "observation": "browser_find returned success.\n\nNo matches.",
+        }
+    )
+
+    assert result["decision"] == "done"
+    assert "did not advance after 8 successful tool steps" in result["final_answer"]
 
 
 @pytest.mark.asyncio
