@@ -47,16 +47,20 @@ Dry check without MCP browser tools:
 python main.py --no-mcp --task "inspect page"
 ```
 
+This runs the startup task, prints its result, and then keeps the session alive
+for the next prompt. Type `quit` or `exit`, or press Ctrl+C/EOF, to
+end the session.
+
 Run with browser tools enabled:
 
 ```powershell
 python main.py --task "open the target page"
 ```
 
-Interactive loop:
+Start directly at the interactive prompt:
 
 ```powershell
-python main.py --loop
+python main.py
 ```
 
 Debug state updates:
@@ -65,15 +69,19 @@ Debug state updates:
 python main.py --show-state --task "inspect page"
 ```
 
-Useful flags include `--loop`, `--show-state`, `--show-tools`, `--json`,
+Useful flags include `--show-state`, `--show-tools`, `--json`,
 `--hide-snapshot`, `--compress-tools`, `--model`, `--temperature`,
 `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, and
-`--recursion-limit`.
+`--recursion-limit`. `--loop` remains accepted as a compatibility flag, but the
+CLI now uses the long-lived session loop by default.
 
 ## Development Guidelines
 
 - Keep reasoning and routing changes in `src/agent/`.
-- Keep runtime infrastructure changes in `src/harness/`.
+- Keep session and runtime infrastructure changes in `src/harness/`.
+- Keep `SessionRuntime` focused on interaction lifecycle and resource
+  ownership; delegate each task to `BrowserHarness` instead of solving tasks in
+  the session layer.
 - Register browser-specific tools through `ToolRegistry` or harness injection.
 - Preserve Playwright MCP snapshot/ref semantics in prompts, policies, and
   executor changes.

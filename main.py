@@ -19,6 +19,7 @@ from mcp.client.stdio import stdio_client
 
 from src.agent.agent import DEFAULT_OLLAMA_MODEL, build_agent_graph
 from src.harness.runtime import BrowserHarness
+from src.harness.session import SessionConfig, SessionRuntime
 
 load_dotenv()
 
@@ -378,64 +379,24 @@ async def run_agent(args: argparse.Namespace) -> int:
     """Run the agent with parsed CLI arguments."""
 
     tracing_enabled = configure_langsmith_tracing()
-    llm = ChatOllama(model=args.model, temperature=args.temperature)
-    mcp_enabled = not args.no_mcp
+    session_config = SessionConfig.from_args(args, tracing_enabled=tracing_enabled)
+    session = SessionRuntime(
+        session_config,
+        graph_builder=build_agent_graph,
+        llm_factory=ChatOllama,
+        task_runner=run_task,
+        start_chrome_cdp=start_chrome_cdp,
+        wait_for_port=wait_for_port,
+        load_browser_tools=load_browser_tools,
+        close_mcp_session=close_mcp_session,
+        print_tools=print_tools,
+        input_fn=input,
+        output_fn=print,
+    )
     try:
-        if args.no_mcp:
-            tools: list[Any] = []
-        else:
-            start_chrome_cdp(args.chrome_path, args.user_data_dir, args.cdp_port)
-            await wait_for_port(args.cdp_port, args.cdp_timeout)
-            print("=== Сервер подключен ===")
-            tools = await load_browser_tools(args.cdp_port)
-            if args.show_tools:
-                print_tools(tools)
-
-        harness = BrowserHarness(
-            build_agent_graph,
-            llm=llm,
-            tools=tools,
-            compress_tools=args.compress_tools,
-        )
-        config = {
-            "recursion_limit": args.recursion_limit,
-            "run_name": "AutoBrowser CLI task",
-            "metadata": {
-                "model": args.model,
-                "temperature": args.temperature,
-                "show_state": args.show_state,
-                "hide_snapshot": args.hide_snapshot,
-                "langsmith_tracing": tracing_enabled,
-                "compress_tools": args.compress_tools,
-            },
-            "tags": [
-                "autobrowser",
-                "cli",
-            ],
-        }
-
-        if args.loop:
-            print("Интерактивный режим. Введите 'quit' для выхода.\n")
-            while True:
-                try:
-                    task = input("Задача> ").strip()
-                except (KeyboardInterrupt, EOFError):
-                    print("\nВыход.")
-                    return 0
-                if not task:
-                    continue
-                if task.lower() in {"quit", "exit", "выход"}:
-                    return 0
-                await run_task(harness, task, args, config)
-                print()
-            return 0
-
-        task = resolve_task(args)
-        await run_task(harness, task, args, config)
-        return 0
+        return await session.run_forever(initial_task=resolve_initial_task(args))
     finally:
-        if mcp_enabled:
-            await close_mcp_session()
+        await session.close()
 
 
 def resolve_task(args: argparse.Namespace) -> str:
@@ -449,14 +410,26 @@ def resolve_task(args: argparse.Namespace) -> str:
     return input("Задача> ").strip()
 
 
+def resolve_initial_task(args: argparse.Namespace) -> str | None:
+    """Resolve the optional startup task without prompting."""
+
+    task = " ".join(args.task).strip()
+    if task:
+        return task
+    if args.task_text:
+        return args.task_text.strip()
+    return None
+
+
 async def run_task(
     harness: BrowserHarness,
     task: str,
-    args: argparse.Namespace,
+    args: argparse.Namespace | SessionConfig,
     config: dict[str, Any],
 ) -> Any:
     """Run one task on an already built harness."""
 
+    as_json = getattr(args, "json", getattr(args, "as_json", False))
     if args.show_state:
         final_update: Any = None
         async for chunk in harness.stream_updates(
@@ -468,7 +441,7 @@ async def run_task(
                 print_step(
                     node_name,
                     update,
-                    args.json,
+                    as_json,
                     hide_snapshot=args.hide_snapshot,
                 )
 
@@ -477,7 +450,7 @@ async def run_task(
         return final_update
 
     result = await harness.run(task, config=config)
-    _print_final_state(result, args.json)
+    _print_final_state(result, as_json)
     return result
 
 

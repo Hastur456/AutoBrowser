@@ -4,7 +4,7 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
-- No project-specific ADRs have been accepted yet.
+- [2026-07-23 Long-Lived Session Runtime](2026-07-23-long-lived-session-runtime.md)
 
 ## Templates
 
