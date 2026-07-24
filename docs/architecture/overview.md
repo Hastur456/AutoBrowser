@@ -51,15 +51,30 @@ and `observe` routes back to `agent`.
 ## Runtime Boundary
 
 `SessionRuntime` in `src/harness/session.py` owns the long-lived application
-lifecycle. It starts process-scoped resources once, including the model,
-optional Chrome/CDP connection, MCP tools, task config, and `BrowserHarness`.
-Each user request is delegated as an independent task. When the agent reaches a
-terminal state, only that task ends; the session returns to the input prompt and
-keeps the same runtime resources alive until the process exits.
+lifecycle and delegates session-owned state to `SessionContext`. The context is
+the root object for one process session: it holds `SessionConfig`, `session_id`,
+task history, current task, workspace, artifact registry, event bus, session
+state, metadata, telemetry, tool registry, memory, LLM, and `BrowserHarness`.
+Each user request is tracked as a `TaskRecord` and delegated as an independent
+task. When the agent reaches a terminal state, only that task ends; the session
+returns to the input prompt and keeps the same runtime resources alive until the
+process exits.
 
 The session layer is intentionally not a task solver. It manages interaction
 lifecycle and resource ownership, while `BrowserHarness` and the compiled
-LangGraph agent continue to handle one task execution at a time.
+LangGraph agent continue to handle one task execution at a time. AutoBrowser
+models session activity as tasks, not chat turns.
+
+Session workspace files live under
+`.autobrowser/sessions/<session_id>/workspace/`, with standard subdirectories
+for `downloads/`, `screenshots/`, `temp/`, and `artifacts/`. This directory is
+runtime-local and ignored by git.
+
+Session metadata is persisted next to the workspace under
+`.autobrowser/sessions/<session_id>/`. `session.json` records the current
+session view, including config, metadata, workspace paths, artifacts, and task
+history. `tasks.json` stores the task records directly for simpler inspection.
+These files are runtime artifacts and are ignored by git.
 
 `BrowserHarness` in `src/harness/runtime.py` is the composition root for runtime
 infrastructure used by one task execution. It receives a graph builder and
@@ -74,6 +89,13 @@ injects:
 This keeps the graph focused on reasoning/control flow, keeps task lifecycle
 separate from session lifecycle, and keeps runtime concerns replaceable in
 tests.
+
+Each task receives a generated task-specific `thread_id` stored on its
+`TaskRecord` and passed into LangGraph config. After a task succeeds or fails,
+`SessionRuntime` asks `MemoryManager` to delete checkpoints for that thread when
+the configured saver supports thread deletion. This keeps the process-long
+session alive without accumulating graph checkpoints or durable message history
+from completed tasks inside the active in-memory saver.
 
 ## Planner
 

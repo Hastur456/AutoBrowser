@@ -8,8 +8,8 @@
 - Chrome/Chromium and Playwright MCP tooling for browser-enabled runs
 
 Runtime folders such as `.venv/`, `.pytest_cache/`, `.playwright-mcp/`,
-`profile/`, `baseline/`, `node_modules/`, and `__pycache__/` are local or
-generated state and should not be treated as source.
+`.autobrowser/`, `profile/`, `baseline/`, `node_modules/`, and `__pycache__/`
+are local or generated state and should not be treated as source.
 
 ## Install
 
@@ -50,6 +50,11 @@ python main.py --no-mcp --task "inspect page"
 This runs the startup task, prints its result, and then keeps the session alive
 for the next prompt. Type `quit` or `exit`, or press Ctrl+C/EOF, to
 end the session.
+
+Session metadata and task history are written under
+`.autobrowser/sessions/<session_id>/` as `session.json` and `tasks.json`.
+Task-specific LangGraph checkpoints are cleaned up after each task when the
+configured saver supports thread deletion.
 
 Run with browser tools enabled:
 

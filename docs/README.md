@@ -14,7 +14,10 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Diagrams](diagrams/index.md): Mermaid diagrams for graph, session runtime,
   and harness boundaries.
 - [Session Runtime Change](development/2026-07-23-session-runtime-change.md):
-  implementation note for the long-lived session refactor.
+  implementation note for the long-lived session and `SessionContext` refactor.
+- [Task Memory Isolation ADR](decisions/2026-07-24-task-memory-isolation-and-session-persistence.md):
+  decision record for per-task checkpoint cleanup and `.autobrowser` session
+  records.
 - [Architecture Decisions](decisions/index.md): ADR index and template.
 - [Research](research/index.md): current open questions and suggested spikes.
 - [Glossary](glossary.md): shared project terms.

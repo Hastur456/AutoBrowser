@@ -33,6 +33,7 @@ baseline/
 node_modules/
 .codegraph/
 .playwright-mcp/
+.autobrowser/
 test.py
 extra/
 .claude/

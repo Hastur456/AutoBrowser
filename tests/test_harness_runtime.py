@@ -8,6 +8,7 @@ from langgraph.errors import GraphRecursionError
 
 from src.harness.runtime import BrowserHarness
 from src.harness.context import ContextBuilder
+from src.harness.memory import MemoryManager
 from src.harness.policy import PolicyEngine
 from src.harness.tools import ToolRegistry
 
@@ -66,6 +67,14 @@ class RecursionAfterDoneGraph:
 
 class FakeTool:
     name = "fake_tool"
+
+
+class FakeCheckpointSaver:
+    def __init__(self) -> None:
+        self.deleted_threads: list[str] = []
+
+    async def adelete_thread(self, thread_id: str) -> None:
+        self.deleted_threads.append(thread_id)
 
 
 class CustomPolicyEngine(PolicyEngine):
@@ -145,6 +154,16 @@ async def test_browser_harness_streams_updates() -> None:
         {"agent": {"final_answer": "done"}},
     ]
     assert graph.calls[0][1]["configurable"]["thread_id"] == "test-thread"
+
+
+@pytest.mark.asyncio
+async def test_memory_manager_deletes_task_thread() -> None:
+    saver = FakeCheckpointSaver()
+    memory = MemoryManager(checkpoint_saver=saver)
+
+    await memory.delete_thread("task-123")
+
+    assert saver.deleted_threads == ["task-123"]
 
 
 @pytest.mark.asyncio
