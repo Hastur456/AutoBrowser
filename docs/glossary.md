@@ -28,10 +28,12 @@
 | SessionContext | Root object for one process-scoped session; owns session state, task history, workspace, artifacts, events, and runtime handles. |
 | SessionEventBus | Minimal synchronous event bus for session lifecycle events such as task start, task finish, and session close. |
 | SessionMetadata | Session-owned metadata such as started time, last activity, task count, and runtime version. |
+| Session records | Runtime-local JSON files under `.autobrowser/sessions/<session_id>/`, currently `session.json` and `tasks.json`. |
 | SessionRuntime | Process-lifetime coordinator that runs the session loop, delegates lifecycle state to `SessionContext`, and sends each task to `BrowserHarness`. |
 | SessionState | Mutable mapping wrapper for shared session-level state that should not require a dedicated typed field yet. |
 | Session workspace | Runtime-local directory under `.autobrowser/sessions/<session_id>/workspace/` for downloads, screenshots, temp files, and artifacts. |
 | Snapshot depth | Tool argument that controls how much visible hierarchy `browser_snapshot` returns. |
-| TaskRecord | Session history entry for one user task, including task text, result, start time, and finish time. |
+| Task thread ID | Generated `configurable.thread_id` used to isolate one task's LangGraph checkpoints inside a long-lived session. |
+| TaskRecord | Session history entry for one user task, including task ID, task text, result, start time, and finish time. |
 | Task lifecycle | One user request delegated to the agent, ending when the compiled graph reaches a terminal task state. |
 | ToolRegistry | Lazy registry that exposes tools from static lists, providers, or MCP clients. |

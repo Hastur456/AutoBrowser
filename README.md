@@ -14,6 +14,7 @@ snapshots and element refs instead of CSS selectors or DOM assumptions.
 - Observes tool output and browser snapshots before deciding the next action.
 - Keeps a process-long session alive so multiple tasks can run without
   restarting the application.
+- Writes runtime session records under `.autobrowser/sessions/<session_id>/`.
 - Supports dry CLI runs without browser/MCP tools for development checks.
 
 ## Requirements
@@ -60,6 +61,10 @@ python main.py --no-mcp --task "inspect page"
 
 After the startup task completes, the CLI remains in the session prompt for the
 next task. Exit with `quit`, `exit`, Ctrl+C, or EOF.
+
+Each session creates `.autobrowser/sessions/<session_id>/` with `session.json`,
+`tasks.json`, and a `workspace/` tree for runtime artifacts. These files are
+local runtime output and are ignored by git.
 
 Run with browser tools enabled:
 

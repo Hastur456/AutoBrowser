@@ -70,6 +70,12 @@ Session workspace files live under
 for `downloads/`, `screenshots/`, `temp/`, and `artifacts/`. This directory is
 runtime-local and ignored by git.
 
+Session metadata is persisted next to the workspace under
+`.autobrowser/sessions/<session_id>/`. `session.json` records the current
+session view, including config, metadata, workspace paths, artifacts, and task
+history. `tasks.json` stores the task records directly for simpler inspection.
+These files are runtime artifacts and are ignored by git.
+
 `BrowserHarness` in `src/harness/runtime.py` is the composition root for runtime
 infrastructure used by one task execution. It receives a graph builder and
 injects:
@@ -83,6 +89,13 @@ injects:
 This keeps the graph focused on reasoning/control flow, keeps task lifecycle
 separate from session lifecycle, and keeps runtime concerns replaceable in
 tests.
+
+Each task receives a generated task-specific `thread_id` stored on its
+`TaskRecord` and passed into LangGraph config. After a task succeeds or fails,
+`SessionRuntime` asks `MemoryManager` to delete checkpoints for that thread when
+the configured saver supports thread deletion. This keeps the process-long
+session alive without accumulating graph checkpoints or durable message history
+from completed tasks inside the active in-memory saver.
 
 ## Planner
 

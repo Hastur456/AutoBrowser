@@ -30,6 +30,11 @@ This note records the code changes from the long-lived session runtime update.
   `ArtifactRegistry`, and `SessionEventBus`.
 - Added the runtime-local workspace layout:
   `.autobrowser/sessions/<session_id>/workspace/`.
+- Added durable session files under `.autobrowser/sessions/<session_id>/`:
+  `session.json` for the full session view and `tasks.json` for task history.
+- Added per-task `thread_id` assignment on `TaskRecord` and cleanup of
+  LangGraph checkpoints for completed or failed task threads through
+  `MemoryManager.delete_thread()`.
 - Kept `BrowserHarness` as the graph composition boundary and kept LangGraph
   state contracts unchanged.
 - Avoided `ConversationContext` and service locator patterns; session activity
@@ -48,3 +53,5 @@ python -m py_compile main.py src\harness\session.py
 At the time of the 2026-07-23 change, the full suite passed with 91 tests.
 After the 2026-07-24 `SessionContext` update, the full suite passed with 97
 tests.
+After the session persistence and task-memory isolation update, the full suite
+passed with 97 tests.

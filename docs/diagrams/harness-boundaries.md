@@ -11,6 +11,7 @@ flowchart LR
   SessionCtx --> Config[SessionConfig]
   SessionCtx --> Tasks[TaskRecord history]
   SessionCtx --> Workspace[Session workspace]
+  SessionCtx --> SessionFiles[session.json and tasks.json]
   SessionCtx --> Artifacts[ArtifactRegistry]
   SessionCtx --> Events[SessionEventBus]
   SessionCtx --> State[SessionState]
@@ -21,6 +22,7 @@ flowchart LR
   SessionCtx --> Harness[BrowserHarness]
   Harness --> ContextBuilder[ContextBuilder]
   Harness --> Memory[MemoryManager]
+  Memory --> Checkpoints[Task checkpoints]
   Harness --> Tools[ToolRegistry]
   Harness --> Policy[PolicyEngine]
   Harness --> Telemetry[TelemetryObserver]
@@ -37,4 +39,6 @@ flowchart LR
 The boundary is intentional: `SessionRuntime` coordinates interaction
 lifecycle, `SessionContext` owns session-scoped state and resources,
 `BrowserHarness` injects graph runtime dependencies, and the agent graph owns
-reasoning and state transitions.
+reasoning and state transitions. Task checkpoints are scoped by generated
+task thread IDs and deleted through `MemoryManager` after each task completes or
+fails, while session metadata remains available in `.autobrowser`.

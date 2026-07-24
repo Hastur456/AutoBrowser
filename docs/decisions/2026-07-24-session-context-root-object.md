@@ -61,6 +61,7 @@ agent state and node contracts are unchanged.
 
 - `src/harness/session.py`
 - `tests/test_harness_session.py`
+- [Task Memory Isolation and Session Persistence](2026-07-24-task-memory-isolation-and-session-persistence.md)
 - [Long-Lived Session Runtime](2026-07-23-long-lived-session-runtime.md)
 - [Architecture Overview](../architecture/overview.md)
 - [Session Runtime Sequence](../diagrams/session-runtime-sequence.md)
