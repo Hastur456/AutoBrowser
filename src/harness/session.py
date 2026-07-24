@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable, Iterator, MutableMapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -125,6 +126,7 @@ class TaskRecord:
 
     task: str
     started_at: datetime
+    task_id: str = field(default_factory=lambda: f"task-{uuid4().hex}")
     finished_at: datetime | None = None
     result: Any | None = None
 
@@ -219,6 +221,35 @@ class WorkspaceContext:
             path.mkdir(parents=True, exist_ok=True)
 
 
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, BaseException):
+        return {
+            "type": type(value).__name__,
+            "message": str(value),
+        }
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(
+        json.dumps(_json_safe(payload), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    tmp_path.replace(path)
+
+
 class SessionEventBus:
     """Synchronous event bus for session lifecycle events."""
 
@@ -243,6 +274,7 @@ class SessionContext:
 
     config: SessionConfig
     session_id: str = field(default_factory=lambda: uuid4().hex)
+    session_dir: Path | None = None
     workspace: WorkspaceContext | None = None
     artifacts: ArtifactRegistry = field(default_factory=ArtifactRegistry)
     state: SessionState = field(default_factory=SessionState)
@@ -277,9 +309,9 @@ class SessionContext:
         now = datetime.now(UTC)
         self.metadata.started_at = now
         self.metadata.last_activity = now
-        self.workspace = WorkspaceContext(
-            Path(".autobrowser") / "sessions" / self.session_id / "workspace"
-        )
+        self.session_dir = (Path(".autobrowser") / "sessions" / self.session_id).resolve()
+        self.session_dir.mkdir(parents=True, exist_ok=True)
+        self.workspace = WorkspaceContext(self.session_dir / "workspace")
         self.workspace.initialize()
 
         self.llm = llm_factory(
@@ -312,16 +344,18 @@ class SessionContext:
             compress_tools=self.config.compress_tools,
         )
         self.initialized = True
+        self.persist()
         self.events.emit("session.started", self)
 
-    def reset_task(self, task: str) -> TaskRecord:
+    def reset_task(self, task: str, *, task_id: str | None = None) -> TaskRecord:
         """Start tracking a new task inside the session."""
 
         now = datetime.now(UTC)
-        record = TaskRecord(task=task, started_at=now)
+        record = TaskRecord(task=task, started_at=now, task_id=task_id or f"task-{uuid4().hex}")
         self.current_task = task
         self.tasks.append(record)
         self.metadata.last_activity = now
+        self.persist()
         self.events.emit("task.started", record)
         return record
 
@@ -334,6 +368,7 @@ class SessionContext:
         self.current_task = None
         self.metadata.task_count += 1
         self.metadata.last_activity = now
+        self.persist()
         self.events.emit("task.finished", record)
 
     def fail_task(self, record: TaskRecord, exception: BaseException) -> None:
@@ -345,7 +380,39 @@ class SessionContext:
         self.current_task = None
         self.metadata.task_count += 1
         self.metadata.last_activity = now
+        self.persist()
         self.events.emit("task.failed", record)
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a durable, JSON-compatible view of the session."""
+
+        workspace = self.workspace
+        return {
+            "session_id": self.session_id,
+            "initialized": self.initialized,
+            "current_task": self.current_task,
+            "config": asdict(self.config),
+            "metadata": asdict(self.metadata),
+            "workspace": {
+                "root": workspace.root if workspace else None,
+                "downloads": workspace.downloads if workspace else None,
+                "screenshots": workspace.screenshots if workspace else None,
+                "temp": workspace.temp if workspace else None,
+                "artifacts": workspace.artifacts if workspace else None,
+            },
+            "artifacts": [asdict(artifact) for artifact in self.artifacts.all()],
+            "tasks": [asdict(task) for task in self.tasks],
+        }
+
+    def persist(self) -> None:
+        """Persist session metadata and task records under .autobrowser."""
+
+        if self.session_dir is None:
+            self.session_dir = (Path(".autobrowser") / "sessions" / self.session_id).resolve()
+            self.session_dir.mkdir(parents=True, exist_ok=True)
+        snapshot = self.snapshot()
+        _write_json(self.session_dir / "session.json", snapshot)
+        _write_json(self.session_dir / "tasks.json", snapshot["tasks"])
 
     async def close(
         self,
@@ -362,6 +429,7 @@ class SessionContext:
         self.current_task = None
         self.metadata.last_activity = datetime.now(UTC)
         self.initialized = False
+        self.persist()
         self.events.emit("session.closed", self)
 
 
@@ -424,19 +492,30 @@ class SessionRuntime:
         """Run one user task through the existing agent implementation."""
 
         await self.start()
-        record = self.context.reset_task(task)
+        task_id = f"task-{uuid4().hex}"
+        record = self.context.reset_task(task, task_id=task_id)
+        task_config = self.config.task_config()
+        configurable = dict(task_config.get("configurable") or {})
+        configurable["thread_id"] = task_id
+        task_config["configurable"] = configurable
         try:
             result = await self._task_runner(
                 self.harness,
                 task,
                 self.config,
-                self.config.task_config(),
+                task_config,
             )
         except Exception as exc:
             self.context.fail_task(record, exc)
+            await self._delete_task_memory(task_id)
             raise
         self.context.finish_task(record, result)
+        await self._delete_task_memory(task_id)
         return result
+
+    async def _delete_task_memory(self, task_id: str) -> None:
+        if self.context.memory is not None:
+            await self.context.memory.delete_thread(task_id)
 
     async def run_forever(self, *, initial_task: str | None = None) -> int:
         """Run tasks sequentially until the user exits the session."""

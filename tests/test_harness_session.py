@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -167,11 +168,21 @@ async def test_session_context_lifecycle_initializes_tracks_tasks_and_closes(
     assert record.finished_at is not None
     assert context.current_task is None
     assert context.metadata.task_count == 1
+    assert context.session_dir is not None
+    session_payload = json.loads((context.session_dir / "session.json").read_text())
+    tasks_payload = json.loads((context.session_dir / "tasks.json").read_text())
+    assert session_payload["session_id"] == context.session_id
+    assert session_payload["metadata"]["task_count"] == 1
+    assert tasks_payload[0]["task"] == "inspect page"
+    assert tasks_payload[0]["task_id"] == record.task_id
+    assert tasks_payload[0]["result"] == result
 
     await context.close()
     assert context.initialized is False
     assert context.harness is None
     assert context.llm is None
+    closed_payload = json.loads((context.session_dir / "session.json").read_text())
+    assert closed_payload["initialized"] is False
     assert events == [
         "session.started",
         "task.started",
@@ -219,6 +230,7 @@ async def test_session_runtime_reuses_context_and_records_task_history(
     assert len(calls) == 1
     assert calls[0][1] == "inspect page"
     assert calls[0][3]["metadata"]["model"] == "test-model"
+    assert calls[0][3]["configurable"]["thread_id"] == runtime.context.tasks[0].task_id
     assert runtime.context.current_task is None
     assert runtime.context.metadata.task_count == 1
     assert runtime.context.tasks[0].task == "inspect page"

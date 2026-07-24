@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 from uuid import uuid4
 
@@ -36,6 +37,21 @@ class MemoryManager:
         if self._checkpoint_saver is None:
             self._checkpoint_saver = _DefaultCheckpointSaver()
         return self._checkpoint_saver
+
+    async def delete_thread(self, thread_id: str) -> None:
+        """Delete checkpoints for one task thread when the saver supports it."""
+
+        saver = self.get_checkpoint_saver()
+        delete = getattr(saver, "adelete_thread", None)
+        if callable(delete):
+            await delete(thread_id)
+            return
+
+        delete = getattr(saver, "delete_thread", None)
+        if callable(delete):
+            result = delete(thread_id)
+            if inspect.isawaitable(result):
+                await result
 
 
 def ensure_message_history(
