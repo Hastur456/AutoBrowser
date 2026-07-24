@@ -18,6 +18,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from src.agent.agent import DEFAULT_OLLAMA_MODEL, build_agent_graph
+from src.cli import run_cli
 from src.harness.runtime import BrowserHarness
 from src.harness.session import SessionConfig, SessionRuntime
 
@@ -378,9 +379,19 @@ def _print_final_state(result: Any, as_json: bool) -> None:
 async def run_agent(args: argparse.Namespace) -> int:
     """Run the agent with parsed CLI arguments."""
 
+    session = build_session(args)
+    try:
+        return await session.run_forever(initial_task=resolve_initial_task(args))
+    finally:
+        await session.close()
+
+
+def build_session(args: argparse.Namespace) -> SessionRuntime:
+    """Build a process-long session runtime from parsed CLI arguments."""
+
     tracing_enabled = configure_langsmith_tracing()
     session_config = SessionConfig.from_args(args, tracing_enabled=tracing_enabled)
-    session = SessionRuntime(
+    return SessionRuntime(
         session_config,
         graph_builder=build_agent_graph,
         llm_factory=ChatOllama,
@@ -393,10 +404,13 @@ async def run_agent(args: argparse.Namespace) -> int:
         input_fn=input,
         output_fn=print,
     )
-    try:
-        return await session.run_forever(initial_task=resolve_initial_task(args))
-    finally:
-        await session.close()
+
+
+def run_agent_cli(args: argparse.Namespace) -> int:
+    """Run the cmd2 interactive CLI from a synchronous entry point."""
+
+    session = build_session(args)
+    return run_cli(session, initial_task=resolve_initial_task(args))
 
 
 def resolve_task(args: argparse.Namespace) -> str:
@@ -455,11 +469,11 @@ async def run_task(
 
 
 def main() -> int:
-    """Parse CLI arguments and run the async agent."""
+    """Parse CLI arguments and run the interactive agent CLI."""
 
     parser = build_parser()
     args = parser.parse_args()
-    return asyncio.run(run_agent(args))
+    return run_agent_cli(args)
 
 
 if __name__ == "__main__":
