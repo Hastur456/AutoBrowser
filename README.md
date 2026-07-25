@@ -14,6 +14,8 @@ snapshots and element refs instead of CSS selectors or DOM assumptions.
 - Observes tool output and browser snapshots before deciding the next action.
 - Keeps a process-long session alive so multiple tasks can run without
   restarting the application.
+- Preserves useful context between tasks in one session, including prior
+  observations, current snapshots, browser state, and dialogue history.
 - Writes runtime session records under `.autobrowser/sessions/<session_id>/`.
 - Supports dry CLI runs without browser/MCP tools for development checks.
 
@@ -69,6 +71,25 @@ autobrowser> status
 autobrowser> exit
 ```
 
+Useful REPL commands:
+
+| Command | Purpose |
+| --- | --- |
+| `run <text>` | Run a new browser-agent task. |
+| free-form input | Run the input as a task without typing `run`. |
+| `tasks` | Show task history for the current session. |
+| `cancel` | Cancel the currently running task. |
+| `session` | Show current session information. |
+| `status` | Show short session, browser, and task status. |
+| `history [N]` | Show the last N dialogue messages. |
+| `clear` | Clear dialogue history. |
+| `reset` | Reset the current session by clearing history and state. |
+| `browser` | Show browser/tool status. |
+| `snapshot` | Save a screenshot to the session workspace. |
+| `url` | Show the current page URL. |
+| `help [command]` | Show command help. |
+| `exit` / `quit` | Exit the CLI. |
+
 Use `--no-mcp` only for dry checks that do not need live browser access:
 
 ```powershell
@@ -81,6 +102,12 @@ live website extraction are unavailable.
 Each session creates `.autobrowser/sessions/<session_id>/` with `session.json`,
 `tasks.json`, and a `workspace/` tree for runtime artifacts. These files are
 local runtime output and are ignored by git.
+
+Within one interactive session, tasks share a session-scoped LangGraph thread.
+The runtime carries forward useful graph state such as durable messages, latest
+observation, current snapshot, and browser progress. Task-local fields such as
+the prior plan, terminal decision, final answer, errors, and retry counters are
+reset before the next task starts.
 
 Run an initial task before entering the REPL:
 
@@ -111,6 +138,13 @@ Run a targeted test file:
 
 ```powershell
 python -m pytest tests\test_agent_graph.py
+```
+
+Focused checks for recent harness/session work:
+
+```powershell
+python -m pytest tests\test_harness_session.py tests\test_harness_runtime.py
+python -m pytest tests\test_main_cli.py
 ```
 
 After changing prompts, run:
@@ -147,6 +181,12 @@ answer is available. The runtime infrastructure is injected through
 `SessionRuntime` and `BrowserHarness` in `src/harness/`, keeping browser
 tooling, memory, policy, telemetry, context, and interaction lifecycle outside
 the core agent loop.
+
+`SessionRuntime` owns the long-lived process lifecycle through `SessionContext`.
+All tasks in one interactive session share a session-scoped checkpoint thread;
+each task still receives a `TaskRecord.task_id` for persisted history and
+message attribution. `SessionRuntime` carries session-useful graph state into
+the next invocation and resets task-local graph fields at the task boundary.
 
 ## Browser Interaction Rules
 
