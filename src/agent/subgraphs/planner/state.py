@@ -14,6 +14,7 @@ class PlannerState(TypedDict, total=False):
     """State accepted and returned by the planner subgraph."""
 
     task: str
+    task_id: str
     observation: str
     plan: list[PlanStep]
     current_step: int

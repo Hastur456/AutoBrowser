@@ -7,6 +7,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.errors import GraphRecursionError
 
 from src.harness.runtime import BrowserHarness
+from src.harness.runtime import HARNESS_STATE_OVERRIDES_CONFIG_KEY
 from src.harness.context import ContextBuilder
 from src.harness.memory import MemoryManager
 from src.harness.policy import PolicyEngine
@@ -119,6 +120,15 @@ async def test_browser_harness_injects_tools_and_memory() -> None:
     assert history[0].content == "HARNESS PROMPT"
     assert isinstance(history[1], HumanMessage)
 
+    next_history = captured["history_builder"](
+        {"task": "open the first result", "task_id": "task-2", "messages": history}
+    )
+    assert next_history[:2] == history
+    assert next_history[2].content == "User request (task-2):\nopen the first result"
+    assert captured["history_builder"](
+        {"task": "open the first result", "task_id": "task-2", "messages": next_history}
+    ) == next_history
+
 
 @pytest.mark.asyncio
 async def test_browser_harness_preserves_existing_config() -> None:
@@ -137,6 +147,33 @@ async def test_browser_harness_preserves_existing_config() -> None:
         "checkpoint_ns": "cli",
         "thread_id": "test-thread",
     }
+
+
+@pytest.mark.asyncio
+async def test_browser_harness_applies_internal_state_overrides() -> None:
+    graph = FakeGraph()
+    prior_messages = [HumanMessage(content="prior task")]
+    harness = BrowserHarness(lambda **kwargs: graph)
+
+    result = await harness.run(
+        "next task",
+        config={
+            "configurable": {"thread_id": "test-thread"},
+            HARNESS_STATE_OVERRIDES_CONFIG_KEY: {
+                "messages": prior_messages,
+                "snapshot": "- link result ref=e1",
+                "decision": "",
+            },
+        },
+    )
+
+    assert result["state"] == {
+        "task": "next task",
+        "messages": prior_messages,
+        "snapshot": "- link result ref=e1",
+        "decision": "",
+    }
+    assert HARNESS_STATE_OVERRIDES_CONFIG_KEY not in result["config"]
 
 
 @pytest.mark.asyncio

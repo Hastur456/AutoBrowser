@@ -85,6 +85,7 @@ class AgentState(TypedDict, total=False):
     """Top-level graph state for the Plan -> Execute -> Observe loop."""
 
     task: str
+    task_id: str
     plan: list[PlanStep]
     current_step: int
 

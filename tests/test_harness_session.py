@@ -8,6 +8,7 @@ import pytest
 
 from src.harness.session import (
     ArtifactRegistry,
+    SESSION_THREAD_PREFIX,
     SessionConfig,
     SessionContext,
     SessionEventBus,
@@ -15,6 +16,7 @@ from src.harness.session import (
     SessionState,
     WorkspaceContext,
 )
+from src.harness.runtime import HARNESS_STATE_OVERRIDES_CONFIG_KEY
 from src.harness.tools import ToolRegistry
 
 
@@ -230,9 +232,73 @@ async def test_session_runtime_reuses_context_and_records_task_history(
     assert len(calls) == 1
     assert calls[0][1] == "inspect page"
     assert calls[0][3]["metadata"]["model"] == "test-model"
-    assert calls[0][3]["configurable"]["thread_id"] == runtime.context.tasks[0].task_id
+    assert calls[0][3]["configurable"]["thread_id"] == (
+        f"{SESSION_THREAD_PREFIX}{runtime.context.session_id}"
+    )
     assert runtime.context.current_task is None
     assert runtime.context.metadata.task_count == 1
     assert runtime.context.tasks[0].task == "inspect page"
     assert runtime.context.tasks[0].result == result
     assert isinstance(runtime.context.tool_registry, ToolRegistry)
+
+
+@pytest.mark.asyncio
+async def test_session_runtime_carries_browser_state_between_tasks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def task_runner(
+        _harness: Any,
+        task: str,
+        _config: SessionConfig,
+        task_config: dict[str, Any],
+    ) -> dict[str, Any]:
+        calls.append((task, task_config))
+        if task == "find products":
+            return {
+                "messages": ["prior product list"],
+                "observation": "Visible results: first product is Keyboard A.",
+                "snapshot": "- link \"Keyboard A\" ref=e10",
+                "decision": "done",
+                "final_answer": "Found Keyboard A.",
+                "plan": [{"id": 1, "description": "old", "status": "completed"}],
+                "replan_count": 2,
+                "consecutive_failures": 1,
+            }
+        return {"final_answer": "done"}
+
+    runtime = SessionRuntime(
+        make_config(),
+        graph_builder=lambda **_kwargs: object(),
+        llm_factory=llm_factory,
+        task_runner=task_runner,
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        load_browser_tools=no_tools,
+        close_mcp_session=noop_close,
+        harness_factory=FakeHarness,
+    )
+
+    await runtime.run_task("find products")
+    await runtime.run_task("open the first one")
+
+    first_config = calls[0][1]
+    second_config = calls[1][1]
+    assert first_config["configurable"]["thread_id"] == second_config["configurable"]["thread_id"]
+    assert first_config["configurable"]["thread_id"] == (
+        f"{SESSION_THREAD_PREFIX}{runtime.context.session_id}"
+    )
+
+    overrides = second_config[HARNESS_STATE_OVERRIDES_CONFIG_KEY]
+    assert overrides["messages"] == ["prior product list"]
+    assert overrides["observation"] == "Visible results: first product is Keyboard A."
+    assert overrides["snapshot"] == "- link \"Keyboard A\" ref=e10"
+    assert overrides["task_id"] == runtime.context.tasks[1].task_id
+    assert overrides["plan"] == []
+    assert overrides["decision"] == ""
+    assert overrides["final_answer"] == ""
+    assert overrides["replan_count"] == 0
+    assert overrides["consecutive_failures"] == 0

@@ -15,6 +15,7 @@ from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolLoader, ToolRegistry
 
 GraphBuilder = Callable[..., Any]
+HARNESS_STATE_OVERRIDES_CONFIG_KEY = "_autobrowser_state_overrides"
 
 
 class BrowserHarness:
@@ -64,8 +65,12 @@ class BrowserHarness:
         """Run one task through the compiled agent graph."""
 
         trace = self.telemetry.start_trace(task)
-        run_config = self._run_config(config, thread_id=thread_id or f"task-{uuid4().hex}")
-        initial_state = self.context.build_initial_state(task, state_overrides)
+        run_config, initial_state = self._prepare_invocation(
+            task,
+            config,
+            thread_id=thread_id,
+            state_overrides=state_overrides,
+        )
 
         try:
             return await self.graph.ainvoke(initial_state, config=run_config)
@@ -90,8 +95,12 @@ class BrowserHarness:
         """Stream graph node updates for one task."""
 
         trace = self.telemetry.start_trace(task)
-        run_config = self._run_config(config, thread_id=thread_id or f"task-{uuid4().hex}")
-        initial_state = self.context.build_initial_state(task, state_overrides)
+        run_config, initial_state = self._prepare_invocation(
+            task,
+            config,
+            thread_id=thread_id,
+            state_overrides=state_overrides,
+        )
 
         yielded_done = False
         try:
@@ -114,6 +123,26 @@ class BrowserHarness:
             self.telemetry.log_error(exc, metadata={"task_name": trace.task_name})
             raise
 
+    async def get_state_values(
+        self,
+        config: Mapping[str, Any] | None = None,
+        *,
+        thread_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Return the latest checkpoint values for a graph thread when available."""
+
+        if not hasattr(self.graph, "aget_state"):
+            return None
+
+        public_config, _state_overrides = _split_internal_config(config)
+        run_config = self._run_config(
+            public_config,
+            thread_id=thread_id or f"task-{uuid4().hex}",
+        )
+        snapshot = await self.graph.aget_state(run_config)
+        values = getattr(snapshot, "values", None)
+        return dict(values) if isinstance(values, Mapping) else None
+
     def _run_config(
         self,
         config: Mapping[str, Any] | None,
@@ -125,6 +154,27 @@ class BrowserHarness:
         configurable.setdefault("thread_id", thread_id or f"task-{uuid4().hex}")
         run_config["configurable"] = configurable
         return run_config
+
+    def _prepare_invocation(
+        self,
+        task: str,
+        config: Mapping[str, Any] | None,
+        *,
+        thread_id: str | None,
+        state_overrides: Mapping[str, Any] | None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        public_config, config_state_overrides = _split_internal_config(config)
+        run_config = self._run_config(
+            public_config,
+            thread_id=thread_id or f"task-{uuid4().hex}",
+        )
+        merged_state_overrides: dict[str, Any] = {}
+        if config_state_overrides:
+            merged_state_overrides.update(config_state_overrides)
+        if state_overrides:
+            merged_state_overrides.update(state_overrides)
+        initial_state = self.context.build_initial_state(task, merged_state_overrides)
+        return run_config, initial_state
 
     def _message_history(self, state: Mapping[str, Any]) -> list[Any]:
         """Build message history with the harness-owned system prompt."""
@@ -162,4 +212,21 @@ def _chunk_contains_done(chunk: Any) -> bool:
     return False
 
 
-__all__ = ["BrowserHarness", "GraphBuilder"]
+def _split_internal_config(
+    config: Mapping[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    run_config = dict(config or {})
+    raw_state_overrides = run_config.pop(HARNESS_STATE_OVERRIDES_CONFIG_KEY, None)
+    state_overrides = (
+        dict(raw_state_overrides)
+        if isinstance(raw_state_overrides, Mapping)
+        else {}
+    )
+    return run_config, state_overrides
+
+
+__all__ = [
+    "BrowserHarness",
+    "GraphBuilder",
+    "HARNESS_STATE_OVERRIDES_CONFIG_KEY",
+]
