@@ -41,32 +41,41 @@ python -m pytest tests\test_prompts.py
 
 ## CLI Usage
 
-Dry check without MCP browser tools:
+Start the interactive `cmd2` REPL:
 
 ```powershell
-python main.py --no-mcp --task "inspect page"
+python main.py
 ```
 
-This runs the startup task, prints its result, and then keeps the session alive
-for the next prompt. Type `quit` or `exit`, or press Ctrl+C/EOF, to
-end the session.
+The REPL exposes the base commands documented by `help`. Free-form input is
+treated as a task, so both of these are valid:
+
+```text
+autobrowser> run open ozon.ru
+autobrowser> open ozon.ru
+```
+
+Type `quit` or `exit`, or press Ctrl+C/EOF, to end the session.
 
 Session metadata and task history are written under
 `.autobrowser/sessions/<session_id>/` as `session.json` and `tasks.json`.
 Task-specific LangGraph checkpoints are cleaned up after each task when the
 configured saver supports thread deletion.
 
-Run with browser tools enabled:
+Run an initial task before entering the REPL:
 
 ```powershell
 python main.py --task "open the target page"
 ```
 
-Start directly at the interactive prompt:
+Dry check without MCP browser tools:
 
 ```powershell
-python main.py
+python main.py --no-mcp
 ```
+
+`--no-mcp` keeps the REPL available but disables live browser access, including
+navigation, snapshots, and current URL lookup.
 
 Debug state updates:
 

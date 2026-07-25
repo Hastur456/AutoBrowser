@@ -53,29 +53,39 @@ Each of these can also be overridden from the command line with `--chrome-path`,
 
 ## Run
 
-Dry run without MCP browser tools:
+Start the interactive `cmd2` REPL:
 
 ```powershell
-python main.py --no-mcp --task "inspect page"
+python main.py
 ```
 
-After the startup task completes, the CLI remains in the session prompt for the
-next task. Exit with `quit`, `exit`, Ctrl+C, or EOF.
+The prompt accepts either explicit commands or free-form tasks:
+
+```text
+autobrowser> help
+autobrowser> run open the target page
+autobrowser> open ozon.ru and find autumn jackets
+autobrowser> status
+autobrowser> exit
+```
+
+Use `--no-mcp` only for dry checks that do not need live browser access:
+
+```powershell
+python main.py --no-mcp
+```
+
+With `--no-mcp`, commands still work, but browser navigation, snapshots, and
+live website extraction are unavailable.
 
 Each session creates `.autobrowser/sessions/<session_id>/` with `session.json`,
 `tasks.json`, and a `workspace/` tree for runtime artifacts. These files are
 local runtime output and are ignored by git.
 
-Run with browser tools enabled:
+Run an initial task before entering the REPL:
 
 ```powershell
 python main.py --task "open the target page"
-```
-
-Start directly at the session prompt:
-
-```powershell
-python main.py
 ```
 
 Show graph state updates while debugging:
