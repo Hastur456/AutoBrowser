@@ -59,8 +59,10 @@ Type `quit` or `exit`, or press Ctrl+C/EOF, to end the session.
 
 Session metadata and task history are written under
 `.autobrowser/sessions/<session_id>/` as `session.json` and `tasks.json`.
-Task-specific LangGraph checkpoints are cleaned up after each task when the
-configured saver supports thread deletion.
+LangGraph checkpoint memory is scoped to the active interactive session so
+follow-up tasks can use prior observations, snapshots, and browser progress.
+Task-local planning, terminal, policy, error, and retry fields are reset before
+each new task.
 
 Run an initial task before entering the REPL:
 
@@ -94,8 +96,9 @@ CLI now uses the long-lived session loop by default.
 - Keep reasoning and routing changes in `src/agent/`.
 - Keep session and runtime infrastructure changes in `src/harness/`.
 - Keep `SessionRuntime` focused on interaction lifecycle and resource
-  ownership; delegate each task to `BrowserHarness` instead of solving tasks in
-  the session layer.
+  ownership; it may carry graph context between tasks, but it should still
+  delegate task solving to `BrowserHarness` instead of solving tasks in the
+  session layer.
 - Register browser-specific tools through `ToolRegistry` or harness injection.
 - Preserve Playwright MCP snapshot/ref semantics in prompts, policies, and
   executor changes.

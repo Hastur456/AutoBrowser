@@ -56,15 +56,16 @@ lifecycle and delegates session-owned state to `SessionContext`. The context is
 the root object for one process session: it holds `SessionConfig`, `session_id`,
 task history, current task, workspace, artifact registry, event bus, session
 state, metadata, telemetry, tool registry, memory, LLM, and `BrowserHarness`.
-Each user request is tracked as a `TaskRecord` and delegated as an independent
-task. When the agent reaches a terminal state, only that task ends; the session
-returns to the input prompt and keeps the same runtime resources alive until the
-process exits.
+Each user request is tracked as a `TaskRecord` and delegated as a task inside
+the active session. When the agent reaches a terminal state, only that task
+ends; the session returns to the input prompt and keeps the same runtime
+resources and session-scoped agent context alive until the process exits.
 
 The session layer is intentionally not a task solver. It manages interaction
-lifecycle and resource ownership, while `BrowserHarness` and the compiled
-LangGraph agent continue to handle one task execution at a time. AutoBrowser
-models session activity as tasks, not chat turns.
+lifecycle, resource ownership, and context handoff between tasks, while
+`BrowserHarness` and the compiled LangGraph agent continue to handle one task
+execution at a time. AutoBrowser models session activity as tasks, with each
+task represented as a distinct user turn in durable message history.
 
 The interactive CLI in `src/cli/agent_cli.py` wraps a prepared
 `SessionRuntime`. It keeps all asynchronous session operations on one dedicated
@@ -97,12 +98,23 @@ This keeps the graph focused on reasoning/control flow, keeps task lifecycle
 separate from session lifecycle, and keeps runtime concerns replaceable in
 tests.
 
-Each task receives a generated task-specific `thread_id` stored on its
-`TaskRecord` and passed into LangGraph config. After a task succeeds or fails,
-`SessionRuntime` asks `MemoryManager` to delete checkpoints for that thread when
-the configured saver supports thread deletion. This keeps the process-long
-session alive without accumulating graph checkpoints or durable message history
-from completed tasks inside the active in-memory saver.
+All tasks in one interactive session share a session-scoped LangGraph
+`thread_id` derived from `SessionContext.session_id`. Each `TaskRecord` still
+receives its own `task_id` for persisted task history and message attribution,
+but that task ID no longer doubles as the checkpoint thread.
+
+After each task, `SessionRuntime` remembers the latest graph state in
+`SessionContext.state`. The next task receives only the context that is useful
+across task boundaries: durable messages, latest observation, current snapshot,
+browser state, and last browser action metadata. Task-local fields such as
+plan, terminal decision, final answer, tool request/result, policy state,
+errors, and retry counters are reset before the next invocation. This lets
+follow-up tasks use prior results and browser progress without inheriting stale
+completion or failure state.
+
+`BrowserHarness` owns an internal state-override channel used by the harness to
+inject this carried session state into the initial graph state. That internal
+key is stripped before LangGraph receives config.
 
 ## Planner
 
@@ -121,9 +133,9 @@ For search tasks, the plan must preserve this contract:
 
 ## Agent Reasoning
 
-The reasoning node uses the current task, plan, latest observation, latest
-snapshot, available refs, retry counters, and durable message history. It must
-return either a native tool call, a JSON replan decision, or a JSON done
+The reasoning node uses the current task, task ID, plan, latest observation,
+latest snapshot, available refs, retry counters, and durable message history.
+It must return either a native tool call, a JSON replan decision, or a JSON done
 decision.
 
 The system prompt emphasizes:

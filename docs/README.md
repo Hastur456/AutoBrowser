@@ -15,9 +15,12 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   and harness boundaries.
 - [Session Runtime Change](development/2026-07-23-session-runtime-change.md):
   implementation note for the long-lived session and `SessionContext` refactor.
+- [Session-Scoped Agent Context Memory ADR](decisions/2026-07-25-session-scoped-agent-context-memory.md):
+  decision record for preserving useful agent context across tasks in one
+  interactive session.
 - [Task Memory Isolation ADR](decisions/2026-07-24-task-memory-isolation-and-session-persistence.md):
-  decision record for per-task checkpoint cleanup and `.autobrowser` session
-  records.
+  superseded historical decision record for per-task checkpoint cleanup and
+  `.autobrowser` session records.
 - [Architecture Decisions](decisions/index.md): ADR index and template.
 - [Research](research/index.md): current open questions and suggested spikes.
 - [Glossary](glossary.md): shared project terms.

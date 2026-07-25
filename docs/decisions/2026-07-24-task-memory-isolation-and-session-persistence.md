@@ -1,7 +1,12 @@
 # Task Memory Isolation and Session Persistence
 
-Status: Accepted
+Status: Superseded by [Session-Scoped Agent Context Memory](2026-07-25-session-scoped-agent-context-memory.md)
 Date: 2026-07-24
+
+Supersession note, 2026-07-25: task-specific checkpoint cleanup was replaced
+by a session-scoped LangGraph thread so follow-up tasks can use previous
+observations, snapshots, browser state, and partial progress from the same
+interactive session. This record is preserved as historical context.
 
 ## Context
 
