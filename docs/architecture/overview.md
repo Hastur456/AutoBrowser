@@ -25,6 +25,7 @@ structure.
 | Path | Responsibility |
 | --- | --- |
 | `main.py` | CLI parsing and wiring the process into `SessionRuntime`. |
+| `src/cli/` | `cmd2` interactive REPL and user-facing session commands. |
 | `src/agent/` | LangGraph graph assembly, shared state, prompts, reasoning node, routers. |
 | `src/agent/subgraphs/planner/` | One-shot planning graph and planning prompts. |
 | `src/agent/subgraphs/executor/` | Tool execution graph and Playwright MCP argument normalization. |
@@ -64,6 +65,12 @@ The session layer is intentionally not a task solver. It manages interaction
 lifecycle and resource ownership, while `BrowserHarness` and the compiled
 LangGraph agent continue to handle one task execution at a time. AutoBrowser
 models session activity as tasks, not chat turns.
+
+The interactive CLI in `src/cli/agent_cli.py` wraps a prepared
+`SessionRuntime`. It keeps all asynchronous session operations on one dedicated
+runtime event loop, including task execution, browser status helpers, reset,
+and close. This avoids closing MCP resources from a different loop than the one
+that created them.
 
 Session workspace files live under
 `.autobrowser/sessions/<session_id>/workspace/`, with standard subdirectories
