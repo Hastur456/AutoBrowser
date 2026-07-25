@@ -23,6 +23,8 @@ from src.agent.state import AgentState, CompactToolObservation, ToolRequest, Too
 from src.harness.context import ContextBuilder
 
 MAX_TOOL_MESSAGE_REFS = 25
+ORIGINAL_USER_REQUEST_PREFIX = "Original user request:\n"
+USER_REQUEST_PREFIX = "User request"
 
 
 class MemoryManager:
@@ -59,10 +61,11 @@ def ensure_message_history(
     *,
     system_prompt: str | None = None,
 ) -> list[BaseMessage]:
-    """Return existing history or initialize it with system and original user task."""
+    """Return existing history and ensure the current user task is represented."""
 
     messages = list(state.get("messages") or [])
     task = str(state.get("task", "") or "Complete the task.").strip()
+    task_id = str(state.get("task_id", "") or "").strip()
     if not any(message.type == "system" for message in messages):
         prompt = (
             system_prompt
@@ -70,14 +73,31 @@ def ensure_message_history(
             else ContextBuilder().get_system_prompt()
         )
         messages.insert(0, SystemMessage(content=prompt))
+
+    if task_id:
+        request_content = f"{USER_REQUEST_PREFIX} ({task_id}):\n{task}"
+        if not _has_human_message(messages, request_content):
+            messages.append(HumanMessage(content=request_content))
+        return messages
+
     if not any(
         message.type == "human"
-        and str(message.content).startswith("Original user request:\n")
+        and str(message.content).startswith(ORIGINAL_USER_REQUEST_PREFIX)
         for message in messages
     ):
         insert_at = 1 if messages and messages[0].type == "system" else 0
-        messages.insert(insert_at, HumanMessage(content=f"Original user request:\n{task}"))
+        messages.insert(
+            insert_at,
+            HumanMessage(content=f"{ORIGINAL_USER_REQUEST_PREFIX}{task}"),
+        )
     return messages
+
+
+def _has_human_message(messages: list[BaseMessage], content: str) -> bool:
+    return any(
+        message.type == "human" and str(message.content) == content
+        for message in messages
+    )
 
 
 def with_tool_call_id(request: ToolRequest) -> ToolRequest:

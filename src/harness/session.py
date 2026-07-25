@@ -11,7 +11,11 @@ from typing import Any
 from uuid import uuid4
 
 from src.harness.memory import MemoryManager
-from src.harness.runtime import BrowserHarness, GraphBuilder
+from src.harness.runtime import (
+    HARNESS_STATE_OVERRIDES_CONFIG_KEY,
+    BrowserHarness,
+    GraphBuilder,
+)
 from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolRegistry
 
@@ -30,6 +34,43 @@ INTERACTIVE_MESSAGE = "Interactive mode. Type 'quit' or 'exit' to quit.\n"
 TASK_PROMPT = "Task> "
 
 EXIT_MESSAGE = "\nExiting."
+SESSION_THREAD_PREFIX = "session-"
+
+SESSION_STATE_KEYS = (
+    "messages",
+    "observation",
+    "snapshot",
+    "needs_fresh_snapshot",
+    "browser",
+    "last_tool",
+    "last_args",
+    "last_tool_request",
+    "snapshot_before_last_browser_action",
+    "last_browser_action",
+    "ineffective_browser_action",
+    "ineffective_browser_actions",
+)
+
+TASK_BOUNDARY_RESETS: dict[str, Any] = {
+    "plan": [],
+    "current_step": 0,
+    "decision": "",
+    "tool_request": {},
+    "tool_result": {},
+    "policy_decision": "",
+    "final_answer": "",
+    "error": "",
+    "repeat_count": 0,
+    "replan_count": 0,
+    "consecutive_failures": 0,
+    "snapshot_recovery_count": 0,
+    "invalid_ref_recovery_count": 0,
+    "stale_snapshot_retries": 0,
+    "ineffective_action_count": 0,
+    "unchanged_snapshot_count": 0,
+    "counters": {},
+    "policy_event": {},
+}
 
 
 @dataclass(frozen=True)
@@ -118,6 +159,11 @@ class SessionState(MutableMapping[str, object]):
         """Set a session-scoped value."""
 
         self._values[key] = value
+
+    def replace(self, values: MutableMapping[str, object]) -> None:
+        """Replace all session-scoped values."""
+
+        self._values = dict(values)
 
 
 @dataclass
@@ -248,6 +294,43 @@ def _write_json(path: Path, payload: Any) -> None:
         encoding="utf-8",
     )
     tmp_path.replace(path)
+
+
+def _task_state_overrides(
+    session_state: MutableMapping[str, object],
+    *,
+    task_id: str,
+) -> dict[str, object]:
+    carried_state = {
+        key: session_state[key]
+        for key in SESSION_STATE_KEYS
+        if key in session_state
+    }
+    reset_state = {
+        key: value.copy() if isinstance(value, (dict, list)) else value
+        for key, value in TASK_BOUNDARY_RESETS.items()
+    }
+    return {
+        **carried_state,
+        **reset_state,
+        "task_id": task_id,
+    }
+
+
+def _state_from_task_result(result: Any) -> dict[str, object] | None:
+    if not isinstance(result, dict):
+        return None
+
+    state = result.get("state")
+    if isinstance(state, dict):
+        return dict(state)
+
+    if len(result) == 1:
+        nested = next(iter(result.values()))
+        if isinstance(nested, dict):
+            return dict(nested)
+
+    return dict(result)
 
 
 class SessionEventBus:
@@ -496,8 +579,12 @@ class SessionRuntime:
         record = self.context.reset_task(task, task_id=task_id)
         task_config = self.config.task_config()
         configurable = dict(task_config.get("configurable") or {})
-        configurable["thread_id"] = task_id
+        configurable["thread_id"] = self._session_thread_id()
         task_config["configurable"] = configurable
+        task_config[HARNESS_STATE_OVERRIDES_CONFIG_KEY] = _task_state_overrides(
+            self.context.state,
+            task_id=task_id,
+        )
         try:
             result = await self._task_runner(
                 self.harness,
@@ -506,16 +593,40 @@ class SessionRuntime:
                 task_config,
             )
         except Exception as exc:
+            await self._remember_latest_state(task_config)
             self.context.fail_task(record, exc)
-            await self._delete_task_memory(task_id)
             raise
+        await self._remember_latest_state(task_config, fallback=result)
         self.context.finish_task(record, result)
-        await self._delete_task_memory(task_id)
         return result
 
-    async def _delete_task_memory(self, task_id: str) -> None:
-        if self.context.memory is not None:
-            await self.context.memory.delete_thread(task_id)
+    def _session_thread_id(self) -> str:
+        return f"{SESSION_THREAD_PREFIX}{self.context.session_id}"
+
+    async def _remember_latest_state(
+        self,
+        task_config: dict[str, Any],
+        *,
+        fallback: Any | None = None,
+    ) -> None:
+        state = await self._latest_harness_state(task_config)
+        if state is None:
+            state = _state_from_task_result(fallback)
+        if state is not None:
+            self.context.state.replace(state)
+
+    async def _latest_harness_state(
+        self,
+        task_config: dict[str, Any],
+    ) -> dict[str, object] | None:
+        get_state_values = getattr(self.harness, "get_state_values", None)
+        if not callable(get_state_values):
+            return None
+
+        values = await get_state_values(config=task_config)
+        if isinstance(values, dict):
+            return dict(values)
+        return None
 
     async def run_forever(self, *, initial_task: str | None = None) -> int:
         """Run tasks sequentially until the user exits the session."""
@@ -559,6 +670,7 @@ __all__ = [
     "SessionMetadata",
     "SessionRuntime",
     "SessionState",
+    "SESSION_THREAD_PREFIX",
     "TaskRecord",
     "WorkspaceContext",
 ]

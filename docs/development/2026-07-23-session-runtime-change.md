@@ -55,3 +55,20 @@ After the 2026-07-24 `SessionContext` update, the full suite passed with 97
 tests.
 After the session persistence and task-memory isolation update, the full suite
 passed with 97 tests.
+
+## 2026-07-25 Follow-Up
+
+- Replaced task-scoped LangGraph thread IDs with one session-scoped thread ID
+  derived from `SessionContext.session_id`.
+- Stopped deleting graph checkpoint memory after each task so follow-up tasks
+  can reuse prior observations, snapshots, browser state, and message history.
+- Added task-boundary state preparation: carry durable/session-useful fields
+  and reset task-local plan, decision, final answer, tool, policy, error, and
+  retry fields.
+- Added `task_id` to graph state so each user request is appended as a distinct
+  human turn in durable message history without duplicating turns.
+- Added a harness-owned state override channel in `BrowserHarness`; the
+  internal key is removed before LangGraph receives config.
+
+After the session-scoped agent context memory update, the full suite passed
+with 100 tests.

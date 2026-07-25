@@ -2,7 +2,9 @@
 
 This diagram shows the long-lived CLI session lifecycle. A terminal agent state
 ends the current task only; the session keeps waiting for another user request
-until the process is interrupted or an exit command is entered.
+until the process is interrupted or an exit command is entered. Useful agent
+context is carried across tasks through a session-scoped LangGraph thread and
+`SessionContext.state`.
 
 ```mermaid
 sequenceDiagram
@@ -30,15 +32,17 @@ sequenceDiagram
     User->>Session: Submit task
     Session->>Context: reset_task(task)
     Context->>Files: Update session.json and tasks.json
-    Session->>Harness: run_task(task, thread_id)
-    Harness->>Agent: Invoke compiled graph
+    Session->>Context: Build carried state and reset task-local fields
+    Session->>Harness: run_task(task, session thread_id, state overrides)
+    Harness->>Agent: Invoke compiled graph with current task
     Agent->>MCP: Execute approved tool calls
     MCP-->>Agent: Tool results and snapshots
     Agent-->>Harness: Terminal task state
     Harness-->>Session: Final task result
+    Session->>Harness: Read latest checkpoint state
+    Session->>Context: Remember messages, observation, snapshot, browser state
     Session->>Context: finish_task(result)
     Context->>Files: Update session.json and tasks.json
-    Session->>Memory: delete_thread(thread_id)
     Session-->>User: Print result and prompt again
   end
   User->>Session: Ctrl+C, EOF, quit, or exit

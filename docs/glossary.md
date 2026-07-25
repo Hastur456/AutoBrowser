@@ -30,10 +30,14 @@
 | SessionMetadata | Session-owned metadata such as started time, last activity, task count, and runtime version. |
 | Session records | Runtime-local JSON files under `.autobrowser/sessions/<session_id>/`, currently `session.json` and `tasks.json`. |
 | SessionRuntime | Process-lifetime coordinator that runs the session loop, delegates lifecycle state to `SessionContext`, and sends each task to `BrowserHarness`. |
+| Session-scoped thread ID | Stable `configurable.thread_id` derived from `SessionContext.session_id` and reused for all tasks in one interactive session. |
 | SessionState | Mutable mapping wrapper for shared session-level state that should not require a dedicated typed field yet. |
+| State override channel | Harness-internal config entry used to inject carried session state into a new graph invocation; stripped before LangGraph receives config. |
 | Session workspace | Runtime-local directory under `.autobrowser/sessions/<session_id>/workspace/` for downloads, screenshots, temp files, and artifacts. |
 | Snapshot depth | Tool argument that controls how much visible hierarchy `browser_snapshot` returns. |
-| Task thread ID | Generated `configurable.thread_id` used to isolate one task's LangGraph checkpoints inside a long-lived session. |
+| Task boundary reset | Clearing task-local graph fields such as plan, final answer, errors, policy state, tool request/result, and retry counters before a new task starts. |
+| Task ID | Generated identifier stored on `TaskRecord` and graph state to attribute one user request inside a session. |
+| Task thread ID | Deprecated term for the former per-task LangGraph checkpoint thread ID; replaced by the session-scoped thread ID plus per-task `task_id`. |
 | TaskRecord | Session history entry for one user task, including task ID, task text, result, start time, and finish time. |
 | Task lifecycle | One user request delegated to the agent, ending when the compiled graph reaches a terminal task state. |
 | ToolRegistry | Lazy registry that exposes tools from static lists, providers, or MCP clients. |

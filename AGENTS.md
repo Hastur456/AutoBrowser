@@ -18,8 +18,10 @@ This is a Python 3.12 repository for an AutoBrowser/LangGraph agent. The CLI ent
 - `src/agent/subgraphs/planner/`: planning graph pieces.
 - `src/agent/subgraphs/executor/`: tool execution graph pieces.
 - `src/agent/subgraphs/observer/`: tool-result and snapshot observation/compression pieces.
-- `src/harness/`: runtime infrastructure injected into the graph.
+- `src/cli/`: `cmd2` interactive CLI, command catalog, output formatting, and task runner adapter.
+- `src/harness/`: session runtime and runtime infrastructure injected into the graph.
 - `src/mcp/`: MCP session and Playwright MCP integration helpers.
+- `docs/`: architecture, development setup, decisions, diagrams, research notes, and glossary.
 
 Tests live in `tests/`. Utility scripts live in `scripts/`, including graph visualization and trace export helpers. Runtime or local-only folders such as `.venv/`, `.pytest_cache/`, `node_modules/`, `.codegraph/`, `.playwright-mcp/`, `profile/`, `baseline/`, and `__pycache__/` should not be treated as source.
 
@@ -29,6 +31,7 @@ LangGraph should own only the agent loop: planning, reasoning, routing, executio
 
 Harness responsibilities:
 
+- `session.py`: owns the process-long session lifecycle through `SessionRuntime` and `SessionContext`.
 - `runtime.py`: assembles harness components and compiles/runs/streams the graph through `BrowserHarness`.
 - `context.py`: context and initial state construction, including system prompt injection.
 - `memory.py`: checkpoint saver ownership and durable conversation history helpers.
@@ -37,6 +40,29 @@ Harness responsibilities:
 - `telemetry.py`: tracing/logging boundary.
 
 Do not hardcode Playwright MCP behavior into the agent loop. Browser-specific MCP clients and toolsets should be registered through `ToolRegistry` or injected through `BrowserHarness` so tools can be swapped or mocked in CI. Keep planner, observer, executor, and core state contracts stable unless a migration step explicitly requires changing them.
+
+## Session Context Architecture
+
+AutoBrowser is a long-lived interactive session, not a single-shot task runner. `SessionRuntime` owns the process lifecycle and delegates session-owned state to `SessionContext`.
+
+All tasks in one interactive session share a session-scoped LangGraph `thread_id` derived from `SessionContext.session_id`. Each user request still gets its own `TaskRecord.task_id` for task history and message attribution, but that ID is not the checkpoint thread.
+
+After each task, `SessionRuntime` remembers the latest graph state in `SessionContext.state`. The next task carries forward only session-useful context:
+
+- durable `messages`;
+- latest `observation`;
+- current `snapshot` and browser state;
+- last browser action metadata needed for stale-snapshot and ineffective-action checks.
+
+Before a new task starts, task-local fields must be reset so stale completion or retry state is not inherited:
+
+- `plan`, `current_step`, `decision`, and `final_answer`;
+- `tool_request`, `tool_result`, `policy_decision`, and `policy_event`;
+- `error`, retry counters, replan counters, repeat counters, and ineffective-action counters.
+
+`BrowserHarness` owns the internal state-override channel used to inject carried session state into the next graph invocation. Strip harness-internal config before passing config to LangGraph.
+
+Preserve this boundary: the session layer manages lifecycle and context handoff, while the compiled graph still owns planning, reasoning, tool execution, observation, and task completion.
 
 ## Build, Test, and Development Commands
 
@@ -56,6 +82,21 @@ python -m pytest
 
 Run targeted tests with `python -m pytest tests\path\to_test.py`.
 
+Useful focused test commands:
+
+```powershell
+python -m pytest tests\test_harness_session.py tests\test_harness_runtime.py
+python -m pytest tests\test_agent_graph.py
+python -m pytest tests\test_main_cli.py
+python -m pytest tests\test_prompts.py
+```
+
+Check docs-only diffs with:
+
+```powershell
+git diff --check -- docs
+```
+
 Run the CLI without browser/MCP tools for dry checks:
 
 ```powershell
@@ -68,7 +109,29 @@ Run the CLI with Playwright MCP tools enabled:
 python main.py --task "open the target page"
 ```
 
-Useful CLI flags include `--loop`, `--show-state`, `--show-tools`, `--json`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, and `--recursion-limit`.
+Start the interactive REPL with:
+
+```powershell
+python main.py
+```
+
+REPL commands include:
+
+- `run <text>` or free-form input: run a new browser-agent task.
+- `tasks`: show task history for the current session.
+- `cancel`: cancel the currently running task.
+- `session`: show current session information.
+- `status`: show short session, browser, and task status.
+- `history [N]`: show the last N dialogue messages.
+- `clear`: clear dialogue history.
+- `reset`: reset the current session by clearing history and state.
+- `browser`: show browser/tool status.
+- `snapshot`: save a screenshot to `workspace/screenshots/`.
+- `url`: show the current page URL.
+- `help [command]`: show command help.
+- `exit` or `quit`: exit the CLI.
+
+Useful CLI flags include `--loop`, `--show-state`, `--hide-snapshot`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, and `--recursion-limit`.
 
 ## Coding Style & Naming Conventions
 

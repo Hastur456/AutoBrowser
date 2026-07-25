@@ -2,7 +2,7 @@
 
 This diagram shows how `SessionRuntime` coordinates lifecycle through
 `SessionContext`, while `BrowserHarness` composes runtime infrastructure around
-one task execution.
+task execution inside a session-scoped graph thread.
 
 ```mermaid
 flowchart LR
@@ -22,7 +22,7 @@ flowchart LR
   SessionCtx --> Harness[BrowserHarness]
   Harness --> ContextBuilder[ContextBuilder]
   Harness --> Memory[MemoryManager]
-  Memory --> Checkpoints[Task checkpoints]
+  Memory --> Checkpoints[Session thread checkpoint]
   Harness --> Tools[ToolRegistry]
   Harness --> Policy[PolicyEngine]
   Harness --> Telemetry[TelemetryObserver]
@@ -39,6 +39,7 @@ flowchart LR
 The boundary is intentional: `SessionRuntime` coordinates interaction
 lifecycle, `SessionContext` owns session-scoped state and resources,
 `BrowserHarness` injects graph runtime dependencies, and the agent graph owns
-reasoning and state transitions. Task checkpoints are scoped by generated
-task thread IDs and deleted through `MemoryManager` after each task completes or
-fails, while session metadata remains available in `.autobrowser`.
+reasoning and state transitions. Graph checkpoints are scoped to the active
+session thread. `SessionRuntime` carries useful state between tasks through
+`SessionContext.state` and resets task-local graph fields before the next
+invocation, while session metadata remains available in `.autobrowser`.
