@@ -16,11 +16,12 @@ This is a Python 3.12 repository for an AutoBrowser/LangGraph agent. The CLI ent
 
 - `src/agent/`: LangGraph agent loop, state, prompts, routers, graph assembly, and history helpers.
 - `src/agent/subgraphs/planner/`: planning graph pieces.
-- `src/agent/subgraphs/executor/`: tool execution graph pieces.
+- `src/agent/subgraphs/executor/`: tool execution graph and provider-backed request/result normalization.
 - `src/agent/subgraphs/observer/`: tool-result and snapshot observation/compression pieces.
+- `src/browser/`: provider-neutral browser contracts, canonical browser names, backend adapters, shared browser errors, and fake browser tools for tests.
 - `src/cli/`: `cmd2` interactive CLI, command catalog, output formatting, and task runner adapter.
 - `src/harness/`: session runtime and runtime infrastructure injected into the graph.
-- `src/mcp/`: MCP session and Playwright MCP integration helpers.
+- `src/mcp/`: Playwright MCP process/session lifecycle helpers and provider loading.
 - `docs/`: architecture, development setup, decisions, diagrams, research notes, and glossary.
 
 Tests live in `tests/`. Utility scripts live in `scripts/`, including graph visualization and trace export helpers. Runtime or local-only folders such as `.venv/`, `.pytest_cache/`, `node_modules/`, `.codegraph/`, `.playwright-mcp/`, `profile/`, `baseline/`, and `__pycache__/` should not be treated as source.
@@ -35,11 +36,28 @@ Harness responsibilities:
 - `runtime.py`: assembles harness components and compiles/runs/streams the graph through `BrowserHarness`.
 - `context.py`: context and initial state construction, including system prompt injection.
 - `memory.py`: checkpoint saver ownership and durable conversation history helpers.
-- `tools.py`: pluggable tool registry for generic tool providers and MCP clients.
+- `tools.py`: pluggable tool registry for static tools, generic providers, browser providers, and MCP clients.
 - `policy.py`: policy checks and policy engine boundary.
 - `telemetry.py`: tracing/logging boundary.
 
-Do not hardcode Playwright MCP behavior into the agent loop. Browser-specific MCP clients and toolsets should be registered through `ToolRegistry` or injected through `BrowserHarness` so tools can be swapped or mocked in CI. Keep planner, observer, executor, and core state contracts stable unless a migration step explicitly requires changing them.
+Do not hardcode Playwright MCP behavior into the agent loop. Browser-specific backends should be registered through `BrowserProvider` and `ToolRegistry` or injected through `BrowserHarness` so tools can be swapped or mocked in CI. Keep planner, observer, executor, and core state contracts stable unless a migration step explicitly requires changing them.
+
+## Browser Provider Architecture
+
+`src/browser/` is the provider-neutral browser boundary. Production browser access is still Playwright MCP, but Playwright-specific schema adaptation belongs in browser providers, not in the executor, policy, or agent prompts.
+
+Browser boundary responsibilities:
+
+- `provider.py`: `BrowserProvider` protocol for backends that expose tools and normalize tool requests/results.
+- `contracts.py`: provider-neutral `BrowserAction` and `BrowserResult` typed contracts.
+- `names.py`: canonical browser names such as `browser.snapshot` and mappings to Playwright MCP names such as `browser_snapshot`.
+- `errors.py`: shared browser error codes such as `invalid_ref`, `unknown_action`, and `action_failed`.
+- `adapters/playwright_mcp.py`: `PlaywrightMCPBrowserProvider`, the production adapter around loaded Playwright MCP tools.
+- `fake.py`: `FakeBrowserProvider` for deterministic tests without Chrome, CDP, or MCP.
+
+The executor should resolve tools through `ToolRegistry`, pass browser requests through registered provider normalizers before invocation, and pass raw results through provider result normalizers before returning graph state. Raw non-provider tools should remain unadapted.
+
+Use canonical `browser.*` names in provider-neutral tests when helpful. The Playwright adapter maps them to runtime MCP tool names.
 
 ## Session Context Architecture
 
@@ -89,6 +107,7 @@ python -m pytest tests\test_harness_session.py tests\test_harness_runtime.py
 python -m pytest tests\test_agent_graph.py
 python -m pytest tests\test_main_cli.py
 python -m pytest tests\test_prompts.py
+python -m pytest tests\test_browser_contracts.py tests\test_fake_browser_provider.py tests\test_playwright_mcp_provider.py
 ```
 
 Check docs-only diffs with:
@@ -135,15 +154,15 @@ Useful CLI flags include `--loop`, `--show-state`, `--hide-snapshot`, `--show-to
 
 ## Coding Style & Naming Conventions
 
-Use Python 3.12-compatible code. Follow PEP 8 with 4-space indentation, snake_case for functions and modules, PascalCase for classes, and UPPER_SNAKE_CASE for constants. Add type hints for public functions and graph state structures.
+Use Python 3.12-compatible code. Follow PEP 8 with 4-space indentation, snake_case for functions and modules, PascalCase for classes, and UPPER_SNAKE_CASE for constants. Add type hints for public functions, graph state structures, and browser boundary contracts.
 
-Keep graph node, router, state, and prompt code in the existing `nodes.py`, `routers.py`, `state.py`, and `prompts.py` pattern. Put infrastructure abstractions in `src/harness/` instead of expanding graph nodes. Prefer structured state updates and typed contracts over ad hoc dictionaries when changing graph boundaries.
+Keep graph node, router, state, and prompt code in the existing `nodes.py`, `routers.py`, `state.py`, and `prompts.py` pattern. Put infrastructure abstractions in `src/harness/` instead of expanding graph nodes. Put browser backend contracts, canonical names, shared errors, and backend adapters in `src/browser/`. Prefer structured state updates and typed contracts over ad hoc dictionaries when changing graph or browser boundaries.
 
 ## Testing Guidelines
 
 Use `pytest` and `pytest-asyncio` for asynchronous graph, harness, and MCP behavior. Name test files `test_*.py` and test functions `test_*`.
 
-Prefer focused unit tests for routers, policy decisions, state transitions, tool registry behavior, and observer normalization. Add integration tests for graph assembly, harness injection, streaming behavior, and tool execution boundaries. Do not require external services in default tests unless they are skipped or mocked.
+Prefer focused unit tests for routers, policy decisions, state transitions, tool registry behavior, browser provider normalization, and observer normalization. Add integration tests for graph assembly, harness injection, streaming behavior, tool execution boundaries, and provider-backed browser execution. Use `FakeBrowserProvider` when tests need browser behavior without external services. Do not require external services in default tests unless they are skipped or mocked.
 
 ## Playwright MCP Development Rules
 
@@ -163,12 +182,21 @@ Preferred interaction:
 - `browser_type(ref)`
 - `browser_hover(ref)`
 
+Provider-neutral tests may use canonical names such as `browser.snapshot`, `browser.click`, `browser.type`, and `browser.hover`; production execution maps them to Playwright MCP names through `PlaywrightMCPBrowserProvider`.
+
+Ref freshness:
+
+- Ref-based actions require a current `browser_snapshot`.
+- If there is no current snapshot, request `browser_snapshot` before clicking, typing, or hovering.
+- If the requested ref is not present in the latest snapshot, replan from visible refs instead of reusing refs from history or a prior page.
+
 Do not:
 
 - guess CSS selectors
 - generate XPath
 - rely on class names
 - assume DOM structure
+- put Playwright MCP schema adaptation in executor or prompt code
 
 If the snapshot does not expose the needed element:
 
