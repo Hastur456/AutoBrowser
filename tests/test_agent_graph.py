@@ -64,6 +64,21 @@ def test_policy_classification() -> None:
     assert classify_tool_request({}, None)[0] == "blocked"
 
 
+def test_policy_treats_canonical_browser_snapshot_as_snapshot_tool() -> None:
+    decision, reason = classify_tool_request(
+        {
+            "snapshot": '- button "Search" ref=e7',
+            "needs_fresh_snapshot": False,
+            "last_tool": "browser_snapshot",
+            "last_args": {},
+        },
+        {"name": "browser.snapshot", "args": {}},
+    )
+
+    assert decision == "blocked"
+    assert "browser.snapshot is already current" in reason
+
+
 def test_policy_allows_typing_target_validation_to_happen_in_agent_or_tool() -> None:
     decision, reason = classify_tool_request(
         {"snapshot": '- button "Search" ref=e7'},
@@ -71,7 +86,7 @@ def test_policy_allows_typing_target_validation_to_happen_in_agent_or_tool() -> 
     )
 
     assert decision == "approved"
-    assert "browser_type" in reason
+    assert "browser.type" in reason
 
 
 def test_policy_allows_ambiguous_generic_typing_targets() -> None:
@@ -81,7 +96,7 @@ def test_policy_allows_ambiguous_generic_typing_targets() -> None:
     )
 
     assert decision == "approved"
-    assert "browser_type" in reason
+    assert "browser.type" in reason
 
 
 def test_policy_allows_typing_into_textbox_ref() -> None:
@@ -91,7 +106,7 @@ def test_policy_allows_typing_into_textbox_ref() -> None:
     )
 
     assert decision == "approved"
-    assert "browser_type" in reason
+    assert "browser.type" in reason
 
 
 def test_policy_block_increments_consecutive_failures() -> None:
@@ -120,7 +135,7 @@ def test_policy_allows_deeper_snapshot_when_current_snapshot_exists() -> None:
     )
 
     assert decision == "approved"
-    assert "browser_snapshot" in reason
+    assert "browser.snapshot" in reason
 
 
 def test_policy_blocks_snapshot_with_varied_depth_after_reuse_block() -> None:
@@ -131,7 +146,7 @@ def test_policy_blocks_snapshot_with_varied_depth_after_reuse_block() -> None:
             "last_tool": "browser_snapshot",
             "last_args": {"depth": 10},
             "observation": (
-                "browser_snapshot is already current. Reuse the existing snapshot "
+                "browser.snapshot is already current. Reuse the existing snapshot "
                 "and refs instead of requesting another snapshot."
             ),
         },
@@ -155,7 +170,7 @@ def test_policy_does_not_classify_ineffective_browser_actions() -> None:
     )
 
     assert decision == "approved"
-    assert "browser_click" in reason
+    assert "browser.click" in reason
 
 
 def test_policy_blocks_accumulated_ineffective_browser_actions() -> None:
@@ -414,7 +429,7 @@ async def test_agent_node_uses_observation_snapshot_and_refs_in_prompt() -> None
     assert 'textbox "Search" ref=e8' in prompt
     assert "e8" in prompt
     assert "[pending] Inspect page" in prompt
-    assert "do not call browser_snapshot again with any\ndepth" in prompt
+    assert "do not call browser.snapshot again with any\ndepth" in prompt
     assert all('textbox "Search" ref=e8' not in message.content for message in result["messages"])
 
 
@@ -601,12 +616,12 @@ async def test_agent_node_replans_snapshot_after_reuse_policy_block() -> None:
             "last_args": {"depth": 10},
             "repeat_count": 1,
             "observation": (
-                "browser_snapshot is already current. Reuse the existing snapshot "
+                "browser.snapshot is already current. Reuse the existing snapshot "
                 "and refs instead of requesting another snapshot."
             ),
             "policy_event": {
                 "decision": "blocked",
-                "reason": "browser_snapshot is already current.",
+                "reason": "browser.snapshot is already current.",
                 "tool_request": {"name": "browser_snapshot", "args": {"depth": 10}},
             },
         }
@@ -1610,6 +1625,46 @@ async def test_graph_executor_subgraph_keeps_snapshot_for_legacy_browser_type() 
             (
                 '{"decision":"tool_call","tool_request":'
                 '{"name":"browser_type","args":{"ref":"e8","text":"iphone"},'
+                '"reason":"Enter search query"}}'
+            ),
+            '{"decision":"done","final_answer":"typed"}',
+        ]
+    )
+    graph = build_agent_graph(llm=llm, tools=[browser_snapshot, browser_type])
+
+    result = await graph.ainvoke({"task": "Search Ozon"}, {"recursion_limit": 12})
+
+    assert result["final_answer"] == "typed"
+    assert calls == [{"element": 'textbox "Search"', "ref": "e8", "text": "iphone"}]
+
+
+@pytest.mark.asyncio
+async def test_graph_executor_subgraph_accepts_canonical_browser_type() -> None:
+    calls: list[dict[str, str]] = []
+
+    @tool
+    def browser_snapshot() -> str:
+        """Return a browser snapshot."""
+
+        return '- textbox "Search" ref=e8'
+
+    @tool
+    def browser_type(element: str, ref: str, text: str) -> str:
+        """Type into a browser element."""
+
+        calls.append({"element": element, "ref": ref, "text": text})
+        return "Typed."
+
+    llm = FakeListLLM(
+        responses=[
+            '{"steps":[{"id":1,"description":"Search Ozon","status":"pending"}]}',
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_snapshot","args":{},"reason":"Find search input"}}'
+            ),
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser.type","args":{"ref":"e8","text":"iphone"},'
                 '"reason":"Enter search query"}}'
             ),
             '{"decision":"done","final_answer":"typed"}',

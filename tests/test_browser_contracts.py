@@ -11,6 +11,12 @@ from src.browser import (
     BrowserErrorCode,
     BrowserProvider,
     BrowserResult,
+    CANONICAL_TO_PLAYWRIGHT,
+    PLAYWRIGHT_TO_CANONICAL,
+    is_browser_snapshot_name,
+    is_browser_tool_name,
+    to_canonical_browser_name,
+    to_playwright_browser_name,
 )
 
 
@@ -23,6 +29,18 @@ def test_browser_action_names_cover_canonical_contract() -> None:
         "browser.hover",
         "browser.evaluate",
     }
+
+
+def test_browser_tool_name_helpers_bridge_canonical_and_playwright_names() -> None:
+    assert CANONICAL_TO_PLAYWRIGHT["browser.snapshot"] == "browser_snapshot"
+    assert CANONICAL_TO_PLAYWRIGHT["browser.click"] == "browser_click"
+    assert CANONICAL_TO_PLAYWRIGHT["browser.type"] == "browser_type"
+    assert PLAYWRIGHT_TO_CANONICAL["browser_snapshot"] == "browser.snapshot"
+    assert to_playwright_browser_name("browser.click") == "browser_click"
+    assert to_canonical_browser_name("browser_type") == "browser.type"
+    assert is_browser_tool_name("browser.missing")
+    assert is_browser_snapshot_name("browser.snapshot")
+    assert is_browser_snapshot_name("browser_snapshot")
 
 
 def test_browser_action_shape_matches_existing_tool_request_fields() -> None:

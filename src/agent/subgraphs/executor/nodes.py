@@ -6,7 +6,12 @@ import json
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from src.browser import BrowserProvider
+from src.browser import (
+    BROWSER_ERROR_UNKNOWN_ACTION,
+    BrowserProvider,
+    is_browser_tool_name,
+    to_canonical_browser_name,
+)
 from src.agent.state import AgentState, ToolRequest, ToolResult
 from src.harness.tools import ToolLoader, ToolRegistry
 
@@ -39,6 +44,41 @@ def _normalize_result(
     for provider in browser_providers:
         normalized_result = provider.normalize_result(normalized_result)
     return normalized_result
+
+
+def _unknown_tool_result(
+    tool_name: str,
+    tools_by_name: dict[str, Any],
+) -> ToolResult:
+    if is_browser_tool_name(tool_name):
+        available_browser_actions = ", ".join(
+            sorted(
+                {
+                    to_canonical_browser_name(available_name)
+                    for available_name in tools_by_name
+                    if is_browser_tool_name(available_name)
+                }
+            )
+        ) or "none"
+        display_name = to_canonical_browser_name(tool_name)
+        return {
+            "name": tool_name,
+            "status": "error",
+            "content": "",
+            "error": (
+                f"Unknown browser action: {display_name}. "
+                f"Available browser actions: {available_browser_actions}"
+            ),
+            "error_code": BROWSER_ERROR_UNKNOWN_ACTION,
+        }
+
+    available = ", ".join(sorted(tools_by_name)) or "none"
+    return {
+        "name": tool_name,
+        "status": "error",
+        "content": "",
+        "error": f"Unknown tool: {tool_name}. Available tools: {available}",
+    }
 
 
 async def _invoke_tool(tool: Any, request: ToolRequest) -> Any:
@@ -84,13 +124,8 @@ def create_executor_node(
         tools_by_name = await registry.get()
         tool = tools_by_name.get(tool_name)
         if tool is None:
-            available = ", ".join(sorted(tools_by_name)) or "none"
-            result = {
-                "name": tool_name,
-                "status": "error",
-                "content": "",
-                "error": f"Unknown tool: {tool_name}. Available tools: {available}",
-            }
+            raw_result = _unknown_tool_result(tool_name, tools_by_name)
+            result = _normalize_result(raw_result, active_browser_providers)
             return {"tool_result": result, "error": result["error"]}
 
         try:

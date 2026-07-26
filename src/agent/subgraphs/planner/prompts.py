@@ -13,9 +13,10 @@ Return only JSON with this shape:
 Keep steps concrete and avoid tool names unless the user explicitly asked for them.
 The observation context is compact and may omit raw tool details.
 
-Playwright MCP refs such as e123 are ephemeral. They are valid only for the
-browser_snapshot that produced them. If observation says a ref was not found,
-plan for obtaining a fresh browser_snapshot before any ref-based action.
+Refs such as e123 are part of the browser contract and are ephemeral. They are
+valid only for the browser.snapshot that produced them. If observation says a
+ref was not found, plan for obtaining a fresh browser.snapshot before any
+ref-based action.
 
 For search/find/show tasks, always include the search contract in the plan:
 locate the search input, inspect the current value, type or replace the query

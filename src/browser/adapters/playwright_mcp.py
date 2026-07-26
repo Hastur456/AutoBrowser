@@ -7,7 +7,14 @@ from collections.abc import Sequence
 from typing import Any
 
 from src.agent.state import AgentState, ToolRequest, ToolResult
+from src.browser.errors import BROWSER_ERROR_INVALID_REF
+from src.browser.names import is_browser_tool_name, to_playwright_browser_name
 from src.browser.provider import BrowserProvider
+
+INVALID_REF_PATTERN = re.compile(
+    r"\bRef\s+[A-Za-z][A-Za-z0-9_-]*\s+not\s+found\b",
+    re.IGNORECASE,
+)
 
 
 def _tool_name(tool: Any) -> str:
@@ -32,6 +39,11 @@ def element_description_from_snapshot(snapshot: str, ref: str) -> str:
     return text.rstrip(":") or ref
 
 
+def _has_invalid_ref_error(result: ToolResult) -> bool:
+    payload = str(result.get("error", "") or result.get("content", "") or "")
+    return bool(INVALID_REF_PATTERN.search(payload))
+
+
 class PlaywrightMCPBrowserProvider(BrowserProvider):
     """Adapt Playwright MCP tools to the neutral browser-provider protocol."""
 
@@ -44,10 +56,12 @@ class PlaywrightMCPBrowserProvider(BrowserProvider):
     def normalize_request(self, request: ToolRequest, state: AgentState) -> ToolRequest:
         normalized_request = dict(request)
         args = dict(request.get("args") or {})
-        tool_name = str(request.get("name", ""))
-        if not self._supports(tool_name):
+        requested_name = str(request.get("name", ""))
+        if not self._supports(requested_name):
             normalized_request["args"] = args
             return normalized_request
+        tool_name = to_playwright_browser_name(requested_name)
+        normalized_request["name"] = tool_name
 
         tool = self._tools_by_name().get(tool_name)
         if tool is None:
@@ -82,13 +96,22 @@ class PlaywrightMCPBrowserProvider(BrowserProvider):
         return normalized_request
 
     def normalize_result(self, result: ToolResult) -> ToolResult:
-        return dict(result)
+        normalized_result = dict(result)
+        tool_name = str(normalized_result.get("name", "") or "")
+        if (
+            normalized_result.get("status") == "error"
+            and is_browser_tool_name(tool_name)
+            and _has_invalid_ref_error(normalized_result)
+            and not normalized_result.get("error_code")
+        ):
+            normalized_result["error_code"] = BROWSER_ERROR_INVALID_REF
+        return normalized_result
 
     def _tools_by_name(self) -> dict[str, Any]:
         return {_tool_name(tool): tool for tool in self._tools if _tool_name(tool)}
 
     def _supports(self, tool_name: str) -> bool:
-        return str(tool_name).startswith("browser_")
+        return is_browser_tool_name(tool_name)
 
     def _schema_dict(self, tool: Any) -> dict[str, Any]:
         for attr in ("args_schema", "input_schema"):

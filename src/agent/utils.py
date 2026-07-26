@@ -21,9 +21,13 @@ from src.agent.state import (
     ToolRequest,
 )
 
-SNAPSHOT_REUSE_MARKER = "browser_snapshot is already current"
+SNAPSHOT_REUSE_MARKERS = (
+    "browser.snapshot is already current",
+    "browser_snapshot is already current",
+)
+SNAPSHOT_REUSE_MARKER = SNAPSHOT_REUSE_MARKERS[0]
 REPEATED_SNAPSHOT_FINAL_ANSWER = (
-    "Stopped because browser_snapshot was requested three consecutive times "
+    "Stopped because browser.snapshot was requested three consecutive times "
     "without a meaningful state change. Latest observation:\n\n{observation}"
 )
 
@@ -175,16 +179,16 @@ def _snapshot_reuse_was_blocked(state: AgentState) -> bool:
     observation = str(state.get("observation", "") or "")
     error = str(state.get("error", "") or "")
     payload = "\n".join([reason, observation, error]).lower()
-    return SNAPSHOT_REUSE_MARKER in payload
+    return any(marker in payload for marker in SNAPSHOT_REUSE_MARKERS)
 
 
 def _snapshot_reuse_replan_update(state: AgentState) -> dict[str, Any]:
     return _replan_response(
         (
-            "browser_snapshot was just blocked because the current snapshot is "
+            "browser.snapshot was just blocked because the current snapshot is "
             "already reusable. Continue from the existing snapshot and refs; use "
-            "browser_find or browser_evaluate only if the current snapshot cannot "
-            "answer the next step. Do not request another browser_snapshot just "
+            "browser_find or browser.evaluate only if the current snapshot cannot "
+            "answer the next step. Do not request another browser.snapshot just "
             "to vary depth."
         ),
         last_tool=state.get("last_tool", ""),
@@ -368,8 +372,9 @@ def _fresh_snapshot_request(state: AgentState, messages: list[Any]) -> dict[str,
             "name": "browser_snapshot",
             "args": {},
             "reason": (
-                "Previous browser ref no longer exists in Playwright MCP. "
-                "Capture a fresh snapshot before any ref-based action."
+                "Previous browser ref is no longer valid for the current "
+                "browser.snapshot. Capture a fresh snapshot before any "
+                "ref-based action."
             ),
         }
     )

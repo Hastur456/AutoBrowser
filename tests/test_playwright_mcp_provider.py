@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.browser.adapters import PlaywrightMCPBrowserProvider
+import pytest
+
+from src.agent.subgraphs.executor.nodes import create_executor_node
+from src.browser import BROWSER_ERROR_INVALID_REF, BROWSER_ERROR_UNKNOWN_ACTION
+from src.browser.adapters import CANONICAL_TO_PLAYWRIGHT, PlaywrightMCPBrowserProvider
 
 
 class FakeTool:
@@ -33,6 +37,32 @@ def test_provider_maps_ref_to_target() -> None:
     )
 
     assert request["args"] == {"ref": "e14", "target": "e14"}
+
+
+def test_provider_maps_canonical_name_to_playwright_tool_name() -> None:
+    tool = FakeTool("browser_click", {"properties": {"target": {"type": "string"}}})
+    provider = PlaywrightMCPBrowserProvider([tool])
+
+    request = provider.normalize_request(
+        {"name": "browser.click", "args": {"ref": "e14"}},
+        {},
+    )
+
+    assert request["name"] == CANONICAL_TO_PLAYWRIGHT["browser.click"]
+    assert request["args"] == {"ref": "e14", "target": "e14"}
+
+
+def test_provider_maps_canonical_snapshot_name_to_playwright_tool_name() -> None:
+    tool = FakeTool("browser_snapshot", {"properties": {"depth": {"type": "integer"}}})
+    provider = PlaywrightMCPBrowserProvider([tool])
+
+    request = provider.normalize_request(
+        {"name": "browser.snapshot", "args": {"depth": 5}},
+        {},
+    )
+
+    assert request["name"] == CANONICAL_TO_PLAYWRIGHT["browser.snapshot"]
+    assert request["args"] == {"depth": 5}
 
 
 def test_provider_maps_target_to_ref_for_legacy_schema() -> None:
@@ -103,3 +133,48 @@ def test_provider_filters_args_when_schema_forbids_additional_properties() -> No
     )
 
     assert request["args"] == {"target": "e14"}
+
+
+def test_provider_normalizes_invalid_ref_error_code() -> None:
+    provider = PlaywrightMCPBrowserProvider()
+
+    result = provider.normalize_result(
+        {
+            "name": "browser_click",
+            "status": "error",
+            "content": "",
+            "error": "Ref e14 not found",
+        }
+    )
+
+    assert result["error"] == "Ref e14 not found"
+    assert result["error_code"] == BROWSER_ERROR_INVALID_REF
+
+
+def test_provider_leaves_non_invalid_error_without_error_code() -> None:
+    provider = PlaywrightMCPBrowserProvider()
+
+    result = provider.normalize_result(
+        {
+            "name": "browser_click",
+            "status": "error",
+            "content": "",
+            "error": "Element is not editable.",
+        }
+    )
+
+    assert result["error"] == "Element is not editable."
+    assert "error_code" not in result
+
+
+@pytest.mark.asyncio
+async def test_provider_backed_unknown_canonical_action_returns_browser_error() -> None:
+    tool = FakeTool("browser_click", {"properties": {"target": {"type": "string"}}})
+    provider = PlaywrightMCPBrowserProvider([tool])
+    node = create_executor_node(browser_providers=[provider])
+
+    result = await node({"tool_request": {"name": "browser.missing", "args": {}}})
+
+    assert result["tool_result"]["status"] == "error"
+    assert result["tool_result"]["error_code"] == BROWSER_ERROR_UNKNOWN_ACTION
+    assert "Unknown browser action: browser.missing" in result["tool_result"]["error"]
