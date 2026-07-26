@@ -11,7 +11,7 @@ from src.harness.memory import (
     ensure_message_history,
     with_tool_call_id,
 )
-from src.mcp.playwright_provider import element_description_from_snapshot
+from src.browser.adapters import element_description_from_snapshot
 from src.agent.subgraphs.observer.utils import has_invalid_ref_text
 from src.agent.state import (
     MAX_CONSECUTIVE_FAILURES,

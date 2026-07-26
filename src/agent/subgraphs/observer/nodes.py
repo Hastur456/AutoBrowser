@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from src.harness.memory import append_tool_message, tool_result_message_content
-from src.mcp.playwright_provider import element_description_from_snapshot
+from src.browser.adapters import element_description_from_snapshot
 from src.agent.subgraphs.observer.observer_llm import (
     compress_tool_result,
     fallback_compact_observation,

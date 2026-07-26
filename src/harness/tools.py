@@ -6,6 +6,8 @@ import inspect
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any, Protocol, runtime_checkable
 
+from src.browser.provider import BrowserProvider
+
 ToolLoader = Callable[[], Awaitable[Sequence[Any]]]
 ToolProvider = Sequence[Any] | ToolLoader | Any
 
@@ -34,7 +36,8 @@ class ToolRegistry:
         tool_loader: ToolLoader | None = None,
     ) -> None:
         self._tools = list(tools) if tools is not None else None
-        self._providers = list(providers or [])
+        self._provider_refs = list(providers or [])
+        self._providers = list(self._provider_refs)
         if tool_loader is not None:
             self._providers.append(tool_loader)
 
@@ -59,6 +62,15 @@ class ToolRegistry:
         """Compatibility alias for executor code that expects a name map."""
 
         return await self.get_by_name()
+
+    def get_browser_providers(self) -> list[BrowserProvider]:
+        """Return registered browser-provider adapters."""
+
+        return [
+            provider
+            for provider in self._provider_refs
+            if isinstance(provider, BrowserProvider)
+        ]
 
     async def _load_provider(self, provider: ToolProvider) -> list[Any]:
         if isinstance(provider, Sequence) and not isinstance(provider, (str, bytes)):

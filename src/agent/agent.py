@@ -9,6 +9,7 @@ from langchain_core.messages import BaseMessage
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, START, StateGraph
 
+from src.browser import BrowserProvider, PlaywrightMCPBrowserProvider
 from src.harness.memory import ensure_message_history
 from src.agent.nodes import create_agent_node, human_input_node
 from src.harness.policy import policy_node as default_policy_node
@@ -38,6 +39,7 @@ def build_agent_graph(
     tools: Sequence[Any] | None = None,
     tool_loader: Callable[[], Awaitable[Sequence[Any]]] | None = None,
     tool_registry: ToolRegistry | None = None,
+    browser_providers: Sequence[BrowserProvider] | None = None,
     policy_node: Callable[[AgentState], dict[str, Any]] = default_policy_node,
     history_builder: Callable[[AgentState], list[BaseMessage]] = ensure_message_history,
     checkpointer: Any | None = None,
@@ -46,7 +48,14 @@ def build_agent_graph(
     """Build and compile the AutoBrowser graph."""
 
     model = llm or create_default_llm()
-    registry = tool_registry or ToolRegistry(tools=tools, tool_loader=tool_loader)
+    active_browser_providers = list(browser_providers or [])
+    if not active_browser_providers and tools is not None:
+        active_browser_providers = [PlaywrightMCPBrowserProvider(tools)]
+    registry = tool_registry or ToolRegistry(
+        providers=active_browser_providers or None,
+        tools=None if active_browser_providers else tools,
+        tool_loader=tool_loader,
+    )
     graph = StateGraph(AgentState)
 
     graph.add_node("plan", build_planner_graph(model, history_builder=history_builder))
@@ -66,6 +75,7 @@ def build_agent_graph(
             tools=tools,
             tool_loader=tool_loader,
             tool_registry=registry,
+            browser_providers=active_browser_providers or None,
         ),
     )
     graph.add_node(
@@ -111,6 +121,7 @@ class AgentWorkflow:
         tools: Sequence[Any] | None = None,
         tool_loader: Callable[[], Awaitable[Sequence[Any]]] | None = None,
         tool_registry: ToolRegistry | None = None,
+        browser_providers: Sequence[BrowserProvider] | None = None,
         policy_node: Callable[[AgentState], dict[str, Any]] = default_policy_node,
         history_builder: Callable[[AgentState], list[BaseMessage]] = ensure_message_history,
         checkpointer: Any | None = None,
@@ -122,6 +133,7 @@ class AgentWorkflow:
             tools=tools,
             tool_loader=tool_loader,
             tool_registry=tool_registry,
+            browser_providers=browser_providers,
             policy_node=policy_node,
             history_builder=history_builder,
             checkpointer=checkpointer,

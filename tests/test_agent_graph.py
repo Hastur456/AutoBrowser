@@ -13,6 +13,7 @@ from src.agent.subgraphs.observer.utils import extract_element_refs
 from src.agent.subgraphs.observer.nodes import compile_observation
 from src.agent.subgraphs.observer.workflow import build_observer_graph
 from src.harness.policy import classify_tool_request, policy_node
+from src.harness.tools import ToolRegistry
 from src.agent.routers import (
     route_agent_decision,
     route_human_decision,
@@ -711,6 +712,36 @@ async def test_executor_adds_element_for_legacy_ref_based_mcp_tool() -> None:
 
     assert result["tool_result"]["status"] == "success"
     assert calls == [{"element": 'button "Catalog"', "ref": "e14"}]
+
+
+@pytest.mark.asyncio
+async def test_executor_uses_registered_browser_provider_adapter() -> None:
+    calls: list[dict[str, str]] = []
+
+    @tool
+    def browser_click(target: str) -> str:
+        """Click a browser element."""
+
+        calls.append({"target": target})
+        return "Clicked."
+
+    class FakeBrowserProvider:
+        async def get_tools(self) -> list[Any]:
+            return [browser_click]
+
+        def normalize_request(self, request, state):
+            if request.get("name") != "browser_click":
+                return request
+            return {**request, "args": {"target": "e14"}}
+
+        def normalize_result(self, result):
+            return result
+
+    node = create_executor_node(tool_registry=ToolRegistry(providers=[FakeBrowserProvider()]))
+    result = await node({"tool_request": {"name": "browser_click", "args": {"ref": "e14"}}})
+
+    assert result["tool_result"]["status"] == "success"
+    assert calls == [{"target": "e14"}]
 
 
 def test_observe_node_translates_snapshot_and_advances_inspection_plan() -> None:

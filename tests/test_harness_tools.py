@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from src.browser.provider import BrowserProvider
 from src.harness.tools import ToolRegistry
 
 
@@ -15,6 +16,17 @@ class FakeTool:
 class FakeMCPClient:
     async def get_tools(self) -> list[Any]:
         return [FakeTool("client_tool")]
+
+
+class FakeBrowserProvider:
+    async def get_tools(self) -> list[Any]:
+        return [FakeTool("browser_snapshot")]
+
+    def normalize_request(self, request, state):
+        return request
+
+    def normalize_result(self, result):
+        return result
 
 
 @pytest.mark.asyncio
@@ -51,3 +63,13 @@ async def test_tool_registry_loads_callable_provider_once() -> None:
     assert sorted(await registry.get_by_name()) == ["loaded_tool"]
     assert sorted(await registry.get_by_name()) == ["loaded_tool"]
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_tool_registry_exposes_browser_providers() -> None:
+    provider = FakeBrowserProvider()
+    registry = ToolRegistry(providers=[provider])
+
+    assert isinstance(provider, BrowserProvider)
+    assert registry.get_browser_providers() == [provider]
+    assert sorted(await registry.get_by_name()) == ["browser_snapshot"]

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from src.browser import PlaywrightMCPBrowserProvider
 from src.harness.memory import MemoryManager
 from src.harness.runtime import (
     HARNESS_STATE_OVERRIDES_CONFIG_KEY,
@@ -417,7 +418,9 @@ class SessionContext:
                 print_tools(tools)
 
         self.memory = MemoryManager()
-        self.tool_registry = ToolRegistry(tools=tools)
+        self.tool_registry = ToolRegistry(
+            providers=[PlaywrightMCPBrowserProvider(tools)]
+        )
         self.harness = harness_factory(
             graph_builder,
             llm=self.llm,

@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+from typing import Any, get_args
+
+from src.browser import (
+    BROWSER_ERROR_ACTION_FAILED,
+    BROWSER_ERROR_INVALID_REF,
+    BROWSER_ERROR_UNKNOWN_ACTION,
+    BrowserAction,
+    BrowserActionName,
+    BrowserErrorCode,
+    BrowserProvider,
+    BrowserResult,
+)
+
+
+def test_browser_action_names_cover_canonical_contract() -> None:
+    assert set(get_args(BrowserActionName)) == {
+        "browser.navigate",
+        "browser.snapshot",
+        "browser.click",
+        "browser.type",
+        "browser.hover",
+        "browser.evaluate",
+    }
+
+
+def test_browser_action_shape_matches_existing_tool_request_fields() -> None:
+    action: BrowserAction = {
+        "name": "browser.click",
+        "args": {"ref": "e14"},
+        "reason": "Click the visible catalog button.",
+        "id": "call_1",
+    }
+
+    assert action["name"] == "browser.click"
+    assert action["args"] == {"ref": "e14"}
+    assert BrowserAction.__required_keys__ == frozenset()
+    assert BrowserAction.__optional_keys__ == frozenset({"name", "args", "reason", "id"})
+
+
+def test_browser_result_shape_supports_optional_error_code() -> None:
+    result: BrowserResult = {
+        "name": "browser.click",
+        "status": "error",
+        "content": "",
+        "error": "Ref e14 not found",
+        "error_code": BROWSER_ERROR_INVALID_REF,
+    }
+
+    assert result["error_code"] == "invalid_ref"
+    assert BrowserResult.__required_keys__ == frozenset()
+    assert BrowserResult.__optional_keys__ == frozenset(
+        {"name", "status", "content", "error", "error_code"}
+    )
+
+
+def test_browser_error_codes_export_shared_vocabulary() -> None:
+    assert BROWSER_ERROR_INVALID_REF == "invalid_ref"
+    assert BROWSER_ERROR_UNKNOWN_ACTION == "unknown_action"
+    assert BROWSER_ERROR_ACTION_FAILED == "action_failed"
+    assert set(get_args(BrowserErrorCode)) == {
+        "invalid_ref",
+        "unknown_action",
+        "action_failed",
+    }
+
+
+class FakeBrowserProvider:
+    async def get_tools(self) -> list[Any]:
+        return []
+
+    def normalize_request(self, request, state):
+        return request
+
+    def normalize_result(self, result):
+        return result
+
+
+def test_browser_provider_protocol_matches_expected_shape() -> None:
+    provider = FakeBrowserProvider()
+
+    assert isinstance(provider, BrowserProvider)
