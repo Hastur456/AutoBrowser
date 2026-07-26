@@ -41,6 +41,7 @@ class ToolResult(TypedDict, total=False):
     status: ToolStatus
     content: str
     error: str
+    error_code: str
 
 
 class CompactToolObservation(TypedDict, total=False):

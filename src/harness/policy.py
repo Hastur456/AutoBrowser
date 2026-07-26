@@ -5,6 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from src.agent.state import AgentState, PolicyDecision, ToolRequest
+from src.browser import (
+    is_browser_snapshot_name,
+    is_browser_tool_name,
+    to_canonical_browser_name,
+)
 from src.agent.subgraphs.observer.utils import has_invalid_ref_text
 from src.harness.memory import append_tool_message
 
@@ -14,7 +19,11 @@ BLOCKED_TOOL_MARKERS = (
     "delete_account",
     "credential",
 )
-SNAPSHOT_REUSE_MARKER = "browser_snapshot is already current"
+SNAPSHOT_REUSE_MARKERS = (
+    "browser.snapshot is already current",
+    "browser_snapshot is already current",
+)
+SNAPSHOT_REUSE_MARKER = SNAPSHOT_REUSE_MARKERS[0]
 
 
 def _snapshot_reuse_was_blocked(state: AgentState) -> bool:
@@ -23,7 +32,7 @@ def _snapshot_reuse_was_blocked(state: AgentState) -> bool:
     observation = str(state.get("observation", "") or "")
     error = str(state.get("error", "") or "")
     payload = "\n".join([reason, observation, error]).lower()
-    return SNAPSHOT_REUSE_MARKER in payload
+    return any(marker in payload for marker in SNAPSHOT_REUSE_MARKERS)
 
 
 class PolicyEngine:
@@ -54,9 +63,11 @@ def classify_tool_request(
     if not request or not request.get("name"):
         return "blocked", "No tool request was provided."
 
-    name = request["name"].lower()
-    if any(marker in name for marker in BLOCKED_TOOL_MARKERS):
-        return "needs_human", f"Tool requires human approval before use: {request['name']}"
+    requested_name = str(request["name"]).strip()
+    name = requested_name.lower()
+    canonical_name = to_canonical_browser_name(name) if is_browser_tool_name(name) else name
+    if any(marker in canonical_name for marker in BLOCKED_TOOL_MARKERS):
+        return "needs_human", f"Tool requires human approval before use: {requested_name}"
 
     ineffective_action_count = int(state.get("ineffective_action_count", 0) or 0)
     if ineffective_action_count >= 3:
@@ -67,14 +78,14 @@ def classify_tool_request(
             "the visible result instead of continuing UI retries.",
         )
 
-    if name == "browser_snapshot":
+    if is_browser_snapshot_name(canonical_name):
         needs_fresh_snapshot = bool(state.get("needs_fresh_snapshot"))
         has_active_invalid_ref = has_invalid_ref_text(state.get("error", ""))
         has_current_snapshot = bool(str(state.get("snapshot", "") or "").strip())
         requested_args = request.get("args") or {}
         last_snapshot_args = (
             state.get("last_args", {})
-            if state.get("last_tool") == "browser_snapshot"
+            if is_browser_snapshot_name(str(state.get("last_tool", "")))
             else {}
         )
         is_same_snapshot_request = requested_args == last_snapshot_args
@@ -86,13 +97,14 @@ def classify_tool_request(
         ):
             return (
                 "blocked",
-                "browser_snapshot is already current. Reuse the existing snapshot "
+                "browser.snapshot is already current. Reuse the existing snapshot "
                 "and refs instead of requesting another snapshot with varied depth. "
-                "Use browser_find or browser_evaluate only if the visible structure "
+                "Use browser_find or browser.evaluate only if the visible structure "
                 "is insufficient, or replan.",
             )
 
-    return "approved", f"Tool approved: {request['name']}"
+    display_name = canonical_name if is_browser_tool_name(name) else requested_name
+    return "approved", f"Tool approved: {display_name}"
 
 
 def policy_node(state: AgentState) -> dict[str, Any]:

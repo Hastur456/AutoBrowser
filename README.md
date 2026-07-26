@@ -10,6 +10,8 @@ snapshots and element refs instead of CSS selectors or DOM assumptions.
 - Plans short browser tasks from natural-language instructions.
 - Uses an Ollama-compatible chat model through LangChain.
 - Loads Playwright MCP tools and connects them to Chrome over CDP.
+- Wraps browser tools behind a provider boundary so Playwright-specific schema
+  adaptation stays out of the executor.
 - Executes tool calls through a harness-owned registry and policy layer.
 - Observes tool output and browser snapshots before deciding the next action.
 - Keeps a process-long session alive so multiple tasks can run without
@@ -147,6 +149,12 @@ python -m pytest tests\test_harness_session.py tests\test_harness_runtime.py
 python -m pytest tests\test_main_cli.py
 ```
 
+Focused checks for browser provider work:
+
+```powershell
+python -m pytest tests\test_browser_contracts.py tests\test_fake_browser_provider.py tests\test_playwright_mcp_provider.py
+```
+
 After changing prompts, run:
 
 ```powershell
@@ -160,10 +168,11 @@ python -m pytest tests\test_prompts.py
 | `main.py` | CLI parsing and wiring the process into the session runtime. |
 | `src/agent/` | LangGraph graph assembly, state, prompts, reasoning node, and routers. |
 | `src/agent/subgraphs/planner/` | Planning graph and planner prompt. |
-| `src/agent/subgraphs/executor/` | Tool execution graph and Playwright MCP argument normalization. |
+| `src/agent/subgraphs/executor/` | Tool execution graph and provider-backed request/result normalization. |
 | `src/agent/subgraphs/observer/` | Tool-result observation, snapshot handling, and compact summaries. |
+| `src/browser/` | Browser provider contracts, canonical names, Playwright MCP adapter, and fake browser backend. |
 | `src/harness/` | Session runtime, graph harness, context, memory, tools, policy, and telemetry boundaries. |
-| `src/mcp/` | MCP session and Playwright MCP integration helpers. |
+| `src/mcp/` | Playwright MCP process/session lifecycle helpers and provider loading. |
 | `tests/` | Pytest coverage for graph behavior, harness boundaries, CLI, prompts, and tools. |
 | `scripts/` | Utility scripts, including graph visualization helpers. |
 | `docs/` | Architecture, setup, diagrams, decisions, research notes, and glossary. |
@@ -181,6 +190,10 @@ answer is available. The runtime infrastructure is injected through
 `SessionRuntime` and `BrowserHarness` in `src/harness/`, keeping browser
 tooling, memory, policy, telemetry, context, and interaction lifecycle outside
 the core agent loop.
+
+Browser-specific request and result adaptation lives under `src/browser/`.
+Production runs use `PlaywrightMCPBrowserProvider`; tests can use
+`FakeBrowserProvider` to exercise browser behavior without external services.
 
 `SessionRuntime` owns the long-lived process lifecycle through `SessionContext`.
 All tasks in one interactive session share a session-scoped checkpoint thread;

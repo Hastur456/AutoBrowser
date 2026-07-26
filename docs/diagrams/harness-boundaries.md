@@ -20,6 +20,7 @@ flowchart LR
   SessionCtx --> Chrome[Chrome/CDP]
   SessionCtx --> MCPRuntime[MCP session]
   SessionCtx --> Harness[BrowserHarness]
+  MCPRuntime --> PlaywrightProvider[PlaywrightMCPBrowserProvider]
   Harness --> ContextBuilder[ContextBuilder]
   Harness --> Memory[MemoryManager]
   Memory --> Checkpoints[Session thread checkpoint]
@@ -28,8 +29,11 @@ flowchart LR
   Harness --> Telemetry[TelemetryObserver]
   Harness --> Graph[Compiled LangGraph]
   Tools --> StaticTools[Static tools]
-  Tools --> Providers[Tool providers]
-  Tools --> MCP[MCP clients]
+  Tools --> Providers[Generic providers]
+  Tools --> BrowserProviders[BrowserProvider adapters]
+  BrowserProviders --> PlaywrightProvider
+  BrowserProviders --> FakeProvider[FakeBrowserProvider]
+  PlaywrightProvider --> MCP[MCP clients]
   Graph --> Planner[Planner subgraph]
   Graph --> Agent[Agent node]
   Graph --> Executor[Executor subgraph]
@@ -40,6 +44,8 @@ The boundary is intentional: `SessionRuntime` coordinates interaction
 lifecycle, `SessionContext` owns session-scoped state and resources,
 `BrowserHarness` injects graph runtime dependencies, and the agent graph owns
 reasoning and state transitions. Graph checkpoints are scoped to the active
-session thread. `SessionRuntime` carries useful state between tasks through
+session thread. Browser-specific schema adaptation is owned by
+`BrowserProvider` adapters registered in `ToolRegistry`, not by the agent loop.
+`SessionRuntime` carries useful state between tasks through
 `SessionContext.state` and resets task-local graph fields before the next
 invocation, while session metadata remains available in `.autobrowser`.

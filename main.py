@@ -33,10 +33,8 @@ from src.cli.task_runner import run_task
 from src.cli.tasks import resolve_initial_task, resolve_task
 from src.harness.langsmith import DEFAULT_LANGSMITH_PROJECT, configure_langsmith_tracing
 from src.mcp.playwright_runtime import (
-    MCPRuntime,
     close_mcp_session,
-    get_mcp_session,
-    load_browser_tools,
+    load_browser_provider,
 )
 
 load_dotenv()
@@ -100,7 +98,7 @@ def build_session(args: argparse.Namespace):
         task_runner=run_task,
         start_chrome=start_chrome_cdp,
         wait_for_cdp_port=wait_for_port,
-        browser_tool_loader=load_browser_tools,
+        browser_provider_loader=load_browser_provider,
         close_mcp=close_mcp_session,
         tool_printer=print_tools,
         tracing_configurator=configure_langsmith_tracing,

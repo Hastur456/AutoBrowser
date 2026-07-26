@@ -6,7 +6,8 @@ from typing import Any
 import pytest
 
 import main
-from src.mcp import mcp_setup
+from src.browser import PlaywrightMCPBrowserProvider
+from src.mcp import mcp_setup, playwright_runtime
 
 
 class FakeChatOllama:
@@ -17,6 +18,24 @@ class FakeChatOllama:
 class FakeTool:
     def __init__(self, name: str) -> None:
         self.name = name
+
+
+class FakeBrowserProvider:
+    def __init__(self, tools: list[FakeTool]) -> None:
+        self.tools = list(tools)
+
+    async def get_tools(self) -> list[FakeTool]:
+        return list(self.tools)
+
+    def normalize_request(
+        self,
+        request: dict[str, Any],
+        _state: dict[str, Any],
+    ) -> dict[str, Any]:
+        return request
+
+    def normalize_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        return result
 
 
 class FakeGraph:
@@ -188,6 +207,24 @@ def test_start_chrome_launches_when_port_closed(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_load_browser_provider_wraps_raw_playwright_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tools = [FakeTool("browser_snapshot")]
+
+    async def fake_load_browser_tools(port: int) -> list[FakeTool]:
+        assert port == 9777
+        return tools
+
+    monkeypatch.setattr(playwright_runtime, "load_browser_tools", fake_load_browser_tools)
+
+    provider = await playwright_runtime.load_browser_provider(9777)
+
+    assert isinstance(provider, PlaywrightMCPBrowserProvider)
+    assert await provider.get_tools() == tools
+
+
+@pytest.mark.asyncio
 async def test_setup_mcp_uses_latest_playwright_mcp(monkeypatch) -> None:
     captured: dict[str, Any] = {}
 
@@ -270,7 +307,7 @@ async def test_no_mcp_does_not_start_chrome_or_load_tools(monkeypatch) -> None:
     monkeypatch.setattr(main, "ChatOllama", FakeChatOllama)
     monkeypatch.setattr(main, "build_agent_graph", lambda **kwargs: FakeGraph())
     monkeypatch.setattr(main, "start_chrome_cdp", fail_start)
-    monkeypatch.setattr(main, "load_browser_tools", fail_load_tools)
+    monkeypatch.setattr(main, "load_browser_provider", fail_load_tools)
     exit_session_after_initial_task(monkeypatch)
 
     exit_code = await main.run_agent(make_args(no_mcp=True))
@@ -289,9 +326,9 @@ async def test_mcp_mode_starts_chrome_and_passes_tools(monkeypatch) -> None:
     async def fake_wait(port: int, timeout: float) -> None:
         events.append(("wait", port, timeout))
 
-    async def fake_load(port: int) -> list[FakeTool]:
+    async def fake_load(port: int) -> FakeBrowserProvider:
         events.append(("load", port))
-        return tools
+        return FakeBrowserProvider(tools)
 
     def fake_build_agent_graph(**kwargs: Any) -> FakeGraph:
         events.append(("tool_registry", kwargs["tool_registry"]))
@@ -303,7 +340,7 @@ async def test_mcp_mode_starts_chrome_and_passes_tools(monkeypatch) -> None:
     monkeypatch.setattr(main, "ChatOllama", FakeChatOllama)
     monkeypatch.setattr(main, "start_chrome_cdp", fake_start)
     monkeypatch.setattr(main, "wait_for_port", fake_wait)
-    monkeypatch.setattr(main, "load_browser_tools", fake_load)
+    monkeypatch.setattr(main, "load_browser_provider", fake_load)
     monkeypatch.setattr(main, "build_agent_graph", fake_build_agent_graph)
     exit_session_after_initial_task(monkeypatch)
 
@@ -317,6 +354,7 @@ async def test_mcp_mode_starts_chrome_and_passes_tools(monkeypatch) -> None:
     assert ("load", 9555) in events
     registry = next(event[1] for event in events if event[0] == "tool_registry")
     assert await registry.get_all() == tools
+    assert len(registry.get_browser_providers()) == 1
     assert any(
         event[0] == "policy_node" and callable(event[1])
         for event in events

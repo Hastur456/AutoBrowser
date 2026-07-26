@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from langchain_ollama import ChatOllama
 
 from src.agent.agent import build_agent_graph
+from src.browser import BrowserProvider
 from src.cli.agent_cli import run_cli
 from src.cli.output import print_tools
 from src.cli.task_runner import run_task
@@ -16,7 +17,7 @@ from src.cli.tasks import resolve_initial_task
 from src.harness.chrome import start_chrome_cdp, wait_for_port
 from src.harness.langsmith import configure_langsmith_tracing
 from src.harness.session import SessionConfig, SessionRuntime
-from src.mcp.playwright_runtime import close_mcp_session, load_browser_tools
+from src.mcp.playwright_runtime import close_mcp_session, load_browser_provider
 
 
 def build_session(
@@ -27,7 +28,7 @@ def build_session(
     task_runner: Callable[..., Awaitable[Any]] = run_task,
     start_chrome: Callable[[str, str, int], Any] = start_chrome_cdp,
     wait_for_cdp_port: Callable[[int, float], Awaitable[None]] = wait_for_port,
-    browser_tool_loader: Callable[[int], Awaitable[Sequence[Any]]] = load_browser_tools,
+    browser_provider_loader: Callable[[int], Awaitable[BrowserProvider]] = load_browser_provider,
     close_mcp: Callable[[], Awaitable[None]] = close_mcp_session,
     tool_printer: Callable[[list[Any]], None] | None = print_tools,
     tracing_configurator: Callable[[], bool] = configure_langsmith_tracing,
@@ -45,7 +46,7 @@ def build_session(
         task_runner=task_runner,
         start_chrome_cdp=start_chrome,
         wait_for_port=wait_for_cdp_port,
-        load_browser_tools=browser_tool_loader,
+        load_browser_provider=browser_provider_loader,
         close_mcp_session=close_mcp,
         print_tools=tool_printer,
         input_fn=input_fn,

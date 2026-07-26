@@ -28,10 +28,11 @@ structure.
 | `src/cli/` | `cmd2` interactive REPL and user-facing session commands. |
 | `src/agent/` | LangGraph graph assembly, shared state, prompts, reasoning node, routers. |
 | `src/agent/subgraphs/planner/` | One-shot planning graph and planning prompts. |
-| `src/agent/subgraphs/executor/` | Tool execution graph and Playwright MCP argument normalization. |
+| `src/agent/subgraphs/executor/` | Tool execution graph and provider-backed request/result normalization. |
 | `src/agent/subgraphs/observer/` | Tool-result observation, snapshot handling, compact result summaries. |
+| `src/browser/` | Provider-neutral browser contracts, canonical browser names, backend adapters, and fake browser tools for tests. |
 | `src/harness/` | Session runtime, graph harness, context, memory, tools, policy, and telemetry boundaries. |
-| `src/mcp/` | MCP session and Playwright MCP integration helpers. |
+| `src/mcp/` | Playwright MCP process/session lifecycle helpers and provider loading. |
 | `tests/` | Pytest coverage for graph behavior, harness boundaries, CLI, prompts, and tools. |
 | `scripts/` | Utility scripts, including graph visualization helpers. |
 
@@ -90,13 +91,38 @@ injects:
 
 - `ContextBuilder`: builds initial graph state and owns system prompt injection.
 - `MemoryManager`: owns checkpoint saver and durable message history helpers.
-- `ToolRegistry`: lazily loads static tools, generic providers, and MCP clients.
+- `ToolRegistry`: lazily loads static tools, generic providers, browser
+  providers, and MCP clients.
 - `PolicyEngine`: classifies tool requests before execution.
 - `TelemetryObserver`: logs local trace metadata and errors.
 
 This keeps the graph focused on reasoning/control flow, keeps task lifecycle
 separate from session lifecycle, and keeps runtime concerns replaceable in
 tests.
+
+## Browser Provider Boundary
+
+`src/browser/` is the provider-neutral browser boundary. It does not replace
+Playwright MCP semantics; it isolates backend-specific schema adaptation behind
+`BrowserProvider` implementations.
+
+The current browser boundary includes:
+
+- `BrowserProvider`: protocol for backends that expose tools and normalize
+  browser tool requests/results.
+- `BrowserAction` and `BrowserResult`: provider-neutral typed contracts.
+- `src/browser/names.py`: canonical `browser.*` names and mappings to
+  Playwright MCP tool names.
+- `src/browser/errors.py`: shared browser error codes such as `invalid_ref`,
+  `unknown_action`, and `action_failed`.
+- `PlaywrightMCPBrowserProvider`: production adapter for loaded Playwright MCP
+  tools.
+- `FakeBrowserProvider`: deterministic backend for tests that need browser
+  behavior without Chrome, CDP, or MCP.
+
+`src/mcp/playwright_runtime.py` still owns Playwright MCP process/session
+lifecycle. It loads raw MCP tools and wraps them with
+`PlaywrightMCPBrowserProvider` before the tools enter `ToolRegistry`.
 
 All tasks in one interactive session share a session-scoped LangGraph
 `thread_id` derived from `SessionContext.session_id`. Each `TaskRecord` still
@@ -149,13 +175,19 @@ The system prompt emphasizes:
 
 ## Executor
 
-The executor resolves the requested tool through `ToolRegistry`. For browser
-tools, it adapts ref-based requests to the loaded Playwright MCP tool schema:
+The executor resolves the requested tool through `ToolRegistry`. Browser
+request and result normalization is delegated to registered `BrowserProvider`
+instances rather than embedded in executor logic.
+
+For the Playwright MCP backend, `PlaywrightMCPBrowserProvider` adapts ref-based
+requests to the loaded tool schema:
 
 - maps `ref` to `target` when the tool expects `target`;
-- maps `target` back to `ref` when the tool expects `ref`;
+- maps ref-like `target` values back to `ref` when the tool expects `ref`;
 - fills an `element` argument from the latest snapshot line when required;
-- removes unsupported extra arguments when the tool schema disallows them.
+- removes unsupported extra arguments when the tool schema disallows them;
+- normalizes invalid-ref failures to the shared `invalid_ref` browser error
+  code.
 
 Tool success and failure are normalized into `ToolResult` state.
 
@@ -173,8 +205,10 @@ must use only the latest `ToolResult` JSON.
 
 `PolicyEngine` currently blocks missing tool requests, routes sensitive tool
 names containing markers such as `payment`, `purchase`, `delete_account`, or
-`credential` to human approval, and blocks redundant identical
-`browser_snapshot` requests when the current snapshot is still usable.
+`credential` to human approval, blocks accumulated ineffective browser actions,
+and blocks redundant identical snapshot requests when the current snapshot is
+still usable. Policy understands both canonical browser names such as
+`browser.snapshot` and Playwright MCP names such as `browser_snapshot`.
 
 ## Browser Semantics
 
@@ -185,6 +219,8 @@ The project follows Playwright MCP semantics:
 - Refs are ephemeral and valid only for the snapshot that produced them.
 - Preferred interactions are `browser_click(ref)`, `browser_type(ref)`, and
   `browser_hover(ref)`.
+- Provider-neutral code may use canonical names such as `browser.snapshot`, but
+  production execution maps them to Playwright MCP tool names.
 - If a snapshot does not expose the required control, the agent should request
   a fresh/deeper snapshot or use `browser_evaluate` only when snapshots cannot
   answer the question.

@@ -7,6 +7,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from src.browser import BrowserProvider
 from src.agent.subgraphs.executor.nodes import create_executor_node
 from src.agent.subgraphs.executor.state import ExecutorState
 from src.harness.tools import ToolRegistry
@@ -16,6 +17,7 @@ def build_executor_graph(
     tools: Sequence[Any] | None = None,
     tool_loader: Callable[[], Awaitable[Sequence[Any]]] | None = None,
     tool_registry: ToolRegistry | None = None,
+    browser_providers: Sequence[BrowserProvider] | None = None,
 ) -> Any:
     """Build a one-shot executor graph."""
 
@@ -26,6 +28,7 @@ def build_executor_graph(
             tools=tools,
             tool_loader=tool_loader,
             tool_registry=tool_registry,
+            browser_providers=browser_providers,
         ),
     )
     graph.add_edge(START, "executor")

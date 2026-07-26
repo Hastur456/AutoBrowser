@@ -8,11 +8,14 @@ from langchain_core.tools import tool
 
 from src.agent.agent import build_agent_graph
 from src.agent.nodes import create_agent_node, create_observe_node, observe_node
+from src.browser import FakeBrowserProvider
+from src.browser.adapters import PlaywrightMCPBrowserProvider
 from src.agent.subgraphs.observer.utils import MAX_CONTENT_PREVIEW_CHARS
 from src.agent.subgraphs.observer.utils import extract_element_refs
 from src.agent.subgraphs.observer.nodes import compile_observation
 from src.agent.subgraphs.observer.workflow import build_observer_graph
 from src.harness.policy import classify_tool_request, policy_node
+from src.harness.tools import ToolRegistry
 from src.agent.routers import (
     route_agent_decision,
     route_human_decision,
@@ -62,6 +65,21 @@ def test_policy_classification() -> None:
     assert classify_tool_request({}, None)[0] == "blocked"
 
 
+def test_policy_treats_canonical_browser_snapshot_as_snapshot_tool() -> None:
+    decision, reason = classify_tool_request(
+        {
+            "snapshot": '- button "Search" ref=e7',
+            "needs_fresh_snapshot": False,
+            "last_tool": "browser_snapshot",
+            "last_args": {},
+        },
+        {"name": "browser.snapshot", "args": {}},
+    )
+
+    assert decision == "blocked"
+    assert "browser.snapshot is already current" in reason
+
+
 def test_policy_allows_typing_target_validation_to_happen_in_agent_or_tool() -> None:
     decision, reason = classify_tool_request(
         {"snapshot": '- button "Search" ref=e7'},
@@ -69,7 +87,7 @@ def test_policy_allows_typing_target_validation_to_happen_in_agent_or_tool() -> 
     )
 
     assert decision == "approved"
-    assert "browser_type" in reason
+    assert "browser.type" in reason
 
 
 def test_policy_allows_ambiguous_generic_typing_targets() -> None:
@@ -79,7 +97,7 @@ def test_policy_allows_ambiguous_generic_typing_targets() -> None:
     )
 
     assert decision == "approved"
-    assert "browser_type" in reason
+    assert "browser.type" in reason
 
 
 def test_policy_allows_typing_into_textbox_ref() -> None:
@@ -89,7 +107,7 @@ def test_policy_allows_typing_into_textbox_ref() -> None:
     )
 
     assert decision == "approved"
-    assert "browser_type" in reason
+    assert "browser.type" in reason
 
 
 def test_policy_block_increments_consecutive_failures() -> None:
@@ -118,7 +136,7 @@ def test_policy_allows_deeper_snapshot_when_current_snapshot_exists() -> None:
     )
 
     assert decision == "approved"
-    assert "browser_snapshot" in reason
+    assert "browser.snapshot" in reason
 
 
 def test_policy_blocks_snapshot_with_varied_depth_after_reuse_block() -> None:
@@ -129,7 +147,7 @@ def test_policy_blocks_snapshot_with_varied_depth_after_reuse_block() -> None:
             "last_tool": "browser_snapshot",
             "last_args": {"depth": 10},
             "observation": (
-                "browser_snapshot is already current. Reuse the existing snapshot "
+                "browser.snapshot is already current. Reuse the existing snapshot "
                 "and refs instead of requesting another snapshot."
             ),
         },
@@ -153,7 +171,7 @@ def test_policy_does_not_classify_ineffective_browser_actions() -> None:
     )
 
     assert decision == "approved"
-    assert "browser_click" in reason
+    assert "browser.click" in reason
 
 
 def test_policy_blocks_accumulated_ineffective_browser_actions() -> None:
@@ -255,7 +273,8 @@ async def test_agent_node_allows_different_action_after_ineffective_action() -> 
     )
 
     assert result["decision"] == "tool_call"
-    assert result["tool_request"]["args"] == {"ref": "f1e29"}
+    assert result["tool_request"]["name"] == "browser_snapshot"
+    assert result["tool_request"]["args"] == {}
 
 
 @pytest.mark.asyncio
@@ -412,7 +431,7 @@ async def test_agent_node_uses_observation_snapshot_and_refs_in_prompt() -> None
     assert 'textbox "Search" ref=e8' in prompt
     assert "e8" in prompt
     assert "[pending] Inspect page" in prompt
-    assert "do not call browser_snapshot again with any\ndepth" in prompt
+    assert "do not call browser.snapshot again with any\ndepth" in prompt
     assert all('textbox "Search" ref=e8' not in message.content for message in result["messages"])
 
 
@@ -599,12 +618,12 @@ async def test_agent_node_replans_snapshot_after_reuse_policy_block() -> None:
             "last_args": {"depth": 10},
             "repeat_count": 1,
             "observation": (
-                "browser_snapshot is already current. Reuse the existing snapshot "
+                "browser.snapshot is already current. Reuse the existing snapshot "
                 "and refs instead of requesting another snapshot."
             ),
             "policy_event": {
                 "decision": "blocked",
-                "reason": "browser_snapshot is already current.",
+                "reason": "browser.snapshot is already current.",
                 "tool_request": {"name": "browser_snapshot", "args": {"depth": 10}},
             },
         }
@@ -643,6 +662,64 @@ async def test_agent_node_replans_on_third_identical_non_snapshot_tool_request()
 
 
 @pytest.mark.asyncio
+async def test_agent_node_requests_snapshot_before_ref_action_without_current_snapshot() -> None:
+    llm = FakeListLLM(
+        responses=[
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_click","args":{"ref":"e1"},'
+                '"reason":"Click the first product"}}'
+            )
+        ]
+    )
+    node = create_agent_node(llm)
+
+    result = await node(
+        {
+            "task": "Open the first product",
+            "plan": [{"id": 1, "description": "Click the first product", "status": "pending"}],
+            "current_step": 0,
+            "messages": [],
+        }
+    )
+
+    assert result["decision"] == "tool_call"
+    assert result["tool_request"]["name"] == "browser_snapshot"
+    assert result["tool_request"]["args"] == {}
+    assert "without a current browser.snapshot" in result["tool_request"]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_agent_node_replans_when_ref_is_not_in_latest_snapshot() -> None:
+    llm = FakeListLLM(
+        responses=[
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_click","args":{"ref":"e1"},'
+                '"reason":"Click the first product"}}'
+            )
+        ]
+    )
+    node = create_agent_node(llm)
+
+    result = await node(
+        {
+            "task": "Open the first product",
+            "plan": [{"id": 1, "description": "Click the first product", "status": "pending"}],
+            "current_step": 0,
+            "snapshot": '- link "Keyboard A" ref=e10',
+            "messages": [],
+        }
+    )
+
+    assert result["decision"] == "replan"
+    assert result["repeat_count"] == 1
+    assert "Requested ref e1 is not present in the latest browser.snapshot" in result[
+        "observation"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_executor_success() -> None:
     @tool
     def browser_snapshot() -> str:
@@ -668,7 +745,27 @@ async def test_executor_unknown_tool() -> None:
 
 
 @pytest.mark.asyncio
-async def test_executor_maps_browser_ref_to_latest_mcp_target() -> None:
+async def test_executor_raw_tools_do_not_apply_playwright_mapping() -> None:
+    calls: list[dict[str, str]] = []
+
+    def browser_click(target: str) -> str:
+        calls.append({"target": target})
+        return "Clicked."
+
+    node = create_executor_node(tools=[browser_click])
+    result = await node(
+        {
+            "snapshot": '- button "Catalog" ref=e14',
+            "tool_request": {"name": "browser_click", "args": {"ref": "e14"}},
+        }
+    )
+
+    assert result["tool_result"]["status"] == "error"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_executor_maps_browser_ref_to_latest_mcp_target_via_provider() -> None:
     calls: list[dict[str, str]] = []
 
     @tool
@@ -678,7 +775,8 @@ async def test_executor_maps_browser_ref_to_latest_mcp_target() -> None:
         calls.append({"target": target})
         return "Clicked."
 
-    node = create_executor_node(tools=[browser_click])
+    provider = PlaywrightMCPBrowserProvider([browser_click])
+    node = create_executor_node(browser_providers=[provider])
     result = await node(
         {
             "snapshot": '- button "Catalog" ref=e14',
@@ -691,7 +789,7 @@ async def test_executor_maps_browser_ref_to_latest_mcp_target() -> None:
 
 
 @pytest.mark.asyncio
-async def test_executor_adds_element_for_legacy_ref_based_mcp_tool() -> None:
+async def test_executor_adds_element_for_legacy_ref_based_mcp_tool_via_provider() -> None:
     calls: list[dict[str, str]] = []
 
     @tool
@@ -701,7 +799,8 @@ async def test_executor_adds_element_for_legacy_ref_based_mcp_tool() -> None:
         calls.append({"element": element, "ref": ref})
         return "Clicked."
 
-    node = create_executor_node(tools=[browser_click])
+    provider = PlaywrightMCPBrowserProvider([browser_click])
+    node = create_executor_node(browser_providers=[provider])
     result = await node(
         {
             "snapshot": '- button "Catalog" ref=e14',
@@ -711,6 +810,55 @@ async def test_executor_adds_element_for_legacy_ref_based_mcp_tool() -> None:
 
     assert result["tool_result"]["status"] == "success"
     assert calls == [{"element": 'button "Catalog"', "ref": "e14"}]
+
+
+@pytest.mark.asyncio
+async def test_executor_uses_registered_browser_provider_adapter() -> None:
+    calls: list[dict[str, str]] = []
+
+    @tool
+    def browser_click(target: str) -> str:
+        """Click a browser element."""
+
+        calls.append({"target": target})
+        return "Clicked."
+
+    class FakeBrowserProvider:
+        async def get_tools(self) -> list[Any]:
+            return [browser_click]
+
+        def normalize_request(self, request, state):
+            if request.get("name") != "browser_click":
+                return request
+            return {**request, "args": {"target": "e14"}}
+
+        def normalize_result(self, result):
+            return result
+
+    node = create_executor_node(tool_registry=ToolRegistry(providers=[FakeBrowserProvider()]))
+    result = await node({"tool_request": {"name": "browser_click", "args": {"ref": "e14"}}})
+
+    assert result["tool_result"]["status"] == "success"
+    assert calls == [{"target": "e14"}]
+
+
+@pytest.mark.asyncio
+async def test_executor_runs_fake_browser_provider_end_to_end() -> None:
+    first_snapshot = '- button "Catalog" ref=e14'
+    second_snapshot = '- heading "Catalog" ref=e21'
+    provider = FakeBrowserProvider([first_snapshot, second_snapshot])
+    node = create_executor_node(browser_providers=[provider])
+
+    first = await node({"tool_request": {"name": "browser.snapshot", "args": {}}})
+    clicked = await node({"tool_request": {"name": "browser.click", "args": {"ref": "e14"}}})
+    second = await node({"tool_request": {"name": "browser.snapshot", "args": {}}})
+
+    assert first["tool_result"]["status"] == "success"
+    assert first["tool_result"]["content"] == first_snapshot
+    assert clicked["tool_result"]["status"] == "success"
+    assert clicked["tool_result"]["name"] == "browser_click"
+    assert second["tool_result"]["status"] == "success"
+    assert second["tool_result"]["content"] == second_snapshot
 
 
 def test_observe_node_translates_snapshot_and_advances_inspection_plan() -> None:
@@ -1070,6 +1218,25 @@ def test_observe_node_preserves_snapshot_after_non_ref_browser_error() -> None:
     assert "snapshot" not in result
     assert "needs_fresh_snapshot" not in result
     assert "Timeout" in result["observation"]
+
+
+def test_observe_node_requests_fresh_snapshot_after_timeout_with_stale_history_ref() -> None:
+    result = observe_node(
+        {
+            "tool_request": {"name": "browser_click", "args": {"ref": "e119"}},
+            "tool_result": {
+                "name": "browser_click",
+                "status": "error",
+                "content": "",
+                "error": "Timeout 5000ms exceeded.",
+            },
+        }
+    )
+
+    assert result["snapshot"] == ""
+    assert result["needs_fresh_snapshot"] is True
+    assert "fresh browser_snapshot" in result["observation"]
+    assert "timed out without a current matching ref" in result["observation"]
 
 
 def test_observe_node_requests_fresh_snapshot_after_stale_element_error() -> None:
@@ -1561,7 +1728,49 @@ async def test_graph_executor_subgraph_keeps_snapshot_for_legacy_browser_type() 
             '{"decision":"done","final_answer":"typed"}',
         ]
     )
-    graph = build_agent_graph(llm=llm, tools=[browser_snapshot, browser_type])
+    provider = PlaywrightMCPBrowserProvider([browser_snapshot, browser_type])
+    graph = build_agent_graph(llm=llm, browser_providers=[provider])
+
+    result = await graph.ainvoke({"task": "Search Ozon"}, {"recursion_limit": 12})
+
+    assert result["final_answer"] == "typed"
+    assert calls == [{"element": 'textbox "Search"', "ref": "e8", "text": "iphone"}]
+
+
+@pytest.mark.asyncio
+async def test_graph_executor_subgraph_accepts_canonical_browser_type() -> None:
+    calls: list[dict[str, str]] = []
+
+    @tool
+    def browser_snapshot() -> str:
+        """Return a browser snapshot."""
+
+        return '- textbox "Search" ref=e8'
+
+    @tool
+    def browser_type(element: str, ref: str, text: str) -> str:
+        """Type into a browser element."""
+
+        calls.append({"element": element, "ref": ref, "text": text})
+        return "Typed."
+
+    llm = FakeListLLM(
+        responses=[
+            '{"steps":[{"id":1,"description":"Search Ozon","status":"pending"}]}',
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_snapshot","args":{},"reason":"Find search input"}}'
+            ),
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser.type","args":{"ref":"e8","text":"iphone"},'
+                '"reason":"Enter search query"}}'
+            ),
+            '{"decision":"done","final_answer":"typed"}',
+        ]
+    )
+    provider = PlaywrightMCPBrowserProvider([browser_snapshot, browser_type])
+    graph = build_agent_graph(llm=llm, browser_providers=[provider])
 
     result = await graph.ainvoke({"task": "Search Ozon"}, {"recursion_limit": 12})
 

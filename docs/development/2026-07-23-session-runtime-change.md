@@ -40,6 +40,11 @@ This note records the code changes from the long-lived session runtime update.
 - Avoided `ConversationContext` and service locator patterns; session activity
   is task-oriented.
 
+Status note: the per-task thread assignment and checkpoint cleanup described
+above records the 2026-07-24 implementation state. It was superseded on
+2026-07-25 by the session-scoped thread model described below and in
+`docs/decisions/2026-07-25-session-scoped-agent-context-memory.md`.
+
 ## Verification
 
 The implementation was checked with:

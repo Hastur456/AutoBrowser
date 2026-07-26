@@ -11,8 +11,13 @@ from src.harness.memory import (
     ensure_message_history,
     with_tool_call_id,
 )
-from src.agent.subgraphs.executor.nodes import _element_description_from_snapshot
-from src.agent.subgraphs.observer.utils import has_invalid_ref_text
+from src.browser.adapters import element_description_from_snapshot
+from src.agent.subgraphs.observer.utils import (
+    REF_INTERACTION_TOOLS,
+    has_invalid_ref_text,
+    request_ref_value,
+    snapshot_contains_ref,
+)
 from src.agent.state import (
     MAX_CONSECUTIVE_FAILURES,
     MAX_REPLANS,
@@ -21,9 +26,13 @@ from src.agent.state import (
     ToolRequest,
 )
 
-SNAPSHOT_REUSE_MARKER = "browser_snapshot is already current"
+SNAPSHOT_REUSE_MARKERS = (
+    "browser.snapshot is already current",
+    "browser_snapshot is already current",
+)
+SNAPSHOT_REUSE_MARKER = SNAPSHOT_REUSE_MARKERS[0]
 REPEATED_SNAPSHOT_FINAL_ANSWER = (
-    "Stopped because browser_snapshot was requested three consecutive times "
+    "Stopped because browser.snapshot was requested three consecutive times "
     "without a meaningful state change. Latest observation:\n\n{observation}"
 )
 
@@ -175,22 +184,94 @@ def _snapshot_reuse_was_blocked(state: AgentState) -> bool:
     observation = str(state.get("observation", "") or "")
     error = str(state.get("error", "") or "")
     payload = "\n".join([reason, observation, error]).lower()
-    return SNAPSHOT_REUSE_MARKER in payload
+    return any(marker in payload for marker in SNAPSHOT_REUSE_MARKERS)
 
 
 def _snapshot_reuse_replan_update(state: AgentState) -> dict[str, Any]:
     return _replan_response(
         (
-            "browser_snapshot was just blocked because the current snapshot is "
+            "browser.snapshot was just blocked because the current snapshot is "
             "already reusable. Continue from the existing snapshot and refs; use "
-            "browser_find or browser_evaluate only if the current snapshot cannot "
-            "answer the next step. Do not request another browser_snapshot just "
+            "browser_find or browser.evaluate only if the current snapshot cannot "
+            "answer the next step. Do not request another browser.snapshot just "
             "to vary depth."
         ),
         last_tool=state.get("last_tool", ""),
         last_args=state.get("last_args", {}),
         repeat_count=int(state.get("repeat_count", 0) or 0),
     )
+
+
+def _snapshot_tool_request(reason: str) -> ToolRequest:
+    return with_tool_call_id(
+        {
+            "name": "browser_snapshot",
+            "args": {},
+            "reason": reason,
+        }
+    )
+
+
+def _snapshot_tool_call_update(
+    state: AgentState,
+    reason: str,
+    *,
+    increment_invalid_ref_recovery: bool = False,
+) -> dict[str, Any]:
+    request = _snapshot_tool_request(reason)
+    recovery_count = int(state.get("invalid_ref_recovery_count", 0) or 0)
+    return {
+        "decision": "tool_call",
+        "tool_request": request,
+        "policy_decision": "",
+        "error": str(state.get("error", "") or ""),
+        "needs_fresh_snapshot": False,
+        "invalid_ref_recovery_count": (
+            recovery_count + 1 if increment_invalid_ref_recovery else recovery_count
+        ),
+        "last_tool": request["name"],
+        "last_args": request["args"],
+        "last_tool_request": request,
+        "repeat_count": 1,
+    }
+
+
+def _ref_action_snapshot_guard(
+    state: AgentState,
+    request: ToolRequest,
+) -> dict[str, Any] | None:
+    tool_name = str(request.get("name", "") or "").lower()
+    if tool_name not in REF_INTERACTION_TOOLS:
+        return None
+
+    requested_ref = request_ref_value(request)
+    if not requested_ref:
+        return None
+
+    snapshot = str(state.get("snapshot", "") or "")
+    if not snapshot.strip():
+        return _snapshot_tool_call_update(
+            state,
+            (
+                "A ref-based browser action was requested without a current "
+                "browser.snapshot. Capture a fresh snapshot before using refs "
+                "from history or a prior page."
+            ),
+        )
+
+    if snapshot_contains_ref(snapshot, requested_ref):
+        return None
+
+    return {
+        **_replan_response(
+            (
+                f"Requested ref {requested_ref} is not present in the latest "
+                "browser.snapshot. Use only refs from the current snapshot "
+                "instead of reusing refs from history or a prior page."
+            )
+        ),
+        **_request_tracking_update(state, request),
+    }
 
 
 def _browser_action_key(
@@ -203,7 +284,7 @@ def _browser_action_key(
     if target is not None:
         target_description = str(action.get("target_description", "") or "")
         if not target_description and snapshot:
-            target_description = _element_description_from_snapshot(snapshot, str(target))
+            target_description = element_description_from_snapshot(snapshot, str(target))
         args["target"] = target_description or str(target)
     return name, tuple(sorted(args.items()))
 
@@ -285,6 +366,10 @@ def _guard_tool_request(state: AgentState, request: ToolRequest) -> dict[str, An
             "repeat_count": 3,
         }
 
+    ref_snapshot_guard = _ref_action_snapshot_guard(state, request)
+    if ref_snapshot_guard is not None:
+        return ref_snapshot_guard
+
     return None
 
 
@@ -300,7 +385,7 @@ def _repeat_tracking_key(
     target = normalized_args.pop("ref", None) or normalized_args.pop("target", None)
     if target is not None:
         target_description = (
-            _element_description_from_snapshot(snapshot, str(target)) if snapshot else ""
+            element_description_from_snapshot(snapshot, str(target)) if snapshot else ""
         )
         normalized_args["target"] = target_description or str(target)
     return name, tuple(sorted(normalized_args.items()))
@@ -362,29 +447,19 @@ def _tool_request_update(
 
 
 def _fresh_snapshot_request(state: AgentState, messages: list[Any]) -> dict[str, Any]:
-    recovery_count = int(state.get("invalid_ref_recovery_count", 0) or 0)
-    request = with_tool_call_id(
-        {
-            "name": "browser_snapshot",
-            "args": {},
-            "reason": (
-                "Previous browser ref no longer exists in Playwright MCP. "
-                "Capture a fresh snapshot before any ref-based action."
-            ),
-        }
+    update = _snapshot_tool_call_update(
+        state,
+        (
+            "Previous browser ref is no longer valid for the current "
+            "browser.snapshot. Capture a fresh snapshot before any "
+            "ref-based action."
+        ),
+        increment_invalid_ref_recovery=True,
     )
+    request = update["tool_request"]
     return {
-        "decision": "tool_call",
-        "tool_request": request,
-        "policy_decision": "",
-        "error": str(state.get("error", "") or ""),
-        "needs_fresh_snapshot": False,
-        "invalid_ref_recovery_count": recovery_count + 1,
+        **update,
         "messages": append_ai_tool_call(messages, request),
-        "last_tool": request["name"],
-        "last_args": request["args"],
-        "last_tool_request": request,
-        "repeat_count": 1,
     }
 
 

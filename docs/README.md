@@ -15,9 +15,14 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   and harness boundaries.
 - [Session Runtime Change](development/2026-07-23-session-runtime-change.md):
   implementation note for the long-lived session and `SessionContext` refactor.
+- [Browser Engine Migration Branch](development/2026-07-26-browser-engine-migration.md):
+  branch-level note for the provider boundary, fake backend, snapshot freshness
+  guard, and related tests.
 - [Session-Scoped Agent Context Memory ADR](decisions/2026-07-25-session-scoped-agent-context-memory.md):
   decision record for preserving useful agent context across tasks in one
   interactive session.
+- [Browser Provider Boundary ADR](decisions/2026-07-26-browser-provider-boundary.md):
+  decision record for moving Playwright MCP adaptation behind browser providers.
 - [Task Memory Isolation ADR](decisions/2026-07-24-task-memory-isolation-and-session-persistence.md):
   superseded historical decision record for per-task checkpoint cleanup and
   `.autobrowser` session records.
@@ -30,6 +35,6 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - Keep docs aligned with observed code and configuration.
 - Preserve historical ADRs; add superseding records instead of rewriting them.
 - Update diagrams when graph nodes, session lifecycle, harness boundaries,
-  policy routing, or MCP integration changes.
+  browser provider boundaries, policy routing, or MCP integration changes.
 - Update prompt documentation and `tests/test_prompts.py` together when agent
   behavior rules change.

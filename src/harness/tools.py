@@ -6,16 +6,23 @@ import inspect
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any, Protocol, runtime_checkable
 
-ToolLoader = Callable[[], Awaitable[Sequence[Any]]]
-ToolProvider = Sequence[Any] | ToolLoader | Any
+from src.browser.provider import BrowserProvider
+
+ToolCollection = Sequence[Any]
+ToolLoadResult = ToolCollection | Awaitable[ToolCollection]
+ToolLoader = Callable[[], ToolLoadResult]
 
 
 @runtime_checkable
 class MCPToolClient(Protocol):
     """Protocol for clients that can expose LangChain-compatible tools."""
 
-    async def get_tools(self) -> Sequence[Any]:
+    async def get_tools(self) -> ToolCollection:
         """Return the tools exposed by the client."""
+
+
+ToolSource = MCPToolClient | BrowserProvider
+ToolProvider = ToolCollection | ToolLoader | ToolSource
 
 
 def tool_name(tool: Any) -> str:
@@ -25,16 +32,17 @@ def tool_name(tool: Any) -> str:
 
 
 class ToolRegistry:
-    """Lazy registry for tools supplied by generic toolsets or MCP clients."""
+    """Lazy registry for direct tool lists, tool providers, and browser providers."""
 
     def __init__(
         self,
-        tools: Sequence[Any] | None = None,
+        tools: ToolCollection | None = None,
         providers: Iterable[ToolProvider] | None = None,
         tool_loader: ToolLoader | None = None,
     ) -> None:
         self._tools = list(tools) if tools is not None else None
-        self._providers = list(providers or [])
+        self._provider_refs = list(providers or [])
+        self._providers = list(self._provider_refs)
         if tool_loader is not None:
             self._providers.append(tool_loader)
 
@@ -60,7 +68,19 @@ class ToolRegistry:
 
         return await self.get_by_name()
 
+    def get_browser_providers(self) -> list[BrowserProvider]:
+        """Return browser-provider adapters passed through ``providers``."""
+
+        return [
+            provider
+            for provider in self._provider_refs
+            if isinstance(provider, BrowserProvider)
+        ]
+
     async def _load_provider(self, provider: ToolProvider) -> list[Any]:
+        if isinstance(provider, MCPToolClient):
+            return list(await self._resolve(provider.get_tools()))
+
         if isinstance(provider, Sequence) and not isinstance(provider, (str, bytes)):
             return list(provider)
 
@@ -73,7 +93,7 @@ class ToolRegistry:
 
         raise TypeError(f"Unsupported tool provider: {type(provider).__name__}")
 
-    async def _resolve(self, value: Any) -> Sequence[Any]:
+    async def _resolve(self, value: ToolLoadResult) -> ToolCollection:
         result = value
         if inspect.isawaitable(result):
             result = await result
@@ -82,8 +102,11 @@ class ToolRegistry:
 
 __all__ = [
     "MCPToolClient",
+    "ToolCollection",
     "ToolLoader",
+    "ToolLoadResult",
     "ToolProvider",
+    "ToolSource",
     "ToolRegistry",
     "tool_name",
 ]

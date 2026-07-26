@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable, Iterator, MutableMapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, MutableMapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from src.browser import BrowserProvider
 from src.harness.memory import MemoryManager
 from src.harness.runtime import (
     HARNESS_STATE_OVERRIDES_CONFIG_KEY,
@@ -379,7 +380,7 @@ class SessionContext:
         llm_factory: LLMFactory,
         start_chrome_cdp: Callable[[str, str, int], Any],
         wait_for_port: Callable[[int, float], Awaitable[None]],
-        load_browser_tools: Callable[[int], Awaitable[Sequence[Any]]],
+        load_browser_provider: Callable[[int], Awaitable[BrowserProvider]],
         output_fn: Callable[..., None],
         print_tools: Callable[[list[Any]], None] | None,
         harness_factory: HarnessFactory,
@@ -401,9 +402,9 @@ class SessionContext:
             model=self.config.model,
             temperature=self.config.temperature,
         )
-        tools: list[Any]
+        browser_providers: list[BrowserProvider]
         if self.config.no_mcp:
-            tools = []
+            browser_providers = []
         else:
             start_chrome_cdp(
                 self.config.chrome_path,
@@ -412,12 +413,14 @@ class SessionContext:
             )
             await wait_for_port(self.config.cdp_port, self.config.cdp_timeout)
             output_fn(SERVER_CONNECTED_MESSAGE)
-            tools = list(await load_browser_tools(self.config.cdp_port))
+            browser_provider = await load_browser_provider(self.config.cdp_port)
+            browser_providers = [browser_provider]
             if self.config.show_tools and print_tools is not None:
+                tools = list(await browser_provider.get_tools())
                 print_tools(tools)
 
         self.memory = MemoryManager()
-        self.tool_registry = ToolRegistry(tools=tools)
+        self.tool_registry = ToolRegistry(providers=browser_providers)
         self.harness = harness_factory(
             graph_builder,
             llm=self.llm,
@@ -528,7 +531,7 @@ class SessionRuntime:
         task_runner: TaskRunner,
         start_chrome_cdp: Callable[[str, str, int], Any],
         wait_for_port: Callable[[int, float], Awaitable[None]],
-        load_browser_tools: Callable[[int], Awaitable[Sequence[Any]]],
+        load_browser_provider: Callable[[int], Awaitable[BrowserProvider]],
         close_mcp_session: Callable[[], Awaitable[None]],
         print_tools: Callable[[list[Any]], None] | None = None,
         harness_factory: HarnessFactory = BrowserHarness,
@@ -542,7 +545,7 @@ class SessionRuntime:
         self._task_runner = task_runner
         self._start_chrome_cdp = start_chrome_cdp
         self._wait_for_port = wait_for_port
-        self._load_browser_tools = load_browser_tools
+        self._load_browser_provider = load_browser_provider
         self._close_mcp_session = close_mcp_session
         self._print_tools = print_tools
         self._harness_factory = harness_factory
@@ -565,7 +568,7 @@ class SessionRuntime:
             llm_factory=self._llm_factory,
             start_chrome_cdp=self._start_chrome_cdp,
             wait_for_port=self._wait_for_port,
-            load_browser_tools=self._load_browser_tools,
+            load_browser_provider=self._load_browser_provider,
             output_fn=self._output,
             print_tools=self._print_tools,
             harness_factory=self._harness_factory,

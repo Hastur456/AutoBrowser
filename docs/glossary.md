@@ -6,14 +6,20 @@
 | Agent node | The reasoning node that chooses a tool call, replans, or returns a final answer. |
 | ArtifactRegistry | Session-owned registry for durable outputs such as screenshots, downloads, reports, or extracted files. |
 | AutoBrowser | The browser automation agent implemented in this repository. |
+| BrowserAction | Provider-neutral typed browser request using canonical `browser.*` action names. |
+| Browser error code | Shared browser-layer error vocabulary such as `invalid_ref`, `unknown_action`, and `action_failed`. |
 | BrowserHarness | Runtime composition wrapper that injects context, tools, memory, policy, and telemetry into the graph. |
+| BrowserProvider | Protocol for browser backends that expose tools and normalize browser tool requests and results. |
+| BrowserResult | Provider-neutral browser action result shape with status, content, error, and optional error code. |
 | `browser_evaluate` | Browser tool fallback for cases where snapshots cannot expose required information. |
 | `browser_find` | Browser tool for plain-text search; not reliable for structured link or attribute extraction. |
 | `browser_snapshot` | Source-of-truth browser observation containing visible page state and element refs. |
+| Canonical browser action | Provider-neutral browser action name such as `browser.snapshot`, mapped to backend-specific tool names by adapters. |
 | Checkpointer | LangGraph persistence component owned by `MemoryManager`. |
 | Compact observation | Short observer output derived from a tool result and used by the next agent step. |
 | Direct search URL fallback | Navigating directly to a site's search results URL when UI search controls do not make progress. |
 | Executor | Subgraph that resolves and invokes approved tool requests. |
+| FakeBrowserProvider | Deterministic browser provider used by tests to replay snapshots without Chrome, CDP, or MCP. |
 | GraphRecursionError | LangGraph error raised when the graph exceeds the configured recursion limit. |
 | Harness | Runtime layer around the graph; owns infrastructure that should not be hardcoded into agent nodes. |
 | Ineffective browser action | A successful browser action whose follow-up snapshot has the same visible fingerprint as the previous snapshot. |
@@ -22,6 +28,7 @@
 | Observer | Subgraph that translates tool results and snapshots into compact state updates. |
 | Planner | Subgraph that creates or revises compact task plans. |
 | Playwright MCP | Browser automation tool provider whose snapshot refs drive interactions. |
+| PlaywrightMCPBrowserProvider | Browser provider adapter that wraps Playwright MCP tools and normalizes request/result schema differences. |
 | PolicyEngine | Harness boundary that classifies tool requests as approved, needing human input, or blocked. |
 | ref | Ephemeral Playwright MCP element identifier such as `e123`; valid only for the snapshot that produced it. |
 | SessionConfig | Args-derived configuration used to initialize a long-lived `SessionRuntime` and shared task config. |
@@ -40,4 +47,4 @@
 | Task thread ID | Deprecated term for the former per-task LangGraph checkpoint thread ID; replaced by the session-scoped thread ID plus per-task `task_id`. |
 | TaskRecord | Session history entry for one user task, including task ID, task text, result, start time, and finish time. |
 | Task lifecycle | One user request delegated to the agent, ending when the compiled graph reaches a terminal task state. |
-| ToolRegistry | Lazy registry that exposes tools from static lists, providers, or MCP clients. |
+| ToolRegistry | Lazy registry that exposes tools from static lists, generic providers, browser providers, or MCP clients. |

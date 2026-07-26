@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from src.harness.memory import append_tool_message, tool_result_message_content
-from src.agent.subgraphs.executor.nodes import _element_description_from_snapshot
+from src.browser.adapters import element_description_from_snapshot
 from src.agent.subgraphs.observer.observer_llm import (
     compress_tool_result,
     fallback_compact_observation,
@@ -17,7 +17,9 @@ from .utils import (
     extract_element_refs,
     _needs_fresh_snapshot_after_error,
     _observation_lines,
-    _plan_completion_update
+    _plan_completion_update,
+    request_ref_value,
+    snapshot_contains_ref,
 )
 
 
@@ -47,7 +49,7 @@ def _action_identity(
     }
     ref = str(args.get("ref") or args.get("target") or "")
     if ref and snapshot:
-        action["target_description"] = _element_description_from_snapshot(snapshot, ref)
+        action["target_description"] = element_description_from_snapshot(snapshot, ref)
     return action
 
 
@@ -57,6 +59,24 @@ def _same_action(left: Any, right: Any) -> bool:
     return left.get("name") == right.get("name") and left.get("args", {}) == right.get(
         "args", {}
     )
+
+
+def _needs_fresh_snapshot_after_timeout(
+    state: AgentState,
+    result: dict[str, Any],
+    request: dict[str, Any],
+) -> bool:
+    tool_name = str(result.get("name", "") or "")
+    payload = str(result.get("error", "") or result.get("content", "") or "").lower()
+    if tool_name not in BROWSER_ACTION_TOOLS or "timeout" not in payload:
+        return False
+
+    requested_ref = request_ref_value(request)
+    if not requested_ref:
+        return False
+
+    snapshot = str(state.get("snapshot", "") or "")
+    return not snapshot.strip() or not snapshot_contains_ref(snapshot, requested_ref)
 
 
 def compile_observation(
@@ -76,14 +96,25 @@ def compile_observation(
     is_browser_tool = tool_name.startswith("browser_")
     is_browser_action = tool_name in BROWSER_ACTION_TOOLS
     is_snapshot = tool_name == "browser_snapshot" and status == "success"
-    needs_fresh_after_error = status == "error" and _needs_fresh_snapshot_after_error(
-        result
+    request = state.get("tool_request") or {}
+    timed_out_stale_ref = status == "error" and _needs_fresh_snapshot_after_timeout(
+        state,
+        result,
+        request,
+    )
+    needs_fresh_after_error = status == "error" and (
+        _needs_fresh_snapshot_after_error(result) or timed_out_stale_ref
     )
     refs = extract_element_refs(content) if is_snapshot else []
     observation_lines = _observation_lines(
         result, compact, refs, compress=compress_tool_output
     )
-    request = state.get("tool_request") or {}
+    if timed_out_stale_ref:
+        observation_lines.append(
+            "The ref-based action timed out without a current matching ref in "
+            "browser_snapshot; take a fresh browser_snapshot before the next "
+            "ref-based action."
+        )
     messages = list(state.get("messages") or [])
 
     updates: dict[str, Any] = {

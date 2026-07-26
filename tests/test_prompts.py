@@ -11,7 +11,9 @@ def test_agent_prompt_requires_search_input_inspection_before_submit() -> None:
     assert "prefer the fewest actions" in prompt
     assert "do not take a fresh" in prompt
     assert "after every successful action" in prompt
-    assert "use browser_type directly" in prompt
+    assert "follow the browser contract" in prompt
+    assert "playwright mcp" not in prompt
+    assert "use browser.type directly" in prompt
     assert "move straight to results extraction" in prompt
     assert "do this search-affordance click at most once" in prompt
     assert "https://www.ozon.ru/search/?text=<url-encoded query>" in prompt
@@ -27,6 +29,8 @@ def test_planner_prompt_includes_search_contract_steps() -> None:
     assert "do not split a search task into separate locate, inspect, type, and submit" in prompt
     assert "direct search url navigation as an early" in prompt
     assert "never plan repeated clicks or double-clicks" in prompt
+    assert "playwright mcp" not in prompt
+    assert "browser.snapshot" in prompt
     assert "locate the search input" in prompt
     assert "verify and extract visible results" in prompt
     assert "filter contract" in prompt
@@ -36,6 +40,9 @@ def test_planner_prompt_includes_search_contract_steps() -> None:
 def test_observer_prompt_reports_search_field_alignment() -> None:
     prompt = OBSERVER_SYSTEM_PROMPT.lower()
 
+    assert "playwright mcp" not in prompt
+    assert "browser.snapshot is the source of truth" in prompt
+    assert "browser.type fails" in prompt
     assert "empty" in prompt
     assert "already aligned with the requested search" in prompt
     assert "unrelated query" in prompt

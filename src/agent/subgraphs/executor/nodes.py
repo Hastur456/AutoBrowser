@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from src.browser import (
+    BROWSER_ERROR_UNKNOWN_ACTION,
+    BrowserProvider,
+    is_browser_tool_name,
+    to_canonical_browser_name,
+)
 from src.agent.state import AgentState, ToolRequest, ToolResult
 from src.harness.tools import ToolLoader, ToolRegistry
 
@@ -20,93 +25,64 @@ def _stringify_result(value: Any) -> str:
         return str(value)
 
 
-def _schema_dict(tool: Any) -> dict[str, Any]:
-    for attr in ("args_schema", "input_schema"):
-        schema = getattr(tool, attr, None)
-        if schema is None:
-            continue
-        if isinstance(schema, dict):
-            return schema
-        if hasattr(schema, "model_json_schema"):
-            return schema.model_json_schema()
-        if hasattr(schema, "schema"):
-            return schema.schema()
-
-    args = getattr(tool, "args", None)
-    if isinstance(args, dict):
-        if "properties" in args:
-            return args
-        return {"properties": args}
-
-    return {}
+def _normalize_request(
+    request: ToolRequest,
+    state: AgentState,
+    browser_providers: Sequence[BrowserProvider],
+) -> ToolRequest:
+    normalized_request = dict(request)
+    for provider in browser_providers:
+        normalized_request = provider.normalize_request(normalized_request, state)
+    return normalized_request
 
 
-def _schema_properties(tool: Any) -> dict[str, Any]:
-    properties = _schema_dict(tool).get("properties", {})
-    return properties if isinstance(properties, dict) else {}
+def _normalize_result(
+    result: ToolResult,
+    browser_providers: Sequence[BrowserProvider],
+) -> ToolResult:
+    normalized_result = dict(result)
+    for provider in browser_providers:
+        normalized_result = provider.normalize_result(normalized_result)
+    return normalized_result
 
 
-def _schema_additional_properties(tool: Any) -> Any:
-    return _schema_dict(tool).get("additionalProperties")
-
-
-def _snapshot_line_for_ref(snapshot: str, ref: str) -> str:
-    pattern = re.compile(rf"(?:\bref=|\[ref=){re.escape(ref)}(?:\b|\])")
-    for line in snapshot.splitlines():
-        if pattern.search(line):
-            return line.strip()
-    return ""
-
-
-def _element_description_from_snapshot(snapshot: str, ref: str) -> str:
-    line = _snapshot_line_for_ref(snapshot, ref)
-    if not line:
-        return ref
-
-    text = re.sub(rf"\s*\[?ref={re.escape(ref)}\]?", "", line).strip()
-    text = re.sub(r"^\s*[-*]\s*", "", text).strip()
-    return text.rstrip(":") or ref
-
-
-def _looks_like_ref(value: Any) -> bool:
-    return bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", str(value or "")))
-
-
-def _normalize_tool_args(tool: Any, request: ToolRequest, state: AgentState) -> dict[str, Any]:
-    """Adapt browser ref arguments to the loaded Playwright MCP tool schema."""
-
-    args = dict(request.get("args") or {})
-    if not str(request.get("name", "")).startswith("browser_"):
-        return args
-
-    properties = _schema_properties(tool)
-    if not properties:
-        return args
-
-    has_target = "target" in properties
-    has_ref = "ref" in properties
-
-    if has_target and "target" not in args and "ref" in args:
-        args["target"] = args["ref"]
-    if has_ref and "ref" not in args and _looks_like_ref(args.get("target")):
-        args["ref"] = args["target"]
-
-    if "element" in properties and "element" not in args:
-        ref = str(args.get("ref") or args.get("target") or "")
-        if ref:
-            args["element"] = _element_description_from_snapshot(
-                str(state.get("snapshot", "") or ""),
-                ref,
+def _unknown_tool_result(
+    tool_name: str,
+    tools_by_name: dict[str, Any],
+) -> ToolResult:
+    if is_browser_tool_name(tool_name):
+        available_browser_actions = ", ".join(
+            sorted(
+                {
+                    to_canonical_browser_name(available_name)
+                    for available_name in tools_by_name
+                    if is_browser_tool_name(available_name)
+                }
             )
+        ) or "none"
+        display_name = to_canonical_browser_name(tool_name)
+        return {
+            "name": tool_name,
+            "status": "error",
+            "content": "",
+            "error": (
+                f"Unknown browser action: {display_name}. "
+                f"Available browser actions: {available_browser_actions}"
+            ),
+            "error_code": BROWSER_ERROR_UNKNOWN_ACTION,
+        }
 
-    if _schema_additional_properties(tool) is False:
-        args = {key: value for key, value in args.items() if key in properties}
+    available = ", ".join(sorted(tools_by_name)) or "none"
+    return {
+        "name": tool_name,
+        "status": "error",
+        "content": "",
+        "error": f"Unknown tool: {tool_name}. Available tools: {available}",
+    }
 
-    return args
 
-
-async def _invoke_tool(tool: Any, request: ToolRequest, state: AgentState) -> Any:
-    args = _normalize_tool_args(tool, request, state)
+async def _invoke_tool(tool: Any, request: ToolRequest) -> Any:
+    args = dict(request.get("args") or {})
     if hasattr(tool, "ainvoke"):
         return await tool.ainvoke(args)
     if hasattr(tool, "invoke"):
@@ -118,10 +94,18 @@ def create_executor_node(
     tools: Sequence[Any] | None = None,
     tool_loader: ToolLoader | None = None,
     tool_registry: ToolRegistry | None = None,
+    browser_providers: Sequence[BrowserProvider] | None = None,
 ) -> Callable[[AgentState], Any]:
     """Create an async node that executes approved tool requests."""
 
-    registry = tool_registry or ToolRegistry(tools=tools, tool_loader=tool_loader)
+    active_browser_providers = list(browser_providers or [])
+    registry = tool_registry or ToolRegistry(
+        providers=active_browser_providers or None,
+        tools=None if active_browser_providers else tools,
+        tool_loader=tool_loader,
+    )
+    if not active_browser_providers:
+        active_browser_providers = registry.get_browser_providers()
 
     async def executor_node(state: AgentState) -> dict[str, Any]:
         request = state.get("tool_request") or {}
@@ -135,35 +119,34 @@ def create_executor_node(
             }
             return {"tool_result": result, "error": result["error"]}
 
+        normalized_request = _normalize_request(request, state, active_browser_providers)
+        tool_name = normalized_request.get("name", "")
         tools_by_name = await registry.get()
         tool = tools_by_name.get(tool_name)
         if tool is None:
-            available = ", ".join(sorted(tools_by_name)) or "none"
-            result = {
-                "name": tool_name,
-                "status": "error",
-                "content": "",
-                "error": f"Unknown tool: {tool_name}. Available tools: {available}",
-            }
+            raw_result = _unknown_tool_result(tool_name, tools_by_name)
+            result = _normalize_result(raw_result, active_browser_providers)
             return {"tool_result": result, "error": result["error"]}
 
         try:
-            value = await _invoke_tool(tool, request, state)
+            value = await _invoke_tool(tool, normalized_request)
         except Exception as exc:  # noqa: BLE001 - tool failures must be state data
-            result = {
+            raw_result: ToolResult = {
                 "name": tool_name,
                 "status": "error",
                 "content": "",
                 "error": str(exc),
             }
+            result = _normalize_result(raw_result, active_browser_providers)
             return {"tool_result": result, "error": result["error"]}
 
-        result = {
+        raw_result: ToolResult = {
             "name": tool_name,
             "status": "success",
             "content": _stringify_result(value),
             "error": "",
         }
-        return {"tool_result": result, "error": ""}
+        result = _normalize_result(raw_result, active_browser_providers)
+        return {"tool_result": result, "error": result.get("error", "")}
 
     return executor_node
