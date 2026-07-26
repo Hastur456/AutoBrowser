@@ -5,6 +5,17 @@ behavioral notes for the AutoBrowser agent.
 
 ## Current Research Themes
 
+### Agent Loop Runtime
+
+AutoBrowser currently has a LangGraph browser-task loop. The next architectural
+step is an AutoBrowser-owned runtime loop inspired by Claude Code and Codex:
+typed events, context assembly, tool brokering, permissions, hooks, skills,
+subagents, durable traces, and scenario evals.
+
+See [Agent Loop Runtime Research](2026-07-26-agent-loop-runtime-research.md).
+See also [Codex-Claude Runtime Migration Plan](2026-07-26-codex-claude-runtime-migration-plan.md)
+for a phased implementation plan.
+
 ### Search Flow Robustness
 
 Recent execution traces showed a failure mode on dynamic commerce pages:
