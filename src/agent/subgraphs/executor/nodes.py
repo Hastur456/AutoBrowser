@@ -6,7 +6,7 @@ import json
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from src.browser import BrowserProvider, PlaywrightMCPBrowserProvider
+from src.browser import BrowserProvider
 from src.agent.state import AgentState, ToolRequest, ToolResult
 from src.harness.tools import ToolLoader, ToolRegistry
 
@@ -59,9 +59,6 @@ def create_executor_node(
     """Create an async node that executes approved tool requests."""
 
     active_browser_providers = list(browser_providers or [])
-    if not active_browser_providers and tools is not None:
-        active_browser_providers = [PlaywrightMCPBrowserProvider(tools)]
-
     registry = tool_registry or ToolRegistry(
         providers=active_browser_providers or None,
         tools=None if active_browser_providers else tools,

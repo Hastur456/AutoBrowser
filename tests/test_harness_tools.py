@@ -73,3 +73,24 @@ async def test_tool_registry_exposes_browser_providers() -> None:
     assert isinstance(provider, BrowserProvider)
     assert registry.get_browser_providers() == [provider]
     assert sorted(await registry.get_by_name()) == ["browser_snapshot"]
+
+
+@pytest.mark.asyncio
+async def test_tool_registry_combines_direct_tools_with_browser_provider() -> None:
+    provider = FakeBrowserProvider()
+    registry = ToolRegistry(
+        tools=[FakeTool("direct_tool")],
+        providers=[provider],
+    )
+
+    assert registry.get_browser_providers() == [provider]
+    assert sorted(await registry.get_by_name()) == ["browser_snapshot", "direct_tool"]
+    assert registry.get_browser_providers() == [provider]
+
+
+@pytest.mark.asyncio
+async def test_tool_registry_rejects_unsupported_provider() -> None:
+    registry = ToolRegistry(providers=[object()])
+
+    with pytest.raises(TypeError, match="Unsupported tool provider: object"):
+        await registry.get_all()

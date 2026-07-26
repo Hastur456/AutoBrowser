@@ -8,6 +8,7 @@ from langchain_core.tools import tool
 
 from src.agent.agent import build_agent_graph
 from src.agent.nodes import create_agent_node, create_observe_node, observe_node
+from src.browser.adapters import PlaywrightMCPBrowserProvider
 from src.agent.subgraphs.observer.utils import MAX_CONTENT_PREVIEW_CHARS
 from src.agent.subgraphs.observer.utils import extract_element_refs
 from src.agent.subgraphs.observer.nodes import compile_observation
@@ -669,7 +670,27 @@ async def test_executor_unknown_tool() -> None:
 
 
 @pytest.mark.asyncio
-async def test_executor_maps_browser_ref_to_latest_mcp_target() -> None:
+async def test_executor_raw_tools_do_not_apply_playwright_mapping() -> None:
+    calls: list[dict[str, str]] = []
+
+    def browser_click(target: str) -> str:
+        calls.append({"target": target})
+        return "Clicked."
+
+    node = create_executor_node(tools=[browser_click])
+    result = await node(
+        {
+            "snapshot": '- button "Catalog" ref=e14',
+            "tool_request": {"name": "browser_click", "args": {"ref": "e14"}},
+        }
+    )
+
+    assert result["tool_result"]["status"] == "error"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_executor_maps_browser_ref_to_latest_mcp_target_via_provider() -> None:
     calls: list[dict[str, str]] = []
 
     @tool
@@ -679,7 +700,8 @@ async def test_executor_maps_browser_ref_to_latest_mcp_target() -> None:
         calls.append({"target": target})
         return "Clicked."
 
-    node = create_executor_node(tools=[browser_click])
+    provider = PlaywrightMCPBrowserProvider([browser_click])
+    node = create_executor_node(browser_providers=[provider])
     result = await node(
         {
             "snapshot": '- button "Catalog" ref=e14',
@@ -692,7 +714,7 @@ async def test_executor_maps_browser_ref_to_latest_mcp_target() -> None:
 
 
 @pytest.mark.asyncio
-async def test_executor_adds_element_for_legacy_ref_based_mcp_tool() -> None:
+async def test_executor_adds_element_for_legacy_ref_based_mcp_tool_via_provider() -> None:
     calls: list[dict[str, str]] = []
 
     @tool
@@ -702,7 +724,8 @@ async def test_executor_adds_element_for_legacy_ref_based_mcp_tool() -> None:
         calls.append({"element": element, "ref": ref})
         return "Clicked."
 
-    node = create_executor_node(tools=[browser_click])
+    provider = PlaywrightMCPBrowserProvider([browser_click])
+    node = create_executor_node(browser_providers=[provider])
     result = await node(
         {
             "snapshot": '- button "Catalog" ref=e14',
