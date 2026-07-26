@@ -1728,7 +1728,8 @@ async def test_graph_executor_subgraph_keeps_snapshot_for_legacy_browser_type() 
             '{"decision":"done","final_answer":"typed"}',
         ]
     )
-    graph = build_agent_graph(llm=llm, tools=[browser_snapshot, browser_type])
+    provider = PlaywrightMCPBrowserProvider([browser_snapshot, browser_type])
+    graph = build_agent_graph(llm=llm, browser_providers=[provider])
 
     result = await graph.ainvoke({"task": "Search Ozon"}, {"recursion_limit": 12})
 
@@ -1768,7 +1769,8 @@ async def test_graph_executor_subgraph_accepts_canonical_browser_type() -> None:
             '{"decision":"done","final_answer":"typed"}',
         ]
     )
-    graph = build_agent_graph(llm=llm, tools=[browser_snapshot, browser_type])
+    provider = PlaywrightMCPBrowserProvider([browser_snapshot, browser_type])
+    graph = build_agent_graph(llm=llm, browser_providers=[provider])
 
     result = await graph.ainvoke({"task": "Search Ozon"}, {"recursion_limit": 12})
 

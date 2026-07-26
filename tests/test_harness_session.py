@@ -28,6 +28,24 @@ class FakeTool:
     name = "browser_snapshot"
 
 
+class FakeBrowserProvider:
+    def __init__(self, tools: list[Any] | None = None) -> None:
+        self.tools = list(tools or [FakeTool()])
+
+    async def get_tools(self) -> list[Any]:
+        return list(self.tools)
+
+    def normalize_request(
+        self,
+        request: dict[str, Any],
+        _state: dict[str, Any],
+    ) -> dict[str, Any]:
+        return request
+
+    def normalize_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        return result
+
+
 class FakeHarness:
     def __init__(self, graph_builder: Any, **kwargs: Any) -> None:
         self.graph_builder = graph_builder
@@ -59,8 +77,8 @@ async def noop_wait(_port: int, _timeout: float) -> None:
     return None
 
 
-async def no_tools(_port: int) -> list[Any]:
-    return []
+async def no_browser_provider(_port: int) -> FakeBrowserProvider:
+    return FakeBrowserProvider([])
 
 
 async def noop_close() -> None:
@@ -135,8 +153,13 @@ async def test_session_context_lifecycle_initializes_tracks_tasks_and_closes(
     tmp_path: Path,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    context = SessionContext(make_config())
+    context = SessionContext(make_config(no_mcp=False))
     events: list[str] = []
+    provider = FakeBrowserProvider()
+
+    async def load_browser_provider(_port: int) -> FakeBrowserProvider:
+        return provider
+
     context.events.subscribe("session.started", lambda name, _payload: events.append(name))
     context.events.subscribe("task.started", lambda name, _payload: events.append(name))
     context.events.subscribe("task.finished", lambda name, _payload: events.append(name))
@@ -147,7 +170,7 @@ async def test_session_context_lifecycle_initializes_tracks_tasks_and_closes(
         llm_factory=llm_factory,
         start_chrome_cdp=no_start,
         wait_for_port=noop_wait,
-        load_browser_tools=no_tools,
+        load_browser_provider=load_browser_provider,
         output_fn=lambda *_args, **_kwargs: None,
         print_tools=None,
         harness_factory=FakeHarness,
@@ -159,6 +182,8 @@ async def test_session_context_lifecycle_initializes_tracks_tasks_and_closes(
     assert context.workspace.root == tmp_path / ".autobrowser" / "sessions" / context.session_id / "workspace"
     assert context.workspace.artifacts.is_dir()
     assert context.metadata.started_at is not None
+    assert context.tool_registry is not None
+    assert context.tool_registry.get_browser_providers() == [provider]
 
     record = context.reset_task("inspect page")
     assert context.current_task == "inspect page"
@@ -217,7 +242,7 @@ async def test_session_runtime_reuses_context_and_records_task_history(
         task_runner=task_runner,
         start_chrome_cdp=no_start,
         wait_for_port=noop_wait,
-        load_browser_tools=no_tools,
+        load_browser_provider=no_browser_provider,
         close_mcp_session=noop_close,
         harness_factory=FakeHarness,
     )
@@ -277,7 +302,7 @@ async def test_session_runtime_carries_browser_state_between_tasks(
         task_runner=task_runner,
         start_chrome_cdp=no_start,
         wait_for_port=noop_wait,
-        load_browser_tools=no_tools,
+        load_browser_provider=no_browser_provider,
         close_mcp_session=noop_close,
         harness_factory=FakeHarness,
     )

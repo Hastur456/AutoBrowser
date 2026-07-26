@@ -10,6 +10,8 @@ from langchain_mcp_adapters.tools import load_mcp_tools
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from src.browser import BrowserProvider, PlaywrightMCPBrowserProvider
+
 
 class MCPRuntime:
     """Keep the stdio MCP process and ClientSession alive while tools run."""
@@ -81,9 +83,17 @@ async def load_browser_tools(port: int) -> list[Any]:
     return list(await load_mcp_tools(session))
 
 
+async def load_browser_provider(port: int) -> BrowserProvider:
+    """Load Playwright MCP tools and wrap them in the browser adapter."""
+
+    tools = await load_browser_tools(port)
+    return PlaywrightMCPBrowserProvider(tools)
+
+
 __all__ = [
     "MCPRuntime",
     "close_mcp_session",
     "get_mcp_session",
+    "load_browser_provider",
     "load_browser_tools",
 ]
