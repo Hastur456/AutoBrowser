@@ -272,7 +272,8 @@ async def test_agent_node_allows_different_action_after_ineffective_action() -> 
     )
 
     assert result["decision"] == "tool_call"
-    assert result["tool_request"]["args"] == {"ref": "f1e29"}
+    assert result["tool_request"]["name"] == "browser_snapshot"
+    assert result["tool_request"]["args"] == {}
 
 
 @pytest.mark.asyncio
@@ -657,6 +658,64 @@ async def test_agent_node_replans_on_third_identical_non_snapshot_tool_request()
     assert result["decision"] == "replan"
     assert result["repeat_count"] == 3
     assert "three consecutive times" in result["observation"]
+
+
+@pytest.mark.asyncio
+async def test_agent_node_requests_snapshot_before_ref_action_without_current_snapshot() -> None:
+    llm = FakeListLLM(
+        responses=[
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_click","args":{"ref":"e1"},'
+                '"reason":"Click the first product"}}'
+            )
+        ]
+    )
+    node = create_agent_node(llm)
+
+    result = await node(
+        {
+            "task": "Open the first product",
+            "plan": [{"id": 1, "description": "Click the first product", "status": "pending"}],
+            "current_step": 0,
+            "messages": [],
+        }
+    )
+
+    assert result["decision"] == "tool_call"
+    assert result["tool_request"]["name"] == "browser_snapshot"
+    assert result["tool_request"]["args"] == {}
+    assert "without a current browser.snapshot" in result["tool_request"]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_agent_node_replans_when_ref_is_not_in_latest_snapshot() -> None:
+    llm = FakeListLLM(
+        responses=[
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_click","args":{"ref":"e1"},'
+                '"reason":"Click the first product"}}'
+            )
+        ]
+    )
+    node = create_agent_node(llm)
+
+    result = await node(
+        {
+            "task": "Open the first product",
+            "plan": [{"id": 1, "description": "Click the first product", "status": "pending"}],
+            "current_step": 0,
+            "snapshot": '- link "Keyboard A" ref=e10',
+            "messages": [],
+        }
+    )
+
+    assert result["decision"] == "replan"
+    assert result["repeat_count"] == 1
+    assert "Requested ref e1 is not present in the latest browser.snapshot" in result[
+        "observation"
+    ]
 
 
 @pytest.mark.asyncio
@@ -1139,6 +1198,25 @@ def test_observe_node_preserves_snapshot_after_non_ref_browser_error() -> None:
     assert "snapshot" not in result
     assert "needs_fresh_snapshot" not in result
     assert "Timeout" in result["observation"]
+
+
+def test_observe_node_requests_fresh_snapshot_after_timeout_with_stale_history_ref() -> None:
+    result = observe_node(
+        {
+            "tool_request": {"name": "browser_click", "args": {"ref": "e119"}},
+            "tool_result": {
+                "name": "browser_click",
+                "status": "error",
+                "content": "",
+                "error": "Timeout 5000ms exceeded.",
+            },
+        }
+    )
+
+    assert result["snapshot"] == ""
+    assert result["needs_fresh_snapshot"] is True
+    assert "fresh browser_snapshot" in result["observation"]
+    assert "timed out without a current matching ref" in result["observation"]
 
 
 def test_observe_node_requests_fresh_snapshot_after_stale_element_error() -> None:

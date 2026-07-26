@@ -9,6 +9,7 @@ from src.agent.state import CompactToolObservation, PlanStep, ToolResult
 MAX_CONTENT_PREVIEW_CHARS = 1200
 MAX_REFS_IN_OBSERVATION = 25
 REF_PATTERN = re.compile(r"\bref=([A-Za-z][A-Za-z0-9_-]*)\b")
+REF_VALUE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 WORD_PATTERN = re.compile(r"[\w]+", re.UNICODE)
 INVALID_REF_PATTERN = re.compile(
     r"\bRef\s+[A-Za-z][A-Za-z0-9_-]*\s+not\s+found\b",
@@ -130,6 +131,29 @@ def extract_element_refs(snapshot: str) -> list[str]:
             seen.add(ref)
             refs.append(ref)
     return refs
+
+
+def is_ref_value(value: Any) -> bool:
+    """Return true when a value looks like a Playwright MCP element ref."""
+
+    return bool(REF_VALUE_PATTERN.fullmatch(str(value or "").strip()))
+
+
+def request_ref_value(request: dict[str, Any] | None) -> str:
+    """Return the explicit ref targeted by a tool request when one exists."""
+
+    args = dict((request or {}).get("args") or {})
+    for key in ("ref", "target"):
+        value = str(args.get(key) or "").strip()
+        if is_ref_value(value):
+            return value
+    return ""
+
+
+def snapshot_contains_ref(snapshot: str, ref: str) -> bool:
+    """Return true when the current snapshot exposes the requested ref."""
+
+    return bool(ref) and ref in extract_element_refs(snapshot)
 
 
 def _clean_invalid_ref_text(value: Any, *, compress: bool) -> str:
