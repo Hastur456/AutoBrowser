@@ -4,6 +4,7 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-07-26 Browser Provider Boundary](2026-07-26-browser-provider-boundary.md)
 - [2026-07-25 Session-Scoped Agent Context Memory](2026-07-25-session-scoped-agent-context-memory.md)
 - [2026-07-24 Task Memory Isolation and Session Persistence](2026-07-24-task-memory-isolation-and-session-persistence.md)
 - [2026-07-24 SessionContext Root Object](2026-07-24-session-context-root-object.md)

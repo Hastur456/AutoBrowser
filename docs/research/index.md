@@ -15,16 +15,19 @@ Recent execution traces showed a failure mode on dynamic commerce pages:
 4. The visible snapshot does not change.
 5. The agent repeats the same click/snapshot cycle until the recursion limit.
 
-Current mitigation is prompt-level:
+Current mitigation is split between prompts and runtime guards:
 
 - prefer direct `browser_type` into visible editable search controls;
 - click a search affordance at most once;
 - avoid `browser_find` for generic implementation words on localized pages;
 - use direct search URL navigation as an early fallback when the site supports
   query parameters.
+- block accumulated ineffective browser actions when repeated UI attempts do
+  not change the visible snapshot.
 
-Open question: should this become an explicit policy or router rule instead of
-being handled only through prompts?
+Open question: should search-affordance-specific loop detection become an
+explicit policy or router rule instead of relying on generic ineffective-action
+tracking?
 
 ### Snapshot Depth Strategy
 

@@ -9,6 +9,9 @@ development workflows.
   input through planning, policy, execution, observation, and completion.
 - [Harness Boundaries](harness-boundaries.md): session ownership through
   `SessionContext` and runtime infrastructure injected by `BrowserHarness`.
+- [Browser Provider Boundary](browser-provider-boundary.md): request/result
+  normalization through `BrowserProvider` adapters before browser tool results
+  return to the observer.
 - [Session Runtime Sequence](session-runtime-sequence.md): process-long session
   startup, repeated task execution with session-scoped context memory,
   persisted session records, and shutdown.

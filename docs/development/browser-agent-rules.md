@@ -22,6 +22,11 @@ Preferred interactions:
 - `browser_type(ref)`
 - `browser_hover(ref)`
 
+Ref-based actions require a current snapshot. If the current state has no
+snapshot, take `browser_snapshot` before clicking, typing, or hovering. If the
+requested ref is not present in the latest snapshot, replan from visible refs
+instead of reusing a ref from history.
+
 ## Search Flow
 
 For search tasks:

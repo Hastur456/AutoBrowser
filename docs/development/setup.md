@@ -39,6 +39,13 @@ Run prompt tests after changing agent, planner, or observer prompts:
 python -m pytest tests\test_prompts.py
 ```
 
+Run browser provider boundary tests after changing `src/browser/`, executor
+normalization, or Playwright MCP integration:
+
+```powershell
+python -m pytest tests\test_browser_contracts.py tests\test_fake_browser_provider.py tests\test_playwright_mcp_provider.py
+```
+
 ## CLI Usage
 
 Start the interactive `cmd2` REPL:
@@ -94,14 +101,21 @@ CLI now uses the long-lived session loop by default.
 ## Development Guidelines
 
 - Keep reasoning and routing changes in `src/agent/`.
+- Keep browser backend contracts, canonical browser names, error codes, and
+  backend adapters in `src/browser/`.
 - Keep session and runtime infrastructure changes in `src/harness/`.
 - Keep `SessionRuntime` focused on interaction lifecycle and resource
   ownership; it may carry graph context between tasks, but it should still
   delegate task solving to `BrowserHarness` instead of solving tasks in the
   session layer.
-- Register browser-specific tools through `ToolRegistry` or harness injection.
-- Preserve Playwright MCP snapshot/ref semantics in prompts, policies, and
-  executor changes.
+- Register browser-specific tools through `BrowserProvider` and `ToolRegistry`
+  or harness injection.
+- Keep Playwright MCP schema adaptation in browser providers, not in executor
+  or agent prompt code.
+- Use `FakeBrowserProvider` for deterministic browser behavior in tests that
+  should not require Chrome, CDP, or MCP.
+- Preserve Playwright MCP snapshot/ref semantics in prompts, policies,
+  observer changes, and browser providers.
 - Prefer focused tests for routers, state transitions, prompt constraints,
   policy decisions, tool registry behavior, and observer normalization.
 
