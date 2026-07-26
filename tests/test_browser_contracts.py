@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, get_args
+from typing import get_args
 
 from src.browser import (
     BROWSER_ERROR_ACTION_FAILED,
@@ -9,6 +9,7 @@ from src.browser import (
     BrowserAction,
     BrowserActionName,
     BrowserErrorCode,
+    FakeBrowserProvider,
     BrowserProvider,
     BrowserResult,
     CANONICAL_TO_PLAYWRIGHT,
@@ -84,18 +85,7 @@ def test_browser_error_codes_export_shared_vocabulary() -> None:
     }
 
 
-class FakeBrowserProvider:
-    async def get_tools(self) -> list[Any]:
-        return []
-
-    def normalize_request(self, request, state):
-        return request
-
-    def normalize_result(self, result):
-        return result
-
-
 def test_browser_provider_protocol_matches_expected_shape() -> None:
-    provider = FakeBrowserProvider()
+    provider = FakeBrowserProvider(['- button "Catalog" ref=e14'])
 
     assert isinstance(provider, BrowserProvider)

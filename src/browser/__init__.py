@@ -19,6 +19,7 @@ from src.browser.errors import (
     BROWSER_ERROR_UNKNOWN_ACTION,
     BrowserErrorCode,
 )
+from src.browser.fake import FakeBrowserProvider
 from src.browser.provider import BrowserProvider
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     "BrowserProvider",
     "BrowserResult",
     "CANONICAL_TO_PLAYWRIGHT",
+    "FakeBrowserProvider",
     "PLAYWRIGHT_TO_CANONICAL",
     "PlaywrightMCPBrowserProvider",
     "element_description_from_snapshot",

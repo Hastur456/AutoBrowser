@@ -8,6 +8,7 @@ from langchain_core.tools import tool
 
 from src.agent.agent import build_agent_graph
 from src.agent.nodes import create_agent_node, create_observe_node, observe_node
+from src.browser import FakeBrowserProvider
 from src.browser.adapters import PlaywrightMCPBrowserProvider
 from src.agent.subgraphs.observer.utils import MAX_CONTENT_PREVIEW_CHARS
 from src.agent.subgraphs.observer.utils import extract_element_refs
@@ -839,6 +840,25 @@ async def test_executor_uses_registered_browser_provider_adapter() -> None:
 
     assert result["tool_result"]["status"] == "success"
     assert calls == [{"target": "e14"}]
+
+
+@pytest.mark.asyncio
+async def test_executor_runs_fake_browser_provider_end_to_end() -> None:
+    first_snapshot = '- button "Catalog" ref=e14'
+    second_snapshot = '- heading "Catalog" ref=e21'
+    provider = FakeBrowserProvider([first_snapshot, second_snapshot])
+    node = create_executor_node(browser_providers=[provider])
+
+    first = await node({"tool_request": {"name": "browser.snapshot", "args": {}}})
+    clicked = await node({"tool_request": {"name": "browser.click", "args": {"ref": "e14"}}})
+    second = await node({"tool_request": {"name": "browser.snapshot", "args": {}}})
+
+    assert first["tool_result"]["status"] == "success"
+    assert first["tool_result"]["content"] == first_snapshot
+    assert clicked["tool_result"]["status"] == "success"
+    assert clicked["tool_result"]["name"] == "browser_click"
+    assert second["tool_result"]["status"] == "success"
+    assert second["tool_result"]["content"] == second_snapshot
 
 
 def test_observe_node_translates_snapshot_and_advances_inspection_plan() -> None:
