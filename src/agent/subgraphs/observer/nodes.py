@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from src.harness.memory import append_tool_message, tool_result_message_content
-from src.agent.subgraphs.executor.nodes import _element_description_from_snapshot
+from src.mcp.playwright_provider import element_description_from_snapshot
 from src.agent.subgraphs.observer.observer_llm import (
     compress_tool_result,
     fallback_compact_observation,
@@ -47,7 +47,7 @@ def _action_identity(
     }
     ref = str(args.get("ref") or args.get("target") or "")
     if ref and snapshot:
-        action["target_description"] = _element_description_from_snapshot(snapshot, ref)
+        action["target_description"] = element_description_from_snapshot(snapshot, ref)
     return action
 
 

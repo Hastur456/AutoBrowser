@@ -11,7 +11,7 @@ from src.harness.memory import (
     ensure_message_history,
     with_tool_call_id,
 )
-from src.agent.subgraphs.executor.nodes import _element_description_from_snapshot
+from src.mcp.playwright_provider import element_description_from_snapshot
 from src.agent.subgraphs.observer.utils import has_invalid_ref_text
 from src.agent.state import (
     MAX_CONSECUTIVE_FAILURES,
@@ -203,7 +203,7 @@ def _browser_action_key(
     if target is not None:
         target_description = str(action.get("target_description", "") or "")
         if not target_description and snapshot:
-            target_description = _element_description_from_snapshot(snapshot, str(target))
+            target_description = element_description_from_snapshot(snapshot, str(target))
         args["target"] = target_description or str(target)
     return name, tuple(sorted(args.items()))
 
@@ -300,7 +300,7 @@ def _repeat_tracking_key(
     target = normalized_args.pop("ref", None) or normalized_args.pop("target", None)
     if target is not None:
         target_description = (
-            _element_description_from_snapshot(snapshot, str(target)) if snapshot else ""
+            element_description_from_snapshot(snapshot, str(target)) if snapshot else ""
         )
         normalized_args["target"] = target_description or str(target)
     return name, tuple(sorted(normalized_args.items()))
