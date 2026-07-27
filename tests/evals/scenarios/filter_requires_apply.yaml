@@ -1,0 +1,50 @@
+name: filter_requires_apply
+task: Set the price filter and apply it.
+model:
+  responses:
+    - steps:
+        - id: 1
+          description: Set and apply price filter
+          status: pending
+    - decision: tool_call
+      tool_request:
+        name: browser.snapshot
+        args: {}
+        reason: Inspect filters.
+    - decision: tool_call
+      tool_request:
+        name: browser.type
+        args:
+          ref: e5
+          text: "2000"
+        reason: Set minimum price.
+    - decision: tool_call
+      tool_request:
+        name: browser.snapshot
+        args: {}
+        reason: Inspect apply control.
+    - decision: tool_call
+      tool_request:
+        name: browser.click
+        args:
+          ref: e6
+        reason: Apply filter.
+    - decision: tool_call
+      tool_request:
+        name: browser.snapshot
+        args: {}
+        reason: Inspect filtered results.
+    - decision: done
+      final_answer: Filtered result C is visible.
+browser:
+  snapshots:
+    - '- textbox "Price from" ref=e5'
+    - '- button "Apply" ref=e6'
+    - '- link "Filtered result C" ref=e9'
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+    - Filtered result C
+  max_tool_calls: 5
+  max_repeated_actions: 0
+  max_policy_blocks: 0

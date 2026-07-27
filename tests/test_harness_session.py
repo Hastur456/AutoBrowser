@@ -210,6 +210,15 @@ async def test_session_context_lifecycle_initializes_tracks_tasks_and_closes(
     assert context.llm is None
     closed_payload = json.loads((context.session_dir / "session.json").read_text())
     assert closed_payload["initialized"] is False
+    assert context.session_dir is not None
+    typed_events = [
+        json.loads(line)
+        for line in (context.session_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [event["type"] for event in typed_events] == [
+        "session.started",
+        "session.closed",
+    ]
     assert events == [
         "session.started",
         "task.started",
@@ -265,6 +274,19 @@ async def test_session_runtime_reuses_context_and_records_task_history(
     assert runtime.context.tasks[0].task == "inspect page"
     assert runtime.context.tasks[0].result == result
     assert isinstance(runtime.context.tool_registry, ToolRegistry)
+    assert runtime.context.session_dir is not None
+    typed_events = [
+        json.loads(line)
+        for line in (runtime.context.session_dir / "events.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    assert [event["type"] for event in typed_events] == [
+        "session.started",
+        "goal.started",
+        "goal.completed",
+    ]
+    assert typed_events[1]["goal_id"] == runtime.context.tasks[0].task_id
 
 
 @pytest.mark.asyncio

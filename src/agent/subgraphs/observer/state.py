@@ -32,3 +32,5 @@ class ObserverState(TypedDict, total=False):
     ineffective_browser_action: ToolRequest
     ineffective_action_count: int
     unchanged_snapshot_count: int
+    pending_browser_tab_index: int
+    pending_browser_tab_reason: str

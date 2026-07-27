@@ -18,6 +18,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Browser Engine Migration Branch](development/2026-07-26-browser-engine-migration.md):
   branch-level note for the provider boundary, fake backend, snapshot freshness
   guard, and related tests.
+- [Agent Loop Observability Branch Plan](development/2026-07-27-agent-loop-observability-branch-plan.md):
+  implementation plan for typed events, JSONL traces, replay helpers, scenario
+  evals, and LangGraph v1 baseline comparison.
 - [Session-Scoped Agent Context Memory ADR](decisions/2026-07-25-session-scoped-agent-context-memory.md):
   decision record for preserving useful agent context across tasks in one
   interactive session.

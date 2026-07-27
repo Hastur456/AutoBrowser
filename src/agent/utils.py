@@ -212,6 +212,26 @@ def _snapshot_tool_request(reason: str) -> ToolRequest:
     )
 
 
+def _pending_tab_activation_request(state: AgentState) -> ToolRequest | None:
+    tab_index = int(state.get("pending_browser_tab_index", 0) or 0)
+    if tab_index <= 0:
+        return None
+
+    reason = str(state.get("pending_browser_tab_reason", "") or "").strip()
+    if not reason:
+        reason = (
+            f"Switch to browser tab {tab_index} that was opened by the last "
+            "browser action before taking a snapshot or using page refs."
+        )
+    return with_tool_call_id(
+        {
+            "name": "browser_tabs",
+            "args": {"action": "select", "index": tab_index},
+            "reason": reason,
+        }
+    )
+
+
 def _snapshot_tool_call_update(
     state: AgentState,
     reason: str,

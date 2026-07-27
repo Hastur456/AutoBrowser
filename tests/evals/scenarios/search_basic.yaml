@@ -1,0 +1,41 @@
+name: search_basic
+task: Search for jackets and report the first visible result.
+model:
+  responses:
+    - steps:
+        - id: 1
+          description: Search for jackets
+          status: pending
+        - id: 2
+          description: Report the first visible result
+          status: pending
+    - decision: tool_call
+      tool_request:
+        name: browser.snapshot
+        args: {}
+        reason: Inspect the page.
+    - decision: tool_call
+      tool_request:
+        name: browser.type
+        args:
+          ref: e8
+          text: jackets
+        reason: Type the search query.
+    - decision: tool_call
+      tool_request:
+        name: browser.snapshot
+        args: {}
+        reason: Inspect the results.
+    - decision: done
+      final_answer: Jacket A is the first visible result.
+browser:
+  snapshots:
+    - '- textbox "Search" ref=e8'
+    - '- link "Jacket A" ref=e10'
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+    - Jacket A
+  max_tool_calls: 3
+  max_repeated_actions: 0
+  max_policy_blocks: 0

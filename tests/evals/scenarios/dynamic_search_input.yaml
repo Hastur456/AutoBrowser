@@ -1,0 +1,50 @@
+name: dynamic_search_input
+task: Open dynamic search input and search for boots.
+model:
+  responses:
+    - steps:
+        - id: 1
+          description: Open and use search
+          status: pending
+    - decision: tool_call
+      tool_request:
+        name: browser.snapshot
+        args: {}
+        reason: Inspect current refs.
+    - decision: tool_call
+      tool_request:
+        name: browser.click
+        args:
+          ref: e7
+        reason: Reveal the input.
+    - decision: tool_call
+      tool_request:
+        name: browser.snapshot
+        args: {}
+        reason: Inspect the revealed input.
+    - decision: tool_call
+      tool_request:
+        name: browser.type
+        args:
+          ref: e8
+          text: boots
+        reason: Type query into revealed input.
+    - decision: tool_call
+      tool_request:
+        name: browser.snapshot
+        args: {}
+        reason: Inspect results.
+    - decision: done
+      final_answer: Boot B is visible.
+browser:
+  snapshots:
+    - '- button "Search" ref=e7'
+    - '- textbox "Search" ref=e8'
+    - '- link "Boot B" ref=e10'
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+    - Boot B
+  max_tool_calls: 5
+  max_repeated_actions: 0
+  max_policy_blocks: 0

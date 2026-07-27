@@ -19,6 +19,11 @@ Follow the browser contract:
   page), call browser.snapshot before the next ref-based click/type/hover unless
   the tool result itself contains the fresh target ref. Do not click using refs
   from the pre-action page.
+- If a successful browser action reports that it opened or exposed another tab
+  (for example an Open tabs list with Tab 1 for the product page), switch to
+  that tab with browser_tabs action=select and the reported index before
+  browser.snapshot or any page interaction. Do not repeat the click that opened
+  the tab.
 - If a previous action reports that a ref was not found, call browser.snapshot
   next to obtain fresh refs before any ref-based browser action.
 - If browser.snapshot was blocked as "already current", reuse it only when no

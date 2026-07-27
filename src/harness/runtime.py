@@ -8,6 +8,12 @@ from uuid import uuid4
 
 from langgraph.errors import GraphRecursionError
 
+from src.agent_loop.events import EventEmitter
+from src.agent_loop.tracing import (
+    EVENT_METADATA_CONFIG_KEY,
+    emit_chunk_events,
+    event_context_from_config,
+)
 from src.harness.context import ContextBuilder
 from src.harness.memory import MemoryManager, ensure_message_history
 from src.harness.policy import PolicyEngine
@@ -16,6 +22,7 @@ from src.harness.tools import ToolLoader, ToolRegistry
 
 GraphBuilder = Callable[..., Any]
 HARNESS_STATE_OVERRIDES_CONFIG_KEY = "_autobrowser_state_overrides"
+HARNESS_EVENT_METADATA_CONFIG_KEY = EVENT_METADATA_CONFIG_KEY
 
 
 class BrowserHarness:
@@ -34,10 +41,12 @@ class BrowserHarness:
         context_builder: ContextBuilder | None = None,
         telemetry: TelemetryObserver | None = None,
         policy_engine: PolicyEngine | None = None,
+        event_emitter: EventEmitter | None = None,
         compress_tools: bool = False,
         graph_options: Mapping[str, Any] | None = None,
     ) -> None:
         self.telemetry = telemetry or TelemetryObserver()
+        self.events = event_emitter or EventEmitter()
         self.memory = memory_manager or MemoryManager()
         self.context = context_builder or ContextBuilder()
         self.tools = tool_registry or ToolRegistry(tools=tools, tool_loader=tool_loader)
@@ -73,15 +82,34 @@ class BrowserHarness:
         )
 
         try:
+            event_context = event_context_from_config(run_config)
+            self.events.emit(
+                "graph.started",
+                source="harness.runtime",
+                payload={"task": task, "mode": "invoke"},
+                **event_context,
+            )
             return await self.graph.ainvoke(initial_state, config=run_config)
         except GraphRecursionError as exc:
             completed_state = await self._completed_state_after_recursion_limit(run_config)
             if completed_state is not None:
                 return completed_state
             self.telemetry.log_error(exc, metadata={"task_name": trace.task_name})
+            self.events.emit(
+                "graph.failed",
+                source="harness.runtime",
+                payload={"task": task, "error": exc},
+                **event_context_from_config(run_config),
+            )
             raise
         except Exception as exc:
             self.telemetry.log_error(exc, metadata={"task_name": trace.task_name})
+            self.events.emit(
+                "graph.failed",
+                source="harness.runtime",
+                payload={"task": task, "error": exc},
+                **event_context_from_config(run_config),
+            )
             raise
 
     async def stream_updates(
@@ -104,23 +132,49 @@ class BrowserHarness:
 
         yielded_done = False
         try:
+            event_context = event_context_from_config(run_config)
+            self.events.emit(
+                "graph.started",
+                source="harness.runtime",
+                payload={"task": task, "mode": "stream"},
+                **event_context,
+            )
             async for chunk in self.graph.astream(
                 initial_state,
                 config=run_config,
                 stream_mode="updates",
             ):
+                emit_chunk_events(self.events, chunk, context=event_context)
                 yielded_done = yielded_done or _chunk_contains_done(chunk)
                 yield chunk
         except GraphRecursionError as exc:
             completed_state = await self._completed_state_after_recursion_limit(run_config)
             if completed_state is not None:
                 if not yielded_done:
-                    yield {"agent": completed_state}
+                    chunk = {"agent": completed_state}
+                    emit_chunk_events(
+                        self.events,
+                        chunk,
+                        context=event_context_from_config(run_config),
+                    )
+                    yield chunk
                 return
             self.telemetry.log_error(exc, metadata={"task_name": trace.task_name})
+            self.events.emit(
+                "graph.failed",
+                source="harness.runtime",
+                payload={"task": task, "error": exc},
+                **event_context_from_config(run_config),
+            )
             raise
         except Exception as exc:
             self.telemetry.log_error(exc, metadata={"task_name": trace.task_name})
+            self.events.emit(
+                "graph.failed",
+                source="harness.runtime",
+                payload={"task": task, "error": exc},
+                **event_context_from_config(run_config),
+            )
             raise
 
     async def get_state_values(
@@ -228,5 +282,6 @@ def _split_internal_config(
 __all__ = [
     "BrowserHarness",
     "GraphBuilder",
+    "HARNESS_EVENT_METADATA_CONFIG_KEY",
     "HARNESS_STATE_OVERRIDES_CONFIG_KEY",
 ]

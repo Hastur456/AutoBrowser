@@ -23,6 +23,7 @@ from src.agent.state import (
     AgentState,
 )
 from src.harness.tools import ToolRegistry
+from src.harness.tools import tool_name as registered_tool_name
 from .utils import (
     _replan_response,
     _message_content,
@@ -33,6 +34,7 @@ from .utils import (
     _tool_request_update,
     _done_response,
     _fresh_snapshot_request,
+    _pending_tab_activation_request,
     _stale_snapshot_retry_update,
     _bind_tools,
     _tool_call_to_request
@@ -49,12 +51,17 @@ def create_agent_node(
 
     registry = tool_registry or ToolRegistry(tools=tools)
     tool_bound_llm = None
+    browser_tabs_available = False
 
     async def agent_node(state: AgentState) -> dict[str, Any]:
-        nonlocal tool_bound_llm
+        nonlocal tool_bound_llm, browser_tabs_available
 
         if tool_bound_llm is None:
-            tool_bound_llm = _bind_tools(llm, await registry.get_all())
+            available_tools = await registry.get_all()
+            browser_tabs_available = any(
+                registered_tool_name(tool) == "browser_tabs" for tool in available_tools
+            )
+            tool_bound_llm = _bind_tools(llm, available_tools)
 
         terminal = _terminal_guard(state)
         if terminal is not None:
@@ -64,6 +71,10 @@ def create_agent_node(
             return _replan_response("No plan is available.")
 
         messages = history_builder(state)
+        pending_tab_request = _pending_tab_activation_request(state)
+        if pending_tab_request is not None and browser_tabs_available:
+            return _tool_request_update(state, messages, pending_tab_request)
+
         stale_snapshot_update = _stale_snapshot_retry_update(state)
         if stale_snapshot_update.get("decision") == "replan":
             return stale_snapshot_update

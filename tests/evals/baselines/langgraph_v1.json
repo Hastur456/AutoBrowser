@@ -1,0 +1,42 @@
+{
+  "dynamic_search_input": {
+    "model_turn_count": 7,
+    "policy_block_count": 0,
+    "repeated_action_count": 0,
+    "terminal_status": "completed",
+    "tool_call_count": 5,
+    "trace_complete": true
+  },
+  "filter_requires_apply": {
+    "model_turn_count": 7,
+    "policy_block_count": 0,
+    "repeated_action_count": 0,
+    "terminal_status": "completed",
+    "tool_call_count": 5,
+    "trace_complete": true
+  },
+  "search_basic": {
+    "model_turn_count": 5,
+    "policy_block_count": 0,
+    "repeated_action_count": 0,
+    "terminal_status": "completed",
+    "tool_call_count": 3,
+    "trace_complete": true
+  },
+  "stale_ref_recovery": {
+    "model_turn_count": 6,
+    "policy_block_count": 0,
+    "repeated_action_count": 0,
+    "terminal_status": "completed",
+    "tool_call_count": 4,
+    "trace_complete": true
+  },
+  "unchanged_search_click": {
+    "model_turn_count": 7,
+    "policy_block_count": 0,
+    "repeated_action_count": 0,
+    "terminal_status": "completed",
+    "tool_call_count": 3,
+    "trace_complete": true
+  }
+}

@@ -10,9 +10,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from src.agent_loop.events import EventEmitter, JsonlEventSink
 from src.browser import BrowserProvider
 from src.harness.memory import MemoryManager
 from src.harness.runtime import (
+    HARNESS_EVENT_METADATA_CONFIG_KEY,
     HARNESS_STATE_OVERRIDES_CONFIG_KEY,
     BrowserHarness,
     GraphBuilder,
@@ -50,6 +52,8 @@ SESSION_STATE_KEYS = (
     "last_browser_action",
     "ineffective_browser_action",
     "ineffective_browser_actions",
+    "pending_browser_tab_index",
+    "pending_browser_tab_reason",
 )
 
 TASK_BOUNDARY_RESETS: dict[str, Any] = {
@@ -371,6 +375,7 @@ class SessionContext:
     memory: MemoryManager | None = None
     tool_registry: ToolRegistry | None = None
     telemetry: TelemetryObserver = field(default_factory=TelemetryObserver)
+    event_emitter: EventEmitter = field(default_factory=EventEmitter)
     initialized: bool = False
 
     async def initialize(
@@ -395,6 +400,10 @@ class SessionContext:
         self.metadata.last_activity = now
         self.session_dir = (Path(".autobrowser") / "sessions" / self.session_id).resolve()
         self.session_dir.mkdir(parents=True, exist_ok=True)
+        self.event_emitter = EventEmitter(
+            JsonlEventSink(self.session_dir / "events.jsonl"),
+            session_id=self.session_id,
+        )
         self.workspace = WorkspaceContext(self.session_dir / "workspace")
         self.workspace.initialize()
 
@@ -427,10 +436,16 @@ class SessionContext:
             tool_registry=self.tool_registry,
             memory_manager=self.memory,
             telemetry=self.telemetry,
+            event_emitter=self.event_emitter,
             compress_tools=self.config.compress_tools,
         )
         self.initialized = True
         self.persist()
+        self.event_emitter.emit(
+            "session.started",
+            source="harness.session",
+            payload={"session_id": self.session_id},
+        )
         self.events.emit("session.started", self)
 
     def reset_task(self, task: str, *, task_id: str | None = None) -> TaskRecord:
@@ -508,6 +523,11 @@ class SessionContext:
 
         if close_external is not None:
             await close_external()
+        self.event_emitter.emit(
+            "session.closed",
+            source="harness.session",
+            payload={"session_id": self.session_id},
+        )
         self.harness = None
         self.llm = None
         self.memory = None
@@ -584,9 +604,25 @@ class SessionRuntime:
         configurable = dict(task_config.get("configurable") or {})
         configurable["thread_id"] = self._session_thread_id()
         task_config["configurable"] = configurable
+        event_metadata = dict(task_config.get(HARNESS_EVENT_METADATA_CONFIG_KEY) or {})
+        event_metadata.update(
+            {
+                "session_id": self.context.session_id,
+                "task_id": task_id,
+                "goal_id": task_id,
+            }
+        )
+        task_config[HARNESS_EVENT_METADATA_CONFIG_KEY] = event_metadata
         task_config[HARNESS_STATE_OVERRIDES_CONFIG_KEY] = _task_state_overrides(
             self.context.state,
             task_id=task_id,
+        )
+        self.context.event_emitter.emit(
+            "goal.started",
+            source="harness.session",
+            payload={"task": task},
+            task_id=task_id,
+            goal_id=task_id,
         )
         try:
             result = await self._task_runner(
@@ -597,10 +633,24 @@ class SessionRuntime:
             )
         except Exception as exc:
             await self._remember_latest_state(task_config)
+            self.context.event_emitter.emit(
+                "goal.failed",
+                source="harness.session",
+                payload={"task": task, "error": exc},
+                task_id=task_id,
+                goal_id=task_id,
+            )
             self.context.fail_task(record, exc)
             raise
         await self._remember_latest_state(task_config, fallback=result)
         self.context.finish_task(record, result)
+        self.context.event_emitter.emit(
+            "goal.completed",
+            source="harness.session",
+            payload={"task": task, "result": result},
+            task_id=task_id,
+            goal_id=task_id,
+        )
         return result
 
     def _session_thread_id(self) -> str:

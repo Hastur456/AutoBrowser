@@ -66,7 +66,7 @@ class FakeGraph:
                 "config": config,
             }
         }
-        yield {"agent": {"final_answer": "done", "config": config}}
+        yield {"agent": {"final_answer": f"done: {state['task']}", "config": config}}
 
 
 def make_args(**overrides: Any) -> argparse.Namespace:

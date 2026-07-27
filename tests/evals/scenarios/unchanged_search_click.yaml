@@ -1,0 +1,42 @@
+name: unchanged_search_click
+task: Avoid repeating an unchanged search-button click.
+model:
+  responses:
+    - steps:
+        - id: 1
+          description: Find search input
+          status: pending
+    - decision: tool_call
+      tool_request:
+        name: browser.snapshot
+        args: {}
+        reason: Inspect current refs.
+    - decision: tool_call
+      tool_request:
+        name: browser.click
+        args:
+          ref: e7
+        reason: Open search.
+    - decision: tool_call
+      tool_request:
+        name: browser.snapshot
+        args: {}
+        reason: Inspect after click.
+    - decision: replan
+      reason: The click did not expose a search input.
+    - steps:
+        - id: 1
+          description: Use fallback result
+          status: pending
+    - decision: done
+      final_answer: Search input did not change; stopped without repeating the click.
+browser:
+  snapshots:
+    - '- button "Search" ref=e7'
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+    - stopped without repeating
+  max_tool_calls: 3
+  max_repeated_actions: 0
+  max_policy_blocks: 0
