@@ -41,6 +41,21 @@ SENSITIVE_KEY_MARKERS = (
 )
 REDACTED_VALUE = "[REDACTED]"
 MAX_STRING_CHARS = 20_000
+AGENT_TRACE_MAX_TEXT_CHARS = 500
+AGENT_TRACE_EVENT_TYPES = {
+    "goal.started",
+    "model.responded",
+    "action.proposed",
+    "policy.decided",
+    "approval.requested",
+    "tool.started",
+    "tool.finished",
+    "observation.compiled",
+    "goal.completed",
+    "goal.blocked",
+    "goal.failed",
+    "goal.cancelled",
+}
 
 
 @dataclass(frozen=True)
@@ -136,6 +151,23 @@ class JsonlEventSink:
             file.flush()
 
 
+class AgentTraceSink:
+    """Append a compact agent-trace projection derived from typed event records."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def emit(self, record: EventRecord) -> None:
+        projected = _project_agent_trace_record(record)
+        if projected is None:
+            return
+        with self.path.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(projected, ensure_ascii=False))
+            file.write("\n")
+            file.flush()
+
+
 class CompositeEventSink:
     """Fan out records to multiple event sinks."""
 
@@ -221,6 +253,121 @@ def _is_sensitive_key(key: str) -> bool:
     return any(marker in normalized for marker in SENSITIVE_KEY_MARKERS)
 
 
+def _project_agent_trace_record(record: EventRecord) -> dict[str, Any] | None:
+    if record.type not in AGENT_TRACE_EVENT_TYPES:
+        return None
+
+    projected: dict[str, Any] = {
+        "timestamp": record.timestamp.isoformat(),
+        "type": record.type,
+    }
+    if record.type == "goal.started":
+        _set_if_present(projected, "task", _compact_text(record.payload.get("task")))
+        return projected
+    if record.type == "model.responded":
+        _set_if_present(projected, "node", _compact_text(record.payload.get("node")))
+        return projected
+    if record.type == "action.proposed":
+        return _project_tool_request_event(projected, record.payload.get("tool_request"))
+    if record.type in {"policy.decided", "approval.requested"}:
+        _set_if_present(projected, "decision", _compact_text(record.payload.get("decision")))
+        _set_if_present(projected, "reason", _compact_text(record.payload.get("reason")))
+        return _project_tool_request_event(projected, record.payload.get("tool_request"))
+    if record.type in {"tool.started", "tool.finished"}:
+        return _project_tool_result_event(projected, record.payload.get("tool_result"))
+    if record.type == "observation.compiled":
+        _set_if_present(
+            projected,
+            "summary",
+            _compact_text(record.payload.get("observation")),
+        )
+        if bool(record.payload.get("has_snapshot")):
+            projected["has_snapshot"] = True
+        return projected
+    if record.type == "goal.completed":
+        _set_if_present(projected, "task", _compact_text(record.payload.get("task")))
+        _set_if_present(projected, "final_answer", _compact_goal_result(record.payload.get("result")))
+        return projected
+    if record.type in {"goal.failed", "goal.blocked", "goal.cancelled"}:
+        _set_if_present(projected, "task", _compact_text(record.payload.get("task")))
+        _set_if_present(projected, "reason", _compact_text(record.payload.get("reason")))
+        _set_if_present(projected, "error", _compact_text(record.payload.get("error")))
+        return projected
+    return projected
+
+
+def _project_tool_request_event(
+    projected: dict[str, Any],
+    payload: Any,
+) -> dict[str, Any]:
+    request = payload if isinstance(payload, dict) else {}
+    _set_if_present(projected, "tool", _compact_text(request.get("name")))
+    arguments = _compact_mapping(request.get("args"))
+    if arguments is not None:
+        projected["arguments"] = arguments
+    _set_if_present(projected, "reason", _compact_text(request.get("reason")))
+    return projected
+
+
+def _project_tool_result_event(
+    projected: dict[str, Any],
+    payload: Any,
+) -> dict[str, Any]:
+    result = payload if isinstance(payload, dict) else {}
+    _set_if_present(projected, "tool", _compact_text(result.get("name")))
+    if projected.get("type") == "tool.finished":
+        _set_if_present(projected, "status", _compact_text(result.get("status")))
+    error = _compact_text(result.get("error"))
+    if error:
+        projected["error"] = error
+    return projected
+
+
+def _compact_goal_result(value: Any) -> str | None:
+    if isinstance(value, dict):
+        final_answer = _compact_text(value.get("final_answer"))
+        if final_answer:
+            return final_answer
+    return _compact_text(value)
+
+
+def _compact_mapping(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    safe = redact_json_safe(value)
+    return safe if isinstance(safe, dict) and safe else None
+
+
+def _compact_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    safe = redact_json_safe(value)
+    if isinstance(safe, dict):
+        message = str(safe.get("message", "") or "").strip()
+        error_type = str(safe.get("type", "") or "").strip()
+        if message and error_type:
+            text = f"{error_type}: {message}"
+        elif message:
+            text = message
+        else:
+            text = json.dumps(safe, ensure_ascii=False, sort_keys=True)
+    elif isinstance(safe, list):
+        text = json.dumps(safe, ensure_ascii=False)
+    else:
+        text = str(safe)
+    normalized = " ".join(text.split()).strip()
+    if not normalized:
+        return None
+    if len(normalized) > AGENT_TRACE_MAX_TEXT_CHARS:
+        return f"{normalized[:AGENT_TRACE_MAX_TEXT_CHARS]}... [truncated]"
+    return normalized
+
+
+def _set_if_present(target: dict[str, Any], key: str, value: Any) -> None:
+    if value not in (None, "", {}, []):
+        target[key] = value
+
+
 def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
@@ -228,6 +375,7 @@ def _optional_str(value: Any) -> str | None:
 
 
 __all__ = [
+    "AgentTraceSink",
     "CompositeEventSink",
     "EventEmitter",
     "EventRecord",

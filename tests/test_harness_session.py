@@ -281,8 +281,18 @@ async def test_session_runtime_reuses_context_and_records_task_history(
             encoding="utf-8"
         ).splitlines()
     ]
+    agent_trace = [
+        json.loads(line)
+        for line in (runtime.context.session_dir / "agent_trace.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
     assert [event["type"] for event in typed_events] == [
         "session.started",
+        "goal.started",
+        "goal.completed",
+    ]
+    assert [event["type"] for event in agent_trace] == [
         "goal.started",
         "goal.completed",
     ]

@@ -1,6 +1,7 @@
 """Runtime observability helpers for the AutoBrowser agent loop."""
 
 from src.agent_loop.events import (
+    AgentTraceSink,
     CompositeEventSink,
     EventEmitter,
     EventRecord,
@@ -11,6 +12,7 @@ from src.agent_loop.events import (
 )
 
 __all__ = [
+    "AgentTraceSink",
     "CompositeEventSink",
     "EventEmitter",
     "EventRecord",

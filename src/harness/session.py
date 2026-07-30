@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from src.agent_loop.events import EventEmitter, JsonlEventSink
+from src.agent_loop.events import (
+    AgentTraceSink,
+    CompositeEventSink,
+    EventEmitter,
+    JsonlEventSink,
+)
 from src.browser import BrowserProvider
 from src.harness.memory import MemoryManager
 from src.harness.runtime import (
@@ -301,6 +306,17 @@ def _write_json(path: Path, payload: Any) -> None:
     tmp_path.replace(path)
 
 
+def _build_session_event_sink(session_dir: Path) -> CompositeEventSink:
+    """Build the session's durable event sinks and projections."""
+
+    return CompositeEventSink(
+        [
+            JsonlEventSink(session_dir / "events.jsonl"),
+            AgentTraceSink(session_dir / "agent_trace.jsonl"),
+        ]
+    )
+
+
 def _task_state_overrides(
     session_state: MutableMapping[str, object],
     *,
@@ -401,7 +417,7 @@ class SessionContext:
         self.session_dir = (Path(".autobrowser") / "sessions" / self.session_id).resolve()
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.event_emitter = EventEmitter(
-            JsonlEventSink(self.session_dir / "events.jsonl"),
+            _build_session_event_sink(self.session_dir),
             session_id=self.session_id,
         )
         self.workspace = WorkspaceContext(self.session_dir / "workspace")
