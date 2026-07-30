@@ -14,19 +14,28 @@ from src.agent_loop.metrics import extract_event_metrics
 
 def collect_session_export_rows(
     sessions_dir: Path = Path(".autobrowser") / "sessions",
+    feedback_path: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Collect export rows from every session directory under ``sessions_dir``."""
 
     root = Path(sessions_dir)
     if not root.exists():
         return []
+    feedback = _load_feedback_index(
+        Path(feedback_path) if feedback_path is not None else root.parent / "feedback.jsonl"
+    )
     rows: list[dict[str, Any]] = []
     for session_dir in sorted(path for path in root.iterdir() if path.is_dir()):
-        rows.extend(collect_session_export_rows_from_dir(session_dir))
+        rows.extend(collect_session_export_rows_from_dir(session_dir, feedback=feedback))
     return rows
 
 
-def collect_session_export_rows_from_dir(session_dir: Path) -> list[dict[str, Any]]:
+def collect_session_export_rows_from_dir(
+    session_dir: Path,
+    *,
+    feedback: Mapping[tuple[str, str], Mapping[str, Any]] | None = None,
+    feedback_path: Path | None = None,
+) -> list[dict[str, Any]]:
     """Collect export rows for one ``.autobrowser/sessions/<session_id>`` directory."""
 
     session_path = Path(session_dir)
@@ -35,6 +44,15 @@ def collect_session_export_rows_from_dir(session_dir: Path) -> list[dict[str, An
     events = _load_event_records(session_path / "events.jsonl")
     events_by_task_id = _group_events_by_task_id(events)
     session_id = _session_id(session, session_path, events)
+    feedback_index = (
+        feedback
+        if feedback is not None
+        else _load_feedback_index(
+            Path(feedback_path)
+            if feedback_path is not None
+            else session_path.parent.parent / "feedback.jsonl"
+        )
+    )
 
     task_by_id = {
         str(task.get("task_id")): task
@@ -49,6 +67,7 @@ def collect_session_export_rows_from_dir(session_dir: Path) -> list[dict[str, An
             task=task_by_id.get(task_id, {}),
             task_id=task_id,
             events=events_by_task_id.get(task_id, []),
+            feedback=feedback_index.get((session_id, task_id)),
         )
         for task_id in task_ids
     ]
@@ -85,6 +104,24 @@ def _load_event_records(path: Path) -> list[EventRecord]:
     return records
 
 
+def _load_feedback_index(path: Path) -> dict[tuple[str, str], dict[str, Any]]:
+    if not path.exists():
+        return {}
+    feedback: dict[tuple[str, str], dict[str, Any]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        data = json.loads(line)
+        if not isinstance(data, dict):
+            continue
+        session_id = data.get("session_id")
+        task_id = data.get("task_id")
+        if session_id in (None, "") or task_id in (None, ""):
+            continue
+        feedback[(str(session_id), str(task_id))] = dict(data)
+    return feedback
+
+
 def _group_events_by_task_id(
     events: Iterable[EventRecord],
 ) -> dict[str, list[EventRecord]]:
@@ -115,6 +152,7 @@ def _export_row(
     task: Mapping[str, Any],
     task_id: str,
     events: list[EventRecord],
+    feedback: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     metrics = extract_event_metrics(events)
     return {
@@ -124,7 +162,7 @@ def _export_row(
         "started_at": task.get("started_at") or _first_event_timestamp(events),
         "finished_at": task.get("finished_at") or _last_event_timestamp(events),
         "metrics": metrics.to_dict(),
-        "feedback": None,
+        "feedback": dict(feedback) if feedback is not None else None,
         "session_config": dict(_mapping(session.get("config"))),
         "session_metadata": dict(_mapping(session.get("metadata"))),
         "result": task.get("result"),

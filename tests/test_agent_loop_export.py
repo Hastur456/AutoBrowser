@@ -139,9 +139,85 @@ def test_collect_session_export_rows_includes_event_only_task_ids(tmp_path: Path
     assert rows[0]["metrics"]["error_count"] == 1
 
 
+def test_collect_session_export_rows_joins_matched_feedback(tmp_path: Path) -> None:
+    autobrowser_dir = tmp_path / ".autobrowser"
+    sessions_dir = autobrowser_dir / "sessions"
+    session_dir = sessions_dir / "session-1"
+    _write_json(
+        session_dir / "session.json",
+        {
+            "session_id": "session-1",
+            "tasks": [{"task_id": "task-1", "task": "review me"}],
+        },
+    )
+    _write_jsonl(
+        autobrowser_dir / "feedback.jsonl",
+        [
+            {
+                "session_id": "session-1",
+                "task_id": "task-1",
+                "scenario_id": "scenario-1",
+                "rating": 5,
+                "passed": True,
+                "expected": "final answer",
+                "notes": "ok",
+                "reviewed_at": "2026-07-30T01:00:00+00:00",
+            }
+        ],
+    )
+
+    rows = collect_session_export_rows(sessions_dir)
+
+    assert len(rows) == 1
+    assert rows[0]["feedback"] == {
+        "session_id": "session-1",
+        "task_id": "task-1",
+        "scenario_id": "scenario-1",
+        "rating": 5,
+        "passed": True,
+        "expected": "final answer",
+        "notes": "ok",
+        "reviewed_at": "2026-07-30T01:00:00+00:00",
+    }
+
+
+def test_collect_session_export_rows_leaves_unmatched_feedback_null(tmp_path: Path) -> None:
+    autobrowser_dir = tmp_path / ".autobrowser"
+    session_dir = autobrowser_dir / "sessions" / "session-1"
+    _write_json(
+        session_dir / "session.json",
+        {
+            "session_id": "session-1",
+            "tasks": [{"task_id": "task-1", "task": "review me"}],
+        },
+    )
+    _write_jsonl(
+        autobrowser_dir / "feedback.jsonl",
+        [
+            {
+                "session_id": "session-1",
+                "task_id": "other-task",
+                "rating": 1,
+                "passed": False,
+            }
+        ],
+    )
+
+    rows = collect_session_export_rows_from_dir(session_dir)
+
+    assert len(rows) == 1
+    assert rows[0]["feedback"] is None
+
+
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps(record) for record in records]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _write_events(path: Path, events: list[EventRecord]) -> None:
