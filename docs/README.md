@@ -21,6 +21,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Agent Loop Observability Branch Plan](development/2026-07-27-agent-loop-observability-branch-plan.md):
   implementation plan for typed events, JSONL traces, replay helpers, scenario
   evals, and LangGraph v1 baseline comparison.
+- [Batch And Export Data Contracts](development/2026-07-30-batch-export-data-contracts.md):
+  current observability sources and JSONL contracts for batch tasks, run
+  indexes, feedback, metrics, and export rows.
 - [Session-Scoped Agent Context Memory ADR](decisions/2026-07-25-session-scoped-agent-context-memory.md):
   decision record for preserving useful agent context across tasks in one
   interactive session.
