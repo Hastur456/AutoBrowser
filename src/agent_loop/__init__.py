@@ -10,11 +10,17 @@ from src.agent_loop.events import (
     JsonlEventSink,
     NullEventSink,
 )
+from src.agent_loop.export import (
+    collect_session_export_rows,
+    collect_session_export_rows_from_dir,
+)
 from src.agent_loop.metrics import EventMetrics, extract_event_metrics
 
 __all__ = [
     "AgentTraceSink",
     "CompositeEventSink",
+    "collect_session_export_rows",
+    "collect_session_export_rows_from_dir",
     "EventEmitter",
     "EventMetrics",
     "EventRecord",
