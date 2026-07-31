@@ -1,10 +1,10 @@
-"""Batch task loading and execution for AutoBrowser sessions."""
+"""Batch scenario loading and execution for AutoBrowser sessions."""
 
 from __future__ import annotations
 
 import json
 import shutil
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,18 +13,18 @@ from uuid import uuid4
 
 
 @dataclass(frozen=True)
-class BatchTask:
-    """One task entry from a batch tasks JSONL file."""
+class BatchScenario:
+    """One scenario entry from a Golden Set JSONL file."""
 
     scenario_id: str
-    task: str
+    tasks: list[str]
     expected: Any | None = None
     tags: list[str] | None = None
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
             "scenario_id": self.scenario_id,
-            "task": self.task,
+            "tasks": list(self.tasks),
             "expected": self.expected,
             "tags": list(self.tags or []),
         }
@@ -42,33 +42,36 @@ class BatchSessionRuntime(Protocol):
         """Release session resources."""
 
 
-def load_batch_tasks(path: Path) -> list[BatchTask]:
-    """Load batch tasks from JSONL, one object per non-empty line."""
+BatchSessionFactory = Callable[[], BatchSessionRuntime]
 
-    tasks: list[BatchTask] = []
+
+def load_batch_scenarios(path: Path) -> list[BatchScenario]:
+    """Load Golden Set scenarios from JSONL, one object per non-empty line."""
+
+    scenarios: list[BatchScenario] = []
     for line_number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
             continue
         payload = json.loads(line)
         if not isinstance(payload, Mapping):
             raise ValueError(f"Line {line_number} must be a JSON object.")
-        tasks.append(_batch_task_from_payload(payload, line_number=line_number))
-    return tasks
+        scenarios.append(_batch_scenario_from_payload(payload, line_number=line_number))
+    return scenarios
 
 
 async def run_batch(
     *,
     tasks_path: Path,
-    session: BatchSessionRuntime,
+    session_factory: BatchSessionFactory,
     batches_dir: Path = Path(".autobrowser") / "batches",
     batch_id: str | None = None,
     config: Mapping[str, Any] | None = None,
     continue_on_error: bool = False,
 ) -> dict[str, Any]:
-    """Run JSONL tasks sequentially through one SessionRuntime and write artifacts."""
+    """Run Golden Set scenarios with one fresh SessionRuntime per scenario."""
 
     tasks_file = Path(tasks_path)
-    tasks = load_batch_tasks(tasks_file)
+    scenarios = load_batch_scenarios(tasks_file)
     batch_id = batch_id or f"batch-{uuid4().hex}"
     batch_dir = Path(batches_dir) / batch_id
     batch_dir.mkdir(parents=True, exist_ok=True)
@@ -81,7 +84,8 @@ async def run_batch(
         "finished_at": None,
         "config": dict(config or {}),
         "tasks_path": str(tasks_file),
-        "task_count": len(tasks),
+        "scenario_count": len(scenarios),
+        "task_count": sum(len(scenario.tasks) for scenario in scenarios),
     }
     _write_json(batch_dir / "batch.json", metadata)
 
@@ -90,17 +94,19 @@ async def run_batch(
     status = "completed"
 
     try:
-        for task in tasks:
+        for scenario in scenarios:
             row_started_at = _now_iso()
+            session = session_factory()
             try:
-                await session.run_task(task.task)
+                for task in scenario.tasks:
+                    await session.run_task(task)
             except Exception as exc:
                 status = "failed"
                 _append_jsonl(
                     run_index_path,
                     _run_index_row(
                         batch_id=batch_id,
-                        task=task,
+                        scenario=scenario,
                         session=session,
                         status="failed",
                         started_at=row_started_at,
@@ -115,7 +121,7 @@ async def run_batch(
                     run_index_path,
                     _run_index_row(
                         batch_id=batch_id,
-                        task=task,
+                        scenario=scenario,
                         session=session,
                         status="completed",
                         started_at=row_started_at,
@@ -123,11 +129,12 @@ async def run_batch(
                         error=None,
                     ),
                 )
+            finally:
+                await session.close()
     finally:
         metadata["finished_at"] = _now_iso()
         metadata["status"] = status
         _write_json(batch_dir / "batch.json", metadata)
-        await session.close()
 
     return {
         "batch_id": batch_id,
@@ -135,17 +142,27 @@ async def run_batch(
         "batch_path": str(batch_dir / "batch.json"),
         "run_index_path": str(run_index_path),
         "status": status,
-        "task_count": len(tasks),
+        "scenario_count": len(scenarios),
+        "task_count": sum(len(scenario.tasks) for scenario in scenarios),
     }
 
 
-def _batch_task_from_payload(payload: Mapping[str, Any], *, line_number: int) -> BatchTask:
+def _batch_scenario_from_payload(
+    payload: Mapping[str, Any],
+    *,
+    line_number: int,
+) -> BatchScenario:
     scenario_id = payload.get("scenario_id")
-    task = payload.get("task")
+    tasks = payload.get("tasks")
     if scenario_id in (None, ""):
         raise ValueError(f"Line {line_number} is missing scenario_id.")
-    if task in (None, ""):
-        raise ValueError(f"Line {line_number} is missing task.")
+    if not isinstance(tasks, list) or not tasks:
+        raise ValueError(f"Line {line_number} must define a non-empty tasks list.")
+    if any(not isinstance(item, str) for item in tasks):
+        raise ValueError(f"Line {line_number} tasks must contain strings.")
+    parsed_tasks = [item.strip() for item in tasks]
+    if any(not task for task in parsed_tasks):
+        raise ValueError(f"Line {line_number} tasks must contain non-empty strings.")
     tags = payload.get("tags")
     if tags is None:
         parsed_tags: list[str] | None = []
@@ -153,9 +170,9 @@ def _batch_task_from_payload(payload: Mapping[str, Any], *, line_number: int) ->
         parsed_tags = [str(item) for item in tags]
     else:
         raise ValueError(f"Line {line_number} tags must be a list.")
-    return BatchTask(
+    return BatchScenario(
         scenario_id=str(scenario_id),
-        task=str(task),
+        tasks=parsed_tasks,
         expected=payload.get("expected"),
         tags=parsed_tags,
     )
@@ -164,7 +181,7 @@ def _batch_task_from_payload(payload: Mapping[str, Any], *, line_number: int) ->
 def _run_index_row(
     *,
     batch_id: str,
-    task: BatchTask,
+    scenario: BatchScenario,
     session: BatchSessionRuntime,
     status: str,
     started_at: str,
@@ -173,14 +190,13 @@ def _run_index_row(
 ) -> dict[str, Any]:
     return {
         "batch_id": batch_id,
-        "scenario_id": task.scenario_id,
+        "scenario_id": scenario.scenario_id,
         "session_id": _session_id(session),
-        "task_id": _latest_task_id(session),
         "status": status,
         "session_dir": _session_dir(session),
-        "task": task.task,
-        "expected": task.expected,
-        "tags": list(task.tags or []),
+        "tasks": list(scenario.tasks),
+        "expected": scenario.expected,
+        "tags": list(scenario.tags or []),
         "started_at": started_at,
         "finished_at": finished_at,
         "error": error,
@@ -193,13 +209,6 @@ def _session_id(session: BatchSessionRuntime) -> str | None:
 
 def _session_dir(session: BatchSessionRuntime) -> str | None:
     return _string_or_none(getattr(session.context, "session_dir", None))
-
-
-def _latest_task_id(session: BatchSessionRuntime) -> str | None:
-    tasks = getattr(session.context, "tasks", [])
-    if not tasks:
-        return None
-    return _string_or_none(getattr(tasks[-1], "task_id", None))
 
 
 def _string_or_none(value: Any) -> str | None:
@@ -226,8 +235,9 @@ def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
 
 
 __all__ = [
+    "BatchScenario",
+    "BatchSessionFactory",
     "BatchSessionRuntime",
-    "BatchTask",
-    "load_batch_tasks",
+    "load_batch_scenarios",
     "run_batch",
 ]

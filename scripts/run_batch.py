@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Run AutoBrowser batch tasks from a JSONL file."""
+"""Run AutoBrowser Golden Set scenarios from a JSONL file."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import json
+import socket
 import sys
 from collections.abc import Awaitable, Callable
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -32,15 +33,14 @@ async def run_batch_from_args(
     session_builder: SessionBuilder = build_session,
     batch_runner: BatchRunner = run_batch,
 ) -> dict[str, Any]:
-    """Build a session runtime from CLI args and run the configured batch."""
+    """Run the configured batch with a fresh session runtime per scenario."""
 
-    session = session_builder(args)
-    config = _batch_config(args, session)
+    session_factory = _session_factory(args, session_builder)
     return await batch_runner(
         tasks_path=args.tasks,
-        session=session,
+        session_factory=session_factory,
         continue_on_error=args.continue_on_error,
-        config=config,
+        config=_batch_config(args),
     )
 
 
@@ -100,6 +100,47 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _session_factory(
+    args: argparse.Namespace,
+    session_builder: SessionBuilder,
+) -> Callable[[], SessionRuntime]:
+    scenario_index = 0
+    next_port = int(args.cdp_port)
+
+    def build() -> SessionRuntime:
+        nonlocal scenario_index, next_port
+        scenario_index += 1
+        session_args = copy.copy(args)
+        session_args.user_data_dir = _scenario_user_data_dir(
+            args.user_data_dir,
+            scenario_index,
+        )
+        if not args.no_mcp:
+            session_args.cdp_port = _next_available_port(next_port)
+            next_port = int(session_args.cdp_port) + 1
+        return session_builder(session_args)
+
+    return build
+
+
+def _scenario_user_data_dir(user_data_dir: str, scenario_index: int) -> str:
+    root = Path(user_data_dir)
+    return str(root.parent / f"{root.name}-scenario-{scenario_index}")
+
+
+def _next_available_port(start: int) -> int:
+    port = start
+    while _is_port_open(port):
+        port += 1
+    return port
+
+
+def _is_port_open(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.2)
+        return sock.connect_ex(("localhost", port)) == 0
+
+
 def _add_session_defaults(parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(
         temperature=0.0,
@@ -112,10 +153,7 @@ def _add_session_defaults(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _batch_config(args: argparse.Namespace, session: SessionRuntime) -> dict[str, Any]:
-    config = getattr(session, "config", None)
-    if config is not None:
-        return asdict(config)
+def _batch_config(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "model": args.model,
         "no_mcp": args.no_mcp,

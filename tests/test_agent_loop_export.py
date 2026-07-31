@@ -199,7 +199,6 @@ def test_collect_session_export_rows_joins_batch_metadata(tmp_path: Path) -> Non
                 "batch_id": "batch-1",
                 "scenario_id": "scenario-1",
                 "session_id": "session-1",
-                "task_id": "task-1",
                 "status": "completed",
                 "expected": {"contains": "done"},
                 "tags": ["smoke", "browser"],
@@ -216,7 +215,48 @@ def test_collect_session_export_rows_joins_batch_metadata(tmp_path: Path) -> Non
     assert rows[0]["tags"] == ["smoke", "browser"]
 
 
-def test_collect_session_export_rows_uses_batch_fallback_for_unbatched_task(
+def test_collect_session_export_rows_applies_scenario_metadata_to_all_session_tasks(
+    tmp_path: Path,
+) -> None:
+    autobrowser_dir = tmp_path / ".autobrowser"
+    session_dir = autobrowser_dir / "sessions" / "session-1"
+    _write_json(
+        session_dir / "session.json",
+        {
+            "session_id": "session-1",
+            "tasks": [
+                {"task_id": "task-1", "task": "open page"},
+                {"task_id": "task-2", "task": "report result"},
+            ],
+        },
+    )
+    _write_jsonl(
+        autobrowser_dir / "batches" / "batch-1" / "run_index.jsonl",
+        [
+            {
+                "batch_id": "batch-1",
+                "scenario_id": "scenario-1",
+                "session_id": "session-1",
+                "expected": {"fields": ["url"]},
+                "tags": ["browser"],
+            }
+        ],
+    )
+
+    rows = collect_session_export_rows_from_dir(session_dir)
+
+    assert len(rows) == 2
+    assert {row["task_id"] for row in rows} == {"task-1", "task-2"}
+    assert {row["batch_id"] for row in rows} == {"batch-1"}
+    assert {row["scenario_id"] for row in rows} == {"scenario-1"}
+    assert [row["expected"] for row in rows] == [
+        {"fields": ["url"]},
+        {"fields": ["url"]},
+    ]
+    assert [row["tags"] for row in rows] == [["browser"], ["browser"]]
+
+
+def test_collect_session_export_rows_leaves_unbatched_task_without_batch_metadata(
     tmp_path: Path,
 ) -> None:
     autobrowser_dir = tmp_path / ".autobrowser"
@@ -234,8 +274,7 @@ def test_collect_session_export_rows_uses_batch_fallback_for_unbatched_task(
             {
                 "batch_id": "batch-1",
                 "scenario_id": "scenario-other",
-                "session_id": "session-1",
-                "task_id": "other-task",
+                "session_id": "session-other",
                 "expected": "other",
                 "tags": ["other"],
             }

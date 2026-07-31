@@ -123,26 +123,39 @@ These evals are not real batch runs:
 All contracts are newline-delimited JSON unless noted otherwise. Unknown fields
 must be preserved by readers where practical and ignored by current logic.
 
-### Batch Task
+### Batch Scenario
 
 Input file consumed by the batch runner.
 
 Required fields:
 
 - `scenario_id`: caller-owned scenario identifier.
-- `task`: user task text.
+- `tasks`: non-empty list of user task texts.
 
 Optional fields:
 
 - `expected`: arbitrary JSON value describing the expected outcome.
 - `tags`: list of labels copied to the run index and export row.
 
+Runtime semantics:
+
+- one JSON object is one scenario;
+- one scenario owns exactly one AutoBrowser session;
+- `tasks` execute sequentially inside that session;
+- browser state, observations, and conversation memory are preserved only inside
+  the scenario;
+- session state never survives into the next scenario.
+
 Example:
 
 ```json
 {
   "scenario_id": "search-basic",
-  "task": "Search for jackets and report the first visible result.",
+  "tasks": [
+    "Open the target page.",
+    "Search for jackets.",
+    "Report the first visible result."
+  ],
   "expected": {
     "contains": "jacket"
   },
@@ -152,7 +165,7 @@ Example:
 
 ### Batch Run Index
 
-Output file written after each attempted task:
+Output file written after each attempted scenario:
 
 ```text
 .autobrowser/batches/<batch_id>/run_index.jsonl
@@ -161,18 +174,17 @@ Output file written after each attempted task:
 Required fields:
 
 - `batch_id`: batch run identifier.
-- `session_id`: AutoBrowser session identifier used for the run.
-- `task_id`: `TaskRecord.task_id` for the executed task when available.
-- `task`: user task text.
+- `scenario_id`: caller-owned scenario identifier.
+- `session_id`: AutoBrowser session identifier used only for this scenario.
 - `status`: `completed`, `failed`, or `skipped`.
+- `tasks`: list of task texts executed sequentially in the scenario session.
 - `started_at`: ISO timestamp.
 - `finished_at`: ISO timestamp.
 
 Optional fields:
 
-- `scenario_id`: copied from the batch task.
-- `expected`: copied from the batch task.
-- `tags`: copied from the batch task.
+- `expected`: copied from the batch scenario.
+- `tags`: copied from the batch scenario.
 - `error`: JSON object with `type` and `message` for failed runner attempts.
 
 Example:
@@ -182,9 +194,12 @@ Example:
   "batch_id": "batch-20260730-001",
   "scenario_id": "search-basic",
   "session_id": "7ad0...",
-  "task_id": "task-...",
-  "task": "Search for jackets and report the first visible result.",
   "status": "completed",
+  "tasks": [
+    "Open the target page.",
+    "Search for jackets.",
+    "Report the first visible result."
+  ],
   "started_at": "2026-07-30T00:00:00+00:00",
   "finished_at": "2026-07-30T00:00:15+00:00",
   "expected": {
@@ -343,15 +358,15 @@ fake model and browser data.
 
 ### 1. Create `tasks.jsonl`
 
-Each non-empty line is one JSON object. `scenario_id` and `task` are required.
-`expected` and `tags` are copied into the batch run index and joined into the
-final export.
+Each non-empty line is one JSON object. `scenario_id` and `tasks` are required.
+The `tasks` value must be a non-empty `list[str]`. `expected` and `tags` are
+copied into the batch run index and joined into the final export.
 
 Example `tasks.jsonl`:
 
 ```jsonl
-{"scenario_id":"search-basic","task":"Open the target page and report the first visible product.","expected":{"contains":"product name"},"tags":["smoke","browser"]}
-{"scenario_id":"status-check","task":"Summarize the current page status.","expected":"A short status summary.","tags":["smoke"]}
+{"scenario_id":"search-basic","tasks":["Open the target page.","Search for a product.","Report the first visible product."],"expected":{"contains":"product name"},"tags":["smoke","browser"]}
+{"scenario_id":"status-check","tasks":["Open the target page.","Summarize the current page status."],"expected":"A short status summary.","tags":["smoke"]}
 ```
 
 ### 2. Run The Batch
@@ -377,10 +392,15 @@ The batch runner creates:
 ```
 
 `batch.json` records `batch_id`, `started_at`, `finished_at`, `status`,
-`task_count`, the source `tasks_path`, and the agent config passed to the run.
-`run_index.jsonl` records one row per attempted task with `batch_id`,
-`scenario_id`, `session_id`, `task_id`, `status`, `session_dir`, `task`,
+`scenario_count`, `task_count`, the source `tasks_path`, and the agent config
+passed to the run. `run_index.jsonl` records one row per attempted scenario
+with `batch_id`, `scenario_id`, `session_id`, `status`, `session_dir`, `tasks`,
 `expected`, `tags`, timestamps, and `error`.
+
+The batch runner creates a fresh `SessionRuntime` and `SessionContext` for each
+scenario, then closes them before the next scenario starts. With browser tools
+enabled, the batch CLI also allocates a scenario-specific Chrome user data
+directory and CDP port so browser profile state does not leak across scenarios.
 
 ### 3. Add Feedback
 
@@ -413,7 +433,7 @@ python scripts/export_sessions.py --sessions-dir .autobrowser/sessions --feedbac
 
 The exporter scans `.autobrowser/sessions/*`, joins feedback from
 `.autobrowser/feedback.jsonl`, and joins batch metadata from
-`.autobrowser/batches/*/run_index.jsonl`.
+`.autobrowser/batches/*/run_index.jsonl` by `session_id`.
 
 ### 5. Inspect The Export
 
@@ -441,8 +461,7 @@ batch fields fall back to `batch_id: null`, `scenario_id: null`,
 - Metrics extraction should accept already-loaded event dictionaries or
   `EventRecord` objects for one task and should not read files directly.
 - Batch metadata is joined by scanning
-  `.autobrowser/batches/*/run_index.jsonl` for matching `session_id` and
-  `task_id`.
+  `.autobrowser/batches/*/run_index.jsonl` for matching `session_id`.
 - The batch runner owns `.autobrowser/batches/<batch_id>/`; session runtime
   continues to own `.autobrowser/sessions/<session_id>/`.
 - The contracts above are separate from `tests/evals`, which remain

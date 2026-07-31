@@ -1,9 +1,10 @@
 """Runtime observability helpers for the AutoBrowser agent loop."""
 
 from src.agent_loop.batch import (
+    BatchScenario,
+    BatchSessionFactory,
     BatchSessionRuntime,
-    BatchTask,
-    load_batch_tasks,
+    load_batch_scenarios,
     run_batch,
 )
 from src.agent_loop.events import (
@@ -24,8 +25,9 @@ from src.agent_loop.metrics import EventMetrics, extract_event_metrics
 
 __all__ = [
     "AgentTraceSink",
+    "BatchScenario",
+    "BatchSessionFactory",
     "BatchSessionRuntime",
-    "BatchTask",
     "CompositeEventSink",
     "collect_session_export_rows",
     "collect_session_export_rows_from_dir",
@@ -35,7 +37,7 @@ __all__ = [
     "EventSink",
     "InMemoryEventSink",
     "JsonlEventSink",
-    "load_batch_tasks",
+    "load_batch_scenarios",
     "NullEventSink",
     "run_batch",
     "extract_event_metrics",

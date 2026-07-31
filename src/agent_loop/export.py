@@ -45,7 +45,7 @@ def collect_session_export_rows_from_dir(
     *,
     feedback: Mapping[tuple[str, str], Mapping[str, Any]] | None = None,
     feedback_path: Path | None = None,
-    batch_index: Mapping[tuple[str, str], Mapping[str, Any]] | None = None,
+    batch_index: Mapping[str, Mapping[str, Any]] | None = None,
     batches_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Collect export rows for one ``.autobrowser/sessions/<session_id>`` directory."""
@@ -89,7 +89,7 @@ def collect_session_export_rows_from_dir(
             task_id=task_id,
             events=events_by_task_id.get(task_id, []),
             feedback=feedback_index.get((session_id, task_id)),
-            batch=batch_run_index.get((session_id, task_id)),
+            batch=batch_run_index.get(session_id),
         )
         for task_id in task_ids
     ]
@@ -144,18 +144,17 @@ def _load_feedback_index(path: Path) -> dict[tuple[str, str], dict[str, Any]]:
     return feedback
 
 
-def _load_batch_index(path: Path) -> dict[tuple[str, str], dict[str, Any]]:
+def _load_batch_index(path: Path) -> dict[str, dict[str, Any]]:
     root = Path(path)
     if not root.exists():
         return {}
-    batch_index: dict[tuple[str, str], dict[str, Any]] = {}
+    batch_index: dict[str, dict[str, Any]] = {}
     for run_index_path in sorted(root.glob("*/run_index.jsonl")):
         for record in _load_jsonl_objects(run_index_path):
             session_id = record.get("session_id")
-            task_id = record.get("task_id")
-            if session_id in (None, "") or task_id in (None, ""):
+            if session_id in (None, ""):
                 continue
-            batch_index[(str(session_id), str(task_id))] = dict(record)
+            batch_index[str(session_id)] = dict(record)
     return batch_index
 
 
