@@ -181,6 +181,76 @@ def test_collect_session_export_rows_joins_matched_feedback(tmp_path: Path) -> N
     }
 
 
+def test_collect_session_export_rows_joins_batch_metadata(tmp_path: Path) -> None:
+    autobrowser_dir = tmp_path / ".autobrowser"
+    sessions_dir = autobrowser_dir / "sessions"
+    session_dir = sessions_dir / "session-1"
+    _write_json(
+        session_dir / "session.json",
+        {
+            "session_id": "session-1",
+            "tasks": [{"task_id": "task-1", "task": "inspect page"}],
+        },
+    )
+    _write_jsonl(
+        autobrowser_dir / "batches" / "batch-1" / "run_index.jsonl",
+        [
+            {
+                "batch_id": "batch-1",
+                "scenario_id": "scenario-1",
+                "session_id": "session-1",
+                "task_id": "task-1",
+                "status": "completed",
+                "expected": {"contains": "done"},
+                "tags": ["smoke", "browser"],
+            }
+        ],
+    )
+
+    rows = collect_session_export_rows(sessions_dir)
+
+    assert len(rows) == 1
+    assert rows[0]["batch_id"] == "batch-1"
+    assert rows[0]["scenario_id"] == "scenario-1"
+    assert rows[0]["expected"] == {"contains": "done"}
+    assert rows[0]["tags"] == ["smoke", "browser"]
+
+
+def test_collect_session_export_rows_uses_batch_fallback_for_unbatched_task(
+    tmp_path: Path,
+) -> None:
+    autobrowser_dir = tmp_path / ".autobrowser"
+    session_dir = autobrowser_dir / "sessions" / "session-1"
+    _write_json(
+        session_dir / "session.json",
+        {
+            "session_id": "session-1",
+            "tasks": [{"task_id": "task-1", "task": "inspect page"}],
+        },
+    )
+    _write_jsonl(
+        autobrowser_dir / "batches" / "batch-1" / "run_index.jsonl",
+        [
+            {
+                "batch_id": "batch-1",
+                "scenario_id": "scenario-other",
+                "session_id": "session-1",
+                "task_id": "other-task",
+                "expected": "other",
+                "tags": ["other"],
+            }
+        ],
+    )
+
+    rows = collect_session_export_rows_from_dir(session_dir)
+
+    assert len(rows) == 1
+    assert rows[0]["batch_id"] is None
+    assert rows[0]["scenario_id"] is None
+    assert rows[0]["expected"] is None
+    assert rows[0]["tags"] == []
+
+
 def test_collect_session_export_rows_leaves_unmatched_feedback_null(tmp_path: Path) -> None:
     autobrowser_dir = tmp_path / ".autobrowser"
     session_dir = autobrowser_dir / "sessions" / "session-1"

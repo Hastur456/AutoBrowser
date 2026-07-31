@@ -15,6 +15,7 @@ from src.agent_loop.metrics import extract_event_metrics
 def collect_session_export_rows(
     sessions_dir: Path = Path(".autobrowser") / "sessions",
     feedback_path: Path | None = None,
+    batches_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Collect export rows from every session directory under ``sessions_dir``."""
 
@@ -24,9 +25,18 @@ def collect_session_export_rows(
     feedback = _load_feedback_index(
         Path(feedback_path) if feedback_path is not None else root.parent / "feedback.jsonl"
     )
+    batch_index = _load_batch_index(
+        Path(batches_dir) if batches_dir is not None else root.parent / "batches"
+    )
     rows: list[dict[str, Any]] = []
     for session_dir in sorted(path for path in root.iterdir() if path.is_dir()):
-        rows.extend(collect_session_export_rows_from_dir(session_dir, feedback=feedback))
+        rows.extend(
+            collect_session_export_rows_from_dir(
+                session_dir,
+                feedback=feedback,
+                batch_index=batch_index,
+            )
+        )
     return rows
 
 
@@ -35,6 +45,8 @@ def collect_session_export_rows_from_dir(
     *,
     feedback: Mapping[tuple[str, str], Mapping[str, Any]] | None = None,
     feedback_path: Path | None = None,
+    batch_index: Mapping[tuple[str, str], Mapping[str, Any]] | None = None,
+    batches_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Collect export rows for one ``.autobrowser/sessions/<session_id>`` directory."""
 
@@ -53,6 +65,15 @@ def collect_session_export_rows_from_dir(
             else session_path.parent.parent / "feedback.jsonl"
         )
     )
+    batch_run_index = (
+        batch_index
+        if batch_index is not None
+        else _load_batch_index(
+            Path(batches_dir)
+            if batches_dir is not None
+            else session_path.parent.parent / "batches"
+        )
+    )
 
     task_by_id = {
         str(task.get("task_id")): task
@@ -68,6 +89,7 @@ def collect_session_export_rows_from_dir(
             task_id=task_id,
             events=events_by_task_id.get(task_id, []),
             feedback=feedback_index.get((session_id, task_id)),
+            batch=batch_run_index.get((session_id, task_id)),
         )
         for task_id in task_ids
     ]
@@ -122,6 +144,32 @@ def _load_feedback_index(path: Path) -> dict[tuple[str, str], dict[str, Any]]:
     return feedback
 
 
+def _load_batch_index(path: Path) -> dict[tuple[str, str], dict[str, Any]]:
+    root = Path(path)
+    if not root.exists():
+        return {}
+    batch_index: dict[tuple[str, str], dict[str, Any]] = {}
+    for run_index_path in sorted(root.glob("*/run_index.jsonl")):
+        for record in _load_jsonl_objects(run_index_path):
+            session_id = record.get("session_id")
+            task_id = record.get("task_id")
+            if session_id in (None, "") or task_id in (None, ""):
+                continue
+            batch_index[(str(session_id), str(task_id))] = dict(record)
+    return batch_index
+
+
+def _load_jsonl_objects(path: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        data = json.loads(line)
+        if isinstance(data, dict):
+            records.append(data)
+    return records
+
+
 def _group_events_by_task_id(
     events: Iterable[EventRecord],
 ) -> dict[str, list[EventRecord]]:
@@ -153,12 +201,17 @@ def _export_row(
     task_id: str,
     events: list[EventRecord],
     feedback: Mapping[str, Any] | None,
+    batch: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     metrics = extract_event_metrics(events)
     return {
         "session_id": session_id,
         "task_id": task_id,
+        "batch_id": _batch_value(batch, "batch_id"),
+        "scenario_id": _batch_value(batch, "scenario_id"),
         "task": _task_text(task, events),
+        "expected": _batch_value(batch, "expected"),
+        "tags": _batch_tags(batch),
         "started_at": task.get("started_at") or _first_event_timestamp(events),
         "finished_at": task.get("finished_at") or _last_event_timestamp(events),
         "metrics": metrics.to_dict(),
@@ -177,6 +230,19 @@ def _task_text(task: Mapping[str, Any], events: list[EventRecord]) -> str:
         if event.payload.get("task"):
             return str(event.payload["task"])
     return ""
+
+
+def _batch_value(batch: Mapping[str, Any] | None, key: str) -> Any:
+    if batch is None:
+        return None
+    return batch.get(key)
+
+
+def _batch_tags(batch: Mapping[str, Any] | None) -> list[Any]:
+    if batch is None:
+        return []
+    tags = batch.get("tags")
+    return list(tags) if isinstance(tags, list) else []
 
 
 def _first_event_timestamp(events: list[EventRecord]) -> str | None:
