@@ -52,6 +52,22 @@ class FakeHarness:
         self.kwargs = kwargs
 
 
+class FakeChromeProcess:
+    def __init__(self) -> None:
+        self.terminated = False
+        self.waited = False
+
+    def poll(self) -> None:
+        return None
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def wait(self, timeout: float | None = None) -> None:
+        _ = timeout
+        self.waited = True
+
+
 def make_config(**overrides: Any) -> SessionConfig:
     values = {
         "model": "test-model",
@@ -225,6 +241,40 @@ async def test_session_context_lifecycle_initializes_tracks_tasks_and_closes(
         "task.finished",
         "session.closed",
     ]
+
+
+@pytest.mark.asyncio
+async def test_session_context_closes_owned_chrome_process(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    context = SessionContext(make_config(no_mcp=False))
+    process = FakeChromeProcess()
+
+    def start_chrome(
+        _chrome_path: str,
+        _user_data_dir: str,
+        _port: int,
+    ) -> FakeChromeProcess:
+        return process
+
+    await context.initialize(
+        graph_builder=lambda **_kwargs: object(),
+        llm_factory=llm_factory,
+        start_chrome_cdp=start_chrome,
+        wait_for_port=noop_wait,
+        load_browser_provider=no_browser_provider,
+        output_fn=lambda *_args, **_kwargs: None,
+        print_tools=None,
+        harness_factory=FakeHarness,
+    )
+
+    await context.close()
+
+    assert process.terminated is True
+    assert process.waited is True
+    assert context.chrome_process is None
 
 
 @pytest.mark.asyncio

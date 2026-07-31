@@ -392,6 +392,7 @@ class SessionContext:
     tool_registry: ToolRegistry | None = None
     telemetry: TelemetryObserver = field(default_factory=TelemetryObserver)
     event_emitter: EventEmitter = field(default_factory=EventEmitter)
+    chrome_process: Any | None = None
     initialized: bool = False
 
     async def initialize(
@@ -431,7 +432,7 @@ class SessionContext:
         if self.config.no_mcp:
             browser_providers = []
         else:
-            start_chrome_cdp(
+            self.chrome_process = start_chrome_cdp(
                 self.config.chrome_path,
                 self.config.user_data_dir,
                 self.config.cdp_port,
@@ -539,6 +540,7 @@ class SessionContext:
 
         if close_external is not None:
             await close_external()
+        self._close_chrome_process()
         self.event_emitter.emit(
             "session.closed",
             source="harness.session",
@@ -553,6 +555,28 @@ class SessionContext:
         self.initialized = False
         self.persist()
         self.events.emit("session.closed", self)
+
+    def _close_chrome_process(self) -> None:
+        process = self.chrome_process
+        self.chrome_process = None
+        if process is None:
+            return
+        poll = getattr(process, "poll", None)
+        if callable(poll) and poll() is not None:
+            return
+        terminate = getattr(process, "terminate", None)
+        if callable(terminate):
+            terminate()
+        wait = getattr(process, "wait", None)
+        if callable(wait):
+            try:
+                wait(timeout=5)
+            except TypeError:
+                wait()
+            except Exception:
+                kill = getattr(process, "kill", None)
+                if callable(kill):
+                    kill()
 
 
 class SessionRuntime:
