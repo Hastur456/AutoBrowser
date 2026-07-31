@@ -9,6 +9,7 @@ CANONICAL_TO_PLAYWRIGHT = {
     "browser.type": "browser_type",
     "browser.hover": "browser_hover",
     "browser.evaluate": "browser_evaluate",
+    "browser.tabs": "browser_tabs",
 }
 
 PLAYWRIGHT_TO_CANONICAL = {

@@ -118,6 +118,8 @@ class AgentState(TypedDict, total=False):
     last_browser_action: ToolRequest
     ineffective_browser_action: ToolRequest
     ineffective_browser_actions: list[ToolRequest]
+    pending_browser_tab_index: int
+    pending_browser_tab_reason: str
 
     final_answer: str
     error: str

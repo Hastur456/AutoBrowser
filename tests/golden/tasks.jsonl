@@ -1,0 +1,9 @@
+{"scenario_id":"ozon-autumn-jackets","tasks":["Открой сайт Ozon.","Найди осенние куртки.","Дождись загрузки результатов поиска.","Выведи первые пять товаров с названием и ценой."],"expected":{"count":5,"fields":["title","price"]},"tags":["shopping","search","extract"]}
+
+{"scenario_id":"ozon-gaming-laptops","tasks":["Открой сайт Ozon.","Найди игровые ноутбуки.","Установи максимальную цену 120000 рублей.","Отсортируй результаты по возрастанию цены.","Выведи первые три товара с названием и ценой."],"expected":{"count":3,"max_price":120000},"tags":["shopping","filters","sorting"]}
+
+{"scenario_id":"github-langgraph","tasks":["Открой GitHub.","Найди репозиторий LangGraph.","Открой страницу репозитория.","Выведи количество звезд.","Выведи количество форков.","Выведи ссылку на репозиторий."],"expected":{"fields":["stars","forks","url"]},"tags":["github","search","extract"]}
+
+{"scenario_id":"wikipedia-python","tasks":["Открой Википедию.","Найди статью про язык программирования Python.","Открой статью.","Выведи первый абзац статьи."],"expected":{"contains":"Python"},"tags":["wikipedia","extract"]}
+
+{"scenario_id":"compare-rtx5070","tasks":["Открой сайт Ozon.","Найди RTX 5070.","Открой первую карточку товара.","Запомни цену и объем видеопамяти.","Вернись к результатам поиска.","Открой вторую карточку товара.","Запомни цену и объем видеопамяти.","Сравни оба товара и выведи результат в виде таблицы."],"expected":{"count":2,"fields":["price","memory"]},"tags":["shopping","comparison","multistep"]}

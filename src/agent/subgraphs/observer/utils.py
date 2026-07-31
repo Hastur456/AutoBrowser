@@ -11,6 +11,16 @@ MAX_REFS_IN_OBSERVATION = 25
 REF_PATTERN = re.compile(r"\bref=([A-Za-z][A-Za-z0-9_-]*)\b")
 REF_VALUE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 WORD_PATTERN = re.compile(r"[\w]+", re.UNICODE)
+TAB_INDEX_PATTERN = re.compile(r"\bTab\s+(?P<index>\d+)\b", re.IGNORECASE)
+TAB_LIST_ITEM_PATTERN = re.compile(
+    r"^\s*(?:[-*]\s*)?(?P<index>\d+)\s*:\s*(?P<body>.+?)\s*$",
+    re.MULTILINE,
+)
+NEW_TAB_MARKER_PATTERN = re.compile(
+    r"\b(?:new|opened|created)\s+(?:browser\s+)?tab\b|"
+    r"\bopened\s+in\s+a\s+new\s+tab\b",
+    re.IGNORECASE,
+)
 INVALID_REF_PATTERN = re.compile(
     r"\bRef\s+[A-Za-z][A-Za-z0-9_-]*\s+not\s+found\b",
     re.IGNORECASE,
@@ -95,6 +105,42 @@ SNAPSHOT_COMPLETION_STEP_TERMS = {
     "snapshot",
     "view",
 }
+ACTION_COMPLETION_TERMS = {
+    "browser_click": {
+        "click",
+        "clicked",
+        "open",
+        "opened",
+        "press",
+        "pressed",
+        "select",
+        "selected",
+        "клик",
+        "кликни",
+        "нажм",
+        "нажать",
+        "открой",
+        "открыть",
+        "перейди",
+        "выбери",
+        "выбрать",
+    },
+    "browser_type": {
+        "type",
+        "typed",
+        "enter",
+        "entered",
+        "input",
+        "введ",
+        "ввести",
+        "напиш",
+        "напечат",
+    },
+    "browser_hover": {"hover", "hovered", "навед", "навести"},
+    "browser_press": {"press", "pressed", "нажм", "нажать"},
+    "browser_select": {"select", "selected", "выбери", "выбрать"},
+    "browser_drag": {"drag", "dragged", "перетащ"},
+}
 
 
 def compact_text(value: Any, limit: int = MAX_CONTENT_PREVIEW_CHARS) -> str:
@@ -172,6 +218,49 @@ def has_stale_or_missing_element_text(value: Any) -> bool:
 
     payload = str(value or "")
     return any(pattern.search(payload) for pattern in STALE_OR_MISSING_ELEMENT_PATTERNS)
+
+
+def pending_tab_activation_from_result(result: ToolResult) -> tuple[int, str] | None:
+    """Return the tab that should be activated after a tool opened a new tab."""
+
+    tool_name = str(result.get("name", "") or "")
+    if (
+        result.get("status") != "success"
+        or tool_name == "browser_tabs"
+        or tool_name not in {*BROWSER_ACTION_TOOLS, "browser_navigate"}
+    ):
+        return None
+
+    payload = str(result.get("content", "") or "")
+    if not payload or "tab" not in payload.lower():
+        return None
+
+    has_new_tab_marker = bool(NEW_TAB_MARKER_PATTERN.search(payload))
+    explicit_tab_indexes = [
+        int(match.group("index")) for match in TAB_INDEX_PATTERN.finditer(payload)
+    ]
+    listed_tab_indexes = [
+        int(match.group("index")) for match in TAB_LIST_ITEM_PATTERN.finditer(payload)
+    ]
+    if not has_new_tab_marker and len(set(listed_tab_indexes)) < 2:
+        return None
+
+    if explicit_tab_indexes:
+        tab_index = explicit_tab_indexes[-1]
+    elif listed_tab_indexes:
+        tab_index = max(listed_tab_indexes)
+    else:
+        return None
+
+    return (
+        tab_index,
+        (
+            f"The last browser action opened or exposed Tab {tab_index}. "
+            f"Switch to it with browser_tabs action=select index={tab_index} "
+            "before taking browser_snapshot or using page refs. Do not repeat "
+            "the click that opened the tab."
+        ),
+    )
 
 
 def _has_invalid_ref_error(result: ToolResult) -> bool:
@@ -302,6 +391,14 @@ def _snapshot_completes_step(step: PlanStep) -> bool:
     return bool(description_words & SNAPSHOT_COMPLETION_STEP_TERMS)
 
 
+def _action_completes_step(step: PlanStep, tool_name: str) -> bool:
+    terms = ACTION_COMPLETION_TERMS.get(tool_name, set())
+    if not terms:
+        return False
+    description = str(step.get("description", "") or "").lower()
+    return any(term in description for term in terms)
+
+
 def _plan_completion_update(
     plan: list[PlanStep],
     current_step: int,
@@ -314,6 +411,10 @@ def _plan_completion_update(
 
     current_plan_step = plan[current_step]
     if tool_name == "browser_snapshot" and _snapshot_completes_step(current_plan_step):
+        updated_plan, next_step = _advance_plan(plan, current_step)
+        return {"plan": updated_plan, "current_step": next_step}
+
+    if _action_completes_step(current_plan_step, tool_name):
         updated_plan, next_step = _advance_plan(plan, current_step)
         return {"plan": updated_plan, "current_step": next_step}
 

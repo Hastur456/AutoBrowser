@@ -19,8 +19,8 @@ async def run_task(
     """Run one task on an already built harness."""
 
     as_json = getattr(args, "json", getattr(args, "as_json", False))
+    final_update: Any = None
     if args.show_state:
-        final_update: Any = None
         async for chunk in harness.stream_updates(
             task,
             config=config,
@@ -38,9 +38,35 @@ async def run_task(
             print("Agent finished without state updates.")
         return final_update
 
-    result = await harness.run(task, config=config)
+    async for chunk in harness.stream_updates(task, config=config):
+        final_update = chunk
+
+    result = await _final_state_from_stream(harness, config, final_update)
     print_final_state(result, as_json)
     return result
+
+
+async def _final_state_from_stream(
+    harness: BrowserHarness,
+    config: dict[str, Any],
+    final_update: Any,
+) -> Any:
+    get_state_values = getattr(harness, "get_state_values", None)
+    if callable(get_state_values):
+        state = await get_state_values(config=config)
+        if isinstance(state, dict):
+            return state
+    return _state_from_update(final_update)
+
+
+def _state_from_update(update: Any) -> Any:
+    if not isinstance(update, dict):
+        return update
+    if len(update) == 1:
+        nested = next(iter(update.values()))
+        if isinstance(nested, dict):
+            return nested
+    return update
 
 
 __all__ = ["run_task"]

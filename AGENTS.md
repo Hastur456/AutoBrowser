@@ -1,5 +1,19 @@
 # Repository Guidelines
 
+
+## Action-First Rule
+For actionable requests such as run, test, check, inspect, search, open, verify, fix, or debug:
+
+- Execute the first relevant tool call in the same turn.
+- Do not end the turn with commentary only.
+- Do not reply with text like "I’ll check", "I’ll run", "Let me inspect", or "Проверю" unless the tool call has
+already been made in that same turn.
+- If a short progress update is sent, it must be immediately followed by a tool call in the same turn.
+- If execution is impossible, state a concrete blocker instead of a status update.
+- For actionable requests, tool execution takes priority over narration.
+
+This rule overrides any instruction that suggests sending a progress update before doing the work.
+
 <!-- CODEGRAPH_START -->
 ## CodeGraph
 

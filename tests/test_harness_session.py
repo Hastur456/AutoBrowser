@@ -52,6 +52,22 @@ class FakeHarness:
         self.kwargs = kwargs
 
 
+class FakeChromeProcess:
+    def __init__(self) -> None:
+        self.terminated = False
+        self.waited = False
+
+    def poll(self) -> None:
+        return None
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def wait(self, timeout: float | None = None) -> None:
+        _ = timeout
+        self.waited = True
+
+
 def make_config(**overrides: Any) -> SessionConfig:
     values = {
         "model": "test-model",
@@ -210,12 +226,55 @@ async def test_session_context_lifecycle_initializes_tracks_tasks_and_closes(
     assert context.llm is None
     closed_payload = json.loads((context.session_dir / "session.json").read_text())
     assert closed_payload["initialized"] is False
+    assert context.session_dir is not None
+    typed_events = [
+        json.loads(line)
+        for line in (context.session_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [event["type"] for event in typed_events] == [
+        "session.started",
+        "session.closed",
+    ]
     assert events == [
         "session.started",
         "task.started",
         "task.finished",
         "session.closed",
     ]
+
+
+@pytest.mark.asyncio
+async def test_session_context_closes_owned_chrome_process(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    context = SessionContext(make_config(no_mcp=False))
+    process = FakeChromeProcess()
+
+    def start_chrome(
+        _chrome_path: str,
+        _user_data_dir: str,
+        _port: int,
+    ) -> FakeChromeProcess:
+        return process
+
+    await context.initialize(
+        graph_builder=lambda **_kwargs: object(),
+        llm_factory=llm_factory,
+        start_chrome_cdp=start_chrome,
+        wait_for_port=noop_wait,
+        load_browser_provider=no_browser_provider,
+        output_fn=lambda *_args, **_kwargs: None,
+        print_tools=None,
+        harness_factory=FakeHarness,
+    )
+
+    await context.close()
+
+    assert process.terminated is True
+    assert process.waited is True
+    assert context.chrome_process is None
 
 
 @pytest.mark.asyncio
@@ -265,6 +324,29 @@ async def test_session_runtime_reuses_context_and_records_task_history(
     assert runtime.context.tasks[0].task == "inspect page"
     assert runtime.context.tasks[0].result == result
     assert isinstance(runtime.context.tool_registry, ToolRegistry)
+    assert runtime.context.session_dir is not None
+    typed_events = [
+        json.loads(line)
+        for line in (runtime.context.session_dir / "events.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    agent_trace = [
+        json.loads(line)
+        for line in (runtime.context.session_dir / "agent_trace.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    assert [event["type"] for event in typed_events] == [
+        "session.started",
+        "goal.started",
+        "goal.completed",
+    ]
+    assert [event["type"] for event in agent_trace] == [
+        "goal.started",
+        "goal.completed",
+    ]
+    assert typed_events[1]["goal_id"] == runtime.context.tasks[0].task_id
 
 
 @pytest.mark.asyncio

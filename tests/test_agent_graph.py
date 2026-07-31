@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Any
 
 import pytest
 from langchain_core.language_models.fake import FakeListLLM
@@ -720,6 +721,43 @@ async def test_agent_node_replans_when_ref_is_not_in_latest_snapshot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_node_selects_pending_browser_tab_before_next_action() -> None:
+    @tool
+    def browser_tabs(action: str, index: int | None = None) -> str:
+        """Manage browser tabs."""
+
+        return f"{action}:{index}"
+
+    llm = FakeListLLM(
+        responses=[
+            (
+                '{"decision":"tool_call","tool_request":'
+                '{"name":"browser_snapshot","args":{"depth":5},"reason":"Inspect product"}}'
+            )
+        ]
+    )
+    node = create_agent_node(llm, tools=[browser_tabs])
+
+    result = await node(
+        {
+            "task": "ее цвет, размеры",
+            "plan": [{"id": 1, "description": "Inspect product", "status": "pending"}],
+            "current_step": 0,
+            "pending_browser_tab_index": 1,
+            "pending_browser_tab_reason": (
+                "The last browser action opened Tab 1. Switch to it first."
+            ),
+            "messages": [],
+        }
+    )
+
+    assert result["decision"] == "tool_call"
+    assert result["tool_request"]["name"] == "browser_tabs"
+    assert result["tool_request"]["args"] == {"action": "select", "index": 1}
+    assert result["messages"][-1].tool_calls[0]["name"] == "browser_tabs"
+
+
+@pytest.mark.asyncio
 async def test_executor_success() -> None:
     @tool
     def browser_snapshot() -> str:
@@ -1026,6 +1064,59 @@ def test_observe_node_clears_snapshot_after_browser_action() -> None:
     assert result["snapshot"] == ""
     assert "refs" not in result
     assert "Clicked" in result["observation"]
+
+
+def test_observe_node_records_pending_tab_after_click_opens_new_tab() -> None:
+    result = observe_node(
+        {
+            "snapshot": '- link "Ветровка Мужской Zolla" ref=f4e420',
+            "plan": [
+                {
+                    "id": 1,
+                    "description": "кликни на первый товар",
+                    "status": "pending",
+                }
+            ],
+            "current_step": 0,
+            "tool_request": {"name": "browser_click", "args": {"target": "f4e420"}},
+            "tool_result": {
+                "name": "browser_click",
+                "status": "success",
+                "content": (
+                    "Clicked link. Opened new tab: Tab 1.\n"
+                    "Open tabs:\n"
+                    "- 0: [Ozon search](https://www.ozon.ru/search/?text=куртки)\n"
+                    "- 1: [Ветровка Мужской Zolla](https://www.ozon.ru/product/1)"
+                ),
+                "error": "",
+            },
+        }
+    )
+
+    assert result["snapshot"] == ""
+    assert result["pending_browser_tab_index"] == 1
+    assert "browser_tabs action=select index=1" in result["observation"]
+    assert result["current_step"] == 1
+    assert result["plan"][0]["status"] == "completed"
+
+
+def test_observe_node_clears_pending_tab_after_browser_tabs_success() -> None:
+    result = observe_node(
+        {
+            "pending_browser_tab_index": 1,
+            "pending_browser_tab_reason": "Switch to Tab 1.",
+            "tool_result": {
+                "name": "browser_tabs",
+                "status": "success",
+                "content": "Selected tab 1.",
+                "error": "",
+            },
+        }
+    )
+
+    assert result["pending_browser_tab_index"] == 0
+    assert result["pending_browser_tab_reason"] == ""
+    assert result["snapshot"] == ""
 
 
 def test_observe_node_marks_action_ineffective_when_next_snapshot_is_unchanged() -> None:

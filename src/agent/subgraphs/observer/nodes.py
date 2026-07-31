@@ -18,6 +18,7 @@ from .utils import (
     _needs_fresh_snapshot_after_error,
     _observation_lines,
     _plan_completion_update,
+    pending_tab_activation_from_result,
     request_ref_value,
     snapshot_contains_ref,
 )
@@ -115,6 +116,10 @@ def compile_observation(
             "browser_snapshot; take a fresh browser_snapshot before the next "
             "ref-based action."
         )
+    pending_tab_activation = pending_tab_activation_from_result(result)
+    if pending_tab_activation:
+        _, pending_tab_reason = pending_tab_activation
+        observation_lines.append(pending_tab_reason)
     messages = list(state.get("messages") or [])
 
     updates: dict[str, Any] = {
@@ -165,6 +170,9 @@ def compile_observation(
         updates["snapshot_before_last_browser_action"] = ""
     elif is_browser_tool and (status == "success" or needs_fresh_after_error):
         if status == "success":
+            if tool_name == "browser_tabs":
+                updates["pending_browser_tab_index"] = 0
+                updates["pending_browser_tab_reason"] = ""
             if is_browser_action:
                 action_snapshot = str(state.get("snapshot", "") or "")
                 updates["snapshot_before_last_browser_action"] = action_snapshot
@@ -175,6 +183,10 @@ def compile_observation(
                 )
             updates["snapshot"] = ""
             updates["unchanged_snapshot_count"] = 0
+            if pending_tab_activation:
+                pending_tab_index, pending_tab_reason = pending_tab_activation
+                updates["pending_browser_tab_index"] = pending_tab_index
+                updates["pending_browser_tab_reason"] = pending_tab_reason
         if needs_fresh_after_error:
             updates["snapshot"] = ""
             updates["needs_fresh_snapshot"] = True

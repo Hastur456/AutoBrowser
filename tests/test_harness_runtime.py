@@ -6,6 +6,7 @@ import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.errors import GraphRecursionError
 
+from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.harness.runtime import BrowserHarness
 from src.harness.runtime import HARNESS_STATE_OVERRIDES_CONFIG_KEY
 from src.harness.context import ContextBuilder
@@ -191,6 +192,43 @@ async def test_browser_harness_streams_updates() -> None:
         {"agent": {"final_answer": "done"}},
     ]
     assert graph.calls[0][1]["configurable"]["thread_id"] == "test-thread"
+
+
+@pytest.mark.asyncio
+async def test_browser_harness_emits_stream_events() -> None:
+    graph = StreamingGraph()
+    sink = InMemoryEventSink()
+    harness = BrowserHarness(
+        lambda **kwargs: graph,
+        event_emitter=EventEmitter(sink, session_id="session-1"),
+    )
+
+    chunks = [
+        chunk
+        async for chunk in harness.stream_updates(
+            "inspect page",
+            config={
+                "_autobrowser_event_metadata": {
+                    "session_id": "session-1",
+                    "task_id": "task-1",
+                    "goal_id": "task-1",
+                }
+            },
+            thread_id="test-thread",
+        )
+    ]
+
+    assert chunks[-1] == {"agent": {"final_answer": "done"}}
+    assert [record.type for record in sink.records] == [
+        "graph.started",
+        "graph.node_started",
+        "graph.node_finished",
+        "model.responded",
+        "graph.node_started",
+        "graph.node_finished",
+        "model.responded",
+    ]
+    assert all(record.task_id == "task-1" for record in sink.records)
 
 
 @pytest.mark.asyncio

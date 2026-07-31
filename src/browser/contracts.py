@@ -12,6 +12,7 @@ BrowserActionName = Literal[
     "browser.type",
     "browser.hover",
     "browser.evaluate",
+    "browser.tabs",
 ]
 
 

@@ -1,0 +1,38 @@
+name: stale_ref_recovery
+task: Open the current result after recovering from a stale ref.
+model:
+  responses:
+    - steps:
+        - id: 1
+          description: Open the current result
+          status: pending
+    - decision: tool_call
+      tool_request:
+        name: browser.snapshot
+        args: {}
+        reason: Inspect current refs.
+    - decision: tool_call
+      tool_request:
+        name: browser.click
+        args:
+          ref: e1
+        reason: Try a stale ref.
+    - decision: tool_call
+      tool_request:
+        name: browser.click
+        args:
+          ref: e2
+        reason: Click the refreshed result.
+    - decision: done
+      final_answer: Opened refreshed result.
+browser:
+  snapshots:
+    - '- link "Old result" ref=e2'
+    - '- heading "Opened refreshed result" ref=e3'
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+    - refreshed result
+  max_tool_calls: 4
+  max_repeated_actions: 0
+  max_policy_blocks: 0
