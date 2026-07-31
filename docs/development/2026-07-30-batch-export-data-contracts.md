@@ -1,6 +1,6 @@
 # 2026-07-30 Batch And Export Data Contracts
 
-Status: Draft for implementation
+Status: Initial implementation documented
 
 This note defines the first stable data contracts for batch runs, feedback, and
 session exports. It is intentionally read-only with respect to the current
@@ -129,25 +129,24 @@ Input file consumed by the batch runner.
 
 Required fields:
 
+- `scenario_id`: caller-owned scenario identifier.
 - `task`: user task text.
 
 Optional fields:
 
-- `scenario_id`: caller-owned scenario identifier.
-- `batch_item_id`: caller-owned row identifier. If omitted, the runner creates
-  a stable item ID for the run index.
-- `metadata`: arbitrary JSON object copied to the run index.
+- `expected`: arbitrary JSON value describing the expected outcome.
+- `tags`: list of labels copied to the run index and export row.
 
 Example:
 
 ```json
 {
   "scenario_id": "search-basic",
-  "batch_item_id": "item-001",
   "task": "Search for jackets and report the first visible result.",
-  "metadata": {
-    "suite": "smoke"
-  }
+  "expected": {
+    "contains": "jacket"
+  },
+  "tags": ["smoke", "search"]
 }
 ```
 
@@ -162,7 +161,6 @@ Output file written after each attempted task:
 Required fields:
 
 - `batch_id`: batch run identifier.
-- `batch_item_id`: input row identifier or generated item ID.
 - `session_id`: AutoBrowser session identifier used for the run.
 - `task_id`: `TaskRecord.task_id` for the executed task when available.
 - `task`: user task text.
@@ -173,7 +171,8 @@ Required fields:
 Optional fields:
 
 - `scenario_id`: copied from the batch task.
-- `metadata`: copied from the batch task.
+- `expected`: copied from the batch task.
+- `tags`: copied from the batch task.
 - `error`: JSON object with `type` and `message` for failed runner attempts.
 
 Example:
@@ -181,7 +180,6 @@ Example:
 ```json
 {
   "batch_id": "batch-20260730-001",
-  "batch_item_id": "item-001",
   "scenario_id": "search-basic",
   "session_id": "7ad0...",
   "task_id": "task-...",
@@ -189,9 +187,11 @@ Example:
   "status": "completed",
   "started_at": "2026-07-30T00:00:00+00:00",
   "finished_at": "2026-07-30T00:00:15+00:00",
-  "metadata": {
-    "suite": "smoke"
-  }
+  "expected": {
+    "contains": "jacket"
+  },
+  "tags": ["smoke", "search"],
+  "error": null
 }
 ```
 
@@ -207,15 +207,15 @@ Required fields:
 
 - `session_id`: AutoBrowser session identifier.
 - `task_id`: task identifier.
-- `rating`: caller-defined numeric or string rating.
 
 Optional fields:
 
-- `feedback_id`: caller-owned feedback record identifier.
-- `created_at`: ISO timestamp.
-- `label`: short categorical outcome such as `pass`, `fail`, or `needs_review`.
-- `comment`: free-form reviewer note.
-- `metadata`: arbitrary JSON object.
+- `scenario_id`: caller-owned scenario identifier from the batch input.
+- `rating`: caller-defined numeric or string rating.
+- `passed`: boolean reviewer outcome.
+- `expected`: expected result or assertion notes.
+- `notes`: free-form reviewer note.
+- `reviewed_at`: ISO timestamp.
 
 If multiple feedback records exist for the same `session_id` and `task_id`, the
 exporter should attach the last record in file order and may expose the count in
@@ -225,13 +225,14 @@ Example:
 
 ```json
 {
-  "feedback_id": "fb-001",
   "session_id": "7ad0...",
   "task_id": "task-...",
+  "scenario_id": "search-basic",
   "rating": 1,
-  "label": "pass",
-  "comment": "Correct first result.",
-  "created_at": "2026-07-30T00:05:00+00:00"
+  "passed": true,
+  "expected": "The answer should mention the first visible jacket.",
+  "notes": "Correct first result.",
+  "reviewed_at": "2026-07-30T00:05:00+00:00"
 }
 ```
 
@@ -288,9 +289,9 @@ Required fields:
 Optional fields:
 
 - `batch_id`
-- `batch_item_id`
 - `scenario_id`
-- `batch_metadata`
+- `expected`
+- `tags`
 - `session_config`
 - `session_metadata`
 - `result`
@@ -305,9 +306,12 @@ Example:
   "session_id": "7ad0...",
   "task_id": "task-...",
   "batch_id": "batch-20260730-001",
-  "batch_item_id": "item-001",
   "scenario_id": "search-basic",
   "task": "Search for jackets and report the first visible result.",
+  "expected": {
+    "contains": "jacket"
+  },
+  "tags": ["smoke", "search"],
   "started_at": "2026-07-30T00:00:00+00:00",
   "finished_at": "2026-07-30T00:00:15+00:00",
   "metrics": {
@@ -330,6 +334,105 @@ Example:
   }
 }
 ```
+
+## Workflow
+
+This workflow is for real autonomous runs through `SessionRuntime.run_task()`.
+It is separate from `tests/evals`, which remain deterministic CI fixtures with
+fake model and browser data.
+
+### 1. Create `tasks.jsonl`
+
+Each non-empty line is one JSON object. `scenario_id` and `task` are required.
+`expected` and `tags` are copied into the batch run index and joined into the
+final export.
+
+Example `tasks.jsonl`:
+
+```jsonl
+{"scenario_id":"search-basic","task":"Open the target page and report the first visible product.","expected":{"contains":"product name"},"tags":["smoke","browser"]}
+{"scenario_id":"status-check","task":"Summarize the current page status.","expected":"A short status summary.","tags":["smoke"]}
+```
+
+### 2. Run The Batch
+
+Dry run without Chrome or MCP:
+
+```powershell
+python scripts/run_batch.py --tasks tasks.jsonl --no-mcp --continue-on-error
+```
+
+Run with browser tools enabled:
+
+```powershell
+python scripts/run_batch.py --tasks tasks.jsonl --continue-on-error --model llama3.1 --recursion-limit 50 --chrome-path "C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir "C:\temp\chrome_debug_profile" --cdp-port 9222
+```
+
+The batch runner creates:
+
+```text
+.autobrowser/batches/<batch_id>/batch.json
+.autobrowser/batches/<batch_id>/tasks.jsonl
+.autobrowser/batches/<batch_id>/run_index.jsonl
+```
+
+`batch.json` records `batch_id`, `started_at`, `finished_at`, `status`,
+`task_count`, the source `tasks_path`, and the agent config passed to the run.
+`run_index.jsonl` records one row per attempted task with `batch_id`,
+`scenario_id`, `session_id`, `task_id`, `status`, `session_dir`, `task`,
+`expected`, `tags`, timestamps, and `error`.
+
+### 3. Add Feedback
+
+Create or append `.autobrowser/feedback.jsonl` after reviewing task outputs.
+The exporter joins feedback by `session_id` and `task_id`.
+
+Example `feedback.jsonl`:
+
+```jsonl
+{"session_id":"7ad0...","task_id":"task-...","scenario_id":"search-basic","rating":5,"passed":true,"expected":{"contains":"product name"},"notes":"Answer matched the visible product.","reviewed_at":"2026-07-30T00:05:00+00:00"}
+{"session_id":"7ad0...","task_id":"task-...","scenario_id":"status-check","rating":2,"passed":false,"expected":"A short status summary.","notes":"Answer missed the page error state.","reviewed_at":"2026-07-30T00:06:00+00:00"}
+```
+
+Feedback is optional. If no matching record exists, the export row contains
+`"feedback": null`.
+
+### 4. Export Session Rows
+
+Write one JSONL row per task:
+
+```powershell
+python scripts/export_sessions.py --out .autobrowser/exports/runs.jsonl
+```
+
+Use explicit locations when exporting test fixtures or non-default artifacts:
+
+```powershell
+python scripts/export_sessions.py --sessions-dir .autobrowser/sessions --feedback .autobrowser/feedback.jsonl --out .autobrowser/exports/runs.jsonl
+```
+
+The exporter scans `.autobrowser/sessions/*`, joins feedback from
+`.autobrowser/feedback.jsonl`, and joins batch metadata from
+`.autobrowser/batches/*/run_index.jsonl`.
+
+### 5. Inspect The Export
+
+Each output line contains one task result:
+
+- identity: `session_id`, `task_id`, optional `batch_id`, optional
+  `scenario_id`;
+- input context: `task`, `expected`, `tags`;
+- timing: `started_at`, `finished_at`, `metrics.duration_ms`;
+- outcome: `metrics.terminal_status`, `metrics.final_answer`, `error`;
+- counters: `metrics.model_turn_count`, `metrics.tool_call_count`,
+  `metrics.policy_block_count`, `metrics.approval_request_count`,
+  `metrics.observation_count`, `metrics.error_count`;
+- review data: `feedback` or null;
+- runtime context: `session_config`, `session_metadata`, `result`.
+
+Tasks not launched through `scripts/run_batch.py` still export normally. Their
+batch fields fall back to `batch_id: null`, `scenario_id: null`,
+`expected: null`, and `tags: []`.
 
 ## Implementation Notes
 
