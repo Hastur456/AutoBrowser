@@ -16,7 +16,10 @@ from src.harness.session import (
     SessionState,
     WorkspaceContext,
 )
-from src.harness.runtime import HARNESS_STATE_OVERRIDES_CONFIG_KEY
+from src.harness.runtime import (
+    HARNESS_EVENT_METADATA_CONFIG_KEY,
+    HARNESS_STATE_OVERRIDES_CONFIG_KEY,
+)
 from src.harness.tools import ToolRegistry
 
 
@@ -50,6 +53,24 @@ class FakeHarness:
     def __init__(self, graph_builder: Any, **kwargs: Any) -> None:
         self.graph_builder = graph_builder
         self.kwargs = kwargs
+
+
+class FakeStateHarness(FakeHarness):
+    def __init__(
+        self,
+        graph_builder: Any,
+        *,
+        state_values: dict[str, object] | None,
+        state_calls: list[dict[str, Any]],
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(graph_builder, **kwargs)
+        self.state_values = state_values
+        self.state_calls = state_calls
+
+    async def get_state_values(self, *, config: dict[str, Any]) -> dict[str, object] | None:
+        self.state_calls.append(config)
+        return self.state_values
 
 
 class FakeChromeProcess:
@@ -87,6 +108,13 @@ def make_config(**overrides: Any) -> SessionConfig:
     }
     values.update(overrides)
     return SessionConfig(**values)
+
+
+def read_typed_events(session_dir: Path) -> list[dict[str, Any]]:
+    return [
+        json.loads(line)
+        for line in (session_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
 
 
 async def noop_wait(_port: int, _timeout: float) -> None:
@@ -319,6 +347,10 @@ async def test_session_runtime_reuses_context_and_records_task_history(
     assert calls[0][3]["configurable"]["thread_id"] == (
         f"{SESSION_THREAD_PREFIX}{runtime.context.session_id}"
     )
+    event_metadata = calls[0][3][HARNESS_EVENT_METADATA_CONFIG_KEY]
+    assert event_metadata["session_id"] == runtime.context.session_id
+    assert event_metadata["task_id"] == runtime.context.tasks[0].task_id
+    assert event_metadata["goal_id"] == runtime.context.tasks[0].task_id
     assert runtime.context.current_task is None
     assert runtime.context.metadata.task_count == 1
     assert runtime.context.tasks[0].task == "inspect page"
@@ -347,6 +379,7 @@ async def test_session_runtime_reuses_context_and_records_task_history(
         "goal.completed",
     ]
     assert typed_events[1]["goal_id"] == runtime.context.tasks[0].task_id
+    assert typed_events[2]["goal_id"] == runtime.context.tasks[0].task_id
 
 
 @pytest.mark.asyncio
@@ -409,3 +442,165 @@ async def test_session_runtime_carries_browser_state_between_tasks(
     assert overrides["final_answer"] == ""
     assert overrides["replan_count"] == 0
     assert overrides["consecutive_failures"] == 0
+
+
+@pytest.mark.asyncio
+async def test_session_runtime_remembers_latest_harness_state_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    state_calls: list[dict[str, Any]] = []
+    latest_state: dict[str, object] = {
+        "messages": ["checkpoint message"],
+        "observation": "Checkpoint observation.",
+        "snapshot": "- button \"Continue\" ref=e1",
+        "final_answer": "Checkpoint answer.",
+    }
+
+    async def task_runner(
+        _harness: Any,
+        _task: str,
+        _config: SessionConfig,
+        _task_config: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {"final_answer": "runner answer"}
+
+    def harness_factory(graph_builder: Any, **kwargs: Any) -> FakeStateHarness:
+        return FakeStateHarness(
+            graph_builder,
+            state_values=latest_state,
+            state_calls=state_calls,
+            **kwargs,
+        )
+
+    runtime = SessionRuntime(
+        make_config(),
+        graph_builder=lambda **_kwargs: object(),
+        llm_factory=llm_factory,
+        task_runner=task_runner,
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        load_browser_provider=no_browser_provider,
+        close_mcp_session=noop_close,
+        harness_factory=harness_factory,
+    )
+
+    result = await runtime.run_task("inspect page")
+
+    assert result == {"final_answer": "runner answer"}
+    assert dict(runtime.context.state) == latest_state
+    assert len(state_calls) == 1
+    assert state_calls[0]["configurable"]["thread_id"] == (
+        f"{SESSION_THREAD_PREFIX}{runtime.context.session_id}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_session_runtime_remembers_result_state_when_checkpoint_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    state_calls: list[dict[str, Any]] = []
+    fallback_state: dict[str, object] = {
+        "messages": ["result message"],
+        "observation": "Result observation.",
+        "final_answer": "Result answer.",
+    }
+
+    async def task_runner(
+        _harness: Any,
+        _task: str,
+        _config: SessionConfig,
+        _task_config: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {"state": fallback_state}
+
+    def harness_factory(graph_builder: Any, **kwargs: Any) -> FakeStateHarness:
+        return FakeStateHarness(
+            graph_builder,
+            state_values=None,
+            state_calls=state_calls,
+            **kwargs,
+        )
+
+    runtime = SessionRuntime(
+        make_config(),
+        graph_builder=lambda **_kwargs: object(),
+        llm_factory=llm_factory,
+        task_runner=task_runner,
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        load_browser_provider=no_browser_provider,
+        close_mcp_session=noop_close,
+        harness_factory=harness_factory,
+    )
+
+    result = await runtime.run_task("inspect page")
+
+    assert result == {"state": fallback_state}
+    assert dict(runtime.context.state) == fallback_state
+    assert len(state_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_session_runtime_emits_goal_failed_and_preserves_exception_behavior(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    state_calls: list[dict[str, Any]] = []
+    latest_state: dict[str, object] = {
+        "messages": ["checkpoint before failure"],
+        "observation": "Failure checkpoint observation.",
+    }
+    error = RuntimeError("task failed")
+
+    async def task_runner(
+        _harness: Any,
+        _task: str,
+        _config: SessionConfig,
+        _task_config: dict[str, Any],
+    ) -> dict[str, Any]:
+        raise error
+
+    def harness_factory(graph_builder: Any, **kwargs: Any) -> FakeStateHarness:
+        return FakeStateHarness(
+            graph_builder,
+            state_values=latest_state,
+            state_calls=state_calls,
+            **kwargs,
+        )
+
+    runtime = SessionRuntime(
+        make_config(),
+        graph_builder=lambda **_kwargs: object(),
+        llm_factory=llm_factory,
+        task_runner=task_runner,
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        load_browser_provider=no_browser_provider,
+        close_mcp_session=noop_close,
+        harness_factory=harness_factory,
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await runtime.run_task("inspect page")
+
+    assert exc_info.value is error
+    assert dict(runtime.context.state) == latest_state
+    assert len(state_calls) == 1
+    assert runtime.context.current_task is None
+    assert runtime.context.metadata.task_count == 1
+    assert runtime.context.tasks[0].result is error
+    assert runtime.context.tasks[0].finished_at is not None
+    assert runtime.context.session_dir is not None
+    typed_events = read_typed_events(runtime.context.session_dir)
+    assert [event["type"] for event in typed_events] == [
+        "session.started",
+        "goal.started",
+        "goal.failed",
+    ]
+    assert typed_events[1]["goal_id"] == runtime.context.tasks[0].task_id
+    assert typed_events[2]["goal_id"] == runtime.context.tasks[0].task_id
