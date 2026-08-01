@@ -22,6 +22,7 @@ from src.agent.state import AgentState
 from src.agent.subgraphs.executor.workflow import build_executor_graph
 from src.agent.subgraphs.observer.workflow import build_observer_graph
 from src.agent.subgraphs.planner.workflow import build_planner_graph
+from src.harness.context import ContextBuilder
 from src.harness.tools import ToolRegistry
 
 DEFAULT_OLLAMA_MODEL = "gpt-oss:20b-cloud"
@@ -42,6 +43,7 @@ def build_agent_graph(
     browser_providers: Sequence[BrowserProvider] | None = None,
     policy_node: Callable[[AgentState], dict[str, Any]] = default_policy_node,
     history_builder: Callable[[AgentState], list[BaseMessage]] = ensure_message_history,
+    context_builder: ContextBuilder | None = None,
     checkpointer: Any | None = None,
     compress_tools: bool = False,
 ) -> Any:
@@ -63,6 +65,7 @@ def build_agent_graph(
             model,
             tool_registry=registry,
             history_builder=history_builder,
+            context_builder=context_builder,
         ),
     )
     graph.add_node("policy", policy_node)
@@ -122,6 +125,7 @@ class AgentWorkflow:
         browser_providers: Sequence[BrowserProvider] | None = None,
         policy_node: Callable[[AgentState], dict[str, Any]] = default_policy_node,
         history_builder: Callable[[AgentState], list[BaseMessage]] = ensure_message_history,
+        context_builder: ContextBuilder | None = None,
         checkpointer: Any | None = None,
         compress_tools: bool = False,
     ) -> None:
@@ -134,6 +138,7 @@ class AgentWorkflow:
             browser_providers=browser_providers,
             policy_node=policy_node,
             history_builder=history_builder,
+            context_builder=context_builder,
             checkpointer=checkpointer,
             compress_tools=compress_tools,
         )
