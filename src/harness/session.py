@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable, Iterator, MutableMapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping, MutableMapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -355,6 +355,36 @@ def _state_from_task_result(result: Any) -> dict[str, object] | None:
     return dict(result)
 
 
+class HarnessLatestStateLoader:
+    """Load latest task state from the harness, with result fallback."""
+
+    def __init__(self, harness: object) -> None:
+        self._harness = harness
+
+    async def __call__(
+        self,
+        task_config: Mapping[str, Any],
+        fallback: Any | None,
+    ) -> dict[str, object] | None:
+        state = await self._latest_harness_state(task_config)
+        if state is None:
+            state = _state_from_task_result(fallback)
+        return state
+
+    async def _latest_harness_state(
+        self,
+        task_config: Mapping[str, Any],
+    ) -> dict[str, object] | None:
+        get_state_values = getattr(self._harness, "get_state_values", None)
+        if not callable(get_state_values):
+            return None
+
+        values = await get_state_values(config=task_config)
+        if isinstance(values, dict):
+            return dict(values)
+        return None
+
+
 class SessionEventBus:
     """Synchronous event bus for session lifecycle events."""
 
@@ -666,14 +696,15 @@ class SessionRuntime:
             config=task_config,
             state_overrides=task_config[HARNESS_STATE_OVERRIDES_CONFIG_KEY],
         )
+        latest_state_loader = HarnessLatestStateLoader(self.harness)
         latest_state: dict[str, object] | None = None
 
         async def load_latest_state(
-            config: dict[str, Any],
+            config: Mapping[str, Any],
             fallback: Any | None,
         ) -> dict[str, object] | None:
             nonlocal latest_state
-            latest_state = await self._load_latest_state(config, fallback=fallback)
+            latest_state = await latest_state_loader(config, fallback)
             return latest_state
 
         runner = GoalRunner(
@@ -697,40 +728,6 @@ class SessionRuntime:
 
     def _session_thread_id(self) -> str:
         return f"{SESSION_THREAD_PREFIX}{self.context.session_id}"
-
-    async def _remember_latest_state(
-        self,
-        task_config: dict[str, Any],
-        *,
-        fallback: Any | None = None,
-    ) -> None:
-        state = await self._load_latest_state(task_config, fallback=fallback)
-        if state is not None:
-            self.context.state.replace(state)
-
-    async def _load_latest_state(
-        self,
-        task_config: dict[str, Any],
-        *,
-        fallback: Any | None = None,
-    ) -> dict[str, object] | None:
-        state = await self._latest_harness_state(task_config)
-        if state is None:
-            state = _state_from_task_result(fallback)
-        return state
-
-    async def _latest_harness_state(
-        self,
-        task_config: dict[str, Any],
-    ) -> dict[str, object] | None:
-        get_state_values = getattr(self.harness, "get_state_values", None)
-        if not callable(get_state_values):
-            return None
-
-        values = await get_state_values(config=task_config)
-        if isinstance(values, dict):
-            return dict(values)
-        return None
 
     async def run_forever(self, *, initial_task: str | None = None) -> int:
         """Run tasks sequentially until the user exits the session."""

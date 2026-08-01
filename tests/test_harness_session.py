@@ -8,6 +8,7 @@ import pytest
 
 from src.harness.session import (
     ArtifactRegistry,
+    HarnessLatestStateLoader,
     SESSION_THREAD_PREFIX,
     SessionConfig,
     SessionContext,
@@ -71,6 +72,10 @@ class FakeStateHarness(FakeHarness):
     async def get_state_values(self, *, config: dict[str, Any]) -> dict[str, object] | None:
         self.state_calls.append(config)
         return self.state_values
+
+
+class FakeNoStateHarness(FakeHarness):
+    pass
 
 
 class FakeChromeProcess:
@@ -172,6 +177,60 @@ def test_artifact_registry_tracks_latest_artifact_by_kind(tmp_path: Path) -> Non
     assert registry.latest("screenshot") == first
     assert registry.latest("missing") is None
     assert registry.all() == [first, second]
+
+
+@pytest.mark.asyncio
+async def test_harness_latest_state_loader_returns_checkpoint_state() -> None:
+    state_calls: list[dict[str, Any]] = []
+    checkpoint_state: dict[str, object] = {
+        "messages": ["checkpoint"],
+        "final_answer": "done",
+    }
+    harness = FakeStateHarness(
+        graph_builder=object(),
+        state_values=checkpoint_state,
+        state_calls=state_calls,
+    )
+    loader = HarnessLatestStateLoader(harness)
+    task_config = {"configurable": {"thread_id": "session-1"}}
+
+    state = await loader(task_config, {"state": {"messages": ["fallback"]}})
+
+    assert state == checkpoint_state
+    assert state is not checkpoint_state
+    assert state_calls == [task_config]
+
+
+@pytest.mark.asyncio
+async def test_harness_latest_state_loader_falls_back_to_result_state() -> None:
+    state_calls: list[dict[str, Any]] = []
+    fallback_state: dict[str, object] = {
+        "messages": ["fallback"],
+        "final_answer": "done",
+    }
+    harness = FakeStateHarness(
+        graph_builder=object(),
+        state_values=None,
+        state_calls=state_calls,
+    )
+    loader = HarnessLatestStateLoader(harness)
+    task_config = {"configurable": {"thread_id": "session-1"}}
+
+    state = await loader(task_config, {"state": fallback_state})
+
+    assert state == fallback_state
+    assert state is not fallback_state
+    assert state_calls == [task_config]
+
+
+@pytest.mark.asyncio
+async def test_harness_latest_state_loader_returns_none_without_state() -> None:
+    harness = FakeNoStateHarness(graph_builder=object())
+    loader = HarnessLatestStateLoader(harness)
+
+    state = await loader({"configurable": {"thread_id": "session-1"}}, None)
+
+    assert state is None
 
 
 def test_session_event_bus_emits_to_subscribers_in_registration_order() -> None:
