@@ -18,17 +18,16 @@ from src.agent.subgraphs.observer.nodes import (
     observe_node,
 )
 from src.agent.subgraphs.observer.utils import extract_element_refs
-from src.agent.prompts import AGENT_USER_PROMPT
 from src.agent.state import (
     AgentState,
 )
+from src.harness.context import ContextBuilder
 from src.harness.tools import ToolRegistry
 from src.harness.tools import tool_name as registered_tool_name
 from .utils import (
     _replan_response,
     _message_content,
     _json_object,
-    _format_plan,
     _normalize_tool_request,
     _terminal_guard,
     _tool_request_update,
@@ -46,22 +45,26 @@ def create_agent_node(
     tools: Sequence[Any] | None = None,
     tool_registry: ToolRegistry | None = None,
     history_builder: Callable[[AgentState], list[BaseMessage]] = ensure_message_history,
+    context_builder: ContextBuilder | None = None,
 ) -> Callable[[AgentState], Any]:
     """Create the reasoning node bound to an LLM."""
 
     registry = tool_registry or ToolRegistry(tools=tools)
+    prompt_context = context_builder or ContextBuilder()
     tool_bound_llm = None
     browser_tabs_available = False
+    available_tools_cache: Sequence[Any] | None = None
 
     async def agent_node(state: AgentState) -> dict[str, Any]:
-        nonlocal tool_bound_llm, browser_tabs_available
+        nonlocal tool_bound_llm, browser_tabs_available, available_tools_cache
 
         if tool_bound_llm is None:
-            available_tools = await registry.get_all()
+            available_tools_cache = await registry.get_all()
             browser_tabs_available = any(
-                registered_tool_name(tool) == "browser_tabs" for tool in available_tools
+                registered_tool_name(tool) == "browser_tabs"
+                for tool in available_tools_cache
             )
-            tool_bound_llm = _bind_tools(llm, available_tools)
+            tool_bound_llm = _bind_tools(llm, available_tools_cache)
 
         terminal = _terminal_guard(state)
         if terminal is not None:
@@ -83,24 +86,14 @@ def create_agent_node(
             snapshot_request.update(stale_snapshot_update)
             return snapshot_request
 
+        turn_prompt = prompt_context.build_turn_prompt(
+            state,
+            available_tools_cache if available_tools_cache is not None else tools,
+        )
         response = await tool_bound_llm.ainvoke(
             [
                 *messages,
-                HumanMessage(
-                    content=AGENT_USER_PROMPT.format(
-                        task=state.get("task", ""),
-                        plan=_format_plan(state),
-                        current_step=state.get("current_step", 0),
-                        observation=state.get("observation", "No observation yet."),
-                        consecutive_failures=state.get("consecutive_failures", 0),
-                        repeat_count=state.get("repeat_count", 0),
-                        snapshot=state.get("snapshot", ""),
-                        refs=", ".join(
-                            extract_element_refs(str(state.get("snapshot", "") or ""))
-                        )
-                        or "none",
-                    )
-                ),
+                HumanMessage(content=turn_prompt),
             ]
         )
 

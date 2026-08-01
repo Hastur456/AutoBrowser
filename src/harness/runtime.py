@@ -58,6 +58,7 @@ class BrowserHarness:
             tool_registry=self.tools,
             policy_node=self.policy.node,
             history_builder=self._message_history,
+            context_builder=self.context,
             checkpointer=self.memory.get_checkpoint_saver(),
             compress_tools=compress_tools,
             **dict(graph_options or {}),

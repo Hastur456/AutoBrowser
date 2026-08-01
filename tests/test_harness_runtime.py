@@ -108,6 +108,7 @@ async def test_browser_harness_injects_tools_and_memory() -> None:
     assert result["final_answer"] == "done"
     assert isinstance(captured["tool_registry"], ToolRegistry)
     assert await captured["tool_registry"].get_all() == tools
+    assert captured["context_builder"] is context_builder
     assert captured["policy_node"]({"tool_request": {"name": "browser_snapshot"}})[
         "observation"
     ] == "custom policy"

@@ -344,6 +344,15 @@ class RecordingLLM:
         return AIMessage(content='{"decision":"done","final_answer":"ok"}')
 
 
+class PromptBuilder:
+    def __init__(self) -> None:
+        self.calls: list[tuple[dict[str, Any], list[Any] | None]] = []
+
+    def build_turn_prompt(self, state, tools=None):
+        self.calls.append((dict(state), list(tools) if tools is not None else None))
+        return "TURN PROMPT"
+
+
 class FailingLLM:
     async def ainvoke(self, _messages):
         raise AssertionError("LLM should not be called")
@@ -434,6 +443,28 @@ async def test_agent_node_uses_observation_snapshot_and_refs_in_prompt() -> None
     assert "[pending] Inspect page" in prompt
     assert "do not call browser.snapshot again with any\ndepth" in prompt
     assert all('textbox "Search" ref=e8' not in message.content for message in result["messages"])
+
+
+@pytest.mark.asyncio
+async def test_agent_node_uses_context_builder_turn_prompt() -> None:
+    llm = RecordingLLM()
+    prompt_builder = PromptBuilder()
+    node = create_agent_node(llm, context_builder=prompt_builder)
+
+    result = await node(
+        {
+            "task": "Inspect",
+            "plan": [{"id": 1, "description": "Inspect page", "status": "pending"}],
+            "current_step": 0,
+            "observation": "Search box found.",
+            "snapshot": '- textbox "Search" ref=e8',
+        }
+    )
+
+    assert result["final_answer"] == "ok"
+    assert prompt_builder.calls[0][0]["task"] == "Inspect"
+    assert prompt_builder.calls[0][1] == []
+    assert llm.messages[-1].content == "TURN PROMPT"
 
 
 @pytest.mark.asyncio
