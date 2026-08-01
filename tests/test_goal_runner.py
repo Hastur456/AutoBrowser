@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
 
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
-from src.agent_loop.goals import GoalRunRequest, GoalRunner
+from src.agent_loop.goals import GoalRunRequest, GoalRunResult, GoalRunner, GoalStatus
 
 
 def make_request() -> GoalRunRequest:
@@ -78,7 +79,9 @@ async def test_goal_runner_emits_failure_event_and_reraises_original_exception()
     sink = InMemoryEventSink()
     event_emitter = EventEmitter(sink, session_id="session-1")
     state_calls: list[tuple[dict[str, Any], Any | None]] = []
+    terminal_results: list[GoalRunResult] = []
     error = RuntimeError("task failed")
+    latest_state = {"messages": ["checkpoint before failure"]}
 
     async def task_runner(
         _harness: Any,
@@ -93,9 +96,27 @@ async def test_goal_runner_emits_failure_event_and_reraises_original_exception()
         fallback: Any | None,
     ) -> dict[str, object] | None:
         state_calls.append((task_config, fallback))
-        return {"messages": ["checkpoint before failure"]}
+        return latest_state
 
-    runner = GoalRunner(
+    class RecordingGoalRunner(GoalRunner):
+        def _terminal_result(
+            self,
+            *,
+            request: GoalRunRequest,
+            result: Any,
+            latest_state: Mapping[str, object] | None,
+            status: GoalStatus,
+        ) -> GoalRunResult:
+            goal_result = super()._terminal_result(
+                request=request,
+                result=result,
+                latest_state=latest_state,
+                status=status,
+            )
+            terminal_results.append(goal_result)
+            return goal_result
+
+    runner = RecordingGoalRunner(
         harness=object(),
         session_config=object(),
         task_runner=task_runner,
@@ -108,6 +129,13 @@ async def test_goal_runner_emits_failure_event_and_reraises_original_exception()
 
     assert exc_info.value is error
     assert state_calls == [({"configurable": {"thread_id": "session-1"}}, None)]
+    assert len(terminal_results) == 1
+    assert terminal_results[0].task == "inspect page"
+    assert terminal_results[0].task_id == "task-1"
+    assert terminal_results[0].goal_id == "task-1"
+    assert terminal_results[0].result is error
+    assert terminal_results[0].latest_state == latest_state
+    assert terminal_results[0].status == "failed"
     assert [record.type for record in sink.records] == ["goal.started", "goal.failed"]
     assert [record.goal_id for record in sink.records] == ["task-1", "task-1"]
     assert [record.task_id for record in sink.records] == ["task-1", "task-1"]

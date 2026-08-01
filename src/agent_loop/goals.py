@@ -78,7 +78,13 @@ class GoalRunner:
                 task_config,
             )
         except Exception as exc:
-            await self._latest_state_loader(task_config, None)
+            latest_state = await self._latest_state_loader(task_config, None)
+            self._terminal_result(
+                request=request,
+                result=exc,
+                latest_state=latest_state,
+                status="failed",
+            )
             self._event_emitter.emit(
                 "goal.failed",
                 source="harness.session",
@@ -96,13 +102,28 @@ class GoalRunner:
             task_id=request.task_id,
             goal_id=request.goal_id,
         )
+        return self._terminal_result(
+            request=request,
+            result=result,
+            latest_state=latest_state,
+            status="completed",
+        )
+
+    def _terminal_result(
+        self,
+        *,
+        request: GoalRunRequest,
+        result: Any,
+        latest_state: Mapping[str, object] | None,
+        status: GoalStatus,
+    ) -> GoalRunResult:
         return GoalRunResult(
             task=request.task,
             task_id=request.task_id,
             goal_id=request.goal_id,
             result=result,
             latest_state=latest_state,
-            status="completed",
+            status=status,
         )
 
 
