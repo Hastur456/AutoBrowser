@@ -192,6 +192,29 @@ def compile_observation(
             updates["needs_fresh_snapshot"] = True
             updates["unchanged_snapshot_count"] = 0
 
+    if status == "error" and is_browser_action and not needs_fresh_after_error:
+        failed_action = _action_identity(
+            request,
+            tool_name,
+            str(state.get("snapshot", "") or ""),
+        )
+        prior_ineffective = state.get("ineffective_browser_action") or {}
+        prior_count = int(state.get("ineffective_action_count", 0) or 0)
+        prior_history = list(state.get("ineffective_browser_actions") or [])
+        updates["ineffective_browser_action"] = failed_action
+        updates["ineffective_browser_actions"] = [
+            *prior_history,
+            failed_action,
+        ][-5:]
+        updates["ineffective_action_count"] = (
+            prior_count + 1 if _same_action(prior_ineffective, failed_action) else 1
+        )
+        observation_lines.append(
+            "The browser action failed for this target. Do not repeat the "
+            "same action with the same target after a recovery detour; choose "
+            "a different control, use a direct fallback, or fail the goal."
+        )
+
     observation = "\n\n".join(observation_lines)
     updates["observation"] = observation
     tool_message = tool_result_message_content(

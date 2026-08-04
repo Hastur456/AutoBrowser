@@ -961,6 +961,31 @@ def test_observe_node_translates_snapshot_and_advances_inspection_plan() -> None
     assert "execution_events" not in result
 
 
+def test_observe_node_tracks_failed_browser_actions_for_progress_guard() -> None:
+    result = compile_observation(
+        {
+            "snapshot": '- link "Product A" ref=e9',
+            "tool_request": {
+                "name": "browser_click",
+                "args": {"ref": "e9"},
+                "reason": "Open product",
+            },
+            "tool_result": {
+                "name": "browser_click",
+                "status": "error",
+                "content": "",
+                "error": "Timeout while clicking ref e9",
+            },
+        }
+    )
+
+    assert result["ineffective_action_count"] == 1
+    assert result["ineffective_browser_actions"][-1]["name"] == "browser_click"
+    assert result["ineffective_browser_action"]["args"] == {"ref": "e9"}
+    assert "Do not repeat the same action" in result["observation"]
+    assert result["error"] == "Timeout while clicking ref e9"
+
+
 def test_observe_node_advances_plan_only_with_step_completion_evidence() -> None:
     result = compile_observation(
         {

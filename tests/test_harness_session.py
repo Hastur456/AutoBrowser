@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+import src.agent_loop.goals as goals
 from src.harness.session import (
     ArtifactRegistry,
     HarnessLatestStateLoader,
@@ -439,6 +441,59 @@ async def test_session_runtime_reuses_context_and_records_task_history(
     ]
     assert typed_events[1]["goal_id"] == runtime.context.tasks[0].task_id
     assert typed_events[2]["goal_id"] == runtime.context.tasks[0].task_id
+
+
+@pytest.mark.asyncio
+async def test_session_runtime_watchdog_failure_clears_active_task(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(goals, "DEFAULT_PROGRESS_TIMEOUT_SECONDS", 0.01)
+    cancelled = False
+
+    async def task_runner(
+        _harness: Any,
+        _task: str,
+        _config: SessionConfig,
+        _task_config: dict[str, Any],
+    ) -> dict[str, Any]:
+        nonlocal cancelled
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        return {"final_answer": "never reached"}
+
+    runtime = SessionRuntime(
+        make_config(),
+        graph_builder=lambda **_kwargs: object(),
+        llm_factory=llm_factory,
+        task_runner=task_runner,
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        load_browser_provider=no_browser_provider,
+        close_mcp_session=noop_close,
+        harness_factory=FakeHarness,
+    )
+
+    with pytest.raises(TimeoutError, match="made no progress"):
+        await runtime.run_task("inspect page")
+
+    assert cancelled is True
+    assert runtime.context.current_task is None
+    assert runtime.context.metadata.task_count == 1
+    assert len(runtime.context.tasks) == 1
+    assert runtime.context.tasks[0].finished_at is not None
+    assert isinstance(runtime.context.tasks[0].result, TimeoutError)
+    assert runtime.context.session_dir is not None
+    typed_events = read_typed_events(runtime.context.session_dir)
+    assert [event["type"] for event in typed_events] == [
+        "session.started",
+        "goal.started",
+        "goal.failed",
+    ]
 
 
 @pytest.mark.asyncio
