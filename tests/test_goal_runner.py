@@ -8,6 +8,7 @@ import pytest
 
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.agent_loop.goals import GoalRunRequest, GoalRunner
+from src.agent_loop.outcomes import GoalState
 
 
 def make_request() -> GoalRunRequest:
@@ -344,7 +345,7 @@ async def test_goal_runner_rejects_nonterminal_result() -> None:
         latest_state_loader=latest_state_loader,
     )
 
-    with pytest.raises(RuntimeError, match="without a terminal agent state"):
+    with pytest.raises(RuntimeError, match="without a terminal goal state"):
         await runner.run(make_request())
 
     assert state_calls == [
@@ -387,3 +388,50 @@ async def test_goal_runner_emits_blocked_event_for_blocked_final_answer() -> Non
 
     assert goal_result.status == "blocked"
     assert [record.type for record in sink.records] == ["goal.started", "goal.blocked"]
+
+
+@pytest.mark.asyncio
+async def test_goal_runner_uses_compiled_goal_state_without_agent_state() -> None:
+    sink = InMemoryEventSink()
+    event_emitter = EventEmitter(sink, session_id="session-1")
+    result = {"engine": {"answer": "done"}}
+    latest_state = {"engine": {"answer": "done"}}
+
+    class IndependentCompiler:
+        def compile(
+            self,
+            *,
+            latest_state: dict[str, object] | None,
+            result: Any,
+        ) -> GoalState:
+            return GoalState(status="done", latest_state=latest_state, result=result)
+
+    async def task_runner(
+        _harness: Any,
+        _task: str,
+        _config: Any,
+        _task_config: dict[str, Any],
+    ) -> dict[str, Any]:
+        return result
+
+    async def latest_state_loader(
+        _task_config: dict[str, Any],
+        _fallback: Any | None,
+    ) -> dict[str, object] | None:
+        return latest_state
+
+    runner = GoalRunner(
+        harness=object(),
+        session_config=SimpleNamespace(goal_timeout_seconds=1),
+        task_runner=task_runner,
+        event_emitter=event_emitter,
+        latest_state_loader=latest_state_loader,
+        observation_compiler=IndependentCompiler(),
+    )
+
+    goal_result = await runner.run(make_request())
+
+    assert goal_result.status == "completed"
+    assert goal_result.result == result
+    assert goal_result.latest_state == latest_state
+    assert [record.type for record in sink.records] == ["goal.started", "goal.completed"]

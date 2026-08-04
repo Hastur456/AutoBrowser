@@ -6,9 +6,17 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from src.agent_loop.events import EventEmitter
+from src.agent_loop.outcomes import (
+    CompletionGuard,
+    GoalStateCompletionGuard,
+    GoalStatus,
+    LegacyAgentStateObservationCompiler,
+    ObservationCompiler,
+    goal_status_from_completion,
+)
 
 
 TaskRunner = Callable[[Any, str, Any, dict[str, Any]], Awaitable[Any]]
@@ -16,7 +24,6 @@ LatestStateLoader = Callable[
     [Mapping[str, Any], Any | None],
     Awaitable[dict[str, object] | None],
 ]
-GoalStatus = Literal["completed", "failed", "cancelled", "blocked"]
 DEFAULT_TASK_TIMEOUT_SECONDS = 300.0
 DEFAULT_PROGRESS_TIMEOUT_SECONDS = 120.0
 DEFAULT_LATEST_STATE_TIMEOUT_SECONDS = 15.0
@@ -57,12 +64,18 @@ class GoalRunner:
         task_runner: TaskRunner,
         event_emitter: EventEmitter,
         latest_state_loader: LatestStateLoader,
+        observation_compiler: ObservationCompiler | None = None,
+        completion_guard: CompletionGuard | None = None,
     ) -> None:
         self._harness = harness
         self._session_config = session_config
         self._task_runner = task_runner
         self._event_emitter = event_emitter
         self._latest_state_loader = latest_state_loader
+        self._observation_compiler = (
+            observation_compiler or LegacyAgentStateObservationCompiler()
+        )
+        self._completion_guard = completion_guard or GoalStateCompletionGuard()
 
     async def run(self, request: GoalRunRequest) -> GoalRunResult:
         """Run one goal and emit terminal lifecycle events."""
@@ -124,13 +137,16 @@ class GoalRunner:
             timeout_seconds=latest_state_timeout_seconds,
             suppress_errors=True,
         )
-        terminal_state = _find_terminal_state(latest_state) or _find_terminal_state(
-            result
+        goal_state = self._observation_compiler.compile(
+            latest_state=latest_state,
+            result=result,
         )
-        status = _goal_status_from_terminal_state(terminal_state)
+        status = goal_status_from_completion(
+            self._completion_guard.status(goal_state)
+        )
         if status is None:
             nonterminal_error = RuntimeError(
-                "Goal runner finished without a terminal agent state."
+                "Goal runner finished without a terminal goal state."
             )
             self._event_emitter.emit(
                 "goal.failed",
@@ -259,8 +275,9 @@ class GoalRunner:
             )
         except Exception:
             if suppress_errors:
-                terminal_state = _find_terminal_state(fallback)
-                return terminal_state if terminal_state is not None else None
+                if isinstance(fallback, Mapping):
+                    return dict(fallback)
+                return None
             raise
 
 
@@ -319,45 +336,15 @@ async def _cancel_pending(task: asyncio.Task[Any]) -> None:
         await task
 
 
-def _find_terminal_state(value: Any) -> dict[str, Any] | None:
-    if isinstance(value, Mapping):
-        final_answer = value.get("final_answer")
-        if final_answer is not None:
-            return dict(value)
-        for nested_value in value.values():
-            terminal_state = _find_terminal_state(nested_value)
-            if terminal_state is not None:
-                return terminal_state
-    elif isinstance(value, list):
-        for nested_value in value:
-            terminal_state = _find_terminal_state(nested_value)
-            if terminal_state is not None:
-                return terminal_state
-    return None
-
-
-def _goal_status_from_terminal_state(state: Mapping[str, Any] | None) -> GoalStatus | None:
-    if not state:
-        return None
-
-    final_answer = str(state.get("final_answer", "") or "").strip()
-    if not final_answer:
-        return None
-    if final_answer.lower().startswith("blocked:"):
-        return "blocked"
-    decision = str(state.get("decision", "") or "").strip().lower()
-    if decision in {"", "done"}:
-        return "completed"
-    if decision == "blocked":
-        return "blocked"
-    return "completed"
-
-
 __all__ = [
+    "CompletionGuard",
     "GoalRunRequest",
     "GoalRunResult",
     "GoalRunner",
+    "GoalStateCompletionGuard",
     "GoalStatus",
     "LatestStateLoader",
+    "LegacyAgentStateObservationCompiler",
+    "ObservationCompiler",
     "TaskRunner",
 ]
