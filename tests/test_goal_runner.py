@@ -75,6 +75,72 @@ async def test_goal_runner_emits_events_calls_task_runner_and_returns_result() -
 
 
 @pytest.mark.asyncio
+async def test_goal_runner_accepts_streaming_task_runner_unchanged() -> None:
+    sink = InMemoryEventSink()
+    event_emitter = EventEmitter(sink, session_id="session-1")
+    state_calls: list[tuple[dict[str, Any], Any | None]] = []
+
+    class StreamingHarness:
+        def __init__(self) -> None:
+            self.streamed = False
+            self.ran = False
+
+        async def stream_updates(self, task: str, config: dict[str, Any]):
+            self.streamed = True
+            yield {"plan": {"task": task}}
+            yield {"agent": {"final_answer": f"streamed: {task}", "config": config}}
+
+        async def run(self, task: str, config: dict[str, Any]):
+            self.ran = True
+            return {"final_answer": f"run: {task}", "config": config}
+
+    harness = StreamingHarness()
+
+    async def streaming_task_runner(
+        call_harness: Any,
+        task: str,
+        _config: Any,
+        task_config: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        final_update: dict[str, Any] | None = None
+        async for chunk in call_harness.stream_updates(task, config=task_config):
+            final_update = chunk
+        return final_update
+
+    async def latest_state_loader(
+        task_config: dict[str, Any],
+        fallback: Any | None,
+    ) -> dict[str, object] | None:
+        state_calls.append((task_config, fallback))
+        return {"state": fallback}
+
+    runner = GoalRunner(
+        harness=harness,
+        session_config=object(),
+        task_runner=streaming_task_runner,
+        event_emitter=event_emitter,
+        latest_state_loader=latest_state_loader,
+    )
+
+    goal_result = await runner.run(make_request())
+
+    expected_result = {
+        "agent": {
+            "final_answer": "streamed: inspect page",
+            "config": {"configurable": {"thread_id": "session-1"}},
+        }
+    }
+    assert goal_result.status == "completed"
+    assert goal_result.result == expected_result
+    assert goal_result.latest_state == {"state": expected_result}
+    assert harness.streamed is True
+    assert harness.ran is False
+    assert state_calls == [({"configurable": {"thread_id": "session-1"}}, expected_result)]
+    assert [record.type for record in sink.records] == ["goal.started", "goal.completed"]
+    assert sink.records[1].payload == {"task": "inspect page", "result": expected_result}
+
+
+@pytest.mark.asyncio
 async def test_goal_runner_emits_failure_event_and_reraises_original_exception() -> None:
     sink = InMemoryEventSink()
     event_emitter = EventEmitter(sink, session_id="session-1")
