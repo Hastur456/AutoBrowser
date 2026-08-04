@@ -2,7 +2,7 @@
 
 Branch: `feat/goal-runner`
 Source plan: [Codex-Claude Runtime Migration Plan](../research/2026-07-26-codex-claude-runtime-migration-plan.md)
-Status: Planned
+Status: Implemented through Slice 6
 
 ## Goal
 
@@ -11,9 +11,12 @@ task.
 
 `GoalRunner` becomes the execution boundary between `SessionRuntime` and the
 current engine. In this branch it must not change agent behavior. It should
-take over task setup, task-scoped config construction, execution coordination,
-state capture, terminal event emission, and task record completion while still
-delegating actual agent work to the existing `BrowserHarness`/LangGraph path.
+take over execution coordination, latest-state loader invocation, terminal
+event emission, and typed terminal result construction while still delegating
+actual agent work to the existing `BrowserHarness`/LangGraph path.
+`SessionRuntime` remains the owner of session start, task id allocation,
+task-scoped config construction, state persistence into `SessionContext`, and
+task record completion or failure.
 
 Target shape for this branch:
 
@@ -71,7 +74,8 @@ graph and a stable home for per-goal lifecycle rules.
 
 ## Current Boundary
 
-`SessionRuntime.run_task()` currently owns too many per-task responsibilities:
+Before this branch, `SessionRuntime.run_task()` owned too many per-task
+responsibilities:
 
 - starts the session if needed;
 - creates the task id;
@@ -85,6 +89,30 @@ graph and a stable home for per-goal lifecycle rules.
 - marks the task record finished or failed;
 - emits `goal.completed` or `goal.failed`;
 - returns the raw task runner result.
+
+Implemented boundary after Slice 6:
+
+```text
+SessionRuntime
+  -> GoalRunner
+      -> existing task_runner
+          -> BrowserHarness
+              -> LangGraph
+```
+
+`SessionRuntime.run_task()` now starts the session, allocates `task_id` and
+`goal_id`, builds `GoalRunRequest`, prepares task config and carried state
+overrides, calls `GoalRunner.run()`, writes returned latest state into
+`SessionContext.state`, and marks the `TaskRecord` finished or failed.
+
+`GoalRunner` now emits `goal.started`, delegates to the configured task runner,
+invokes the injected `LatestStateLoader`, emits `goal.completed` or
+`goal.failed`, and returns or internally constructs `GoalRunResult` with an
+explicit terminal `status`.
+
+`GoalRunner` does not consume graph stream chunks. Streaming remains owned by
+the task runner adapter in `src/cli/task_runner.py`, which streams from
+`BrowserHarness.stream_updates()`.
 
 `BrowserHarness` should continue to own engine invocation:
 
@@ -149,6 +177,18 @@ class GoalRunner:
 The implementation can use project-specific types instead of these exact names
 when that better fits imports and test ergonomics. The boundary matters more
 than the final dataclass spelling.
+
+Implemented names:
+
+- `GoalRunRequest`, `GoalRunResult`, `GoalRunner`, and `GoalStatus` live in
+  `src/agent_loop/goals.py`.
+- `TaskRunner` is the callable port used by `GoalRunner` to delegate current
+  execution.
+- `LatestStateLoader` is the callable port used by `GoalRunner` to capture
+  latest graph state.
+- `HarnessLatestStateLoader` lives in `src/harness/session.py` and adapts
+  `BrowserHarness.get_state_values()` plus result-state fallback conversion to
+  the `LatestStateLoader` port.
 
 ## Ownership
 
@@ -223,9 +263,9 @@ Changed test files:
 
 Optional docs follow-up:
 
-- update `docs/architecture/overview.md` after implementation lands;
-- update `docs/glossary.md` with `GoalRunner`, `GoalRunRequest`, and
-  `GoalRunResult` if those names become stable.
+- `docs/architecture/overview.md` updated in Slice 6;
+- `docs/glossary.md` updated in Slice 6 with stable `GoalRunner`,
+  `GoalRunRequest`, `GoalRunResult`, and `LatestStateLoader` names.
 
 ## Compatibility Requirements
 
@@ -348,6 +388,14 @@ Exit gate:
 
 - docs match the implemented boundary and do not claim `GoalRunner` owns the
   model/action loop yet.
+
+Implemented notes:
+
+- this plan records the implemented boundary and stable names;
+- `docs/architecture/overview.md` describes the current
+  `SessionRuntime -> GoalRunner -> task_runner -> BrowserHarness -> LangGraph`
+  path;
+- `docs/glossary.md` defines the stable goal runner terms.
 
 ## Test Plan
 

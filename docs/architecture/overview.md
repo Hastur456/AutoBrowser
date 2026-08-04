@@ -26,6 +26,7 @@ structure.
 | --- | --- |
 | `main.py` | CLI parsing and wiring the process into `SessionRuntime`. |
 | `src/cli/` | `cmd2` interactive REPL and user-facing session commands. |
+| `src/agent_loop/` | Runtime-adjacent lifecycle, eventing, tracing, eval, context, and goal-runner boundaries around the current graph engine. |
 | `src/agent/` | LangGraph graph assembly, shared state, prompts, reasoning node, routers. |
 | `src/agent/subgraphs/planner/` | One-shot planning graph and planning prompts. |
 | `src/agent/subgraphs/executor/` | Tool execution graph and provider-backed request/result normalization. |
@@ -67,6 +68,32 @@ lifecycle, resource ownership, and context handoff between tasks, while
 `BrowserHarness` and the compiled LangGraph agent continue to handle one task
 execution at a time. AutoBrowser models session activity as tasks, with each
 task represented as a distinct user turn in durable message history.
+
+One-task execution now passes through `GoalRunner` in
+`src/agent_loop/goals.py`:
+
+```text
+SessionRuntime
+  -> GoalRunner
+      -> task_runner
+          -> BrowserHarness
+              -> LangGraph
+```
+
+`SessionRuntime` still starts the session, allocates task and goal ids, builds
+task config, injects carried session state, persists latest state into
+`SessionContext`, and marks task history finished or failed. `GoalRunner` owns
+the goal lifecycle boundary for that task: it emits `goal.started`, delegates
+to the configured task runner, invokes a `LatestStateLoader`, emits
+`goal.completed` or `goal.failed`, and returns a `GoalRunResult` with explicit
+terminal status. The current `goal_id` is equal to the task id.
+
+`GoalRunner` is not an agent engine. It does not choose actions, inspect model
+messages for semantic completion, change graph routing, call tools, manage
+retry counters, enforce browser policy, or consume graph stream chunks. The CLI
+task runner adapter remains responsible for streaming from
+`BrowserHarness.stream_updates()`, and `BrowserHarness` remains the adapter
+that invokes the compiled LangGraph engine.
 
 The interactive CLI in `src/cli/agent_cli.py` wraps a prepared
 `SessionRuntime`. It keeps all asynchronous session operations on one dedicated
