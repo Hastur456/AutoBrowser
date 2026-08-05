@@ -95,6 +95,14 @@ task runner adapter remains responsible for streaming from
 `BrowserHarness.stream_updates()`, and `BrowserHarness` remains the adapter
 that invokes the compiled LangGraph engine.
 
+While the old LangGraph Agent Loop remains active, `src/agent_loop/outcomes.py`
+contains a legacy compatibility layer that adapts `AgentState`-shaped results
+into provider-neutral `GoalState`. That adapter knows about `final_answer` and
+`decision` only as a migration bridge. The target Agent Loop should return a
+provider-neutral terminal state directly so `GoalRunner` no longer depends on
+`LegacyAgentStateObservationCompiler`, `CompletionGuard`, or any legacy
+`AgentState` inspection.
+
 The interactive CLI in `src/cli/agent_cli.py` wraps a prepared
 `SessionRuntime`. It keeps all asynchronous session operations on one dedicated
 runtime event loop, including task execution, browser status helpers, reset,
@@ -262,3 +270,6 @@ The project follows Playwright MCP semantics:
   the current controls.
 - Tool-output compression must preserve enough snapshot/ref detail for safe
   follow-up actions.
+- `src/agent_loop/outcomes.py` is transitional compatibility debt. It should
+  be removed or reduced to stable provider-neutral types after the new Agent
+  Loop emits terminal goal state directly.

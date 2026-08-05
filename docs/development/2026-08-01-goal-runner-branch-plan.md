@@ -189,6 +189,10 @@ Implemented names:
 - `HarnessLatestStateLoader` lives in `src/harness/session.py` and adapts
   `BrowserHarness.get_state_values()` plus result-state fallback conversion to
   the `LatestStateLoader` port.
+- `src/agent_loop/outcomes.py` currently contains the legacy compatibility
+  adapter that converts old LangGraph `AgentState` output into `GoalState`.
+  This is transitional debt and must be removed after the new Agent Loop emits
+  provider-neutral terminal state directly.
 
 ## Ownership
 
@@ -230,6 +234,15 @@ For this branch, `GoalRunner` must not:
 - change browser snapshot/ref policy;
 - call tools directly;
 - introduce a new prompt or model loop.
+
+Current implementation note: completion inference still exists outside
+`GoalRunner` in `src/agent_loop/outcomes.py` as a compatibility layer for the
+old LangGraph Agent Loop. It searches legacy state for `final_answer`, reads
+`decision`, and maps that shape into provider-neutral `GoalState`. This should
+not be expanded. After the new Agent Loop returns a provider-neutral terminal
+result, remove `LegacyAgentStateObservationCompiler`, `CompletionGuard`,
+`GoalStateCompletionGuard`, `_find_terminal_agent_state()`, and
+`_completion_status_from_agent_state()`.
 
 ### BrowserHarness
 
@@ -461,11 +474,13 @@ After `GoalRunner` is stable, later branches can move additional runtime
 concepts behind it:
 
 1. engine selection: `LangGraphEngine` vs future `AgentLoopEngine`;
-2. typed goal cancellation and blocked status;
-3. approval queue coordination;
-4. tool broker and permission engine integration;
-5. hooks around `GoalStart`, `PreCompletion`, and `GoalEnd`;
-6. parent/child goal relationships for bounded subagents.
+2. provider-neutral terminal goal state emitted by the new Agent Loop;
+3. removal of the legacy `outcomes.py` compatibility adapter;
+4. typed goal cancellation and blocked status;
+5. approval queue coordination;
+6. tool broker and permission engine integration;
+7. hooks around `GoalStart`, `PreCompletion`, and `GoalEnd`;
+8. parent/child goal relationships for bounded subagents.
 
 These should remain follow-ups. The `feat/goal-runner` branch is a boundary
 extraction branch, not a behavior migration branch.
