@@ -20,7 +20,7 @@ except ImportError:  # pragma: no cover - compatibility with older LangGraph rel
     from langgraph.checkpoint.memory import MemorySaver as _DefaultCheckpointSaver
 
 from src.agent.state import AgentState, CompactToolObservation, ToolRequest, ToolResult
-from src.harness.context import ContextBuilder
+# from src.harness.context import ContextBuilder
 
 MAX_TOOL_MESSAGE_REFS = 25
 ORIGINAL_USER_REQUEST_PREFIX = "Original user request:\n"
@@ -67,11 +67,13 @@ def ensure_message_history(
     task = str(state.get("task", "") or "Complete the task.").strip()
     task_id = str(state.get("task_id", "") or "").strip()
     if not any(message.type == "system" for message in messages):
-        prompt = (
-            system_prompt
-            if system_prompt is not None
-            else ContextBuilder().get_system_prompt()
-        )
+        # TODO: Закомментировання реализация не работает из-за Import Ciclic Error
+        prompt = system_prompt or ""
+        # prompt = (
+        #     system_prompt
+        #     if system_prompt is not None
+        #     else ContextBuilder().get_system_prompt()
+        # )
         messages.insert(0, SystemMessage(content=prompt))
 
     if task_id:
