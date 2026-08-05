@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable, Iterator, MutableMapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping, MutableMapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +16,7 @@ from src.agent_loop.events import (
     EventEmitter,
     JsonlEventSink,
 )
+from src.agent_loop.goals import GoalRunRequest, GoalRunner
 from src.browser import BrowserProvider
 from src.harness.memory import MemoryManager
 from src.harness.runtime import (
@@ -354,6 +355,36 @@ def _state_from_task_result(result: Any) -> dict[str, object] | None:
     return dict(result)
 
 
+class HarnessLatestStateLoader:
+    """Load latest task state from the harness, with result fallback."""
+
+    def __init__(self, harness: object) -> None:
+        self._harness = harness
+
+    async def __call__(
+        self,
+        task_config: Mapping[str, Any],
+        fallback: Any | None,
+    ) -> dict[str, object] | None:
+        state = await self._latest_harness_state(task_config)
+        if state is None:
+            state = _state_from_task_result(fallback)
+        return state
+
+    async def _latest_harness_state(
+        self,
+        task_config: Mapping[str, Any],
+    ) -> dict[str, object] | None:
+        get_state_values = getattr(self._harness, "get_state_values", None)
+        if not callable(get_state_values):
+            return None
+
+        values = await get_state_values(config=task_config)
+        if isinstance(values, dict):
+            return dict(values)
+        return None
+
+
 class SessionEventBus:
     """Synchronous event bus for session lifecycle events."""
 
@@ -657,69 +688,46 @@ class SessionRuntime:
             self.context.state,
             task_id=task_id,
         )
-        self.context.event_emitter.emit(
-            "goal.started",
-            source="harness.session",
-            payload={"task": task},
+        request = GoalRunRequest(
+            task=task,
             task_id=task_id,
             goal_id=task_id,
+            thread_id=self._session_thread_id(),
+            config=task_config,
+            state_overrides=task_config[HARNESS_STATE_OVERRIDES_CONFIG_KEY],
+        )
+        latest_state_loader = HarnessLatestStateLoader(self.harness)
+        latest_state: dict[str, object] | None = None
+
+        async def load_latest_state(
+            config: Mapping[str, Any],
+            fallback: Any | None,
+        ) -> dict[str, object] | None:
+            nonlocal latest_state
+            latest_state = await latest_state_loader(config, fallback)
+            return latest_state
+
+        runner = GoalRunner(
+            harness=self.harness,
+            session_config=self.config,
+            task_runner=self._task_runner,
+            event_emitter=self.context.event_emitter,
+            latest_state_loader=load_latest_state,
         )
         try:
-            result = await self._task_runner(
-                self.harness,
-                task,
-                self.config,
-                task_config,
-            )
+            goal_result = await runner.run(request)
         except Exception as exc:
-            await self._remember_latest_state(task_config)
-            self.context.event_emitter.emit(
-                "goal.failed",
-                source="harness.session",
-                payload={"task": task, "error": exc},
-                task_id=task_id,
-                goal_id=task_id,
-            )
+            if latest_state is not None:
+                self.context.state.replace(latest_state)
             self.context.fail_task(record, exc)
             raise
-        await self._remember_latest_state(task_config, fallback=result)
-        self.context.finish_task(record, result)
-        self.context.event_emitter.emit(
-            "goal.completed",
-            source="harness.session",
-            payload={"task": task, "result": result},
-            task_id=task_id,
-            goal_id=task_id,
-        )
-        return result
+        if goal_result.latest_state is not None:
+            self.context.state.replace(dict(goal_result.latest_state))
+        self.context.finish_task(record, goal_result.result)
+        return goal_result.result
 
     def _session_thread_id(self) -> str:
         return f"{SESSION_THREAD_PREFIX}{self.context.session_id}"
-
-    async def _remember_latest_state(
-        self,
-        task_config: dict[str, Any],
-        *,
-        fallback: Any | None = None,
-    ) -> None:
-        state = await self._latest_harness_state(task_config)
-        if state is None:
-            state = _state_from_task_result(fallback)
-        if state is not None:
-            self.context.state.replace(state)
-
-    async def _latest_harness_state(
-        self,
-        task_config: dict[str, Any],
-    ) -> dict[str, object] | None:
-        get_state_values = getattr(self.harness, "get_state_values", None)
-        if not callable(get_state_values):
-            return None
-
-        values = await get_state_values(config=task_config)
-        if isinstance(values, dict):
-            return dict(values)
-        return None
 
     async def run_forever(self, *, initial_task: str | None = None) -> int:
         """Run tasks sequentially until the user exits the session."""

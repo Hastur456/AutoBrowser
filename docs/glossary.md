@@ -21,10 +21,17 @@
 | Executor | Subgraph that resolves and invokes approved tool requests. |
 | FakeBrowserProvider | Deterministic browser provider used by tests to replay snapshots without Chrome, CDP, or MCP. |
 | GraphRecursionError | LangGraph error raised when the graph exceeds the configured recursion limit. |
+| GoalState | Provider-neutral terminal state used by `GoalRunner` to determine explicit goal completion status during the migration to the new Agent Loop. |
+| GoalRunRequest | Immutable input object for one `GoalRunner` execution, including task text, task id, goal id, session thread id, graph config, and state overrides. |
+| GoalRunResult | Immutable terminal object returned or internally constructed by `GoalRunner`, including raw task result or exception, latest state, and explicit terminal status. |
+| GoalRunner | One-task lifecycle boundary between `SessionRuntime` and the current task runner; emits goal lifecycle events, delegates execution, captures latest state through `LatestStateLoader`, and does not own the model/action loop. |
 | Harness | Runtime layer around the graph; owns infrastructure that should not be hardcoded into agent nodes. |
 | Ineffective browser action | A successful browser action whose follow-up snapshot has the same visible fingerprint as the previous snapshot. |
 | LangGraph | Graph runtime used for the AutoBrowser agent loop and subgraphs. |
+| LatestStateLoader | Callable port injected into `GoalRunner` to load latest graph state from the current harness/config, with fallback to task result state when no checkpoint is available. |
+| LegacyAgentStateObservationCompiler | Transitional adapter in `src/agent_loop/outcomes.py` that maps old LangGraph `AgentState` fields such as `final_answer` and `decision` into `GoalState`; remove after the new Agent Loop emits provider-neutral terminal state. |
 | MCP | Model Context Protocol, used here for browser tool integration. |
+| New Agent Loop terminal state | Future provider-neutral completion result returned directly by the agent engine, replacing legacy `AgentState` inspection in `outcomes.py`. |
 | Observer | Subgraph that translates tool results and snapshots into compact state updates. |
 | Planner | Subgraph that creates or revises compact task plans. |
 | Playwright MCP | Browser automation tool provider whose snapshot refs drive interactions. |

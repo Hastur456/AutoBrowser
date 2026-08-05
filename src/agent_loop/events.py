@@ -192,6 +192,12 @@ class EventEmitter:
         self.session_id = session_id
         self._sequence = 0
 
+    @property
+    def sequence(self) -> int:
+        """Return the latest emitted event sequence number."""
+
+        return self._sequence
+
     def emit(
         self,
         event_type: EventType,
