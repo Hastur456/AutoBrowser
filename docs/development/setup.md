@@ -46,6 +46,22 @@ normalization, or Playwright MCP integration:
 python -m pytest tests\test_browser_contracts.py tests\test_fake_browser_provider.py tests\test_playwright_mcp_provider.py
 ```
 
+Run Agent Loop contract and observability tests after changing `src/agent_loop/`
+or scripts that consume session traces:
+
+```powershell
+python -m pytest tests\test_agent_loop_events.py tests\test_agent_loop_tracing.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py
+python -m pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
+python -m pytest tests\test_context_assembler.py tests\test_goal_runner.py
+```
+
+Run harness and CLI boundary tests after changing session/runtime/tool wiring:
+
+```powershell
+python -m pytest tests\test_harness_session.py tests\test_harness_runtime.py tests\test_harness_tools.py tests\test_harness_telemetry.py
+python -m pytest tests\test_main_cli.py tests\test_cli_task_runner.py
+```
+
 ## CLI Usage
 
 Start the interactive `cmd2` REPL:
@@ -98,9 +114,44 @@ Useful flags include `--show-state`, `--show-tools`, `--json`,
 `--recursion-limit`. `--loop` remains accepted as a compatibility flag, but the
 CLI now uses the long-lived session loop by default.
 
+Set `AUTOBROWSER_CONTEXT_MODE=assembled` to route per-turn prompt construction
+through `src/agent_loop/context.py`. The default is `legacy`; use
+`AUTOBROWSER_CONTEXT_MODE=legacy` as the rollback path while the assembled
+context path is still being validated.
+
+## Batch, Export, Replay, And Evals
+
+Run JSONL Golden Set scenarios through fresh `SessionRuntime` instances:
+
+```powershell
+python scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
+```
+
+Export persisted session task rows:
+
+```powershell
+python scripts/export_sessions.py --out .autobrowser\exports\runs.jsonl
+```
+
+Inspect a durable event trace:
+
+```powershell
+python scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
+python scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.jsonl
+```
+
+Compare deterministic fake-browser eval scenarios with the baseline:
+
+```powershell
+python scripts/run_evals.py --baseline tests\evals\baselines\langgraph_v1.json
+```
+
 ## Development Guidelines
 
 - Keep reasoning and routing changes in `src/agent/`.
+- Keep Agent Loop action contracts, model action parsing, event records,
+  tracing, replay/eval helpers, batch/export helpers, context assembly, skills,
+  and goal lifecycle boundaries in `src/agent_loop/`.
 - Keep browser backend contracts, canonical browser names, error codes, and
   backend adapters in `src/browser/`.
 - Keep session and runtime infrastructure changes in `src/harness/`.

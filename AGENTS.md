@@ -29,6 +29,7 @@ This repository is indexed by CodeGraph (`.codegraph/` exists at the repo root).
 This is a Python 3.12 repository for an AutoBrowser/LangGraph agent. The CLI entry point is `main.py`. Core code lives in `src/`:
 
 - `src/agent/`: LangGraph agent loop, state, prompts, routers, graph assembly, and history helpers.
+- `src/agent_loop/`: runtime-facing action contracts, model action parsing, eventing, tracing, replay/evals, metrics, batch/export helpers, context assembly, skills, and goal lifecycle boundaries around the current graph engine.
 - `src/agent/subgraphs/planner/`: planning graph pieces.
 - `src/agent/subgraphs/executor/`: tool execution graph and provider-backed request/result normalization.
 - `src/agent/subgraphs/observer/`: tool-result and snapshot observation/compression pieces.
@@ -38,7 +39,7 @@ This is a Python 3.12 repository for an AutoBrowser/LangGraph agent. The CLI ent
 - `src/mcp/`: Playwright MCP process/session lifecycle helpers and provider loading.
 - `docs/`: architecture, development setup, decisions, diagrams, research notes, and glossary.
 
-Tests live in `tests/`. Utility scripts live in `scripts/`, including graph visualization and trace export helpers. Runtime or local-only folders such as `.venv/`, `.pytest_cache/`, `node_modules/`, `.codegraph/`, `.playwright-mcp/`, `profile/`, `baseline/`, and `__pycache__/` should not be treated as source.
+Tests live in `tests/`. Utility scripts live in `scripts/`, including graph visualization, batch runs, session exports, trace replay/export, LangSmith trace export, and eval baseline helpers. Runtime or local-only folders such as `.venv/`, `.pytest_cache/`, `node_modules/`, `.codegraph/`, `.playwright-mcp/`, `.autobrowser/`, `profile/`, `baseline/`, and `__pycache__/` should not be treated as source.
 
 ## Harness Architecture
 
@@ -53,6 +54,8 @@ Harness responsibilities:
 - `tools.py`: pluggable tool registry for static tools, generic providers, browser providers, and MCP clients.
 - `policy.py`: policy checks and policy engine boundary.
 - `telemetry.py`: tracing/logging boundary.
+
+`ContextBuilder` defaults to legacy prompt rendering. Set `AUTOBROWSER_CONTEXT_MODE=assembled` to use the assembled context path backed by `src/agent_loop/context.py`; set `AUTOBROWSER_CONTEXT_MODE=legacy` for rollback while validating prompt changes.
 
 Do not hardcode Playwright MCP behavior into the agent loop. Browser-specific backends should be registered through `BrowserProvider` and `ToolRegistry` or injected through `BrowserHarness` so tools can be swapped or mocked in CI. Keep planner, observer, executor, and core state contracts stable unless a migration step explicitly requires changing them.
 
@@ -122,6 +125,9 @@ python -m pytest tests\test_agent_graph.py
 python -m pytest tests\test_main_cli.py
 python -m pytest tests\test_prompts.py
 python -m pytest tests\test_browser_contracts.py tests\test_fake_browser_provider.py tests\test_playwright_mcp_provider.py
+python -m pytest tests\test_agent_loop_events.py tests\test_agent_loop_tracing.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py
+python -m pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
+python -m pytest tests\test_context_assembler.py tests\test_goal_runner.py
 ```
 
 Check docs-only diffs with:
@@ -140,6 +146,26 @@ Run the CLI with Playwright MCP tools enabled:
 
 ```powershell
 python main.py --task "open the target page"
+```
+
+Run Golden Set JSONL scenarios:
+
+```powershell
+python scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
+```
+
+Export session rows and inspect traces:
+
+```powershell
+python scripts/export_sessions.py --out .autobrowser\exports\runs.jsonl
+python scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
+python scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.jsonl
+```
+
+Run deterministic fake-browser eval baselines:
+
+```powershell
+python scripts/run_evals.py --baseline tests\evals\baselines\langgraph_v1.json
 ```
 
 Start the interactive REPL with:
@@ -170,13 +196,13 @@ Useful CLI flags include `--loop`, `--show-state`, `--hide-snapshot`, `--show-to
 
 Use Python 3.12-compatible code. Follow PEP 8 with 4-space indentation, snake_case for functions and modules, PascalCase for classes, and UPPER_SNAKE_CASE for constants. Add type hints for public functions, graph state structures, and browser boundary contracts.
 
-Keep graph node, router, state, and prompt code in the existing `nodes.py`, `routers.py`, `state.py`, and `prompts.py` pattern. Put infrastructure abstractions in `src/harness/` instead of expanding graph nodes. Put browser backend contracts, canonical names, shared errors, and backend adapters in `src/browser/`. Prefer structured state updates and typed contracts over ad hoc dictionaries when changing graph or browser boundaries.
+Keep graph node, router, state, and prompt code in the existing `nodes.py`, `routers.py`, `state.py`, and `prompts.py` pattern. Put runtime-facing Agent Loop contracts, durable event/trace helpers, replay/eval helpers, batch/export helpers, context assembly, skills, and goal lifecycle boundaries in `src/agent_loop/`. Put infrastructure abstractions in `src/harness/` instead of expanding graph nodes. Put browser backend contracts, canonical names, shared errors, and backend adapters in `src/browser/`. Prefer structured state updates and typed contracts over ad hoc dictionaries when changing graph or browser boundaries.
 
 ## Testing Guidelines
 
 Use `pytest` and `pytest-asyncio` for asynchronous graph, harness, and MCP behavior. Name test files `test_*.py` and test functions `test_*`.
 
-Prefer focused unit tests for routers, policy decisions, state transitions, tool registry behavior, browser provider normalization, and observer normalization. Add integration tests for graph assembly, harness injection, streaming behavior, tool execution boundaries, and provider-backed browser execution. Use `FakeBrowserProvider` when tests need browser behavior without external services. Do not require external services in default tests unless they are skipped or mocked.
+Prefer focused unit tests for routers, policy decisions, state transitions, tool registry behavior, browser provider normalization, observer normalization, Agent Loop event/action contracts, context assembly, goal lifecycle, metrics, replay, batch, and export behavior. Add integration tests for graph assembly, harness injection, streaming behavior, tool execution boundaries, provider-backed browser execution, and scenario eval coverage. Use `FakeBrowserProvider` when tests need browser behavior without external services. Do not require external services in default tests unless they are skipped or mocked.
 
 ## Playwright MCP Development Rules
 

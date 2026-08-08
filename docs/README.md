@@ -24,6 +24,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Batch And Export Data Contracts](development/2026-07-30-batch-export-data-contracts.md):
   current observability sources and JSONL contracts for batch scenarios, run
   indexes, feedback, metrics, and export rows.
+- [Context Assembler And Prompt Split Plan](development/2026-08-01-context-assembler-prompt-split.md):
+  current plan and rollback switch for assembled context rendering through
+  `AUTOBROWSER_CONTEXT_MODE`.
 - [GoalRunner Branch Plan](development/2026-08-01-goal-runner-branch-plan.md):
   current one-task lifecycle boundary and follow-up migration path toward the
   new Agent Loop.
