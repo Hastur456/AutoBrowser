@@ -33,6 +33,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Agent Loop Legacy Outcomes Cleanup](development/2026-08-05-agent-loop-legacy-outcomes.md):
   TODO for removing the transitional `outcomes.py` compatibility layer after
   provider-neutral terminal state is emitted by the new Agent Loop.
+- [Agent Loop Engine Migration Touchpoints](development/2026-08-08-agent-loop-engine-migration-touchpoints.md):
+  checklist of legacy LangGraph, harness, browser, eval, CLI, and exporter
+  coupling to rewrite before enabling a new Agent Loop engine by default.
 - [Session-Scoped Agent Context Memory ADR](decisions/2026-07-25-session-scoped-agent-context-memory.md):
   decision record for preserving useful agent context across tasks in one
   interactive session.

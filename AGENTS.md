@@ -57,6 +57,8 @@ Harness responsibilities:
 
 `ContextBuilder` defaults to legacy prompt rendering. Set `AUTOBROWSER_CONTEXT_MODE=assembled` to use the assembled context path backed by `src/agent_loop/context.py`; set `AUTOBROWSER_CONTEXT_MODE=legacy` for rollback while validating prompt changes.
 
+When migrating to a new `AgentLoopEngine`, do not treat `src/agent_loop/outcomes.py` or `src/agent_loop/adapters/langgraph.py` as the only legacy code. `BrowserHarness`, most session state/config handoff in `src/harness/`, `PolicyEngine` state patches, `MemoryManager` checkpoint ownership, browser provider request/result normalization in `src/browser/`, eval runner wiring, CLI streaming, and export/metrics final-answer assumptions also need review or rewrite. Keep [docs/development/2026-08-08-agent-loop-engine-migration-touchpoints.md](docs/development/2026-08-08-agent-loop-engine-migration-touchpoints.md) updated when touching this migration.
+
 Do not hardcode Playwright MCP behavior into the agent loop. Browser-specific backends should be registered through `BrowserProvider` and `ToolRegistry` or injected through `BrowserHarness` so tools can be swapped or mocked in CI. Keep planner, observer, executor, and core state contracts stable unless a migration step explicitly requires changing them.
 
 ## Browser Provider Architecture

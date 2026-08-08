@@ -118,6 +118,13 @@ around the current graph engine:
 - `adapters/langgraph.py` maps proposed actions back to the current LangGraph
   state update shape during the migration.
 
+Before enabling a new `AgentLoopEngine` by default, treat `outcomes.py`,
+`adapters/langgraph.py`, `BrowserHarness`, most `src/harness/` state/config
+handoff code, and browser provider normalization as migration touchpoints, not
+stable final architecture. See
+[Agent Loop Engine Migration Touchpoints](../development/2026-08-08-agent-loop-engine-migration-touchpoints.md)
+for the full checklist.
+
 The interactive CLI in `src/cli/agent_cli.py` wraps a prepared
 `SessionRuntime`. It keeps all asynchronous session operations on one dedicated
 runtime event loop, including task execution, browser status helpers, reset,
@@ -288,3 +295,8 @@ The project follows Playwright MCP semantics:
 - `src/agent_loop/outcomes.py` is transitional compatibility debt. It should
   be removed or reduced to stable provider-neutral types after the new Agent
   Loop emits terminal goal state directly.
+- The new Agent Loop engine migration must also rewrite the LangGraph adapter,
+  `BrowserHarness`, session state handoff, policy state patches, browser
+  provider request/result normalization, eval runner wiring, CLI streaming, and
+  export/metrics assumptions that still read legacy graph state. Track this in
+  [Agent Loop Engine Migration Touchpoints](../development/2026-08-08-agent-loop-engine-migration-touchpoints.md).

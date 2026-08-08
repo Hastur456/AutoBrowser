@@ -22,6 +22,15 @@ compatibility layer from `outcomes.py`:
 - `_find_terminal_agent_state()`
 - `_completion_status_from_agent_state()`
 
+This file is not the only legacy dependency. The new engine migration also
+needs to rewrite the LangGraph adapter, the current `BrowserHarness` graph
+adapter, most session state/config handoff in `src/harness/`, browser provider
+request/result normalization, eval runner wiring, CLI streaming, and
+export/metrics assumptions that still read legacy graph state. Keep the broader
+checklist in
+[Agent Loop Engine Migration Touchpoints](2026-08-08-agent-loop-engine-migration-touchpoints.md)
+updated as the migration proceeds.
+
 ## Reason
 
 `outcomes.py` exists only to keep `GoalRunner` compatible with the old
@@ -83,6 +92,7 @@ Do not remove `outcomes.py` until all of these are true:
 Keep these documents aligned while migrating:
 
 - [Architecture Overview](../architecture/overview.md)
+- [Agent Loop Engine Migration Touchpoints](2026-08-08-agent-loop-engine-migration-touchpoints.md)
 - [GoalRunner Branch Plan](2026-08-01-goal-runner-branch-plan.md)
 - [Batch And Export Data Contracts](2026-07-30-batch-export-data-contracts.md)
 - [Glossary](../glossary.md)
