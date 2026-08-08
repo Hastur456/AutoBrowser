@@ -16,6 +16,7 @@ from src.agent_loop.events import (
     EventEmitter,
     JsonlEventSink,
 )
+from src.agent_loop.engine import AgentLoopEngine
 from src.agent_loop.goals import GoalRunRequest, GoalRunner
 from src.browser import BrowserProvider
 from src.harness.memory import MemoryManager
@@ -96,6 +97,7 @@ class SessionConfig:
     show_tools: bool
     as_json: bool
     compress_tools: bool
+    agent_loop: bool
     chrome_path: str
     user_data_dir: str
     cdp_port: int
@@ -116,6 +118,7 @@ class SessionConfig:
             show_tools=args.show_tools,
             as_json=args.json,
             compress_tools=args.compress_tools,
+            agent_loop=args.agent_loop,
             chrome_path=args.chrome_path,
             user_data_dir=args.user_data_dir,
             cdp_port=args.cdp_port,
@@ -137,6 +140,7 @@ class SessionConfig:
                 "hide_snapshot": self.hide_snapshot,
                 "langsmith_tracing": self.tracing_enabled,
                 "compress_tools": self.compress_tools,
+                "agent_loop": self.agent_loop,
             },
             "tags": [
                 "autobrowser",
@@ -707,13 +711,22 @@ class SessionRuntime:
             latest_state = await latest_state_loader(config, fallback)
             return latest_state
 
-        runner = GoalRunner(
-            harness=self.harness,
-            session_config=self.config,
-            task_runner=self._task_runner,
-            event_emitter=self.context.event_emitter,
-            latest_state_loader=load_latest_state,
-        )
+        if self.config.agent_loop:
+            runner = AgentLoopEngine(
+                harness=self.harness,
+                session_config=self.config,
+                task_runner=self._task_runner,
+                event_emitter=self.context.event_emitter,
+                latest_state_loader=load_latest_state,
+            )
+        else:
+            runner = GoalRunner(
+                harness=self.harness,
+                session_config=self.config,
+                task_runner=self._task_runner,
+                event_emitter=self.context.event_emitter,
+                latest_state_loader=load_latest_state,
+            )
         try:
             goal_result = await runner.run(request)
         except Exception as exc:

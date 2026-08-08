@@ -106,6 +106,7 @@ def make_config(**overrides: Any) -> SessionConfig:
         "show_tools": False,
         "as_json": False,
         "compress_tools": False,
+        "agent_loop": False,
         "chrome_path": "chrome.exe",
         "user_data_dir": "profile",
         "cdp_port": 9555,

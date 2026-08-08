@@ -4,6 +4,7 @@
 | --- | --- |
 | Agent graph | The compiled LangGraph state machine assembled by `build_agent_graph`. |
 | Agent Loop contracts | Runtime-facing contracts under `src/agent_loop/` for proposed actions, model turns, events, traces, metrics, context assembly, batch/export, evals, and goal lifecycle boundaries around the current graph engine. |
+| AgentLoopEngine | Transitional explicit loop shell that wraps `GoalRunner` behind the `AUTOBROWSER_AGENT_LOOP` feature flag. |
 | Agent node | The reasoning node that chooses a tool call, replans, or returns a final answer. |
 | AgentTraceSink | Event sink that writes compact human-readable trace projections beside durable event records. |
 | Assembled context | Deterministic prompt representation produced by `ContextAssembler` when `AUTOBROWSER_CONTEXT_MODE=assembled`. |

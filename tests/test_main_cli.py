@@ -82,6 +82,7 @@ def make_args(**overrides: Any) -> argparse.Namespace:
         "json": False,
         "no_mcp": True,
         "compress_tools": False,
+        "agent_loop": False,
         "chrome_path": "chrome.exe",
         "user_data_dir": "profile",
         "cdp_port": 9222,
@@ -134,11 +135,20 @@ def test_parser_accepts_cli_flags() -> None:
     assert args.json is True
     assert args.no_mcp is True
     assert args.compress_tools is True
+    assert args.agent_loop is False
     assert args.chrome_path == "chrome.exe"
     assert args.user_data_dir == "profile"
     assert args.cdp_port == 9333
     assert args.cdp_timeout == 5
     assert args.recursion_limit == 7
+
+
+def test_parser_accepts_agent_loop_flag() -> None:
+    parser = main.build_parser()
+
+    args = parser.parse_args(["--agent-loop"])
+
+    assert args.agent_loop is True
 
 
 def test_format_state_json() -> None:
@@ -388,3 +398,27 @@ async def test_run_agent_keeps_session_alive_for_prompted_task(monkeypatch, caps
     assert "done: first task" in output
     assert "done: second task" in output
     assert len(graphs) == 1
+
+
+@pytest.mark.asyncio
+async def test_run_agent_passes_agent_loop_flag_into_session(monkeypatch) -> None:
+    seen: dict[str, Any] = {}
+
+    class FakeSession:
+        async def run_forever(self, *, initial_task: str | None = None) -> int:
+            _ = initial_task
+            return 0
+
+        async def close(self) -> None:
+            return None
+
+    def fake_build_session(args: argparse.Namespace, **kwargs: Any) -> FakeSession:
+        seen["agent_loop"] = args.agent_loop
+        return FakeSession()
+
+    monkeypatch.setattr(main, "_build_session", fake_build_session)
+
+    exit_code = await main.run_agent(make_args(agent_loop=True))
+
+    assert exit_code == 0
+    assert seen["agent_loop"] is True

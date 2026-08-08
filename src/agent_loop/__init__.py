@@ -43,6 +43,7 @@ from src.agent_loop.export import (
     collect_session_export_rows,
     collect_session_export_rows_from_dir,
 )
+from src.agent_loop.engine import AgentLoopEngine, AgentLoopResult
 from src.agent_loop.goals import GoalRunRequest, GoalRunResult, GoalRunner
 from src.agent_loop.model import ActionParser, ModelDriver, ModelTurn
 from src.agent_loop.metrics import EventMetrics, extract_event_metrics
@@ -55,6 +56,8 @@ __all__ = [
     "AnswerAction",
     "AgentTraceSink",
     "AskUserAction",
+    "AgentLoopEngine",
+    "AgentLoopResult",
     "AgentTraceSink",
     "BatchScenario",
     "BatchSessionFactory",

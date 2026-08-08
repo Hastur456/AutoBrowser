@@ -15,6 +15,11 @@ DEFAULT_CHROME_PATH = os.getenv(
 DEFAULT_USER_DATA_DIR = os.getenv("USER_DATA_DIR", r"C:\temp\chrome_debug_profile")
 
 
+def _env_flag(name: str) -> bool:
+    value = os.getenv(name, "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
 
@@ -69,6 +74,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--compress-tools",
         action="store_true",
         help="Compress tool outputs and snapshots with the observer LLM.",
+    )
+    parser.add_argument(
+        "--agent-loop",
+        dest="agent_loop",
+        action=argparse.BooleanOptionalAction,
+        default=_env_flag("AUTOBROWSER_AGENT_LOOP"),
+        help="Use the explicit AgentLoopEngine shell. Default: AUTOBROWSER_AGENT_LOOP.",
     )
     parser.add_argument(
         "--chrome-path",
