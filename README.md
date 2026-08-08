@@ -12,6 +12,9 @@ snapshots and element refs instead of CSS selectors or DOM assumptions.
 - Loads Playwright MCP tools and connects them to Chrome over CDP.
 - Wraps browser tools behind a provider boundary so Playwright-specific schema
   adaptation stays out of the executor.
+- Provides runtime-adjacent Agent Loop contracts for actions, events, tracing,
+  replay, scenario evals, batch runs, exports, context assembly, and goal
+  lifecycle boundaries.
 - Executes tool calls through a harness-owned registry and policy layer.
 - Observes tool output and browser snapshots before deciding the next action.
 - Keeps a process-long session alive so multiple tasks can run without
@@ -149,6 +152,14 @@ python -m pytest tests\test_harness_session.py tests\test_harness_runtime.py
 python -m pytest tests\test_main_cli.py
 ```
 
+Focused checks for Agent Loop runtime contracts and observability:
+
+```powershell
+python -m pytest tests\test_agent_loop_events.py tests\test_agent_loop_tracing.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py
+python -m pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
+python -m pytest tests\test_context_assembler.py tests\test_goal_runner.py
+```
+
 Focused checks for browser provider work:
 
 ```powershell
@@ -167,14 +178,15 @@ python -m pytest tests\test_prompts.py
 | --- | --- |
 | `main.py` | CLI parsing and wiring the process into the session runtime. |
 | `src/agent/` | LangGraph graph assembly, state, prompts, reasoning node, and routers. |
+| `src/agent_loop/` | Runtime-facing action contracts, eventing, tracing, replay/evals, batch/export helpers, context assembly, and goal lifecycle boundaries around the current graph engine. |
 | `src/agent/subgraphs/planner/` | Planning graph and planner prompt. |
 | `src/agent/subgraphs/executor/` | Tool execution graph and provider-backed request/result normalization. |
 | `src/agent/subgraphs/observer/` | Tool-result observation, snapshot handling, and compact summaries. |
 | `src/browser/` | Browser provider contracts, canonical names, Playwright MCP adapter, and fake browser backend. |
 | `src/harness/` | Session runtime, graph harness, context, memory, tools, policy, and telemetry boundaries. |
 | `src/mcp/` | Playwright MCP process/session lifecycle helpers and provider loading. |
-| `tests/` | Pytest coverage for graph behavior, harness boundaries, CLI, prompts, and tools. |
-| `scripts/` | Utility scripts, including graph visualization helpers. |
+| `tests/` | Pytest coverage for graph behavior, harness boundaries, Agent Loop contracts, CLI, prompts, tools, batch/export, and deterministic eval scenarios. |
+| `scripts/` | Utility scripts for graph visualization, batch runs, session exports, trace replay/export, LangSmith trace export, and eval baseline checks. |
 | `docs/` | Architecture, setup, diagrams, decisions, research notes, and glossary. |
 
 ## Architecture

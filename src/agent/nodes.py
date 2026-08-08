@@ -8,11 +8,8 @@ from typing import Any
 from langchain_core.messages import BaseMessage, HumanMessage
 from langgraph.types import interrupt
 
-from src.harness.memory import (
-    append_tool_message,
-    ensure_message_history,
-    with_tool_call_id,
-)
+from src.agent_loop.adapters.langgraph import proposed_action_to_legacy_update
+from src.agent_loop.model import ModelDriver
 from src.agent.subgraphs.observer.nodes import (
     create_observe_node,
     observe_node,
@@ -36,7 +33,10 @@ from .utils import (
     _pending_tab_activation_request,
     _stale_snapshot_retry_update,
     _bind_tools,
-    _tool_call_to_request
+    _tool_call_to_request,
+    append_tool_message,
+    ensure_message_history,
+    with_tool_call_id,
 )
 
 
@@ -51,20 +51,19 @@ def create_agent_node(
 
     registry = tool_registry or ToolRegistry(tools=tools)
     prompt_context = context_builder or ContextBuilder()
-    tool_bound_llm = None
+    model_driver = ModelDriver(llm, tool_registry=registry)
     browser_tabs_available = False
     available_tools_cache: Sequence[Any] | None = None
 
     async def agent_node(state: AgentState) -> dict[str, Any]:
-        nonlocal tool_bound_llm, browser_tabs_available, available_tools_cache
+        nonlocal browser_tabs_available, available_tools_cache
 
-        if tool_bound_llm is None:
+        if available_tools_cache is None:
             available_tools_cache = await registry.get_all()
             browser_tabs_available = any(
                 registered_tool_name(tool) == "browser_tabs"
                 for tool in available_tools_cache
             )
-            tool_bound_llm = _bind_tools(llm, available_tools_cache)
 
         terminal = _terminal_guard(state)
         if terminal is not None:
@@ -90,19 +89,21 @@ def create_agent_node(
             state,
             available_tools_cache if available_tools_cache is not None else tools,
         )
-        response = await tool_bound_llm.ainvoke(
+        model_turn = await model_driver.invoke(
             [
                 *messages,
                 HumanMessage(content=turn_prompt),
-            ]
+            ],
+            tools=available_tools_cache if available_tools_cache is not None else tools,
         )
+        if model_turn.actions:
+            return proposed_action_to_legacy_update(
+                model_turn.actions[0],
+                state,
+                messages=messages,
+            )
 
-        tool_calls = getattr(response, "tool_calls", None) or []
-        if tool_calls:
-            tool_request = with_tool_call_id(_tool_call_to_request(tool_calls[0]))
-            if tool_request.get("name"):
-                return _tool_request_update(state, messages, tool_request)
-
+        response = model_turn.response
         content = _message_content(response)
         data = _json_object(content)
         decision = str(data.get("decision", "")).strip()

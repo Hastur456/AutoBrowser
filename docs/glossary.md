@@ -3,9 +3,13 @@
 | Term | Meaning |
 | --- | --- |
 | Agent graph | The compiled LangGraph state machine assembled by `build_agent_graph`. |
+| Agent Loop contracts | Runtime-facing contracts under `src/agent_loop/` for proposed actions, model turns, events, traces, metrics, context assembly, batch/export, evals, and goal lifecycle boundaries around the current graph engine. |
 | Agent node | The reasoning node that chooses a tool call, replans, or returns a final answer. |
+| AgentTraceSink | Event sink that writes compact human-readable trace projections beside durable event records. |
+| Assembled context | Deterministic prompt representation produced by `ContextAssembler` when `AUTOBROWSER_CONTEXT_MODE=assembled`. |
 | ArtifactRegistry | Session-owned registry for durable outputs such as screenshots, downloads, reports, or extracted files. |
 | AutoBrowser | The browser automation agent implemented in this repository. |
+| Batch run | Execution of JSONL Golden Set scenarios through fresh `SessionRuntime` instances, with metadata written under `.autobrowser/batches/<batch_id>/`. |
 | BrowserAction | Provider-neutral typed browser request using canonical `browser.*` action names. |
 | Browser error code | Shared browser-layer error vocabulary such as `invalid_ref`, `unknown_action`, and `action_failed`. |
 | BrowserHarness | Runtime composition wrapper that injects context, tools, memory, policy, and telemetry into the graph. |
@@ -17,8 +21,11 @@
 | Canonical browser action | Provider-neutral browser action name such as `browser.snapshot`, mapped to backend-specific tool names by adapters. |
 | Checkpointer | LangGraph persistence component owned by `MemoryManager`. |
 | Compact observation | Short observer output derived from a tool result and used by the next agent step. |
+| ContextAssembler | Runtime-facing context builder in `src/agent_loop/context.py` that renders ordered prompt blocks for the assembled context path. |
 | Direct search URL fallback | Navigating directly to a site's search results URL when UI search controls do not make progress. |
+| EventRecord | Durable JSON-safe event envelope for session, goal, graph, model, action, policy, tool, observation, and terminal lifecycle events. |
 | Executor | Subgraph that resolves and invokes approved tool requests. |
+| Export row | JSONL task-level analytics row produced by `scripts/export_sessions.py` from persisted session, task, event, feedback, and batch metadata. |
 | FakeBrowserProvider | Deterministic browser provider used by tests to replay snapshots without Chrome, CDP, or MCP. |
 | GraphRecursionError | LangGraph error raised when the graph exceeds the configured recursion limit. |
 | GoalState | Provider-neutral terminal state used by `GoalRunner` to determine explicit goal completion status during the migration to the new Agent Loop. |
@@ -37,6 +44,7 @@
 | Playwright MCP | Browser automation tool provider whose snapshot refs drive interactions. |
 | PlaywrightMCPBrowserProvider | Browser provider adapter that wraps Playwright MCP tools and normalizes request/result schema differences. |
 | PolicyEngine | Harness boundary that classifies tool requests as approved, needing human input, or blocked. |
+| ProposedAction | Provider-neutral model action contract used during the migration from legacy graph state updates to explicit Agent Loop actions. |
 | ref | Ephemeral Playwright MCP element identifier such as `e123`; valid only for the snapshot that produced it. |
 | SessionConfig | Args-derived configuration used to initialize a long-lived `SessionRuntime` and shared task config. |
 | SessionContext | Root object for one process-scoped session; owns session state, task history, workspace, artifacts, events, and runtime handles. |
@@ -55,3 +63,4 @@
 | TaskRecord | Session history entry for one user task, including task ID, task text, result, start time, and finish time. |
 | Task lifecycle | One user request delegated to the agent, ending when the compiled graph reaches a terminal task state. |
 | ToolRegistry | Lazy registry that exposes tools from static lists, generic providers, browser providers, or MCP clients. |
+| Trace replay | Loading `events.jsonl` records to summarize terminal status and print compact action sequences for diagnostics or eval failures. |

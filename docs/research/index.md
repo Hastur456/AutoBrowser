@@ -16,6 +16,13 @@ See [Agent Loop Runtime Research](2026-07-26-agent-loop-runtime-research.md).
 See also [Codex-Claude Runtime Migration Plan](2026-07-26-codex-claude-runtime-migration-plan.md)
 for a phased implementation plan.
 
+### Proposed Action Contract
+
+Phase 4 of the migration plan introduces a typed `ProposedAction` contract and
+`ModelDriver` boundary before the LangGraph loop is replaced.
+
+See [Phase 4 ProposedAction Contract Research](2026-08-05-phase-4-proposed-action-contract-research.md).
+
 ### Search Flow Robustness
 
 Recent execution traces showed a failure mode on dynamic commerce pages:

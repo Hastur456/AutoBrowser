@@ -24,12 +24,18 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Batch And Export Data Contracts](development/2026-07-30-batch-export-data-contracts.md):
   current observability sources and JSONL contracts for batch scenarios, run
   indexes, feedback, metrics, and export rows.
+- [Context Assembler And Prompt Split Plan](development/2026-08-01-context-assembler-prompt-split.md):
+  current plan and rollback switch for assembled context rendering through
+  `AUTOBROWSER_CONTEXT_MODE`.
 - [GoalRunner Branch Plan](development/2026-08-01-goal-runner-branch-plan.md):
   current one-task lifecycle boundary and follow-up migration path toward the
   new Agent Loop.
 - [Agent Loop Legacy Outcomes Cleanup](development/2026-08-05-agent-loop-legacy-outcomes.md):
   TODO for removing the transitional `outcomes.py` compatibility layer after
   provider-neutral terminal state is emitted by the new Agent Loop.
+- [Agent Loop Engine Migration Touchpoints](development/2026-08-08-agent-loop-engine-migration-touchpoints.md):
+  checklist of legacy LangGraph, harness, browser, eval, CLI, and exporter
+  coupling to rewrite before enabling a new Agent Loop engine by default.
 - [Session-Scoped Agent Context Memory ADR](decisions/2026-07-25-session-scoped-agent-context-memory.md):
   decision record for preserving useful agent context across tasks in one
   interactive session.

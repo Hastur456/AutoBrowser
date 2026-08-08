@@ -26,7 +26,7 @@ structure.
 | --- | --- |
 | `main.py` | CLI parsing and wiring the process into `SessionRuntime`. |
 | `src/cli/` | `cmd2` interactive REPL and user-facing session commands. |
-| `src/agent_loop/` | Runtime-adjacent lifecycle, eventing, tracing, eval, context, and goal-runner boundaries around the current graph engine. |
+| `src/agent_loop/` | Runtime-facing action contracts, model action parsing, lifecycle events, tracing, replay/evals, metrics, batch/export helpers, context assembly, skills, and goal-runner boundaries around the current graph engine. |
 | `src/agent/` | LangGraph graph assembly, shared state, prompts, reasoning node, routers. |
 | `src/agent/subgraphs/planner/` | One-shot planning graph and planning prompts. |
 | `src/agent/subgraphs/executor/` | Tool execution graph and provider-backed request/result normalization. |
@@ -34,8 +34,8 @@ structure.
 | `src/browser/` | Provider-neutral browser contracts, canonical browser names, backend adapters, and fake browser tools for tests. |
 | `src/harness/` | Session runtime, graph harness, context, memory, tools, policy, and telemetry boundaries. |
 | `src/mcp/` | Playwright MCP process/session lifecycle helpers and provider loading. |
-| `tests/` | Pytest coverage for graph behavior, harness boundaries, CLI, prompts, and tools. |
-| `scripts/` | Utility scripts, including graph visualization helpers. |
+| `tests/` | Pytest coverage for graph behavior, harness boundaries, Agent Loop contracts, CLI, prompts, tools, batch/export, and deterministic eval scenarios. |
+| `scripts/` | Utility scripts for graph visualization, batch runs, session exports, trace replay/export, LangSmith trace export, and eval baseline checks. |
 
 ## Graph Shape
 
@@ -102,6 +102,28 @@ into provider-neutral `GoalState`. That adapter knows about `final_answer` and
 provider-neutral terminal state directly so `GoalRunner` no longer depends on
 `LegacyAgentStateObservationCompiler`, `CompletionGuard`, or any legacy
 `AgentState` inspection.
+
+Other `src/agent_loop/` modules are runtime-facing contracts and diagnostics
+around the current graph engine:
+
+- `actions.py` and `model.py` define provider-neutral proposed actions and a
+  model response parser/driver.
+- `events.py`, `tracing.py`, `replay.py`, and `metrics.py` provide durable
+  event records, compact trace projections, replay summaries, and metric
+  extraction.
+- `batch.py`, `export.py`, and `evals.py` power Golden Set runs, session export
+  rows, and deterministic fake-browser scenario checks.
+- `context.py`, `prompts.py`, and `skills.py` provide the assembled context
+  path selected with `AUTOBROWSER_CONTEXT_MODE=assembled`.
+- `adapters/langgraph.py` maps proposed actions back to the current LangGraph
+  state update shape during the migration.
+
+Before enabling a new `AgentLoopEngine` by default, treat `outcomes.py`,
+`adapters/langgraph.py`, `BrowserHarness`, most `src/harness/` state/config
+handoff code, and browser provider normalization as migration touchpoints, not
+stable final architecture. See
+[Agent Loop Engine Migration Touchpoints](../development/2026-08-08-agent-loop-engine-migration-touchpoints.md)
+for the full checklist.
 
 The interactive CLI in `src/cli/agent_cli.py` wraps a prepared
 `SessionRuntime`. It keeps all asynchronous session operations on one dedicated
@@ -273,3 +295,8 @@ The project follows Playwright MCP semantics:
 - `src/agent_loop/outcomes.py` is transitional compatibility debt. It should
   be removed or reduced to stable provider-neutral types after the new Agent
   Loop emits terminal goal state directly.
+- The new Agent Loop engine migration must also rewrite the LangGraph adapter,
+  `BrowserHarness`, session state handoff, policy state patches, browser
+  provider request/result normalization, eval runner wiring, CLI streaming, and
+  export/metrics assumptions that still read legacy graph state. Track this in
+  [Agent Loop Engine Migration Touchpoints](../development/2026-08-08-agent-loop-engine-migration-touchpoints.md).
