@@ -1,28 +1,46 @@
-"""Observation translation for executor results."""
+"""Engine-native observation compiler.
+
+Ported from ``src/agent/subgraphs/observer/nodes.py`` (``compile_observation`` and its
+snapshot-fingerprint / action-identity helpers). Snapshot fingerprinting,
+unchanged-snapshot termination at :data:`MAX_UNCHANGED_SNAPSHOTS`, ineffective-action
+detection, browser-state clearing, ``consecutive_failures`` accounting, stale/invalid-ref
+handling, and pending-tab tracking are preserved. State access changes from ``AgentState``
+dict ``.get(...)`` reads to typed :class:`~src.agent_loop.execution.state.LoopState`
+attribute access, and the returned flat update dict is applied through
+:meth:`LoopState.apply`.
+
+Deliberately **not** ported: the legacy keyword-heuristic plan advancement
+(``_plan_completion_update`` and its hardcoded natural-language term lists). The
+engine-native path does not auto-advance the plan from observation text — plan progression
+is driven by the planner/model (via ``update_plan``/replan) and the loop, not by matching
+observation text against a hardcoded verb list. Behavioral divergence from the legacy graph
+on plan-advance-dependent scenarios is expected and covered by relaxed parity assertions.
+
+The browser-schema observation leaves live in :mod:`src.browser.observation`; the tool-message
+builders in ``harness/memory.py`` are reused directly. This module imports nothing from
+``src/agent/``.
+"""
 
 from __future__ import annotations
 
 import re
 from typing import Any
 
-from src.harness.memory import append_tool_message, tool_result_message_content
-from src.browser.adapters import element_description_from_snapshot
-from src.agent.subgraphs.observer.observer_llm import (
-    compress_tool_result,
-    fallback_compact_observation,
-)
-from src.contracts import MAX_UNCHANGED_SNAPSHOTS
-from src.agent.state import AgentState, CompactToolObservation
-from .utils import (
+from src.contracts import CompactToolObservation
+from src.browser.observation import (
     BROWSER_ACTION_TOOLS,
-    extract_element_refs,
     _needs_fresh_snapshot_after_error,
     _observation_lines,
-    _plan_completion_update,
+    extract_element_refs,
+    fallback_compact_observation,
     pending_tab_activation_from_result,
     request_ref_value,
     snapshot_contains_ref,
 )
+from src.browser.adapters import element_description_from_snapshot
+from src.harness.memory import append_tool_message, tool_result_message_content
+
+from src.agent_loop.execution.state import MAX_UNCHANGED_SNAPSHOTS, LoopState
 
 
 def _snapshot_fingerprint(snapshot: str) -> str:
@@ -61,7 +79,7 @@ def _same_action(left: Any, right: Any) -> bool:
 
 
 def _needs_fresh_snapshot_after_timeout(
-    state: AgentState,
+    state: LoopState,
     result: dict[str, Any],
     request: dict[str, Any],
 ) -> bool:
@@ -74,19 +92,23 @@ def _needs_fresh_snapshot_after_timeout(
     if not requested_ref:
         return False
 
-    snapshot = str(state.get("snapshot", "") or "")
+    snapshot = str(state.browser.snapshot or "")
     return not snapshot.strip() or not snapshot_contains_ref(snapshot, requested_ref)
 
 
 def compile_observation(
-    state: AgentState,
+    state: LoopState,
     compact_observation: CompactToolObservation | None = None,
     *,
     compress_tool_output: bool = False,
 ) -> dict[str, Any]:
-    """Translate the latest ToolResult into a plain observation string."""
+    """Translate the latest ToolResult into a plain observation update dict.
 
-    result = state.get("tool_result") or {}
+    Does not touch ``plan``/``current_step``/``steps_without_plan_advance`` — plan
+    progression is model/loop-driven on the engine-native path (see module docstring).
+    """
+
+    result = state.tool_result or {}
     tool_name = str(result.get("name", "") or "")
     status = result.get("status", "error")
     content = str(result.get("content", "") or "")
@@ -95,7 +117,7 @@ def compile_observation(
     is_browser_tool = tool_name.startswith("browser_")
     is_browser_action = tool_name in BROWSER_ACTION_TOOLS
     is_snapshot = tool_name == "browser_snapshot" and status == "success"
-    request = state.get("tool_request") or {}
+    request = state.tool_request or {}
     timed_out_stale_ref = status == "error" and _needs_fresh_snapshot_after_timeout(
         state,
         result,
@@ -118,7 +140,7 @@ def compile_observation(
     if pending_tab_activation:
         _, pending_tab_reason = pending_tab_activation
         observation_lines.append(pending_tab_reason)
-    messages = list(state.get("messages") or [])
+    messages = list(state.messages or [])
 
     updates: dict[str, Any] = {
         "decision": "tool_call",
@@ -127,8 +149,8 @@ def compile_observation(
     }
 
     if is_snapshot:
-        prior_unchanged_snapshots = int(state.get("unchanged_snapshot_count", 0) or 0)
-        previous_browser_snapshot = str(state.get("snapshot", "") or "")
+        prior_unchanged_snapshots = int(state.unchanged_snapshot_count or 0)
+        previous_browser_snapshot = str(state.browser.snapshot or "")
         current_fingerprint = _snapshot_fingerprint(content)
         previous_browser_fingerprint = _snapshot_fingerprint(previous_browser_snapshot)
 
@@ -140,14 +162,14 @@ def compile_observation(
         updates["snapshot"] = content
         updates["needs_fresh_snapshot"] = False
         updates["unchanged_snapshot_count"] = unchanged_snapshot_count
-        previous_snapshot = str(state.get("snapshot_before_last_browser_action", "") or "")
-        last_action = state.get("last_browser_action") or {}
+        previous_snapshot = str(state.browser.snapshot_before_last_browser_action or "")
+        last_action = state.browser.last_browser_action or {}
         if previous_snapshot and last_action:
             previous_fingerprint = _snapshot_fingerprint(previous_snapshot)
             if current_fingerprint == previous_fingerprint:
-                prior_ineffective = state.get("ineffective_browser_action") or {}
-                prior_count = int(state.get("ineffective_action_count", 0) or 0)
-                prior_history = list(state.get("ineffective_browser_actions") or [])
+                prior_ineffective = state.browser.ineffective_browser_action or {}
+                prior_count = int(state.ineffective_action_count or 0)
+                prior_history = list(state.browser.ineffective_browser_actions or [])
                 updates["ineffective_browser_action"] = last_action
                 updates["ineffective_browser_actions"] = [
                     *prior_history,
@@ -172,7 +194,7 @@ def compile_observation(
                 updates["pending_browser_tab_index"] = 0
                 updates["pending_browser_tab_reason"] = ""
             if is_browser_action:
-                action_snapshot = str(state.get("snapshot", "") or "")
+                action_snapshot = str(state.browser.snapshot or "")
                 updates["snapshot_before_last_browser_action"] = action_snapshot
                 updates["last_browser_action"] = _action_identity(
                     request,
@@ -194,11 +216,11 @@ def compile_observation(
         failed_action = _action_identity(
             request,
             tool_name,
-            str(state.get("snapshot", "") or ""),
+            str(state.browser.snapshot or ""),
         )
-        prior_ineffective = state.get("ineffective_browser_action") or {}
-        prior_count = int(state.get("ineffective_action_count", 0) or 0)
-        prior_history = list(state.get("ineffective_browser_actions") or [])
+        prior_ineffective = state.browser.ineffective_browser_action or {}
+        prior_count = int(state.ineffective_action_count or 0)
+        prior_history = list(state.browser.ineffective_browser_actions or [])
         updates["ineffective_browser_action"] = failed_action
         updates["ineffective_browser_actions"] = [
             *prior_history,
@@ -225,21 +247,6 @@ def compile_observation(
     updates["messages"] = append_tool_message(messages, request, tool_message)
 
     if status == "success":
-        plan = state.get("plan") or []
-        current_step = int(state.get("current_step", 0) or 0)
-        plan_update = _plan_completion_update(
-            plan,
-            current_step,
-            compact,
-            tool_name=tool_name,
-        )
-        updates.update(plan_update)
-        if plan_update:
-            updates["steps_without_plan_advance"] = 0
-        elif plan and current_step < len(plan):
-            updates["steps_without_plan_advance"] = (
-                int(state.get("steps_without_plan_advance", 0) or 0) + 1
-            )
         updates["error"] = ""
         updates["consecutive_failures"] = 0
         if tool_name != "browser_snapshot":
@@ -261,34 +268,13 @@ def compile_observation(
     else:
         updates["error"] = str(result.get("error", "") or "")
         updates["consecutive_failures"] = (
-            int(state.get("consecutive_failures", 0) or 0) + 1
+            int(state.consecutive_failures or 0) + 1
         )
 
     return updates
 
 
-def observe_node(state: AgentState) -> dict[str, Any]:
-    """Compile executor output into MCP-aware observation state without an LLM."""
-
-    return compile_observation(state)
-
-
-def create_observe_node(
-    observer_llm: Any | None = None,
-    *,
-    compress_tools: bool = False,
-) -> Any:
-    """Create an observer node whose LLM only sees the latest ToolResult."""
-
-    async def _observe_node(state: AgentState) -> dict[str, Any]:
-        result = state.get("tool_result") or {}
-        compact_observation = None
-        if compress_tools:
-            compact_observation = await compress_tool_result(result, observer_llm)
-        return compile_observation(
-            state,
-            compact_observation,
-            compress_tool_output=compress_tools,
-        )
-
-    return _observe_node
+__all__ = [
+    "MAX_UNCHANGED_SNAPSHOTS",
+    "compile_observation",
+]
