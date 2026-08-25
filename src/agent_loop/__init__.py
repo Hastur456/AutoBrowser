@@ -47,7 +47,6 @@ from src.agent_loop.engine import AgentLoopEngine, AgentLoopResult
 from src.agent_loop.goals import GoalRunRequest, GoalRunResult, GoalRunner
 from src.agent_loop.model import ActionParser, ModelDriver, ModelTurn
 from src.agent_loop.metrics import EventMetrics, extract_event_metrics
-from src.agent_loop.adapters import proposed_action_to_legacy_update
 
 __all__ = [
     "ActionKind",
@@ -92,7 +91,6 @@ __all__ = [
     "delegate_action",
     "is_terminal_action",
     "normalize_tool_request",
-    "proposed_action_to_legacy_update",
     "stop_action",
     "tool_call_action",
     "update_plan_action",

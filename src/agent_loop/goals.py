@@ -13,7 +13,6 @@ from src.agent_loop.outcomes import (
     CompletionGuard,
     GoalStateCompletionGuard,
     GoalStatus,
-    LegacyAgentStateObservationCompiler,
     ObservationCompiler,
     goal_status_from_completion,
 )
@@ -72,9 +71,13 @@ class GoalRunner:
         self._task_runner = task_runner
         self._event_emitter = event_emitter
         self._latest_state_loader = latest_state_loader
-        self._observation_compiler = (
-            observation_compiler or LegacyAgentStateObservationCompiler()
-        )
+        if observation_compiler is None:
+            # Imported lazily: execution.completion → execution.loop pulls in the engine
+            # and its resource composition, which must not load at goals import time.
+            from src.agent_loop.execution.completion import NativeObservationCompiler
+
+            observation_compiler = NativeObservationCompiler()
+        self._observation_compiler = observation_compiler
         self._completion_guard = completion_guard or GoalStateCompletionGuard()
 
     async def run(self, request: GoalRunRequest) -> GoalRunResult:
@@ -344,7 +347,6 @@ __all__ = [
     "GoalStateCompletionGuard",
     "GoalStatus",
     "LatestStateLoader",
-    "LegacyAgentStateObservationCompiler",
     "ObservationCompiler",
     "TaskRunner",
 ]

@@ -1,14 +1,14 @@
 """Native completion mapping for the engine-native execution path.
 
-Replaces :class:`~src.agent_loop.outcomes.LegacyAgentStateObservationCompiler` for the native
-loop. Where the legacy compiler inspects an ``AgentState`` mapping to decide the terminal
-:class:`~src.agent_loop.outcomes.CompletionStatus`, :class:`NativeObservationCompiler` reads the
-status the loop already computed on :class:`~src.agent_loop.execution.loop.EngineRunResult` — so
-the native path never constructs an ``AgentState`` and never touches ``outcomes.py`` internals
-beyond the public :class:`~src.agent_loop.outcomes.GoalState` it must return.
+Where the (now-removed) legacy compiler inspected an ``AgentState`` mapping to decide the
+terminal :class:`~src.agent_loop.outcomes.CompletionStatus`, :class:`NativeObservationCompiler`
+reads the status the loop already computed on
+:class:`~src.agent_loop.execution.loop.AgentLoopResult` — so the native path never constructs
+an ``AgentState`` and never touches ``outcomes.py`` internals beyond the public
+:class:`~src.agent_loop.outcomes.GoalState` it must return.
 
 ``native_latest_state_loader`` supplies the cross-task carry-forward: the loop already emits the
-``SESSION_STATE_KEYS`` subset as ``EngineRunResult.session_state`` (via
+``SESSION_STATE_KEYS`` subset as :attr:`AgentLoopResult.session_state` (via
 :meth:`LoopState.to_session_state`), so the loader just hands that dict back to
 :meth:`SessionContext.state.replace` through the ``GoalRunner``.
 """
@@ -18,12 +18,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from src.agent_loop.execution.loop import AgentLoopResult
 from src.agent_loop.outcomes import CompletionStatus, GoalState
-from src.agent_loop.execution.loop import EngineRunResult
 
 
 class NativeObservationCompiler:
-    """Map an :class:`EngineRunResult` to a :class:`GoalState` with no ``AgentState``."""
+    """Map an :class:`AgentLoopResult` to a :class:`GoalState` with no ``AgentState``."""
 
     def compile(
         self,
@@ -32,7 +32,7 @@ class NativeObservationCompiler:
         result: Any,
     ) -> GoalState:
         status: CompletionStatus
-        if isinstance(result, EngineRunResult):
+        if isinstance(result, AgentLoopResult):
             status = result.status
         else:
             # Defensive: an unexpected result shape cannot be treated as terminal-done.
@@ -50,7 +50,7 @@ async def native_latest_state_loader(
     carries the ``SESSION_STATE_KEYS`` dict, so no harness state read is needed.
     """
 
-    if isinstance(fallback, EngineRunResult):
+    if isinstance(fallback, AgentLoopResult):
         return dict(fallback.session_state)
     if isinstance(fallback, Mapping):
         return dict(fallback)

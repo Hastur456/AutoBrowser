@@ -15,7 +15,7 @@ control logic is re-homed here.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.contracts import ToolRequest
 from src.browser.observation import (
@@ -37,7 +37,16 @@ from src.agent_loop.execution.state import (
     MAX_CONSECUTIVE_FAILURES,
     MAX_REPLANS,
     MAX_STEPS_WITHOUT_PLAN_ADVANCE,
+    MAX_UNCHANGED_SNAPSHOTS,
     LoopState,
+)
+
+if TYPE_CHECKING:
+    from src.agent_loop.outcomes import CompletionStatus
+
+REPEATED_SNAPSHOT_OBSERVATION_FINAL_ANSWER = (
+    "Stopped because browser_snapshot returned the same visible state "
+    "three consecutive times. Latest observation:\n\n{observation}"
 )
 
 SNAPSHOT_REUSE_MARKERS = (
@@ -151,6 +160,64 @@ def _terminal_guard(state: LoopState) -> dict[str, Any] | None:
         )
 
     return None
+
+
+class CompletionController:
+    """Single owner of every terminal decision on the native loop.
+
+    Consolidates completion logic that previously lived in two places: the pre-turn
+    :func:`_terminal_guard` (replan / consecutive-failure / stalled-plan limits) and the
+    unchanged-snapshot terminal that used to be inlined inside ``compile_observation``.
+    :class:`~src.agent_loop.execution.observation.ObservationCompiler` delegates the
+    observation terminal here so no completion policy is scattered through observation
+    building, and the loop derives its terminal status through :meth:`status_from_state`.
+    """
+
+    def pre_turn_terminal(self, state: LoopState) -> dict[str, Any] | None:
+        """Return a terminal update if a pre-model-turn limit/decision fired, else ``None``."""
+
+        return _terminal_guard(state)
+
+    def observation_terminal_update(
+        self,
+        *,
+        is_snapshot: bool,
+        status: Any,
+        unchanged_snapshot_count: int,
+        observation: str,
+    ) -> dict[str, Any] | None:
+        """Terminate the run when ``browser_snapshot`` repeats an unchanged view.
+
+        Mirrors the legacy ``compile_observation`` block: only a successful snapshot whose
+        unchanged streak reached :data:`MAX_UNCHANGED_SNAPSHOTS` ends the goal, and the
+        terminal observation is replaced by the final-answer text verbatim.
+        """
+
+        if status != "success" or not is_snapshot:
+            return None
+        if int(unchanged_snapshot_count or 0) < MAX_UNCHANGED_SNAPSHOTS:
+            return None
+        final_answer = REPEATED_SNAPSHOT_OBSERVATION_FINAL_ANSWER.format(
+            observation=observation
+        )
+        return {
+            "decision": "done",
+            "final_answer": final_answer,
+            "observation": final_answer,
+        }
+
+    @staticmethod
+    def status_from_state(state: LoopState) -> "CompletionStatus":
+        """Derive a terminal status from ``LoopState`` (ports ``_completion_status_from_agent_state``)."""
+
+        final_answer = str(state.final_answer or "").strip()
+        if not final_answer:
+            return "continue"
+        if final_answer.lower().startswith("blocked:"):
+            return "blocked"
+        if str(state.decision or "").strip().lower() == "blocked":
+            return "blocked"
+        return "done"
 
 
 def _has_reusable_current_snapshot(state: LoopState) -> bool:
@@ -519,8 +586,10 @@ __all__ = [
     "MAX_REPLANS",
     "MAX_STEPS_WITHOUT_PLAN_ADVANCE",
     "REPEATED_SNAPSHOT_FINAL_ANSWER",
+    "REPEATED_SNAPSHOT_OBSERVATION_FINAL_ANSWER",
     "SNAPSHOT_REUSE_MARKER",
     "SNAPSHOT_REUSE_MARKERS",
+    "CompletionController",
     "blocked_response",
     "browser_action_key",
     "complete_plan_update",

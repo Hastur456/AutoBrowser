@@ -10,13 +10,18 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from src.agent_loop.engine import native_task_runner
 from src.agent_loop.events import (
     AgentTraceSink,
     CompositeEventSink,
     EventEmitter,
     JsonlEventSink,
 )
-from src.agent_loop.engine import AgentLoopEngine
+from src.agent_loop.execution.completion import (
+    NativeObservationCompiler,
+    native_latest_state_loader,
+)
+from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalRunRequest, GoalRunner
 from src.browser import BrowserProvider
 from src.harness.memory import MemoryManager
@@ -24,13 +29,11 @@ from src.harness.runtime import (
     HARNESS_EVENT_METADATA_CONFIG_KEY,
     HARNESS_STATE_OVERRIDES_CONFIG_KEY,
     BrowserHarness,
-    GraphBuilder,
 )
 from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolRegistry
 
 
-TaskRunner = Callable[[BrowserHarness, str, Any, dict[str, Any]], Awaitable[Any]]
 LLMFactory = Callable[..., Any]
 HarnessFactory = Callable[..., BrowserHarness]
 EventHandler = Callable[[str, object | None], None]
@@ -343,52 +346,6 @@ def _task_state_overrides(
     }
 
 
-def _state_from_task_result(result: Any) -> dict[str, object] | None:
-    if not isinstance(result, dict):
-        return None
-
-    state = result.get("state")
-    if isinstance(state, dict):
-        return dict(state)
-
-    if len(result) == 1:
-        nested = next(iter(result.values()))
-        if isinstance(nested, dict):
-            return dict(nested)
-
-    return dict(result)
-
-
-class HarnessLatestStateLoader:
-    """Load latest task state from the harness, with result fallback."""
-
-    def __init__(self, harness: object) -> None:
-        self._harness = harness
-
-    async def __call__(
-        self,
-        task_config: Mapping[str, Any],
-        fallback: Any | None,
-    ) -> dict[str, object] | None:
-        state = await self._latest_harness_state(task_config)
-        if state is None:
-            state = _state_from_task_result(fallback)
-        return state
-
-    async def _latest_harness_state(
-        self,
-        task_config: Mapping[str, Any],
-    ) -> dict[str, object] | None:
-        get_state_values = getattr(self._harness, "get_state_values", None)
-        if not callable(get_state_values):
-            return None
-
-        values = await get_state_values(config=task_config)
-        if isinstance(values, dict):
-            return dict(values)
-        return None
-
-
 class SessionEventBus:
     """Synchronous event bus for session lifecycle events."""
 
@@ -433,7 +390,6 @@ class SessionContext:
     async def initialize(
         self,
         *,
-        graph_builder: GraphBuilder,
         llm_factory: LLMFactory,
         start_chrome_cdp: Callable[[str, str, int], Any],
         wait_for_port: Callable[[int, float], Awaitable[None]],
@@ -483,7 +439,6 @@ class SessionContext:
         self.memory = MemoryManager()
         self.tool_registry = ToolRegistry(providers=browser_providers)
         self.harness = harness_factory(
-            graph_builder,
             llm=self.llm,
             tool_registry=self.tool_registry,
             memory_manager=self.memory,
@@ -621,9 +576,7 @@ class SessionRuntime:
         self,
         config: SessionConfig,
         *,
-        graph_builder: GraphBuilder,
         llm_factory: LLMFactory,
-        task_runner: TaskRunner,
         start_chrome_cdp: Callable[[str, str, int], Any],
         wait_for_port: Callable[[int, float], Awaitable[None]],
         load_browser_provider: Callable[[int], Awaitable[BrowserProvider]],
@@ -635,9 +588,7 @@ class SessionRuntime:
     ) -> None:
         self.config = config
         self.context = SessionContext(config)
-        self._graph_builder = graph_builder
         self._llm_factory = llm_factory
-        self._task_runner = task_runner
         self._start_chrome_cdp = start_chrome_cdp
         self._wait_for_port = wait_for_port
         self._load_browser_provider = load_browser_provider
@@ -659,7 +610,6 @@ class SessionRuntime:
         """Initialize long-lived resources once for this process session."""
 
         await self.context.initialize(
-            graph_builder=self._graph_builder,
             llm_factory=self._llm_factory,
             start_chrome_cdp=self._start_chrome_cdp,
             wait_for_port=self._wait_for_port,
@@ -700,7 +650,6 @@ class SessionRuntime:
             config=task_config,
             state_overrides=task_config[HARNESS_STATE_OVERRIDES_CONFIG_KEY],
         )
-        latest_state_loader = HarnessLatestStateLoader(self.harness)
         latest_state: dict[str, object] | None = None
 
         async def load_latest_state(
@@ -708,25 +657,22 @@ class SessionRuntime:
             fallback: Any | None,
         ) -> dict[str, object] | None:
             nonlocal latest_state
-            latest_state = await latest_state_loader(config, fallback)
+            latest_state = await native_latest_state_loader(config, fallback)
             return latest_state
 
-        if self.config.agent_loop:
-            runner = AgentLoopEngine(
-                harness=self.harness,
-                session_config=self.config,
-                task_runner=self._task_runner,
-                event_emitter=self.context.event_emitter,
-                latest_state_loader=load_latest_state,
-            )
-        else:
-            runner = GoalRunner(
-                harness=self.harness,
-                session_config=self.config,
-                task_runner=self._task_runner,
-                event_emitter=self.context.event_emitter,
-                latest_state_loader=load_latest_state,
-            )
+        resources = EngineResources.from_harness(
+            self.harness,
+            llm=self.context.llm,
+            events=self.context.event_emitter,
+        )
+        runner = GoalRunner(
+            harness=self.harness,
+            session_config=self.config,
+            task_runner=native_task_runner(resources),
+            event_emitter=self.context.event_emitter,
+            latest_state_loader=load_latest_state,
+            observation_compiler=NativeObservationCompiler(),
+        )
         try:
             goal_result = await runner.run(request)
         except Exception as exc:

@@ -33,12 +33,17 @@ from src.agent_loop.execution.completion import (
     native_latest_state_loader,
 )
 from src.agent_loop.execution.loop import (
-    AgentExecutionLoop,
-    EngineRunResult,
+    AgentLoopEngine,
+    AgentLoopResult,
     HumanInputCallback,
+    TurnController,
+    TurnResult,
     native_task_runner,
 )
-from src.agent_loop.execution.observation import compile_observation
+from src.agent_loop.execution.observation import (
+    ObservationCompiler,
+    compile_observation,
+)
 from src.agent_loop.execution.policy import (
     BLOCKED_TOOL_MARKERS,
     classify_tool_request,
@@ -63,14 +68,17 @@ __all__ = [
     "MAX_UNCHANGED_SNAPSHOTS",
     "REPEATED_SNAPSHOT_FINAL_ANSWER",
     "SNAPSHOT_REUSE_MARKERS",
-    "AgentExecutionLoop",
+    "AgentLoopEngine",
+    "AgentLoopResult",
     "BrowserState",
     "EngineResources",
-    "EngineRunResult",
     "HumanInputCallback",
     "LoopState",
     "NativeObservationCompiler",
+    "ObservationCompiler",
     "ToolBroker",
+    "TurnController",
+    "TurnResult",
     "blocked_response",
     "classify_tool_request",
     "compile_observation",
