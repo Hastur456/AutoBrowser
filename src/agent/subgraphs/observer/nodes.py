@@ -11,6 +11,7 @@ from src.agent.subgraphs.observer.observer_llm import (
     compress_tool_result,
     fallback_compact_observation,
 )
+from src.contracts import MAX_UNCHANGED_SNAPSHOTS
 from src.agent.state import AgentState, CompactToolObservation
 from .utils import (
     BROWSER_ACTION_TOOLS,
@@ -22,9 +23,6 @@ from .utils import (
     request_ref_value,
     snapshot_contains_ref,
 )
-
-
-MAX_UNCHANGED_SNAPSHOTS = 3
 
 
 def _snapshot_fingerprint(snapshot: str) -> str:

@@ -8,11 +8,9 @@ from typing import Any
 
 from langchain_ollama import ChatOllama
 
-from src.agent.agent import build_agent_graph
 from src.browser import BrowserProvider
 from src.cli.agent_cli import run_cli
 from src.cli.output import print_tools
-from src.cli.task_runner import run_task
 from src.cli.tasks import resolve_initial_task
 from src.harness.chrome import start_chrome_cdp, wait_for_port
 from src.harness.langsmith import configure_langsmith_tracing
@@ -23,9 +21,7 @@ from src.mcp.playwright_runtime import close_mcp_session, load_browser_provider
 def build_session(
     args: argparse.Namespace,
     *,
-    graph_builder: Callable[..., Any] = build_agent_graph,
     llm_factory: Callable[..., Any] = ChatOllama,
-    task_runner: Callable[..., Awaitable[Any]] = run_task,
     start_chrome: Callable[[str, str, int], Any] = start_chrome_cdp,
     wait_for_cdp_port: Callable[[int, float], Awaitable[None]] = wait_for_port,
     browser_provider_loader: Callable[[int], Awaitable[BrowserProvider]] = load_browser_provider,
@@ -41,9 +37,7 @@ def build_session(
     session_config = SessionConfig.from_args(args, tracing_enabled=tracing_enabled)
     return SessionRuntime(
         session_config,
-        graph_builder=graph_builder,
         llm_factory=llm_factory,
-        task_runner=task_runner,
         start_chrome_cdp=start_chrome,
         wait_for_port=wait_for_cdp_port,
         load_browser_provider=browser_provider_loader,

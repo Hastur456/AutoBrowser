@@ -1,53 +1,51 @@
+"""Observer leaf helpers for the legacy LangGraph observer.
+
+Split by responsibility:
+
+- Browser-schema adaptation and deterministic tool-result rendering (element refs, tab
+  activation, invalid/stale-ref detection, observation-line formatting) now live in the
+  browser layer at :mod:`src.browser.observation` and are re-exported here unchanged so
+  existing ``from src.agent.subgraphs.observer.utils import ...`` imports keep working.
+- Plan/step-completion heuristics (hardcoded natural-language term lists + keyword matching
+  used to auto-advance the plan) are agent-loop reasoning, not browser-schema adaptation, so
+  they stay defined **here**, local to the legacy observer. The engine-native execution path
+  deliberately does not use them.
+"""
+
 from __future__ import annotations
 
 from typing import Any
 import re
 
-from src.agent.state import CompactToolObservation, PlanStep, ToolResult
+from src.agent.state import CompactToolObservation, PlanStep
+from src.browser.observation import (
+    BROWSER_ACTION_TOOLS,
+    INVALID_REF_PATTERN,
+    MAX_CONTENT_PREVIEW_CHARS,
+    MAX_REFS_IN_OBSERVATION,
+    NEW_TAB_MARKER_PATTERN,
+    REF_INTERACTION_TOOLS,
+    REF_PATTERN,
+    REF_VALUE_PATTERN,
+    STALE_OR_MISSING_ELEMENT_PATTERNS,
+    TAB_INDEX_PATTERN,
+    TAB_LIST_ITEM_PATTERN,
+    _clean_invalid_ref_text,
+    _has_invalid_ref_error,
+    _needs_fresh_snapshot_after_error,
+    _observation_lines,
+    compact_text,
+    extract_element_refs,
+    has_invalid_ref_text,
+    has_stale_or_missing_element_text,
+    is_ref_value,
+    pending_tab_activation_from_result,
+    raw_text,
+    request_ref_value,
+    snapshot_contains_ref,
+)
 
-
-MAX_CONTENT_PREVIEW_CHARS = 1200
-MAX_REFS_IN_OBSERVATION = 25
-REF_PATTERN = re.compile(r"\bref=([A-Za-z][A-Za-z0-9_-]*)\b")
-REF_VALUE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 WORD_PATTERN = re.compile(r"[\w]+", re.UNICODE)
-TAB_INDEX_PATTERN = re.compile(r"\bTab\s+(?P<index>\d+)\b", re.IGNORECASE)
-TAB_LIST_ITEM_PATTERN = re.compile(
-    r"^\s*(?:[-*]\s*)?(?P<index>\d+)\s*:\s*(?P<body>.+?)\s*$",
-    re.MULTILINE,
-)
-NEW_TAB_MARKER_PATTERN = re.compile(
-    r"\b(?:new|opened|created)\s+(?:browser\s+)?tab\b|"
-    r"\bopened\s+in\s+a\s+new\s+tab\b",
-    re.IGNORECASE,
-)
-INVALID_REF_PATTERN = re.compile(
-    r"\bRef\s+[A-Za-z][A-Za-z0-9_-]*\s+not\s+found\b",
-    re.IGNORECASE,
-)
-REF_INTERACTION_TOOLS = {
-    "browser_click",
-    "browser_type",
-    "browser_hover",
-    "browser_select",
-    "browser_press",
-    "browser_drag",
-}
-BROWSER_ACTION_TOOLS = REF_INTERACTION_TOOLS
-STALE_OR_MISSING_ELEMENT_PATTERNS = tuple(
-    re.compile(pattern, re.IGNORECASE)
-    for pattern in (
-        r"\bnot\s+found\b",
-        r"\bnot\s+visible\b",
-        r"\bnot\s+attached\b",
-        r"\bdetached\b",
-        r"\bnot\s+editable\b",
-        r"\bnot\s+enabled\b",
-        r"\belement\s+is\s+not\b",
-        r"\bunable\s+to\s+(?:click|type|fill|hover)\b",
-        r"\bcannot\s+(?:click|type|fill|hover)\b",
-    )
-)
 COMPLETION_EVIDENCE_TERMS = {
     "completed",
     "extracted",
@@ -143,194 +141,6 @@ ACTION_COMPLETION_TERMS = {
 }
 
 
-def compact_text(value: Any, limit: int = MAX_CONTENT_PREVIEW_CHARS) -> str:
-    """Return a deterministic text preview within a character budget."""
-
-    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-    if not text:
-        return ""
-
-    lines = [" ".join(line.split()) for line in text.split("\n")]
-    text = "\n".join(line for line in lines if line)
-    if len(text) <= limit:
-        return text
-
-    omitted = len(text) - limit
-    suffix = f"... [truncated {omitted} chars]"
-    return text[: max(0, limit - len(suffix))].rstrip() + suffix
-
-
-def raw_text(value: Any) -> str:
-    """Return normalized text without truncating tool output."""
-
-    return str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-
-
-def extract_element_refs(snapshot: str) -> list[str]:
-    """Extract Playwright MCP element refs while preserving snapshot order."""
-
-    refs: list[str] = []
-    seen: set[str] = set()
-    for match in REF_PATTERN.finditer(snapshot):
-        ref = match.group(1)
-        if ref not in seen:
-            seen.add(ref)
-            refs.append(ref)
-    return refs
-
-
-def is_ref_value(value: Any) -> bool:
-    """Return true when a value looks like a Playwright MCP element ref."""
-
-    return bool(REF_VALUE_PATTERN.fullmatch(str(value or "").strip()))
-
-
-def request_ref_value(request: dict[str, Any] | None) -> str:
-    """Return the explicit ref targeted by a tool request when one exists."""
-
-    args = dict((request or {}).get("args") or {})
-    for key in ("ref", "target"):
-        value = str(args.get(key) or "").strip()
-        if is_ref_value(value):
-            return value
-    return ""
-
-
-def snapshot_contains_ref(snapshot: str, ref: str) -> bool:
-    """Return true when the current snapshot exposes the requested ref."""
-
-    return bool(ref) and ref in extract_element_refs(snapshot)
-
-
-def _clean_invalid_ref_text(value: Any, *, compress: bool) -> str:
-    text = compact_text(value) if compress else raw_text(value)
-    return INVALID_REF_PATTERN.sub("Ref not found", text)
-
-
-def has_invalid_ref_text(value: Any) -> bool:
-    """Return true when the payload contains a Playwright MCP invalid ref error."""
-
-    return bool(INVALID_REF_PATTERN.search(str(value or "")))
-
-
-def has_stale_or_missing_element_text(value: Any) -> bool:
-    """Return true when a browser error suggests the snapshot is stale."""
-
-    payload = str(value or "")
-    return any(pattern.search(payload) for pattern in STALE_OR_MISSING_ELEMENT_PATTERNS)
-
-
-def pending_tab_activation_from_result(result: ToolResult) -> tuple[int, str] | None:
-    """Return the tab that should be activated after a tool opened a new tab."""
-
-    tool_name = str(result.get("name", "") or "")
-    if (
-        result.get("status") != "success"
-        or tool_name == "browser_tabs"
-        or tool_name not in {*BROWSER_ACTION_TOOLS, "browser_navigate"}
-    ):
-        return None
-
-    payload = str(result.get("content", "") or "")
-    if not payload or "tab" not in payload.lower():
-        return None
-
-    has_new_tab_marker = bool(NEW_TAB_MARKER_PATTERN.search(payload))
-    explicit_tab_indexes = [
-        int(match.group("index")) for match in TAB_INDEX_PATTERN.finditer(payload)
-    ]
-    listed_tab_indexes = [
-        int(match.group("index")) for match in TAB_LIST_ITEM_PATTERN.finditer(payload)
-    ]
-    if not has_new_tab_marker and len(set(listed_tab_indexes)) < 2:
-        return None
-
-    if explicit_tab_indexes:
-        tab_index = explicit_tab_indexes[-1]
-    elif listed_tab_indexes:
-        tab_index = max(listed_tab_indexes)
-    else:
-        return None
-
-    return (
-        tab_index,
-        (
-            f"The last browser action opened or exposed Tab {tab_index}. "
-            f"Switch to it with browser_tabs action=select index={tab_index} "
-            "before taking browser_snapshot or using page refs. Do not repeat "
-            "the click that opened the tab."
-        ),
-    )
-
-
-def _has_invalid_ref_error(result: ToolResult) -> bool:
-    payload = str(result.get("error", "") or result.get("content", "") or "")
-    return has_invalid_ref_text(payload)
-
-
-def _needs_fresh_snapshot_after_error(result: ToolResult) -> bool:
-    tool_name = str(result.get("name", "") or "")
-    payload = str(result.get("error", "") or result.get("content", "") or "")
-    if has_invalid_ref_text(payload):
-        return True
-    return tool_name in REF_INTERACTION_TOOLS and has_stale_or_missing_element_text(
-        payload
-    )
-
-
-def _observation_lines(
-    result: ToolResult,
-    compact: CompactToolObservation,
-    refs: list[str],
-    *,
-    compress: bool,
-) -> list[str]:
-    tool_name = str(result.get("name", "tool") or "tool").strip()
-    status = result.get("status", "error")
-    content = str(result.get("content", "") or "")
-    error = str(result.get("error", "") or "")
-    payload = content if content else error
-
-    if status == "error":
-        lines = ["Tool failed."]
-        cleaned_error = _clean_invalid_ref_text(error or payload, compress=compress)
-        if cleaned_error:
-            lines.append(cleaned_error)
-        if INVALID_REF_PATTERN.search(error or payload):
-            lines.append("A fresh browser_snapshot is required.")
-        elif (
-            tool_name in REF_INTERACTION_TOOLS
-            and has_stale_or_missing_element_text(error or payload)
-        ):
-            lines.append(
-                "The current element/page structure may be stale; take a fresh "
-                "browser_snapshot before the next ref-based action."
-            )
-        return lines
-
-    if not compress:
-        lines = [f"{tool_name} returned success."]
-        if payload:
-            lines.append(raw_text(payload))
-        if refs:
-            shown_refs = "\n".join(refs[:MAX_REFS_IN_OBSERVATION])
-            lines.extend(["Refs:", shown_refs])
-        return [line for line in lines if line]
-
-    summary = compact.get("summary") or f"{tool_name} completed."
-    visible_state = compact.get("visible_state") or payload
-    lines = [compact_text(summary, 400)]
-    if visible_state:
-        lines.append(compact_text(visible_state))
-    if refs:
-        shown_refs = "\n".join(refs[:MAX_REFS_IN_OBSERVATION])
-        lines.extend(["Refs:", shown_refs])
-    hint = compact.get("next_observation_hint", "")
-    if hint:
-        lines.append(compact_text(hint, 300))
-    return [line for line in lines if line]
-
-
 def _advance_plan(plan: list[PlanStep], current_step: int) -> tuple[list[PlanStep], int]:
     if current_step < 0 or current_step >= len(plan):
         return plan, current_step
@@ -423,3 +233,44 @@ def _plan_completion_update(
 
     updated_plan, next_step = _advance_plan(plan, current_step)
     return {"plan": updated_plan, "current_step": next_step}
+
+
+__all__ = [
+    "ACTION_COMPLETION_TERMS",
+    "BROWSER_ACTION_TOOLS",
+    "COMPLETION_EVIDENCE_TERMS",
+    "INVALID_REF_PATTERN",
+    "MAX_CONTENT_PREVIEW_CHARS",
+    "MAX_REFS_IN_OBSERVATION",
+    "NEGATIVE_EVIDENCE_TERMS",
+    "NEW_TAB_MARKER_PATTERN",
+    "REF_INTERACTION_TOOLS",
+    "REF_PATTERN",
+    "REF_VALUE_PATTERN",
+    "SNAPSHOT_COMPLETION_STEP_TERMS",
+    "STALE_OR_MISSING_ELEMENT_PATTERNS",
+    "STEP_STOPWORDS",
+    "TAB_INDEX_PATTERN",
+    "TAB_LIST_ITEM_PATTERN",
+    "WORD_PATTERN",
+    "_action_completes_step",
+    "_advance_plan",
+    "_clean_invalid_ref_text",
+    "_has_invalid_ref_error",
+    "_has_keyword_match",
+    "_has_step_completion_evidence",
+    "_needs_fresh_snapshot_after_error",
+    "_observation_lines",
+    "_plan_completion_update",
+    "_snapshot_completes_step",
+    "_step_keywords",
+    "compact_text",
+    "extract_element_refs",
+    "has_invalid_ref_text",
+    "has_stale_or_missing_element_text",
+    "is_ref_value",
+    "pending_tab_activation_from_result",
+    "raw_text",
+    "request_ref_value",
+    "snapshot_contains_ref",
+]

@@ -10,6 +10,10 @@ from typing import Any
 
 from src.agent.prompts import AGENT_SYSTEM_PROMPT
 from src.agent.prompts import AGENT_USER_PROMPT
+from src.agent.subgraphs.planner.prompts import (
+    PLANNER_SYSTEM_PROMPT,
+    PLANNER_USER_PROMPT,
+)
 from src.agent_loop.context import ContextAssembler
 from src.agent_loop.context import AssembledContext
 from src.agent.state import AgentState
@@ -60,6 +64,28 @@ class ContextBuilder:
             repeat_count=state.get("repeat_count", 0),
             snapshot=state.get("snapshot", ""),
             refs=_extract_refs(state.get("snapshot", "")),
+        )
+
+    def build_plan_prompt(self, state: Mapping[str, Any]) -> str:
+        """Return the planner prompt for the current state.
+
+        Mirrors ``plan_node`` (``src/agent/subgraphs/planner/nodes.py``): the planner
+        message is the ``PLANNER_SYSTEM_PROMPT`` and ``PLANNER_USER_PROMPT`` joined by a
+        blank line, with the observation defaulting to ``"No observation yet."``. This is
+        the sanctioned prompt-assembly boundary for the engine-native loop, which must not
+        import planner prompts from ``src/agent/`` directly.
+        """
+
+        task = str(state.get("task", "") or "").strip()
+        observation = str(state.get("observation", "") or "")
+        return "\n\n".join(
+            [
+                PLANNER_SYSTEM_PROMPT,
+                PLANNER_USER_PROMPT.format(
+                    task=task,
+                    observation=observation or "No observation yet.",
+                ),
+            ]
         )
 
     def build_assembled_context(

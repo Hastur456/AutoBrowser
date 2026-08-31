@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Required, TypeAlias, TypedDict
 
-from src.agent.state import PlanStep, ToolRequest
+from src.contracts import PlanStep, ToolRequest
 
 ActionKind = Literal[
     "answer",
