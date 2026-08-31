@@ -20,7 +20,7 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   guard, and related tests.
 - [Agent Loop Observability Branch Plan](development/2026-07-27-agent-loop-observability-branch-plan.md):
   implementation plan for typed events, JSONL traces, replay helpers, scenario
-  evals, and LangGraph v1 baseline comparison.
+  evals, and the stored eval baseline comparison.
 - [Batch And Export Data Contracts](development/2026-07-30-batch-export-data-contracts.md):
   current observability sources and JSONL contracts for batch scenarios, run
   indexes, feedback, metrics, and export rows.
@@ -28,14 +28,16 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   current plan and rollback switch for assembled context rendering through
   `AUTOBROWSER_CONTEXT_MODE`.
 - [GoalRunner Branch Plan](development/2026-08-01-goal-runner-branch-plan.md):
-  current one-task lifecycle boundary and follow-up migration path toward the
-  new Agent Loop.
+  current one-task lifecycle boundary between `SessionRuntime` and the engine.
 - [Agent Loop Legacy Outcomes Cleanup](development/2026-08-05-agent-loop-legacy-outcomes.md):
-  TODO for removing the transitional `outcomes.py` compatibility layer after
-  provider-neutral terminal state is emitted by the new Agent Loop.
+  historical note for removing the transitional `outcomes.py` compatibility
+  layer; completed by the engine-native ADR.
 - [Agent Loop Engine Migration Touchpoints](development/2026-08-08-agent-loop-engine-migration-touchpoints.md):
-  checklist of legacy LangGraph, harness, browser, eval, CLI, and exporter
-  coupling to rewrite before enabling a new Agent Loop engine by default.
+  historical checklist of the legacy LangGraph, harness, browser, eval, CLI, and
+  exporter coupling that the completed engine migration removed.
+- [Native Agent Loop Engine ADR](decisions/2026-08-31-native-agent-loop-engine.md):
+  the engine-native `AgentLoopEngine` is the sole runtime; `src/agent/` and all
+  LangGraph control flow are removed.
 - [Session-Scoped Agent Context Memory ADR](decisions/2026-07-25-session-scoped-agent-context-memory.md):
   decision record for preserving useful agent context across tasks in one
   interactive session.

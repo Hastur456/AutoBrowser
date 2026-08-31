@@ -4,6 +4,10 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-08-31 Native Agent Loop Engine](2026-08-31-native-agent-loop-engine.md):
+  the engine-native `AgentLoopEngine` is the sole runtime; `src/agent/` and all
+  LangGraph control flow are removed (supersedes the LangGraph-thread decisions
+  below).
 - [2026-07-26 Browser Provider Boundary](2026-07-26-browser-provider-boundary.md)
 - [2026-07-25 Session-Scoped Agent Context Memory](2026-07-25-session-scoped-agent-context-memory.md)
 - [2026-07-24 Task Memory Isolation and Session Persistence](2026-07-24-task-memory-isolation-and-session-persistence.md)
