@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent.subgraphs.executor.nodes import create_executor_node
+from src.agent_loop.execution.tools import ToolBroker
 from src.browser import (
     BROWSER_ERROR_ACTION_FAILED,
     BROWSER_ERROR_INVALID_REF,
     FakeBrowserProvider,
 )
+from src.harness.tools import ToolRegistry
 
 
 def test_fake_provider_rejects_empty_snapshots() -> None:
@@ -86,27 +87,27 @@ async def test_fake_provider_evaluate_does_not_advance_snapshot() -> None:
 @pytest.mark.asyncio
 async def test_fake_provider_invalid_ref_is_normalized_by_executor() -> None:
     provider = FakeBrowserProvider(['- button "Catalog" ref=e14'])
-    node = create_executor_node(browser_providers=[provider])
+    broker = ToolBroker(ToolRegistry(providers=[provider]))
 
-    result = await node({"tool_request": {"name": "browser.click", "args": {"ref": "e99"}}})
+    result = await broker.execute({"name": "browser.click", "args": {"ref": "e99"}})
 
-    assert result["tool_result"]["status"] == "error"
-    assert result["tool_result"]["error"] == "Ref e99 not found"
-    assert result["tool_result"]["error_code"] == BROWSER_ERROR_INVALID_REF
+    assert result["status"] == "error"
+    assert result["error"] == "Ref e99 not found"
+    assert result["error_code"] == BROWSER_ERROR_INVALID_REF
 
 
 @pytest.mark.asyncio
 async def test_fake_provider_normalizes_other_failures_to_action_failed() -> None:
     provider = FakeBrowserProvider(['- button "Catalog" ref=e14'])
-    node = create_executor_node(browser_providers=[provider])
+    broker = ToolBroker(ToolRegistry(providers=[provider]))
 
-    result = await node(
-        {"tool_request": {"name": "browser.click", "args": {"target": "catalog button"}}}
+    result = await broker.execute(
+        {"name": "browser.click", "args": {"target": "catalog button"}}
     )
 
-    assert result["tool_result"]["status"] == "error"
+    assert result["status"] == "error"
     assert (
-        result["tool_result"]["error"]
+        result["error"]
         == "Fake browser action requires a ref or ref-like target."
     )
-    assert result["tool_result"]["error_code"] == BROWSER_ERROR_ACTION_FAILED
+    assert result["error_code"] == BROWSER_ERROR_ACTION_FAILED

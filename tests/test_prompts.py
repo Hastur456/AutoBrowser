@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent.prompts import AGENT_SYSTEM_PROMPT
-from src.agent.prompts import AGENT_USER_PROMPT
-from src.agent.prompts import BROWSER_CONTRACT_PROMPT
-from src.agent.prompts import COMPLETION_PROMPT
-from src.agent.prompts import CORE_RUNTIME_PROMPT
-from src.agent.prompts import LOOP_GUARD_PROMPT
-from src.agent.prompts import OUTPUT_FORMAT_PROMPT
-from src.agent.prompts import render_compatibility_system_prompt
-from src.agent.subgraphs.observer.prompts import OBSERVER_SYSTEM_PROMPT
-from src.agent.subgraphs.planner.prompts import PLANNER_SYSTEM_PROMPT
+from src.agent_loop.prompts import AGENT_SYSTEM_PROMPT
+from src.agent_loop.prompts import AGENT_USER_PROMPT
+from src.agent_loop.prompts import BROWSER_CONTRACT_PROMPT
+from src.agent_loop.prompts import COMPLETION_PROMPT
+from src.agent_loop.prompts import CORE_RUNTIME_PROMPT
+from src.agent_loop.prompts import LOOP_GUARD_PROMPT
+from src.agent_loop.prompts import OBSERVER_SYSTEM_PROMPT
+from src.agent_loop.prompts import OUTPUT_FORMAT_PROMPT
+from src.agent_loop.prompts import PLANNER_SYSTEM_PROMPT
+from src.agent_loop.prompts import render_compatibility_system_prompt
 
 
 PROMPT_CONSTRAINTS = {

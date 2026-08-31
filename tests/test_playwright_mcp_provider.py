@@ -4,9 +4,10 @@ from typing import Any
 
 import pytest
 
-from src.agent.subgraphs.executor.nodes import create_executor_node
+from src.agent_loop.execution.tools import ToolBroker
 from src.browser import BROWSER_ERROR_INVALID_REF, BROWSER_ERROR_UNKNOWN_ACTION
 from src.browser.adapters import CANONICAL_TO_PLAYWRIGHT, PlaywrightMCPBrowserProvider
+from src.harness.tools import ToolRegistry
 
 
 class FakeTool:
@@ -171,10 +172,10 @@ def test_provider_leaves_non_invalid_error_without_error_code() -> None:
 async def test_provider_backed_unknown_canonical_action_returns_browser_error() -> None:
     tool = FakeTool("browser_click", {"properties": {"target": {"type": "string"}}})
     provider = PlaywrightMCPBrowserProvider([tool])
-    node = create_executor_node(browser_providers=[provider])
+    broker = ToolBroker(ToolRegistry(providers=[provider]))
 
-    result = await node({"tool_request": {"name": "browser.missing", "args": {}}})
+    result = await broker.execute({"name": "browser.missing", "args": {}})
 
-    assert result["tool_result"]["status"] == "error"
-    assert result["tool_result"]["error_code"] == BROWSER_ERROR_UNKNOWN_ACTION
-    assert "Unknown browser action: browser.missing" in result["tool_result"]["error"]
+    assert result["status"] == "error"
+    assert result["error_code"] == BROWSER_ERROR_UNKNOWN_ACTION
+    assert "Unknown browser action: browser.missing" in result["error"]

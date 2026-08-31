@@ -19,7 +19,8 @@ try:
 except ImportError:  # pragma: no cover - compatibility with older LangGraph releases
     from langgraph.checkpoint.memory import MemorySaver as _DefaultCheckpointSaver
 
-from src.agent.state import AgentState, CompactToolObservation, ToolRequest, ToolResult
+from src.contracts import CompactToolObservation, ToolRequest, ToolResult
+from src.state import AgentState
 # from src.harness.context import ContextBuilder
 
 MAX_TOOL_MESSAGE_REFS = 25

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.agent.state import AgentState, PolicyDecision, ToolRequest
 from src.browser import (
     is_browser_snapshot_name,
     is_browser_tool_name,
     to_canonical_browser_name,
 )
-from src.agent.subgraphs.observer.utils import has_invalid_ref_text
+from src.browser.observation import has_invalid_ref_text
+from src.contracts import PolicyDecision, ToolRequest
+from src.state import AgentState
 from src.harness.memory import append_tool_message
 
 BLOCKED_TOOL_MARKERS = (

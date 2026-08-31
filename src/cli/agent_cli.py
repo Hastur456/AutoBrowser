@@ -383,6 +383,9 @@ class AgentCli(cmd2.Cmd):
     def _on_task_done(self, future: Future[Any]) -> None:
         try:
             self._task_result = future.result()
+            answer = getattr(self._task_result, "final_answer", None)
+            if answer:
+                self.poutput(str(answer))
             self.poutput(self._ok("Task finished."))
         except BaseException as exc:
             if future.cancelled() or isinstance(exc, asyncio.CancelledError):
