@@ -19,9 +19,10 @@ try:
 except ImportError:  # pragma: no cover - compatibility with older LangGraph releases
     from langgraph.checkpoint.memory import MemorySaver as _DefaultCheckpointSaver
 
+from src.browser import is_browser_snapshot_name
 from src.contracts import CompactToolObservation, ToolRequest, ToolResult
 from src.state import AgentState
-# from src.harness.context import ContextBuilder
+from src.harness.context import ContextBuilder
 
 MAX_TOOL_MESSAGE_REFS = 25
 ORIGINAL_USER_REQUEST_PREFIX = "Original user request:\n"
@@ -68,22 +69,18 @@ def ensure_message_history(
     task = str(state.get("task", "") or "Complete the task.").strip()
     task_id = str(state.get("task_id", "") or "").strip()
     if not any(message.type == "system" for message in messages):
-        # TODO: Закомментировання реализация не работает из-за Import Ciclic Error
-        prompt = system_prompt or ""
-        # prompt = (
-        #     system_prompt
-        #     if system_prompt is not None
-        #     else ContextBuilder().get_system_prompt()
-        # )
+        prompt = (
+            system_prompt
+            if system_prompt is not None
+            else ContextBuilder().get_system_prompt()
+        )
         messages.insert(0, SystemMessage(content=prompt))
 
     if task_id:
         request_content = f"{USER_REQUEST_PREFIX} ({task_id}):\n{task}"
         if not _has_human_message(messages, request_content):
             messages.append(HumanMessage(content=request_content))
-        return messages
-
-    if not any(
+    elif not any(
         message.type == "human"
         and str(message.content).startswith(ORIGINAL_USER_REQUEST_PREFIX)
         for message in messages
@@ -93,7 +90,7 @@ def ensure_message_history(
             insert_at,
             HumanMessage(content=f"{ORIGINAL_USER_REQUEST_PREFIX}{task}"),
         )
-    return messages
+    return _compact_snapshot_history(messages)
 
 
 def _has_human_message(messages: list[BaseMessage], content: str) -> bool:
@@ -101,6 +98,45 @@ def _has_human_message(messages: list[BaseMessage], content: str) -> bool:
         message.type == "human" and str(message.content) == content
         for message in messages
     )
+
+
+def _compact_snapshot_history(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """Replace every snapshot ``ToolMessage`` but the latest with a stale-ref marker.
+
+    Snapshot accessibility trees are appended to the durable history in full (see
+    :func:`append_tool_message`), so without compaction every page the agent ever
+    visited re-enters the model context on each turn and quickly overflows the window.
+    Only the most recent snapshot is usable anyway — refs are ephemeral and valid
+    solely for the snapshot that produced them — so older snapshot bodies collapse to
+    a short marker telling the model the refs are stale. The ``tool_call_id`` is
+    preserved, keeping the ``AIMessage(tool_calls)`` → ``ToolMessage`` pairing valid
+    for the chat API.
+    """
+
+    snapshot_indices = [
+        index
+        for index, message in enumerate(messages)
+        if isinstance(message, ToolMessage)
+        and is_browser_snapshot_name(str(message.name or ""))
+        and str(message.content or "").strip()
+    ]
+    if len(snapshot_indices) <= 1:
+        return messages
+
+    for index in snapshot_indices[:-1]:
+        previous = messages[index]
+        # snapshot_indices are collected from ToolMessage entries only, so ``previous``
+        # always carries a ``tool_call_id`` here.
+        messages[index] = ToolMessage(
+            content=(
+                f"{previous.name or 'browser_snapshot'} (historical)\n"
+                "Snapshot superseded by a more recent one. "
+                "Use only the latest snapshot and its refs."
+            ),
+            name=previous.name,
+            tool_call_id=previous.tool_call_id,
+        )
+    return messages
 
 
 def with_tool_call_id(request: ToolRequest) -> ToolRequest:

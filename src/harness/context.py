@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 from collections.abc import Mapping
 from collections.abc import Sequence
 from typing import Any
@@ -62,8 +61,6 @@ class ContextBuilder:
             observation=state.get("observation", "No observation yet."),
             consecutive_failures=state.get("consecutive_failures", 0),
             repeat_count=state.get("repeat_count", 0),
-            snapshot=state.get("snapshot", ""),
-            refs=_extract_refs(state.get("snapshot", "")),
         )
 
     def build_plan_prompt(self, state: Mapping[str, Any]) -> str:
@@ -123,11 +120,6 @@ def _format_plan(plan: Any) -> str:
         for index, step in enumerate(plan, start=1)
         if isinstance(step, Mapping)
     )
-
-
-def _extract_refs(snapshot: Any) -> str:
-    refs = re.findall(r"\bref=([A-Za-z0-9_-]+)", str(snapshot or ""))
-    return ", ".join(dict.fromkeys(refs)) or "none"
 
 
 __all__ = ["CONTEXT_MODE_ASSEMBLED", "CONTEXT_MODE_LEGACY", "ContextBuilder"]

@@ -34,7 +34,6 @@ def test_context_block_model_assembles_state_and_tools() -> None:
         "Observation",
         "Tool Inventory",
         "Browser Rules",
-        "Browser Snapshot",
     ]
     assert context.turn_prompt.startswith("Task:\nfind a product")
     assert "Tool Inventory:" not in context.turn_prompt
@@ -63,7 +62,7 @@ def test_browser_rules_appear_for_browser_tools_and_state() -> None:
     assert "Browser Rules:" in context.system_prompt
     assert "source of truth" in context.system_prompt
     assert "browser_snapshot" in context.system_prompt
-    assert "Browser Snapshot:" in context.turn_prompt
+    assert "Browser Snapshot:" not in context.turn_prompt
 
 
 def test_browser_rules_appear_for_explicit_browser_task_without_tools() -> None:
