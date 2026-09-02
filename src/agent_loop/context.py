@@ -121,23 +121,14 @@ class ContextAssembler:
             )
         if _is_browser_relevant(state, tools):
             resource = browser_agent_rules_resource()
-            blocks.extend(
-                (
-                    ContextBlock(
-                        name="Browser Rules",
-                        role="system",
-                        content=resource.load(),
-                        priority=45,
-                        source=f"resource:{resource.name}",
-                        metadata={"resource": resource.name},
-                    ),
-                    ContextBlock(
-                        name="Browser Snapshot",
-                        role="user",
-                        content=str(state.get("snapshot", "")),
-                        priority=50,
-                        source="state.snapshot",
-                    ),
+            blocks.append(
+                ContextBlock(
+                    name="Browser Rules",
+                    role="system",
+                    content=resource.load(),
+                    priority=45,
+                    source=f"resource:{resource.name}",
+                    metadata={"resource": resource.name},
                 )
             )
         return blocks

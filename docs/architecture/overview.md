@@ -1,9 +1,9 @@
 # Architecture Overview
 
-AutoBrowser is a Python 3.12 browser automation agent built around LangGraph.
-The command-line entry point is `main.py`; the core agent graph lives under
-`src/agent/`; session and runtime infrastructure are managed from
-`src/harness/`.
+AutoBrowser is a Python 3.12 browser automation agent with an engine-native
+execution loop. The command-line entry point is `main.py`; the core agent loop
+lives under `src/agent_loop/execution/`; session and runtime infrastructure are
+managed from `src/harness/`.
 
 ## Goals
 
@@ -25,31 +25,43 @@ structure.
 | Path | Responsibility |
 | --- | --- |
 | `main.py` | CLI parsing and wiring the process into `SessionRuntime`. |
-| `src/cli/` | `cmd2` interactive REPL and user-facing session commands. |
-| `src/agent_loop/` | Runtime-facing action contracts, model action parsing, lifecycle events, tracing, replay/evals, metrics, batch/export helpers, context assembly, skills, and goal-runner boundaries around the current graph engine. |
-| `src/agent/` | LangGraph graph assembly, shared state, prompts, reasoning node, routers. |
-| `src/agent/subgraphs/planner/` | One-shot planning graph and planning prompts. |
-| `src/agent/subgraphs/executor/` | Tool execution graph and provider-backed request/result normalization. |
-| `src/agent/subgraphs/observer/` | Tool-result observation, snapshot handling, compact result summaries. |
+| `src/cli/` | `cmd2` interactive REPL, parser, output formatting, and session bootstrap. |
+| `src/agent_loop/execution/` | The engine-native control loop: `AgentLoopEngine`, `TurnController`, the frozen `LoopState`, completion/observation/guards/policy helpers, `EngineResources`, and `native_task_runner`. |
+| `src/agent_loop/` | Runtime-facing action contracts, model action parsing, lifecycle events, tracing, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary. |
+| `src/contracts.py` | Provider-neutral typed tool/plan/observation contracts and control-loop thresholds (no imports from the loop, harness, or browser layers). |
+| `src/state.py` | Type-only `AgentState`/`BrowserState` TypedDicts kept for harness/browser annotation. |
+| `src/llm.py` | Model defaults such as `DEFAULT_OLLAMA_MODEL` and the `ChatOllama` factory. |
 | `src/browser/` | Provider-neutral browser contracts, canonical browser names, backend adapters, and fake browser tools for tests. |
-| `src/harness/` | Session runtime, graph harness, context, memory, tools, policy, and telemetry boundaries. |
+| `src/harness/` | Session runtime, harness composition root, context, memory, tools, policy, and telemetry boundaries. |
 | `src/mcp/` | Playwright MCP process/session lifecycle helpers and provider loading. |
-| `tests/` | Pytest coverage for graph behavior, harness boundaries, Agent Loop contracts, CLI, prompts, tools, batch/export, and deterministic eval scenarios. |
-| `scripts/` | Utility scripts for graph visualization, batch runs, session exports, trace replay/export, LangSmith trace export, and eval baseline checks. |
+| `tests/` | Pytest coverage for engine behavior, harness boundaries, Agent Loop contracts, CLI, prompts, tools, batch/export, and deterministic eval scenarios. |
+| `scripts/` | Utility scripts for batch runs, session exports, trace replay/export, LangSmith trace export, and eval baseline checks. |
 
-## Graph Shape
+The legacy `src/agent/` LangGraph graph, its `planner`/`executor`/`observer`
+subgraphs, `src/agent_loop/adapters/langgraph.py`, and
+`src/cli/task_runner.py` were removed; see
+[docs/decisions/2026-08-31-native-agent-loop-engine.md](../decisions/2026-08-31-native-agent-loop-engine.md).
 
-The compiled graph is assembled by `build_agent_graph` in `src/agent/agent.py`.
-Its verified node flow is:
+## Engine Loop
+
+The loop is assembled and driven by `AgentLoopEngine.run` in
+`src/agent_loop/execution/loop.py`. Its verified flow is:
 
 ```text
-START -> plan -> agent -> policy -> executor -> observe -> agent
+build initial plan (model call #0) -> while turn <= cap:
+  TurnController.run_turn(LoopState) ->
+    agent step -> decision
+      done    -> terminal status via CompletionController
+      replan  -> rebuild plan
+      tool_call -> policy -> (human_input?) -> ToolBroker.execute -> observe
 ```
 
-The `agent` node can also route back to `plan` for replanning or to `END` when
-the task is done. `policy` can route to `human_input` when a tool needs human
-approval. After approved execution, `executor` always routes into `observe`,
-and `observe` routes back to `agent`.
+A turn with a `tool_call` decision runs policy before execution. `policy` can
+route to `human_input` when a tool needs human approval; a blocked or denied
+tool short-circuits back to the loop with a status-prefixed final answer.
+Otherwise the approved tool executes through `ToolBroker` and the observer
+compiles the result back into `LoopState`, which continues or terminates.
+`DEFAULT_TURN_CAP = 50` bounds the loop.
 
 ## Runtime Boundary
 
@@ -59,52 +71,49 @@ the root object for one process session: it holds `SessionConfig`, `session_id`,
 task history, current task, workspace, artifact registry, event bus, session
 state, metadata, telemetry, tool registry, memory, LLM, and `BrowserHarness`.
 Each user request is tracked as a `TaskRecord` and delegated as a task inside
-the active session. When the agent reaches a terminal state, only that task
+the active session. When the loop reaches a terminal state, only that task
 ends; the session returns to the input prompt and keeps the same runtime
-resources and session-scoped agent context alive until the process exits.
+resources and session-scoped context alive until the process exits.
 
 The session layer is intentionally not a task solver. It manages interaction
-lifecycle, resource ownership, and context handoff between tasks, while
-`BrowserHarness` and the compiled LangGraph agent continue to handle one task
-execution at a time. AutoBrowser models session activity as tasks, with each
-task represented as a distinct user turn in durable message history.
+lifecycle, resource ownership, and context handoff between tasks, while the
+engine-native loop handles one task execution at a time. AutoBrowser models
+session activity as tasks, with each task represented as a distinct user turn in
+durable message history.
 
-One-task execution now passes through `GoalRunner` in
-`src/agent_loop/goals.py`:
+One-task execution passes through `GoalRunner` in `src/agent_loop/goals.py`:
 
 ```text
 SessionRuntime
   -> GoalRunner
-      -> task_runner
-          -> BrowserHarness
-              -> LangGraph
+      -> native_task_runner
+          -> AgentLoopEngine
+              -> TurnController
 ```
 
-`SessionRuntime` still starts the session, allocates task and goal ids, builds
-task config, injects carried session state, persists latest state into
+`SessionRuntime` starts the session, allocates task and goal ids, builds task
+config, injects carried session state, persists latest state into
 `SessionContext`, and marks task history finished or failed. `GoalRunner` owns
-the goal lifecycle boundary for that task: it emits `goal.started`, delegates
-to the configured task runner, invokes a `LatestStateLoader`, emits
-`goal.completed` or `goal.failed`, and returns a `GoalRunResult` with explicit
-terminal status. The current `goal_id` is equal to the task id.
+the goal lifecycle boundary for that task: it emits `goal.started`, delegates to
+`native_task_runner` (which composes `EngineResources` from `BrowserHarness`),
+invokes a `LatestStateLoader`, emits `goal.completed` or `goal.failed`, and
+returns a `GoalRunResult` with explicit terminal status. The current `goal_id`
+is equal to the task id.
 
 `GoalRunner` is not an agent engine. It does not choose actions, inspect model
-messages for semantic completion, change graph routing, call tools, manage
-retry counters, enforce browser policy, or consume graph stream chunks. The CLI
-task runner adapter remains responsible for streaming from
-`BrowserHarness.stream_updates()`, and `BrowserHarness` remains the adapter
-that invokes the compiled LangGraph engine.
+messages for semantic completion, call tools, manage retry counters, enforce
+browser policy, or consume stream chunks. `AgentLoopEngine` is the real
+control-flow owner: it builds the initial plan, then drives a bounded `while`
+loop of `TurnController` turns and returns a terminal `AgentLoopResult` with
+`status`/`final_answer`/`session_state`/`state`/`turns`.
 
-While the old LangGraph Agent Loop remains active, `src/agent_loop/outcomes.py`
-contains a legacy compatibility layer that adapts `AgentState`-shaped results
-into provider-neutral `GoalState`. That adapter knows about `final_answer` and
-`decision` only as a migration bridge. The target Agent Loop should return a
-provider-neutral terminal state directly so `GoalRunner` no longer depends on
-`LegacyAgentStateObservationCompiler`, `CompletionGuard`, or any legacy
-`AgentState` inspection.
+`src/agent_loop/outcomes.py` contains only the stable provider-neutral
+`GoalState` types, `CompletionGuard`, and `goal_status_from_completion` used by
+`GoalRunner`. The legacy `LegacyAgentStateObservationCompiler` was removed once
+`AgentLoopResult` became the terminal contract.
 
 Other `src/agent_loop/` modules are runtime-facing contracts and diagnostics
-around the current graph engine:
+around the engine:
 
 - `actions.py` and `model.py` define provider-neutral proposed actions and a
   model response parser/driver.
@@ -115,15 +124,6 @@ around the current graph engine:
   rows, and deterministic fake-browser scenario checks.
 - `context.py`, `prompts.py`, and `skills.py` provide the assembled context
   path selected with `AUTOBROWSER_CONTEXT_MODE=assembled`.
-- `adapters/langgraph.py` maps proposed actions back to the current LangGraph
-  state update shape during the migration.
-
-Before enabling a new `AgentLoopEngine` by default, treat `outcomes.py`,
-`adapters/langgraph.py`, `BrowserHarness`, most `src/harness/` state/config
-handoff code, and browser provider normalization as migration touchpoints, not
-stable final architecture. See
-[Agent Loop Engine Migration Touchpoints](../development/2026-08-08-agent-loop-engine-migration-touchpoints.md)
-for the full checklist.
 
 The interactive CLI in `src/cli/agent_cli.py` wraps a prepared
 `SessionRuntime`. It keeps all asynchronous session operations on one dedicated
@@ -143,19 +143,20 @@ history. `tasks.json` stores the task records directly for simpler inspection.
 These files are runtime artifacts and are ignored by git.
 
 `BrowserHarness` in `src/harness/runtime.py` is the composition root for runtime
-infrastructure used by one task execution. It receives a graph builder and
-injects:
+infrastructure consumed by one task execution. It holds:
 
-- `ContextBuilder`: builds initial graph state and owns system prompt injection.
+- `ContextBuilder`: builds per-turn prompts and owns system prompt injection.
 - `MemoryManager`: owns checkpoint saver and durable message history helpers.
 - `ToolRegistry`: lazily loads static tools, generic providers, browser
   providers, and MCP clients.
 - `PolicyEngine`: classifies tool requests before execution.
 - `TelemetryObserver`: logs local trace metadata and errors.
+- `EventEmitter`: durable goal/model/action/policy/tool/observation events.
 
-This keeps the graph focused on reasoning/control flow, keeps task lifecycle
-separate from session lifecycle, and keeps runtime concerns replaceable in
-tests.
+`EngineResources.from_harness(harness, llm=...)` bundles these collaborators
+(plus `browser_providers` from the registry) for `AgentLoopEngine`. This keeps
+the engine focused on reasoning/control flow, keeps task lifecycle separate from
+session lifecycle, and keeps runtime concerns replaceable in tests.
 
 ## Browser Provider Boundary
 
@@ -181,23 +182,25 @@ The current browser boundary includes:
 lifecycle. It loads raw MCP tools and wraps them with
 `PlaywrightMCPBrowserProvider` before the tools enter `ToolRegistry`.
 
-All tasks in one interactive session share a session-scoped LangGraph
-`thread_id` derived from `SessionContext.session_id`. Each `TaskRecord` still
-receives its own `task_id` for persisted task history and message attribution,
-but that task ID no longer doubles as the checkpoint thread.
+All tasks in one interactive session share a session identity derived from
+`SessionContext.session_id`, passed into each task config as
+`configurable.thread_id`. Each `TaskRecord` still receives its own `task_id` for
+persisted task history and message attribution; there is no LangGraph checkpoint
+thread anymore, and `goal_id == task_id`.
 
-After each task, `SessionRuntime` remembers the latest graph state in
-`SessionContext.state`. The next task receives only the context that is useful
-across task boundaries: durable messages, latest observation, current snapshot,
-browser state, and last browser action metadata. Task-local fields such as
-plan, terminal decision, final answer, tool request/result, policy state,
-errors, and retry counters are reset before the next invocation. This lets
-follow-up tasks use prior results and browser progress without inheriting stale
-completion or failure state.
+After each task, `SessionRuntime` remembers the latest loop state in
+`SessionContext.state` (from the terminal `AgentLoopResult.session_state`). The
+next task receives only the context that is useful across task boundaries:
+durable messages, latest observation, current snapshot, browser state, and last
+browser action metadata. Task-local fields such as plan, terminal decision,
+final answer, tool request/result, policy state, errors, and retry counters are
+reset before the next invocation. This lets follow-up tasks use prior results
+and browser progress without inheriting stale completion or failure state.
 
-`BrowserHarness` owns an internal state-override channel used by the harness to
-inject this carried session state into the initial graph state. That internal
-key is stripped before LangGraph receives config.
+`BrowserHarness` owns the internal state-override channel
+(`HARNESS_STATE_OVERRIDES_CONFIG_KEY`) used to inject this carried session state
+into the next `AgentLoopEngine.run` call. That internal key is stripped from the
+task config before the engine sees it.
 
 ## Planner
 
@@ -216,10 +219,12 @@ For search tasks, the plan must preserve this contract:
 
 ## Agent Reasoning
 
-The reasoning node uses the current task, task ID, plan, latest observation,
+The reasoning step uses the current task, task ID, plan, latest observation,
 latest snapshot, available refs, retry counters, and durable message history.
 It must return either a native tool call, a JSON replan decision, or a JSON done
-decision.
+decision. `TurnController._agent_step` maps a parsed `ProposedAction` to a flat
+`LoopState` update; terminal status is derived from the resulting state by
+`CompletionController`, never decided by the model step itself.
 
 The system prompt emphasizes:
 
@@ -232,9 +237,9 @@ The system prompt emphasizes:
 
 ## Executor
 
-The executor resolves the requested tool through `ToolRegistry`. Browser
-request and result normalization is delegated to registered `BrowserProvider`
-instances rather than embedded in executor logic.
+The executor resolves the requested tool through `ToolRegistry` (via
+`ToolBroker`). Browser request and result normalization is delegated to
+registered `BrowserProvider` instances rather than embedded in executor logic.
 
 For the Playwright MCP backend, `PlaywrightMCPBrowserProvider` adapts ref-based
 requests to the loaded tool schema:
@@ -250,7 +255,7 @@ Tool success and failure are normalized into `ToolResult` state.
 
 ## Observer
 
-The observer translates a single tool result into compact graph state. It stores
+The observer translates a single tool result into compact loop state. It stores
 successful snapshots as the current source of truth, clears stale snapshots
 after browser actions, tracks invalid-ref recovery, and detects ineffective
 browser actions by comparing snapshot fingerprints.
@@ -287,16 +292,11 @@ The project follows Playwright MCP semantics:
 - Dynamic commerce pages can expose a search button before the editable input.
   Prompt rules now limit repeated search-button clicks and allow direct search
   URL fallback, especially for Ozon.
-- Recursion limits can be reached when the agent repeats tool calls without
-  progress. Retry counters, observer hints, policy checks, and prompt rules are
-  the current controls.
+- The turn cap (`DEFAULT_TURN_CAP = 50`) can be reached when the agent repeats
+  tool calls without progress. Retry counters, observer hints, policy checks,
+  and prompt rules are the current controls.
 - Tool-output compression must preserve enough snapshot/ref detail for safe
   follow-up actions.
-- `src/agent_loop/outcomes.py` is transitional compatibility debt. It should
-  be removed or reduced to stable provider-neutral types after the new Agent
-  Loop emits terminal goal state directly.
-- The new Agent Loop engine migration must also rewrite the LangGraph adapter,
-  `BrowserHarness`, session state handoff, policy state patches, browser
-  provider request/result normalization, eval runner wiring, CLI streaming, and
-  export/metrics assumptions that still read legacy graph state. Track this in
-  [Agent Loop Engine Migration Touchpoints](../development/2026-08-08-agent-loop-engine-migration-touchpoints.md).
+- `AUTOBROWSER_AGENT_LOOP`/`SessionConfig.agent_loop` are inert compatibility
+  flags; they parse but do not change routing and can be removed once external
+  tooling stops referencing them.

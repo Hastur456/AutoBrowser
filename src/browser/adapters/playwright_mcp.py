@@ -6,10 +6,13 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
-from src.agent.state import AgentState, ToolRequest, ToolResult
 from src.browser.errors import BROWSER_ERROR_INVALID_REF
 from src.browser.names import is_browser_tool_name, to_playwright_browser_name
 from src.browser.provider import BrowserProvider
+from src.contracts import ToolRequest, ToolResult
+from src.state import AgentState
+# TODO: Circular Import
+# from src.agent_loop.execution.state import LoopState
 
 INVALID_REF_PATTERN = re.compile(
     r"\bRef\s+[A-Za-z][A-Za-z0-9_-]*\s+not\s+found\b",

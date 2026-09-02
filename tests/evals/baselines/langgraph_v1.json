@@ -1,42 +1,42 @@
 {
   "dynamic_search_input": {
+    "terminal_status": "completed",
     "model_turn_count": 7,
+    "tool_call_count": 5,
     "policy_block_count": 0,
     "repeated_action_count": 0,
-    "terminal_status": "completed",
-    "tool_call_count": 5,
     "trace_complete": true
   },
   "filter_requires_apply": {
+    "terminal_status": "completed",
     "model_turn_count": 7,
+    "tool_call_count": 5,
     "policy_block_count": 0,
     "repeated_action_count": 0,
-    "terminal_status": "completed",
-    "tool_call_count": 5,
     "trace_complete": true
   },
   "search_basic": {
+    "terminal_status": "completed",
     "model_turn_count": 5,
+    "tool_call_count": 3,
     "policy_block_count": 0,
     "repeated_action_count": 0,
-    "terminal_status": "completed",
-    "tool_call_count": 3,
     "trace_complete": true
   },
   "stale_ref_recovery": {
-    "model_turn_count": 6,
+    "terminal_status": "completed",
+    "model_turn_count": 5,
+    "tool_call_count": 4,
     "policy_block_count": 0,
     "repeated_action_count": 0,
-    "terminal_status": "completed",
-    "tool_call_count": 4,
     "trace_complete": true
   },
   "unchanged_search_click": {
+    "terminal_status": "completed",
     "model_turn_count": 7,
+    "tool_call_count": 3,
     "policy_block_count": 0,
     "repeated_action_count": 0,
-    "terminal_status": "completed",
-    "tool_call_count": 3,
     "trace_complete": true
   }
 }

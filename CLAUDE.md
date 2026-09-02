@@ -27,37 +27,48 @@ Get-Content -LiteralPath path\to\file.md -Encoding UTF8
 
 ## What This Is
 
-AutoBrowser is a Python 3.12 LangGraph agent that turns a natural-language task into a
-plan → reason → policy → execute → observe loop. Browser interaction is **snapshot-driven**
-via Playwright MCP (element `ref`s), not CSS/XPath. It runs as a long-lived interactive
-`cmd2` REPL (`main.py`) over an Ollama-compatible chat model (default `gpt-oss:20b-cloud`).
+AutoBrowser is a Python 3.12 browser automation agent that turns a
+natural-language task into a plan → reason → policy → execute → observe loop.
+Browser interaction is **snapshot-driven** via Playwright MCP (element `ref`s),
+not CSS/XPath. It runs as a long-lived interactive `cmd2` REPL (`main.py`) over
+an Ollama-compatible chat model (default `gpt-oss:20b-cloud`). Control flow is
+**engine-native** — there is no LangGraph graph. The explicit `AgentLoopEngine`
+owns the loop; see `docs/decisions/2026-08-31-native-agent-loop-engine.md` for
+the ADR that made it the sole runtime.
 
-## Two "Agent Loops" — Read This First
+## The Engine-Native Loop
 
-The single biggest source of confusion: **two directories both look like "the agent loop."**
+Control flow lives in `src/agent_loop/execution/`, not in a compiled graph:
 
-- `src/agent/` — the **active** engine. The compiled LangGraph graph, its `AgentState`,
-  nodes, routers, prompts, and the `planner`/`executor`/`observer` subgraphs. This is what
-  actually runs today.
-- `src/agent_loop/` — **provider-neutral contracts + observability + the future engine
-  shell** being built alongside the graph: `ProposedAction`/`ModelDriver` (`actions.py`,
-  `model.py`), events/tracing/replay/metrics, batch/export/evals, `ContextAssembler`
-  (`context.py`), `GoalRunner` (`goals.py`), and the `AgentLoopEngine` shell (`engine.py`).
+- `loop.py` — `AgentLoopEngine` (builds the initial plan, then drives a bounded
+  `while` loop of `TurnController` turns and returns a terminal `AgentLoopResult`)
+  and `native_task_runner` (composes `EngineResources`).
+- `state.py` — the frozen `LoopState` dataclass. `LoopState.apply()` is STRICT —
+  it raises `ValueError` on unknown keys. `LoopState()` constructs with all
+  defaults; `to_session_state()` yields the `SESSION_STATE_KEYS` dict carried
+  across tasks.
+- `completion.py` — `CompletionController`, `NativeObservationCompiler`,
+  `native_latest_state_loader` (AgentLoopResult → terminal status / session state).
+- `guards.py`, `policy.py`, `observation.py`, `tools.py`, `resources.py` — the
+  loop guards, policy fns, observation compiler, tool broker, and
+  `EngineResources` bundling.
 
-An in-progress migration (branch `feat/agent-loop-engine`) is moving control flow from the
-LangGraph graph to an explicit `AgentLoopEngine`. It proceeds **incrementally behind flags**;
-LangGraph stays the default and the rollback path until scenario-eval parity is proven.
-Before assuming a module is "the final architecture," check
-`docs/development/2026-08-08-agent-loop-engine-migration-touchpoints.md` — much of
-`src/harness/` and `src/browser/` currently exists to feed the *legacy* graph shape and is
-slated for rewrite. `src/agent_loop/outcomes.py` and `src/agent_loop/adapters/langgraph.py`
-are explicit transitional debt — **do not grow them**; port behavior into engine-native
-contracts instead.
+`AgentLoopResult(status, final_answer, session_state, state, turns=0)` is a frozen
+dataclass exported from `src.agent_loop.execution.loop.__all__`. `status` is always
+terminal (`"done"`/`"blocked"`/`"cancelled"`).
+
+The old `src/agent/` LangGraph graph is **deleted**. `src/agent_loop/outcomes.py`
+holds only the stable provider-neutral `GoalState` types; the legacy
+`adapters/langgraph.py` and `src/cli/task_runner.py` are gone. Neutral typed
+contracts live in `src/contracts.py` (imports nothing from `src/agent_loop/`,
+`src/harness/`, or `src/browser/`); `AgentState`/`BrowserState` remain as
+type-only TypedDicts in `src/state.py` for annotation; prompts are consolidated in
+`src/agent_loop/prompts.py`; model defaults are in `src/llm.py`.
 
 ## Ownership Chain & Layering Rules
 
 ```text
-SessionRuntime -> GoalRunner -> task_runner -> BrowserHarness -> LangGraph graph
+SessionRuntime -> GoalRunner -> native_task_runner -> AgentLoopEngine -> TurnController
 ```
 
 Each layer is hard-fenced; **respect the boundary the code is trying to keep**:
@@ -68,23 +79,30 @@ Each layer is hard-fenced; **respect the boundary the code is trying to keep**:
   choose actions, judge completion, touch routing/counters/policy, or run a model loop.
 - `src/harness/runtime.py` — `BrowserHarness`: per-task composition root. Injects
   `ContextBuilder`, `MemoryManager`, `ToolRegistry`, `PolicyEngine`, `TelemetryObserver`
-  and invokes/streams the graph. Recursion-limit recovery lives here.
-- `src/agent/` — the graph owns **only** reasoning, routing, execution, observation.
-  Infrastructure goes in `src/harness/`; browser schema adaptation goes in `src/browser/`.
+  and holds `EngineResources.from_harness` sources. There is no graph to stream and no
+  recursion-limit recovery here anymore.
+- `src/agent_loop/execution/` — the engine owns **only** reasoning, routing, execution,
+  observation. Infrastructure goes in `src/harness/`; browser schema adaptation goes in
+  `src/browser/`.
 
 Do not hardcode Playwright MCP behavior into the agent loop, and do not put browser schema
-adaptation in the executor or prompts — register it through `BrowserProvider`/`ToolRegistry`.
+adaptation in the engine or prompts — register it through `BrowserProvider`/`ToolRegistry`.
 
-## The Compiled Graph
+## The Engine Loop
 
-Assembled by `build_agent_graph` in `src/agent/agent.py`:
+`AgentLoopEngine.run` (in `src/agent_loop/execution/loop.py`):
 
 ```text
-START -> plan -> agent -> policy -> executor -> observe -> agent
+build initial plan (model call #0) -> while turn <= cap:
+  TurnController.run_turn(LoopState) ->
+    agent step -> decision
+      done    -> terminal status via CompletionController
+      replan  -> rebuild plan
+      tool_call -> policy -> (human_input?) -> ToolBroker.execute -> observe
 ```
 
-`agent` also routes to `plan` (replan) or `END` (done); `policy` routes to `human_input`
-(sensitive tool) or back to `agent` (blocked); `executor` always flows into `observe`.
+`policy` routes to `human_input` for sensitive tools; a blocked or denied tool
+short-circuits back to the loop. `DEFAULT_TURN_CAP = 50` bounds the loop.
 
 ## Browser Semantics (Hard Invariant)
 
@@ -106,20 +124,21 @@ without Chrome/CDP/MCP.
 
 ## Session vs Task Boundary
 
-All tasks in one REPL session share **one** LangGraph `thread_id` (from
-`SessionContext.session_id`). Across tasks the runtime carries forward only durable context
+All tasks in one REPL session share one session identity (from
+`SessionContext.session_id`), passed into each task config as
+`configurable.thread_id`. Across tasks the runtime carries forward only durable context
 (messages, latest observation, current snapshot, browser state, last-action metadata) and
 **resets task-local fields** (`plan`, `decision`, `final_answer`, tool request/result,
-policy state, errors, retry/replan/repeat counters) before the next task. `BrowserHarness`
-injects carried state through an internal override key that is stripped before LangGraph
-sees the config.
+policy state, errors, retry/replan/repeat counters) before the next task. Carried state is
+injected through the harness-internal state-override key
+(`HARNESS_STATE_OVERRIDES_CONFIG_KEY`), which is stripped from the task config before the
+engine sees it.
 
 ## Feature Flags (env vars)
 
-- `AUTOBROWSER_AGENT_LOOP` — boolean (also `--agent-loop`). Routes execution through the
-  explicit `AgentLoopEngine` shell (`src/agent_loop/engine.py`), which currently wraps
-  `GoalRunner` with no behavior change. Unset → the LangGraph path. This is the seam the
-  engine migration is being built on.
+- `AUTOBROWSER_AGENT_LOOP` (also `--agent-loop`) — **inert.** The engine-native path is the
+  only runtime; the flag and `SessionConfig.agent_loop` parse for CLI compatibility but do
+  not change routing.
 - `AUTOBROWSER_CONTEXT_MODE` — `legacy` (default) | `assembled`. `assembled` renders per-turn
   prompts through `ContextAssembler` (`src/agent_loop/context.py`); `legacy` is the rollback.
 
@@ -129,12 +148,12 @@ sees the config.
 python -m venv .venv; .\.venv\Scripts\Activate.ps1; python -m pip install -r requirements.txt
 
 python -m pytest                              # full suite
-python -m pytest tests\test_agent_graph.py    # single file
+python -m pytest tests\test_harness_session.py  # engine + session lifecycle
 python -m pytest tests\test_prompts.py        # ALWAYS run after changing any prompt
 
 python main.py                                # interactive REPL (browser + MCP)
 python main.py --no-mcp --task "inspect page" # dry run, no browser/MCP (dev checks)
-python main.py --show-state --task "..."      # debug graph state per step
+python main.py --show-state --task "..."      # debug state per step
 
 python scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
 python scripts/run_evals.py --baseline tests\evals\baselines\langgraph_v1.json
@@ -150,10 +169,10 @@ Focused test groups are grouped by area in `AGENTS.md` / `docs/development/setup
 
 - Prompt change → update the prompt file, adjust `tests/test_prompts.py`, run it, and for
   browser-behavior changes inspect one `--show-state` trace for loops.
-- Keep every behavior change behind a flag and keep the LangGraph path working until v2 wins
-  on evals. Prefer additive files over rewrites during the migration; keep `goal_id == task_id`.
+- The engine-native path is the only path — there is no LangGraph rollback. Keep every
+  behavioral change additive and covered by the native tests; keep `goal_id == task_id`.
 - Redact secrets (token/password/credential/api_key/authorization) before persisting events.
   `agent_trace.jsonl` is a diagnostic sidecar, **not** the metrics source of truth.
-- Update `docs/diagrams/` when graph nodes, subgraph boundaries, session lifecycle, harness
+- Update `docs/diagrams/` when engine nodes, subgraph boundaries, session lifecycle, harness
   injection, policy routing, or MCP integration change. Add superseding ADRs; don't rewrite
   historical ones.

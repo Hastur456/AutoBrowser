@@ -1,18 +1,20 @@
-"""Scenario eval harness for the current LangGraph agent loop."""
+"""Scenario eval harness for the engine-native agent loop."""
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
 import yaml
 from langchain_core.language_models.fake import FakeListLLM
 
-from src.agent.agent import build_agent_graph
+from src.agent_loop.engine import native_task_runner
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
+from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.replay import TraceSummary, print_action_sequence, summarize_trace
 from src.browser import FakeBrowserProvider
 from src.harness.runtime import HARNESS_EVENT_METADATA_CONFIG_KEY, BrowserHarness
@@ -92,19 +94,20 @@ def load_scenario(path: Path) -> EvalScenario:
 
 
 async def run_scenario(scenario: EvalScenario) -> EvalResult:
-    """Run one scenario against the current LangGraph loop."""
+    """Run one scenario against the engine-native execution loop."""
 
     sink = InMemoryEventSink()
     session_id = f"eval-{uuid4().hex}"
     task_id = f"task-{uuid4().hex}"
     emitter = EventEmitter(sink, session_id=session_id)
     provider = FakeBrowserProvider(scenario.browser_snapshots)
+    llm = FakeListLLM(responses=scenario.model_responses)
     harness = BrowserHarness(
-        build_agent_graph,
-        llm=FakeListLLM(responses=scenario.model_responses),
+        llm=llm,
         tool_registry=ToolRegistry(providers=[provider]),
         event_emitter=emitter,
     )
+    resources = EngineResources.from_harness(harness, llm=llm, events=emitter)
     emitter.emit(
         "goal.started",
         source="agent_loop.evals",
@@ -112,20 +115,20 @@ async def run_scenario(scenario: EvalScenario) -> EvalResult:
         task_id=task_id,
         goal_id=task_id,
     )
-    final_state: dict[str, Any] = {}
+    runner = native_task_runner(resources)
+    task_config = {
+        HARNESS_EVENT_METADATA_CONFIG_KEY: {
+            "session_id": session_id,
+            "task_id": task_id,
+            "goal_id": task_id,
+        },
+    }
+    session_config = SimpleNamespace(
+        recursion_limit=scenario.recursion_limit,
+        compress_tools=False,
+    )
     try:
-        async for chunk in harness.stream_updates(
-            scenario.task,
-            config={
-                "recursion_limit": scenario.recursion_limit,
-                HARNESS_EVENT_METADATA_CONFIG_KEY: {
-                    "session_id": session_id,
-                    "task_id": task_id,
-                    "goal_id": task_id,
-                },
-            },
-        ):
-            final_state = _state_from_chunk(chunk)
+        result = await runner(harness, scenario.task, session_config, task_config)
     except Exception as exc:
         emitter.emit(
             "goal.failed",
@@ -134,7 +137,13 @@ async def run_scenario(scenario: EvalScenario) -> EvalResult:
             task_id=task_id,
             goal_id=task_id,
         )
+        final_state: dict[str, Any] = {}
     else:
+        final_state = {
+            **dict(result.session_state),
+            "final_answer": str(result.final_answer or ""),
+            "decision": str(result.status or ""),
+        }
         emitter.emit(
             "goal.completed",
             source="agent_loop.evals",
@@ -183,13 +192,6 @@ def _json_response(response: Any) -> str:
     if isinstance(response, str):
         return response
     return json.dumps(response, ensure_ascii=False)
-
-
-def _state_from_chunk(chunk: Any) -> dict[str, Any]:
-    if not isinstance(chunk, dict) or not chunk:
-        return {}
-    nested = next(reversed(chunk.values()))
-    return dict(nested) if isinstance(nested, dict) else {}
 
 
 __all__ = [

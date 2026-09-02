@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 
-from src.agent.agent import DEFAULT_OLLAMA_MODEL
+from src.llm import DEFAULT_OLLAMA_MODEL
 
 DEFAULT_CDP_PORT = int(os.getenv("PORT", "9222"))
 DEFAULT_CHROME_PATH = os.getenv(

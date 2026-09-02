@@ -1,13 +1,13 @@
-"""Shared state and data contracts for the AutoBrowser agent graph.
+"""Provider-neutral graph state contracts.
 
-The provider-neutral contracts and control-loop thresholds now live in
-:mod:`src.contracts` so both the legacy graph and the engine-native execution package
-(``src/agent_loop/execution/``) can share them without either depending on the other.
-They are re-exported here unchanged for backward compatibility — existing
-``from src.agent.state import ...`` imports keep working.
+``AgentState`` (the LangGraph-shaped top-level loop state) and its ``BrowserState``
+sub-shape historically lived in ``src/agent/state.py`` alongside the now-removed
+LangGraph graph. The provider-neutral tool/plan/observation contracts remain in
+:mod:`src.contracts`; ``AgentState`` is kept here for the harness/browser layers that
+still annotate their collaborators with the full loop-state shape.
 
-``AgentState`` (the LangGraph graph state) and its ``BrowserState`` sub-shape are
-graph-specific and remain defined in this module.
+This module imports nothing from ``src/agent/``, ``src/agent_loop/``,
+``src/harness/`` or ``src/browser/``.
 """
 
 from __future__ import annotations
@@ -17,20 +17,13 @@ from typing import Any, NotRequired, TypedDict
 from langchain_core.messages import BaseMessage
 
 from src.contracts import (
-    MAX_CONSECUTIVE_FAILURES,
-    MAX_REPLANS,
-    MAX_SNAPSHOT_RECOVERIES,
-    MAX_STEPS_WITHOUT_PLAN_ADVANCE,
-    MAX_UNCHANGED_SNAPSHOTS,
     AgentDecision,
-    CompactToolObservation,
     PlanStep,
     PolicyDecision,
     PolicyEvent,
     RecoveryCounters,
     ToolRequest,
     ToolResult,
-    ToolStatus,
 )
 
 
@@ -42,7 +35,7 @@ class BrowserState(TypedDict, total=False):
 
 
 class AgentState(TypedDict, total=False):
-    """Top-level graph state for the Plan -> Execute -> Observe loop."""
+    """Top-level loop state for the Plan -> Execute -> Observe loop."""
 
     task: str
     task_id: str
@@ -86,20 +79,6 @@ class AgentState(TypedDict, total=False):
 
 
 __all__ = [
-    "MAX_CONSECUTIVE_FAILURES",
-    "MAX_REPLANS",
-    "MAX_SNAPSHOT_RECOVERIES",
-    "MAX_STEPS_WITHOUT_PLAN_ADVANCE",
-    "MAX_UNCHANGED_SNAPSHOTS",
-    "AgentDecision",
     "AgentState",
     "BrowserState",
-    "CompactToolObservation",
-    "PlanStep",
-    "PolicyDecision",
-    "PolicyEvent",
-    "RecoveryCounters",
-    "ToolRequest",
-    "ToolResult",
-    "ToolStatus",
 ]

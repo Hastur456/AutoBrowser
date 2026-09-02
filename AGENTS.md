@@ -26,16 +26,19 @@ This repository is indexed by CodeGraph (`.codegraph/` exists at the repo root).
 
 ## Project Structure & Module Organization
 
-This is a Python 3.12 repository for an AutoBrowser/LangGraph agent. The CLI entry point is `main.py`. Core code lives in `src/`:
+This is a Python 3.12 repository for an AutoBrowser browser automation agent with an
+engine-native execution loop. The CLI entry point is `main.py`. Core code lives in `src/`:
 
-- `src/agent/`: LangGraph agent loop, state, prompts, routers, graph assembly, and history helpers.
-- `src/agent_loop/`: runtime-facing action contracts, model action parsing, eventing, tracing, replay/evals, metrics, batch/export helpers, context assembly, skills, and goal lifecycle boundaries around the current graph engine.
-- `src/agent/subgraphs/planner/`: planning graph pieces.
-- `src/agent/subgraphs/executor/`: tool execution graph and provider-backed request/result normalization.
-- `src/agent/subgraphs/observer/`: tool-result and snapshot observation/compression pieces.
+- `src/agent_loop/execution/`: the engine-native control loop — `AgentLoopEngine`,
+  `TurnController`, the frozen `LoopState`, completion/observation/guards/policy
+  helpers, `EngineResources`, and `native_task_runner`.
+- `src/agent_loop/`: runtime-facing action contracts, model action parsing, eventing, tracing, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary around the engine.
+- `src/contracts.py`: provider-neutral typed tool/plan/observation contracts and loop thresholds (no imports from the loop, harness, or browser layers).
+- `src/state.py`: type-only `AgentState`/`BrowserState` TypedDicts kept for annotation.
+- `src/llm.py`: model defaults such as `DEFAULT_OLLAMA_MODEL` and the `ChatOllama` factory.
 - `src/browser/`: provider-neutral browser contracts, canonical browser names, backend adapters, shared browser errors, and fake browser tools for tests.
-- `src/cli/`: `cmd2` interactive CLI, command catalog, output formatting, and task runner adapter.
-- `src/harness/`: session runtime and runtime infrastructure injected into the graph.
+- `src/cli/`: `cmd2` interactive CLI, command catalog, output formatting, parser, and bootstrap wiring.
+- `src/harness/`: session runtime and runtime infrastructure bundled into `EngineResources` for the engine.
 - `src/mcp/`: Playwright MCP process/session lifecycle helpers and provider loading.
 - `docs/`: architecture, development setup, decisions, diagrams, research notes, and glossary.
 
@@ -43,12 +46,14 @@ Tests live in `tests/`. Utility scripts live in `scripts/`, including graph visu
 
 ## Harness Architecture
 
-LangGraph should own only the agent loop: planning, reasoning, routing, execution, and observation nodes. Infrastructure belongs in `src/harness/` and is injected into the compiled graph.
+The engine-native `AgentLoopEngine` owns the agent loop: planning, reasoning,
+routing, execution, and observation. Infrastructure belongs in `src/harness/`
+and is bundled into `EngineResources` for the engine by `BrowserHarness`.
 
 Harness responsibilities:
 
 - `session.py`: owns the process-long session lifecycle through `SessionRuntime` and `SessionContext`.
-- `runtime.py`: assembles harness components and compiles/runs/streams the graph through `BrowserHarness`.
+- `runtime.py`: composition root that holds the infrastructure collaborators `EngineResources.from_harness` reads; it no longer compiles/runs/streams a graph.
 - `context.py`: context and initial state construction, including system prompt injection.
 - `memory.py`: checkpoint saver ownership and durable conversation history helpers.
 - `tools.py`: pluggable tool registry for static tools, generic providers, browser providers, and MCP clients.
@@ -57,9 +62,13 @@ Harness responsibilities:
 
 `ContextBuilder` defaults to legacy prompt rendering. Set `AUTOBROWSER_CONTEXT_MODE=assembled` to use the assembled context path backed by `src/agent_loop/context.py`; set `AUTOBROWSER_CONTEXT_MODE=legacy` for rollback while validating prompt changes.
 
-When migrating to a new `AgentLoopEngine`, do not treat `src/agent_loop/outcomes.py` or `src/agent_loop/adapters/langgraph.py` as the only legacy code. `BrowserHarness`, most session state/config handoff in `src/harness/`, `PolicyEngine` state patches, `MemoryManager` checkpoint ownership, browser provider request/result normalization in `src/browser/`, eval runner wiring, CLI streaming, and export/metrics final-answer assumptions also need review or rewrite. Keep [docs/development/2026-08-08-agent-loop-engine-migration-touchpoints.md](docs/development/2026-08-08-agent-loop-engine-migration-touchpoints.md) updated when touching this migration.
+The LangGraph migration is complete: `src/agent/`, `src/agent_loop/adapters/langgraph.py`,
+`src/cli/task_runner.py`, and the legacy `LegacyAgentStateObservationCompiler` are removed, and
+`AgentLoopEngine` is the sole runtime (see
+[docs/decisions/2026-08-31-native-agent-loop-engine.md](docs/decisions/2026-08-31-native-agent-loop-engine.md)).
+`AUTOBROWSER_AGENT_LOOP`/`SessionConfig.agent_loop` are inert compatibility surface.
 
-Do not hardcode Playwright MCP behavior into the agent loop. Browser-specific backends should be registered through `BrowserProvider` and `ToolRegistry` or injected through `BrowserHarness` so tools can be swapped or mocked in CI. Keep planner, observer, executor, and core state contracts stable unless a migration step explicitly requires changing them.
+Do not hardcode Playwright MCP behavior into the agent loop. Browser-specific backends should be registered through `BrowserProvider` and `ToolRegistry` or injected through `BrowserHarness` so tools can be swapped or mocked in CI. Keep the engine-native contracts and the frozen `LoopState` stable unless a change explicitly requires touching them.
 
 ## Browser Provider Architecture
 
@@ -74,7 +83,7 @@ Browser boundary responsibilities:
 - `adapters/playwright_mcp.py`: `PlaywrightMCPBrowserProvider`, the production adapter around loaded Playwright MCP tools.
 - `fake.py`: `FakeBrowserProvider` for deterministic tests without Chrome, CDP, or MCP.
 
-The executor should resolve tools through `ToolRegistry`, pass browser requests through registered provider normalizers before invocation, and pass raw results through provider result normalizers before returning graph state. Raw non-provider tools should remain unadapted.
+The executor should resolve tools through `ToolRegistry`, pass browser requests through registered provider normalizers before invocation, and pass raw results through provider result normalizers before returning loop state. Raw non-provider tools should remain unadapted.
 
 Use canonical `browser.*` names in provider-neutral tests when helpful. The Playwright adapter maps them to runtime MCP tool names.
 
@@ -82,9 +91,9 @@ Use canonical `browser.*` names in provider-neutral tests when helpful. The Play
 
 AutoBrowser is a long-lived interactive session, not a single-shot task runner. `SessionRuntime` owns the process lifecycle and delegates session-owned state to `SessionContext`.
 
-All tasks in one interactive session share a session-scoped LangGraph `thread_id` derived from `SessionContext.session_id`. Each user request still gets its own `TaskRecord.task_id` for task history and message attribution, but that ID is not the checkpoint thread.
+All tasks in one interactive session share a session identity derived from `SessionContext.session_id`, passed into each task config as `configurable.thread_id`. Each user request still gets its own `TaskRecord.task_id` for task history and message attribution, and `goal_id == task_id`.
 
-After each task, `SessionRuntime` remembers the latest graph state in `SessionContext.state`. The next task carries forward only session-useful context:
+After each task, `SessionRuntime` remembers the latest loop state in `SessionContext.state` (from the terminal `AgentLoopResult.session_state`). The next task carries forward only session-useful context:
 
 - durable `messages`;
 - latest `observation`;
@@ -97,9 +106,14 @@ Before a new task starts, task-local fields must be reset so stale completion or
 - `tool_request`, `tool_result`, `policy_decision`, and `policy_event`;
 - `error`, retry counters, replan counters, repeat counters, and ineffective-action counters.
 
-`BrowserHarness` owns the internal state-override channel used to inject carried session state into the next graph invocation. Strip harness-internal config before passing config to LangGraph.
+`BrowserHarness` owns the internal state-override channel
+(`HARNESS_STATE_OVERRIDES_CONFIG_KEY`) used to inject carried session state into
+the next `AgentLoopEngine.run` call. Strip harness-internal config before the
+engine sees the task config.
 
-Preserve this boundary: the session layer manages lifecycle and context handoff, while the compiled graph still owns planning, reasoning, tool execution, observation, and task completion.
+Preserve this boundary: the session layer manages lifecycle and context handoff,
+while the engine-native loop still owns planning, reasoning, tool execution,
+observation, and task completion.
 
 ## Build, Test, and Development Commands
 
@@ -123,7 +137,6 @@ Useful focused test commands:
 
 ```powershell
 python -m pytest tests\test_harness_session.py tests\test_harness_runtime.py
-python -m pytest tests\test_agent_graph.py
 python -m pytest tests\test_main_cli.py
 python -m pytest tests\test_prompts.py
 python -m pytest tests\test_browser_contracts.py tests\test_fake_browser_provider.py tests\test_playwright_mcp_provider.py
@@ -196,15 +209,15 @@ Useful CLI flags include `--loop`, `--show-state`, `--hide-snapshot`, `--show-to
 
 ## Coding Style & Naming Conventions
 
-Use Python 3.12-compatible code. Follow PEP 8 with 4-space indentation, snake_case for functions and modules, PascalCase for classes, and UPPER_SNAKE_CASE for constants. Add type hints for public functions, graph state structures, and browser boundary contracts.
+Use Python 3.12-compatible code. Follow PEP 8 with 4-space indentation, snake_case for functions and modules, PascalCase for classes, and UPPER_SNAKE_CASE for constants. Add type hints for public functions, loop state structures, and browser boundary contracts.
 
-Keep graph node, router, state, and prompt code in the existing `nodes.py`, `routers.py`, `state.py`, and `prompts.py` pattern. Put runtime-facing Agent Loop contracts, durable event/trace helpers, replay/eval helpers, batch/export helpers, context assembly, skills, and goal lifecycle boundaries in `src/agent_loop/`. Put infrastructure abstractions in `src/harness/` instead of expanding graph nodes. Put browser backend contracts, canonical names, shared errors, and backend adapters in `src/browser/`. Prefer structured state updates and typed contracts over ad hoc dictionaries when changing graph or browser boundaries.
+Keep engine, state, and prompt code in the `src/agent_loop/execution/` and `src/agent_loop/prompts.py` patterns. Put runtime-facing Agent Loop contracts, durable event/trace helpers, replay/eval helpers, batch/export helpers, context assembly, skills, and goal lifecycle boundaries in `src/agent_loop/`. Put infrastructure abstractions in `src/harness/` instead of expanding engine modules. Put browser backend contracts, canonical names, shared errors, and backend adapters in `src/browser/`. Prefer strict `LoopState` updates and typed contracts over ad hoc dictionaries when changing loop or browser boundaries.
 
 ## Testing Guidelines
 
-Use `pytest` and `pytest-asyncio` for asynchronous graph, harness, and MCP behavior. Name test files `test_*.py` and test functions `test_*`.
+Use `pytest` and `pytest-asyncio` for asynchronous engine, harness, and MCP behavior. Name test files `test_*.py` and test functions `test_*`.
 
-Prefer focused unit tests for routers, policy decisions, state transitions, tool registry behavior, browser provider normalization, observer normalization, Agent Loop event/action contracts, context assembly, goal lifecycle, metrics, replay, batch, and export behavior. Add integration tests for graph assembly, harness injection, streaming behavior, tool execution boundaries, provider-backed browser execution, and scenario eval coverage. Use `FakeBrowserProvider` when tests need browser behavior without external services. Do not require external services in default tests unless they are skipped or mocked.
+Prefer focused unit tests for loop decisions, policy decisions, state transitions, tool registry behavior, browser provider normalization, observer normalization, Agent Loop event/action contracts, context assembly, goal lifecycle, metrics, replay, batch, and export behavior. Add integration tests for engine/harness wiring, harness injection, tool execution boundaries, provider-backed browser execution, and scenario eval coverage. Use `FakeBrowserProvider` when tests need browser behavior without external services. Do not require external services in default tests unless they are skipped or mocked.
 
 ## Playwright MCP Development Rules
 

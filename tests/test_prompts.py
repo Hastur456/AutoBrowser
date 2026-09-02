@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent.prompts import AGENT_SYSTEM_PROMPT
-from src.agent.prompts import AGENT_USER_PROMPT
-from src.agent.prompts import BROWSER_CONTRACT_PROMPT
-from src.agent.prompts import COMPLETION_PROMPT
-from src.agent.prompts import CORE_RUNTIME_PROMPT
-from src.agent.prompts import LOOP_GUARD_PROMPT
-from src.agent.prompts import OUTPUT_FORMAT_PROMPT
-from src.agent.prompts import render_compatibility_system_prompt
-from src.agent.subgraphs.observer.prompts import OBSERVER_SYSTEM_PROMPT
-from src.agent.subgraphs.planner.prompts import PLANNER_SYSTEM_PROMPT
+from src.agent_loop.prompts import AGENT_SYSTEM_PROMPT
+from src.agent_loop.prompts import AGENT_USER_PROMPT
+from src.agent_loop.prompts import BROWSER_CONTRACT_PROMPT
+from src.agent_loop.prompts import COMPLETION_PROMPT
+from src.agent_loop.prompts import CORE_RUNTIME_PROMPT
+from src.agent_loop.prompts import LOOP_GUARD_PROMPT
+from src.agent_loop.prompts import OBSERVER_SYSTEM_PROMPT
+from src.agent_loop.prompts import OUTPUT_FORMAT_PROMPT
+from src.agent_loop.prompts import PLANNER_SYSTEM_PROMPT
+from src.agent_loop.prompts import render_compatibility_system_prompt
 
 
 PROMPT_CONSTRAINTS = {
@@ -123,8 +123,6 @@ def test_agent_user_prompt_golden_browser_turn() -> None:
         observation="The latest snapshot shows a searchbox ref=e123.",
         consecutive_failures=1,
         repeat_count=0,
-        snapshot='textbox "Search" [ref=e123]',
-        refs="e123",
     )
 
     assert rendered == """Task:
@@ -145,23 +143,17 @@ Consecutive tool failures:
 Repeated tool request count:
 0
 
-Latest browser.snapshot:
-textbox "Search" [ref=e123]
-
-Available refs:
-e123
-
 Snapshot reuse rule:
 If the latest observation says browser.snapshot is already current or says to
 reuse the existing snapshot/refs, do not call browser.snapshot again with any
-depth. Continue from Latest browser.snapshot and Available refs. If the visible
-snapshot is insufficient for the next step, prefer browser_find or
-browser.evaluate; otherwise replan.
+depth. Continue from the snapshot in the message history and its available
+refs. If the visible snapshot is insufficient for the next step, prefer
+browser_find or browser.evaluate; otherwise replan.
 
 Choose the next action."""
 
 
-def test_agent_user_prompt_golden_non_browser_turn_has_explicit_empty_browser_state() -> None:
+def test_agent_user_prompt_golden_non_browser_turn() -> None:
     rendered = AGENT_USER_PROMPT.format(
         task="summarize the provided notes",
         plan="No plan yet.",
@@ -169,11 +161,8 @@ def test_agent_user_prompt_golden_non_browser_turn_has_explicit_empty_browser_st
         observation="No observation yet.",
         consecutive_failures=0,
         repeat_count=0,
-        snapshot="",
-        refs="none",
     )
 
     assert "Task:\nsummarize the provided notes" in rendered
     assert "Latest observation:\nNo observation yet." in rendered
-    assert "Latest browser.snapshot:\n\n\nAvailable refs:\nnone" in rendered
     assert rendered.endswith("Choose the next action.")

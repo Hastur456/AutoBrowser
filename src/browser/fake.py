@@ -8,7 +8,8 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from src.agent.state import AgentState, ToolRequest, ToolResult
+from src.contracts import ToolRequest, ToolResult
+from src.state import AgentState
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
 from src.browser.names import is_browser_tool_name, to_playwright_browser_name
 from src.browser.provider import BrowserProvider

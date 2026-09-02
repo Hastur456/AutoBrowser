@@ -694,7 +694,7 @@ class SessionRuntime:
         await self.start()
         task = (initial_task or "").strip()
         if task:
-            await self.run_task(task)
+            self._print_result(await self.run_task(task))
             self._output()
 
         self._output(INTERACTIVE_MESSAGE)
@@ -710,8 +710,17 @@ class SessionRuntime:
             if task.lower() in EXIT_COMMANDS:
                 return 0
 
-            await self.run_task(task)
+            self._print_result(await self.run_task(task))
             self._output()
+
+    def _print_result(self, result: Any) -> None:
+        """Print a task's final answer to the interactive loop output."""
+
+        answer = getattr(result, "final_answer", None)
+        if not answer and isinstance(result, Mapping):
+            answer = result.get("final_answer")
+        if answer:
+            self._output(answer)
 
     async def close(self) -> None:
         """Release process-lifetime external resources."""

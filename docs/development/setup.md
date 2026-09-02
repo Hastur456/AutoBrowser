@@ -30,7 +30,7 @@ python -m pytest
 Run a targeted file:
 
 ```powershell
-python -m pytest tests\test_agent_graph.py
+python -m pytest tests\test_harness_session.py
 ```
 
 Run prompt tests after changing agent, planner, or observer prompts:
@@ -59,7 +59,7 @@ Run harness and CLI boundary tests after changing session/runtime/tool wiring:
 
 ```powershell
 python -m pytest tests\test_harness_session.py tests\test_harness_runtime.py tests\test_harness_tools.py tests\test_harness_telemetry.py
-python -m pytest tests\test_main_cli.py tests\test_cli_task_runner.py
+python -m pytest tests\test_main_cli.py
 ```
 
 ## CLI Usage
@@ -82,8 +82,8 @@ Type `quit` or `exit`, or press Ctrl+C/EOF, to end the session.
 
 Session metadata and task history are written under
 `.autobrowser/sessions/<session_id>/` as `session.json` and `tasks.json`.
-LangGraph checkpoint memory is scoped to the active interactive session so
-follow-up tasks can use prior observations, snapshots, and browser progress.
+Durable loop state is scoped to the active interactive session so follow-up
+tasks can use prior observations, snapshots, and browser progress.
 Task-local planning, terminal, policy, error, and retry fields are reset before
 each new task.
 
@@ -148,7 +148,8 @@ python scripts/run_evals.py --baseline tests\evals\baselines\langgraph_v1.json
 
 ## Development Guidelines
 
-- Keep reasoning and routing changes in `src/agent/`.
+- Keep engine, state, and prompt changes in `src/agent_loop/` (`execution/`,
+  `state.py`, `prompts.py`).
 - Keep Agent Loop action contracts, model action parsing, event records,
   tracing, replay/eval helpers, batch/export helpers, context assembly, skills,
   and goal lifecycle boundaries in `src/agent_loop/`.
@@ -156,8 +157,8 @@ python scripts/run_evals.py --baseline tests\evals\baselines\langgraph_v1.json
   backend adapters in `src/browser/`.
 - Keep session and runtime infrastructure changes in `src/harness/`.
 - Keep `SessionRuntime` focused on interaction lifecycle and resource
-  ownership; it may carry graph context between tasks, but it should still
-  delegate task solving to `BrowserHarness` instead of solving tasks in the
+  ownership; it may carry loop context between tasks, but it should still
+  delegate task solving to `AgentLoopEngine` instead of solving tasks in the
   session layer.
 - Register browser-specific tools through `BrowserProvider` and `ToolRegistry`
   or harness injection.
@@ -167,14 +168,15 @@ python scripts/run_evals.py --baseline tests\evals\baselines\langgraph_v1.json
   should not require Chrome, CDP, or MCP.
 - Preserve Playwright MCP snapshot/ref semantics in prompts, policies,
   observer changes, and browser providers.
-- Prefer focused tests for routers, state transitions, prompt constraints,
-  policy decisions, tool registry behavior, and observer normalization.
+- Prefer focused tests for loop decisions, state transitions, prompt
+  constraints, policy decisions, tool registry behavior, and observer
+  normalization.
 
 ## Prompt Change Checklist
 
 When changing prompts:
 
-1. Update the relevant prompt file under `src/agent/` or a subgraph.
+1. Update the relevant prompt file under `src/agent_loop/prompts.py`.
 2. Add or adjust assertions in `tests/test_prompts.py`.
 3. Run `python -m pytest tests\test_prompts.py`.
 4. For behavior-sensitive browser changes, run at least one CLI trace with

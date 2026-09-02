@@ -3,20 +3,19 @@
 from __future__ import annotations
 
 import os
-import re
 from collections.abc import Mapping
 from collections.abc import Sequence
 from typing import Any
 
-from src.agent.prompts import AGENT_SYSTEM_PROMPT
-from src.agent.prompts import AGENT_USER_PROMPT
-from src.agent.subgraphs.planner.prompts import (
+from src.agent_loop.context import ContextAssembler
+from src.agent_loop.context import AssembledContext
+from src.agent_loop.prompts import (
+    AGENT_SYSTEM_PROMPT,
+    AGENT_USER_PROMPT,
     PLANNER_SYSTEM_PROMPT,
     PLANNER_USER_PROMPT,
 )
-from src.agent_loop.context import ContextAssembler
-from src.agent_loop.context import AssembledContext
-from src.agent.state import AgentState
+from src.state import AgentState
 
 CONTEXT_MODE_LEGACY = "legacy"
 CONTEXT_MODE_ASSEMBLED = "assembled"
@@ -62,8 +61,6 @@ class ContextBuilder:
             observation=state.get("observation", "No observation yet."),
             consecutive_failures=state.get("consecutive_failures", 0),
             repeat_count=state.get("repeat_count", 0),
-            snapshot=state.get("snapshot", ""),
-            refs=_extract_refs(state.get("snapshot", "")),
         )
 
     def build_plan_prompt(self, state: Mapping[str, Any]) -> str:
@@ -123,11 +120,6 @@ def _format_plan(plan: Any) -> str:
         for index, step in enumerate(plan, start=1)
         if isinstance(step, Mapping)
     )
-
-
-def _extract_refs(snapshot: Any) -> str:
-    refs = re.findall(r"\bref=([A-Za-z0-9_-]+)", str(snapshot or ""))
-    return ", ".join(dict.fromkeys(refs)) or "none"
 
 
 __all__ = ["CONTEXT_MODE_ASSEMBLED", "CONTEXT_MODE_LEGACY", "ContextBuilder"]

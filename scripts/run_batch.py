@@ -18,10 +18,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.agent_loop.batch import run_batch
-from src.agent.agent import DEFAULT_OLLAMA_MODEL
 from src.cli.bootstrap import build_session
 from src.cli.parser import DEFAULT_CDP_PORT, DEFAULT_CHROME_PATH, DEFAULT_USER_DATA_DIR
 from src.harness.session import SessionRuntime
+from src.llm import DEFAULT_OLLAMA_MODEL
 
 SessionBuilder = Callable[[argparse.Namespace], SessionRuntime]
 BatchRunner = Callable[..., Awaitable[dict[str, Any]]]

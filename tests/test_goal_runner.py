@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any
 
@@ -9,6 +10,31 @@ import pytest
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.agent_loop.goals import GoalRunRequest, GoalRunner
 from src.agent_loop.outcomes import GoalState
+
+
+class DictResultCompiler:
+    """GoalState compiler for plain-dict task-runner results.
+
+    The engine-native loop returns an ``AgentLoopResult``, so
+    ``NativeObservationCompiler`` is the production default. These lifecycle tests
+    inject raw dict task-runners instead, so they provide a small compiler that
+    derives a terminal status from a ``final_answer`` the way the removed legacy
+    compiler did.
+    """
+
+    def compile(
+        self,
+        *,
+        latest_state: Mapping[str, object] | None,
+        result: Any,
+    ) -> GoalState:
+        if isinstance(result, Mapping):
+            nested = result.get("agent") if isinstance(result.get("agent"), Mapping) else result
+            answer = str(nested.get("final_answer", "") or "")
+            if answer:
+                status = "blocked" if answer.startswith("Blocked:") else "done"
+                return GoalState(status=status, latest_state=latest_state, result=result)
+        return GoalState(status="continue", latest_state=latest_state, result=result)
 
 
 def make_request() -> GoalRunRequest:
@@ -55,6 +81,7 @@ async def test_goal_runner_emits_events_calls_task_runner_and_returns_result() -
         task_runner=task_runner,
         event_emitter=event_emitter,
         latest_state_loader=latest_state_loader,
+        observation_compiler=DictResultCompiler(),
     )
 
     goal_result = await runner.run(make_request())
@@ -127,6 +154,7 @@ async def test_goal_runner_accepts_streaming_task_runner_unchanged() -> None:
         task_runner=streaming_task_runner,
         event_emitter=event_emitter,
         latest_state_loader=latest_state_loader,
+        observation_compiler=DictResultCompiler(),
     )
 
     goal_result = await runner.run(make_request())
@@ -176,6 +204,7 @@ async def test_goal_runner_emits_failure_event_and_reraises_original_exception()
         task_runner=task_runner,
         event_emitter=event_emitter,
         latest_state_loader=latest_state_loader,
+        observation_compiler=DictResultCompiler(),
     )
 
     with pytest.raises(RuntimeError) as exc_info:
@@ -306,6 +335,7 @@ async def test_goal_runner_uses_terminal_result_when_latest_state_loader_stalls(
         task_runner=task_runner,
         event_emitter=event_emitter,
         latest_state_loader=latest_state_loader,
+        observation_compiler=DictResultCompiler(),
     )
 
     goal_result = await runner.run(make_request())
@@ -343,6 +373,7 @@ async def test_goal_runner_rejects_nonterminal_result() -> None:
         task_runner=task_runner,
         event_emitter=event_emitter,
         latest_state_loader=latest_state_loader,
+        observation_compiler=DictResultCompiler(),
     )
 
     with pytest.raises(RuntimeError, match="without a terminal goal state"):
@@ -382,6 +413,7 @@ async def test_goal_runner_emits_blocked_event_for_blocked_final_answer() -> Non
         task_runner=task_runner,
         event_emitter=event_emitter,
         latest_state_loader=latest_state_loader,
+        observation_compiler=DictResultCompiler(),
     )
 
     goal_result = await runner.run(make_request())

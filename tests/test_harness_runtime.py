@@ -1,82 +1,31 @@
+"""Tests for the ``BrowserHarness`` composition root and ``EngineResources`` bundling.
+
+The legacy graph streaming/recursion-recovery behavior was removed along with
+``src/agent/``: ``BrowserHarness`` is now a pure composition root that holds the
+infrastructure collaborators the engine-native loop consumes. These tests cover its
+default wiring, injection, tool-registry composition, and how
+:meth:`src.agent_loop.execution.resources.EngineResources.from_harness` reads it.
+"""
+
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
-from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.errors import GraphRecursionError
 
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
-from src.harness.runtime import BrowserHarness
-from src.harness.runtime import HARNESS_STATE_OVERRIDES_CONFIG_KEY
+from src.agent_loop.execution.resources import EngineResources
+from src.browser import FakeBrowserProvider
 from src.harness.context import ContextBuilder
 from src.harness.memory import MemoryManager
 from src.harness.policy import PolicyEngine
+from src.harness.runtime import BrowserHarness
+from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolRegistry
-
-
-class FakeGraph:
-    def __init__(self) -> None:
-        self.calls: list[tuple[dict[str, Any], dict[str, Any]]] = []
-
-    async def ainvoke(self, state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
-        self.calls.append((state, config))
-        return {"final_answer": "done", "state": state, "config": config}
-
-
-class FailingGraph:
-    async def ainvoke(self, state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
-        raise RuntimeError("graph failed")
-
-
-class StreamingGraph(FakeGraph):
-    async def astream(
-        self,
-        state: dict[str, Any],
-        config: dict[str, Any],
-        stream_mode: str,
-    ):
-        self.calls.append((state, config))
-        yield {"plan": {"task": state["task"], "stream_mode": stream_mode}}
-        yield {"agent": {"final_answer": "done"}}
-
-
-class FakeStateSnapshot:
-    def __init__(self, values: dict[str, Any]) -> None:
-        self.values = values
-
-
-class RecursionAfterDoneGraph:
-    def __init__(self) -> None:
-        self.values = {"decision": "done", "final_answer": "finished"}
-
-    async def ainvoke(self, state: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
-        raise GraphRecursionError("Recursion limit reached")
-
-    async def astream(
-        self,
-        state: dict[str, Any],
-        config: dict[str, Any],
-        stream_mode: str,
-    ):
-        yield {"plan": {"task": state["task"], "stream_mode": stream_mode}}
-        yield {"agent": self.values}
-        raise GraphRecursionError("Recursion limit reached")
-
-    async def aget_state(self, config: dict[str, Any]) -> FakeStateSnapshot:
-        return FakeStateSnapshot(self.values)
 
 
 class FakeTool:
     name = "fake_tool"
-
-
-class FakeCheckpointSaver:
-    def __init__(self) -> None:
-        self.deleted_threads: list[str] = []
-
-    async def adelete_thread(self, thread_id: str) -> None:
-        self.deleted_threads.append(thread_id)
 
 
 class CustomPolicyEngine(PolicyEngine):
@@ -84,152 +33,96 @@ class CustomPolicyEngine(PolicyEngine):
         return "blocked", "custom policy"
 
 
-@pytest.mark.asyncio
-async def test_browser_harness_injects_tools_and_memory() -> None:
-    graph = FakeGraph()
-    captured: dict[str, Any] = {}
-    tools = [FakeTool()]
-    context_builder = ContextBuilder(system_prompt="HARNESS PROMPT")
+def test_browser_harness_wires_default_collaborators() -> None:
+    harness = BrowserHarness()
 
-    def graph_builder(**kwargs: Any) -> FakeGraph:
-        captured.update(kwargs)
-        return graph
+    assert isinstance(harness.telemetry, TelemetryObserver)
+    assert isinstance(harness.events, EventEmitter)
+    assert isinstance(harness.memory, MemoryManager)
+    assert isinstance(harness.context, ContextBuilder)
+    assert isinstance(harness.tools, ToolRegistry)
+    assert isinstance(harness.policy, PolicyEngine)
+    assert harness.llm is None
+    assert harness.compress_tools is False
+
+
+def test_browser_harness_preserves_injected_collaborators() -> None:
+    tools = [FakeTool()]
+    tool_registry = ToolRegistry(tools=tools)
+    context_builder = ContextBuilder(system_prompt="HARNESS PROMPT")
+    policy_engine = CustomPolicyEngine()
+    memory = MemoryManager()
+    telemetry = TelemetryObserver()
+    events = EventEmitter(InMemoryEventSink(), session_id="session-1")
+    llm = object()
 
     harness = BrowserHarness(
-        graph_builder,
-        tools=tools,
+        llm=llm,
+        tool_registry=tool_registry,
+        memory_manager=memory,
         context_builder=context_builder,
-        policy_engine=CustomPolicyEngine(),
+        telemetry=telemetry,
+        policy_engine=policy_engine,
+        event_emitter=events,
         compress_tools=True,
     )
 
-    result = await harness.run("inspect page", thread_id="test-thread")
-
-    assert result["final_answer"] == "done"
-    assert isinstance(captured["tool_registry"], ToolRegistry)
-    assert await captured["tool_registry"].get_all() == tools
-    assert captured["context_builder"] is context_builder
-    assert captured["policy_node"]({"tool_request": {"name": "browser_snapshot"}})[
-        "observation"
-    ] == "custom policy"
-    assert captured["checkpointer"] is harness.memory.get_checkpoint_saver()
-    assert captured["compress_tools"] is True
-    assert graph.calls[0][0] == {"task": "inspect page"}
-    assert graph.calls[0][1]["configurable"]["thread_id"] == "test-thread"
-
-    history = captured["history_builder"]({"task": "inspect page"})
-    assert isinstance(history[0], SystemMessage)
-    assert history[0].content == "HARNESS PROMPT"
-    assert isinstance(history[1], HumanMessage)
-
-    next_history = captured["history_builder"](
-        {"task": "open the first result", "task_id": "task-2", "messages": history}
-    )
-    assert next_history[:2] == history
-    assert next_history[2].content == "User request (task-2):\nopen the first result"
-    assert captured["history_builder"](
-        {"task": "open the first result", "task_id": "task-2", "messages": next_history}
-    ) == next_history
+    assert harness.tools is tool_registry
+    assert harness.context is context_builder
+    assert harness.policy is policy_engine
+    assert harness.memory is memory
+    assert harness.telemetry is telemetry
+    assert harness.events is events
+    assert harness.llm is llm
+    assert harness.compress_tools is True
 
 
 @pytest.mark.asyncio
-async def test_browser_harness_preserves_existing_config() -> None:
-    graph = FakeGraph()
+async def test_browser_harness_composes_tool_registry_from_tools() -> None:
+    tools = [FakeTool()]
 
-    harness = BrowserHarness(lambda **kwargs: graph)
+    harness = BrowserHarness(tools=tools)
 
-    result = await harness.run(
-        "inspect page",
-        config={"recursion_limit": 5, "configurable": {"checkpoint_ns": "cli"}},
-        thread_id="test-thread",
-    )
-
-    assert result["config"]["recursion_limit"] == 5
-    assert result["config"]["configurable"] == {
-        "checkpoint_ns": "cli",
-        "thread_id": "test-thread",
-    }
+    assert await harness.tools.get_all() == tools
+    assert "fake_tool" in await harness.tools.get_by_name()
 
 
 @pytest.mark.asyncio
-async def test_browser_harness_applies_internal_state_overrides() -> None:
-    graph = FakeGraph()
-    prior_messages = [HumanMessage(content="prior task")]
-    harness = BrowserHarness(lambda **kwargs: graph)
-
-    result = await harness.run(
-        "next task",
-        config={
-            "configurable": {"thread_id": "test-thread"},
-            HARNESS_STATE_OVERRIDES_CONFIG_KEY: {
-                "messages": prior_messages,
-                "snapshot": "- link result ref=e1",
-                "decision": "",
-            },
-        },
-    )
-
-    assert result["state"] == {
-        "task": "next task",
-        "messages": prior_messages,
-        "snapshot": "- link result ref=e1",
-        "decision": "",
-    }
-    assert HARNESS_STATE_OVERRIDES_CONFIG_KEY not in result["config"]
-
-
-@pytest.mark.asyncio
-async def test_browser_harness_streams_updates() -> None:
-    graph = StreamingGraph()
-    harness = BrowserHarness(lambda **kwargs: graph)
-
-    chunks = [
-        chunk
-        async for chunk in harness.stream_updates("inspect page", thread_id="test-thread")
-    ]
-
-    assert chunks == [
-        {"plan": {"task": "inspect page", "stream_mode": "updates"}},
-        {"agent": {"final_answer": "done"}},
-    ]
-    assert graph.calls[0][1]["configurable"]["thread_id"] == "test-thread"
-
-
-@pytest.mark.asyncio
-async def test_browser_harness_emits_stream_events() -> None:
-    graph = StreamingGraph()
-    sink = InMemoryEventSink()
+async def test_engine_resources_from_harness_bundles_collaborators() -> None:
+    provider = FakeBrowserProvider(['- button "Catalog" ref=e14'])
+    tools = [FakeTool()]
+    tool_registry = ToolRegistry(tools=tools, providers=[provider])
+    context_builder = ContextBuilder(system_prompt="HARNESS PROMPT")
+    policy_engine = CustomPolicyEngine()
+    memory = MemoryManager()
+    events = EventEmitter(InMemoryEventSink(), session_id="session-1")
     harness = BrowserHarness(
-        lambda **kwargs: graph,
-        event_emitter=EventEmitter(sink, session_id="session-1"),
+        tool_registry=tool_registry,
+        context_builder=context_builder,
+        policy_engine=policy_engine,
+        memory_manager=memory,
+        event_emitter=events,
     )
+    llm = object()
 
-    chunks = [
-        chunk
-        async for chunk in harness.stream_updates(
-            "inspect page",
-            config={
-                "_autobrowser_event_metadata": {
-                    "session_id": "session-1",
-                    "task_id": "task-1",
-                    "goal_id": "task-1",
-                }
-            },
-            thread_id="test-thread",
-        )
-    ]
+    resources = EngineResources.from_harness(harness, llm=llm)
 
-    assert chunks[-1] == {"agent": {"final_answer": "done"}}
-    assert [record.type for record in sink.records] == [
-        "graph.started",
-        "graph.node_started",
-        "graph.node_finished",
-        "model.responded",
-        "graph.node_started",
-        "graph.node_finished",
-        "model.responded",
-    ]
-    assert all(record.task_id == "task-1" for record in sink.records)
+    assert resources.llm is llm
+    assert resources.tool_registry is tool_registry
+    assert resources.browser_providers == [provider]
+    assert resources.policy is policy_engine
+    assert resources.context is context_builder
+    assert resources.events is events
+    assert resources.memory is memory
+
+
+def test_engine_resources_from_harness_overrides_events() -> None:
+    harness = BrowserHarness()
+    session_events = EventEmitter(InMemoryEventSink(), session_id="session-1")
+
+    resources = EngineResources.from_harness(harness, llm=object(), events=session_events)
+
+    assert resources.events is session_events
 
 
 @pytest.mark.asyncio
@@ -242,37 +135,9 @@ async def test_memory_manager_deletes_task_thread() -> None:
     assert saver.deleted_threads == ["task-123"]
 
 
-@pytest.mark.asyncio
-async def test_browser_harness_logs_graph_errors(caplog) -> None:
-    harness = BrowserHarness(lambda **kwargs: FailingGraph())
+class FakeCheckpointSaver:
+    def __init__(self) -> None:
+        self.deleted_threads: list[str] = []
 
-    with pytest.raises(RuntimeError, match="graph failed"):
-        await harness.run("inspect page", thread_id="test-thread")
-
-    assert "Harness error: graph failed" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_browser_harness_returns_completed_state_after_recursion_boundary() -> None:
-    graph = RecursionAfterDoneGraph()
-    harness = BrowserHarness(lambda **kwargs: graph)
-
-    result = await harness.run("inspect page", thread_id="test-thread")
-
-    assert result == {"decision": "done", "final_answer": "finished"}
-
-
-@pytest.mark.asyncio
-async def test_browser_harness_stream_suppresses_recursion_after_done() -> None:
-    graph = RecursionAfterDoneGraph()
-    harness = BrowserHarness(lambda **kwargs: graph)
-
-    chunks = [
-        chunk
-        async for chunk in harness.stream_updates("inspect page", thread_id="test-thread")
-    ]
-
-    assert chunks == [
-        {"plan": {"task": "inspect page", "stream_mode": "updates"}},
-        {"agent": {"decision": "done", "final_answer": "finished"}},
-    ]
+    async def adelete_thread(self, thread_id: str) -> None:
+        self.deleted_threads.append(thread_id)

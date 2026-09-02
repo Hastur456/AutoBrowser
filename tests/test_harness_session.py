@@ -7,10 +7,15 @@ from typing import Any
 
 import pytest
 
-import src.agent_loop.goals as goals
+from src.agent_loop import goals
+from src.agent_loop.execution.loop import AgentLoopResult
+from src.agent_loop.execution.state import BrowserState, LoopState
+from src.harness.runtime import (
+    HARNESS_EVENT_METADATA_CONFIG_KEY,
+    HARNESS_STATE_OVERRIDES_CONFIG_KEY,
+)
 from src.harness.session import (
     ArtifactRegistry,
-    HarnessLatestStateLoader,
     SESSION_THREAD_PREFIX,
     SessionConfig,
     SessionContext,
@@ -18,10 +23,6 @@ from src.harness.session import (
     SessionRuntime,
     SessionState,
     WorkspaceContext,
-)
-from src.harness.runtime import (
-    HARNESS_EVENT_METADATA_CONFIG_KEY,
-    HARNESS_STATE_OVERRIDES_CONFIG_KEY,
 )
 from src.harness.tools import ToolRegistry
 
@@ -53,31 +54,8 @@ class FakeBrowserProvider:
 
 
 class FakeHarness:
-    def __init__(self, graph_builder: Any, **kwargs: Any) -> None:
-        self.graph_builder = graph_builder
+    def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
-
-
-class FakeStateHarness(FakeHarness):
-    def __init__(
-        self,
-        graph_builder: Any,
-        *,
-        state_values: dict[str, object] | None,
-        state_calls: list[dict[str, Any]],
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(graph_builder, **kwargs)
-        self.state_values = state_values
-        self.state_calls = state_calls
-
-    async def get_state_values(self, *, config: dict[str, Any]) -> dict[str, object] | None:
-        self.state_calls.append(config)
-        return self.state_values
-
-
-class FakeNoStateHarness(FakeHarness):
-    pass
 
 
 class FakeChromeProcess:
@@ -94,6 +72,33 @@ class FakeChromeProcess:
     def wait(self, timeout: float | None = None) -> None:
         _ = timeout
         self.waited = True
+
+
+def native_result(
+    final_answer: str = "",
+    *,
+    status: str = "done",
+    **state_updates: Any,
+) -> AgentLoopResult:
+    """Build a terminal ``AgentLoopResult`` the way the native loop does."""
+    state = LoopState(**state_updates)
+    return AgentLoopResult(
+        status=status,
+        final_answer=final_answer,
+        session_state=state.to_session_state(),
+        state=state,
+    )
+
+
+def install_runner(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: Any,
+) -> None:
+    """Inject a fake task runner in place of ``native_task_runner``."""
+    monkeypatch.setattr(
+        "src.harness.session.native_task_runner",
+        lambda _resources: runner,
+    )
 
 
 def make_config(**overrides: Any) -> SessionConfig:
@@ -145,6 +150,17 @@ def llm_factory(**_kwargs: Any) -> FakeLLM:
     return FakeLLM()
 
 
+def make_runtime(**overrides: Any) -> SessionRuntime:
+    return SessionRuntime(
+        make_config(**overrides),
+        llm_factory=llm_factory,
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        load_browser_provider=no_browser_provider,
+        close_mcp_session=noop_close,
+    )
+
+
 def test_session_state_wraps_mapping_operations() -> None:
     state = SessionState()
 
@@ -180,60 +196,6 @@ def test_artifact_registry_tracks_latest_artifact_by_kind(tmp_path: Path) -> Non
     assert registry.latest("screenshot") == first
     assert registry.latest("missing") is None
     assert registry.all() == [first, second]
-
-
-@pytest.mark.asyncio
-async def test_harness_latest_state_loader_returns_checkpoint_state() -> None:
-    state_calls: list[dict[str, Any]] = []
-    checkpoint_state: dict[str, object] = {
-        "messages": ["checkpoint"],
-        "final_answer": "done",
-    }
-    harness = FakeStateHarness(
-        graph_builder=object(),
-        state_values=checkpoint_state,
-        state_calls=state_calls,
-    )
-    loader = HarnessLatestStateLoader(harness)
-    task_config = {"configurable": {"thread_id": "session-1"}}
-
-    state = await loader(task_config, {"state": {"messages": ["fallback"]}})
-
-    assert state == checkpoint_state
-    assert state is not checkpoint_state
-    assert state_calls == [task_config]
-
-
-@pytest.mark.asyncio
-async def test_harness_latest_state_loader_falls_back_to_result_state() -> None:
-    state_calls: list[dict[str, Any]] = []
-    fallback_state: dict[str, object] = {
-        "messages": ["fallback"],
-        "final_answer": "done",
-    }
-    harness = FakeStateHarness(
-        graph_builder=object(),
-        state_values=None,
-        state_calls=state_calls,
-    )
-    loader = HarnessLatestStateLoader(harness)
-    task_config = {"configurable": {"thread_id": "session-1"}}
-
-    state = await loader(task_config, {"state": fallback_state})
-
-    assert state == fallback_state
-    assert state is not fallback_state
-    assert state_calls == [task_config]
-
-
-@pytest.mark.asyncio
-async def test_harness_latest_state_loader_returns_none_without_state() -> None:
-    harness = FakeNoStateHarness(graph_builder=object())
-    loader = HarnessLatestStateLoader(harness)
-
-    state = await loader({"configurable": {"thread_id": "session-1"}}, None)
-
-    assert state is None
 
 
 def test_session_event_bus_emits_to_subscribers_in_registration_order() -> None:
@@ -272,7 +234,6 @@ async def test_session_context_lifecycle_initializes_tracks_tasks_and_closes(
     context.events.subscribe("session.closed", lambda name, _payload: events.append(name))
 
     await context.initialize(
-        graph_builder=lambda **_kwargs: object(),
         llm_factory=llm_factory,
         start_chrome_cdp=no_start,
         wait_for_port=noop_wait,
@@ -350,7 +311,6 @@ async def test_session_context_closes_owned_chrome_process(
         return process
 
     await context.initialize(
-        graph_builder=lambda **_kwargs: object(),
         llm_factory=llm_factory,
         start_chrome_cdp=start_chrome,
         wait_for_port=noop_wait,
@@ -380,21 +340,12 @@ async def test_session_runtime_reuses_context_and_records_task_history(
         task: str,
         config: SessionConfig,
         task_config: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> AgentLoopResult:
         calls.append((harness, task, config, task_config))
-        return {"final_answer": f"done: {task}"}
+        return native_result(final_answer=f"done: {task}")
 
-    runtime = SessionRuntime(
-        make_config(),
-        graph_builder=lambda **_kwargs: object(),
-        llm_factory=llm_factory,
-        task_runner=task_runner,
-        start_chrome_cdp=no_start,
-        wait_for_port=noop_wait,
-        load_browser_provider=no_browser_provider,
-        close_mcp_session=noop_close,
-        harness_factory=FakeHarness,
-    )
+    install_runner(monkeypatch, task_runner)
+    runtime = make_runtime()
 
     await runtime.start()
     first_harness = runtime.harness
@@ -402,7 +353,8 @@ async def test_session_runtime_reuses_context_and_records_task_history(
     result = await runtime.run_task("inspect page")
 
     assert runtime.harness is first_harness
-    assert result == {"final_answer": "done: inspect page"}
+    assert result.status == "done"
+    assert result.final_answer == "done: inspect page"
     assert len(calls) == 1
     assert calls[0][1] == "inspect page"
     assert calls[0][3]["metadata"]["model"] == "test-model"
@@ -458,26 +410,17 @@ async def test_session_runtime_watchdog_failure_clears_active_task(
         _task: str,
         _config: SessionConfig,
         _task_config: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> AgentLoopResult:
         nonlocal cancelled
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
             cancelled = True
             raise
-        return {"final_answer": "never reached"}
+        return native_result(final_answer="never reached")
 
-    runtime = SessionRuntime(
-        make_config(),
-        graph_builder=lambda **_kwargs: object(),
-        llm_factory=llm_factory,
-        task_runner=task_runner,
-        start_chrome_cdp=no_start,
-        wait_for_port=noop_wait,
-        load_browser_provider=no_browser_provider,
-        close_mcp_session=noop_close,
-        harness_factory=FakeHarness,
-    )
+    install_runner(monkeypatch, task_runner)
+    runtime = make_runtime()
 
     with pytest.raises(TimeoutError, match="made no progress"):
         await runtime.run_task("inspect page")
@@ -510,32 +453,19 @@ async def test_session_runtime_carries_browser_state_between_tasks(
         task: str,
         _config: SessionConfig,
         task_config: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> AgentLoopResult:
         calls.append((task, task_config))
         if task == "find products":
-            return {
-                "messages": ["prior product list"],
-                "observation": "Visible results: first product is Keyboard A.",
-                "snapshot": "- link \"Keyboard A\" ref=e10",
-                "decision": "done",
-                "final_answer": "Found Keyboard A.",
-                "plan": [{"id": 1, "description": "old", "status": "completed"}],
-                "replan_count": 2,
-                "consecutive_failures": 1,
-            }
-        return {"final_answer": "done"}
+            return native_result(
+                final_answer="Found Keyboard A.",
+                messages=["prior product list"],
+                observation="Visible results: first product is Keyboard A.",
+                browser=BrowserState(snapshot='- link "Keyboard A" ref=e10'),
+            )
+        return native_result(final_answer="done")
 
-    runtime = SessionRuntime(
-        make_config(),
-        graph_builder=lambda **_kwargs: object(),
-        llm_factory=llm_factory,
-        task_runner=task_runner,
-        start_chrome_cdp=no_start,
-        wait_for_port=noop_wait,
-        load_browser_provider=no_browser_provider,
-        close_mcp_session=noop_close,
-        harness_factory=FakeHarness,
-    )
+    install_runner(monkeypatch, task_runner)
+    runtime = make_runtime()
 
     await runtime.run_task("find products")
     await runtime.run_task("open the first one")
@@ -550,7 +480,7 @@ async def test_session_runtime_carries_browser_state_between_tasks(
     overrides = second_config[HARNESS_STATE_OVERRIDES_CONFIG_KEY]
     assert overrides["messages"] == ["prior product list"]
     assert overrides["observation"] == "Visible results: first product is Keyboard A."
-    assert overrides["snapshot"] == "- link \"Keyboard A\" ref=e10"
+    assert overrides["snapshot"] == '- link "Keyboard A" ref=e10'
     assert overrides["task_id"] == runtime.context.tasks[1].task_id
     assert overrides["plan"] == []
     assert overrides["decision"] == ""
@@ -565,11 +495,11 @@ async def test_session_runtime_remembers_latest_harness_state_on_success(
     tmp_path: Path,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    state_calls: list[dict[str, Any]] = []
+    state_calls: list[tuple[dict[str, Any], Any | None]] = []
     latest_state: dict[str, object] = {
         "messages": ["checkpoint message"],
         "observation": "Checkpoint observation.",
-        "snapshot": "- button \"Continue\" ref=e1",
+        "snapshot": '- button "Continue" ref=e1',
         "final_answer": "Checkpoint answer.",
     }
 
@@ -578,85 +508,62 @@ async def test_session_runtime_remembers_latest_harness_state_on_success(
         _task: str,
         _config: SessionConfig,
         _task_config: dict[str, Any],
-    ) -> dict[str, Any]:
-        return {"final_answer": "runner answer"}
+    ) -> AgentLoopResult:
+        return native_result(final_answer="runner answer")
 
-    def harness_factory(graph_builder: Any, **kwargs: Any) -> FakeStateHarness:
-        return FakeStateHarness(
-            graph_builder,
-            state_values=latest_state,
-            state_calls=state_calls,
-            **kwargs,
-        )
+    install_runner(monkeypatch, task_runner)
 
-    runtime = SessionRuntime(
-        make_config(),
-        graph_builder=lambda **_kwargs: object(),
-        llm_factory=llm_factory,
-        task_runner=task_runner,
-        start_chrome_cdp=no_start,
-        wait_for_port=noop_wait,
-        load_browser_provider=no_browser_provider,
-        close_mcp_session=noop_close,
-        harness_factory=harness_factory,
+    async def latest_state_loader(
+        task_config: dict[str, Any],
+        fallback: Any | None,
+    ) -> dict[str, object] | None:
+        state_calls.append((task_config, fallback))
+        return latest_state
+
+    monkeypatch.setattr(
+        "src.harness.session.native_latest_state_loader",
+        latest_state_loader,
     )
+    runtime = make_runtime()
 
     result = await runtime.run_task("inspect page")
 
-    assert result == {"final_answer": "runner answer"}
+    assert result.final_answer == "runner answer"
     assert dict(runtime.context.state) == latest_state
     assert len(state_calls) == 1
-    assert state_calls[0]["configurable"]["thread_id"] == (
+    assert state_calls[0][0]["configurable"]["thread_id"] == (
         f"{SESSION_THREAD_PREFIX}{runtime.context.session_id}"
     )
 
 
 @pytest.mark.asyncio
-async def test_session_runtime_remembers_result_state_when_checkpoint_unavailable(
+async def test_session_runtime_remembers_result_session_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    state_calls: list[dict[str, Any]] = []
-    fallback_state: dict[str, object] = {
-        "messages": ["result message"],
-        "observation": "Result observation.",
-        "final_answer": "Result answer.",
-    }
 
     async def task_runner(
         _harness: Any,
         _task: str,
         _config: SessionConfig,
         _task_config: dict[str, Any],
-    ) -> dict[str, Any]:
-        return {"state": fallback_state}
-
-    def harness_factory(graph_builder: Any, **kwargs: Any) -> FakeStateHarness:
-        return FakeStateHarness(
-            graph_builder,
-            state_values=None,
-            state_calls=state_calls,
-            **kwargs,
+    ) -> AgentLoopResult:
+        return native_result(
+            final_answer="Result answer.",
+            messages=["result message"],
+            observation="Result observation.",
         )
 
-    runtime = SessionRuntime(
-        make_config(),
-        graph_builder=lambda **_kwargs: object(),
-        llm_factory=llm_factory,
-        task_runner=task_runner,
-        start_chrome_cdp=no_start,
-        wait_for_port=noop_wait,
-        load_browser_provider=no_browser_provider,
-        close_mcp_session=noop_close,
-        harness_factory=harness_factory,
-    )
+    install_runner(monkeypatch, task_runner)
+    runtime = make_runtime()
 
     result = await runtime.run_task("inspect page")
 
-    assert result == {"state": fallback_state}
-    assert dict(runtime.context.state) == fallback_state
-    assert len(state_calls) == 1
+    assert result.final_answer == "Result answer."
+    state = dict(runtime.context.state)
+    assert state["messages"] == ["result message"]
+    assert state["observation"] == "Result observation."
 
 
 @pytest.mark.asyncio
@@ -665,11 +572,6 @@ async def test_session_runtime_emits_goal_failed_and_preserves_exception_behavio
     tmp_path: Path,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    state_calls: list[dict[str, Any]] = []
-    latest_state: dict[str, object] = {
-        "messages": ["checkpoint before failure"],
-        "observation": "Failure checkpoint observation.",
-    }
     error = RuntimeError("task failed")
 
     async def task_runner(
@@ -677,35 +579,17 @@ async def test_session_runtime_emits_goal_failed_and_preserves_exception_behavio
         _task: str,
         _config: SessionConfig,
         _task_config: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> AgentLoopResult:
         raise error
 
-    def harness_factory(graph_builder: Any, **kwargs: Any) -> FakeStateHarness:
-        return FakeStateHarness(
-            graph_builder,
-            state_values=latest_state,
-            state_calls=state_calls,
-            **kwargs,
-        )
-
-    runtime = SessionRuntime(
-        make_config(),
-        graph_builder=lambda **_kwargs: object(),
-        llm_factory=llm_factory,
-        task_runner=task_runner,
-        start_chrome_cdp=no_start,
-        wait_for_port=noop_wait,
-        load_browser_provider=no_browser_provider,
-        close_mcp_session=noop_close,
-        harness_factory=harness_factory,
-    )
+    install_runner(monkeypatch, task_runner)
+    runtime = make_runtime()
 
     with pytest.raises(RuntimeError) as exc_info:
         await runtime.run_task("inspect page")
 
     assert exc_info.value is error
-    assert dict(runtime.context.state) == latest_state
-    assert len(state_calls) == 1
+    assert dict(runtime.context.state) == {}
     assert runtime.context.current_task is None
     assert runtime.context.metadata.task_count == 1
     assert runtime.context.tasks[0].result is error
