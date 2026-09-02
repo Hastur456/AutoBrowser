@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.agent_loop.actions import (
-    ActionKind,
     ProposedAction,
     answer_action,
     ask_user_action,
@@ -19,6 +18,7 @@ from src.agent_loop.actions import (
     tool_call_action,
     update_plan_action,
 )
+from src.harness.tools import to_tool_def
 
 
 @dataclass(frozen=True)
@@ -133,10 +133,13 @@ class ActionParser:
                 action_id=str(tool_call.get("id", "") or ""),
             )
 
+        args = getattr(tool_call, "arguments", None)
+        if not isinstance(args, dict):
+            args = getattr(tool_call, "args", {})
         request = normalize_tool_request(
             {
                 "name": getattr(tool_call, "name", ""),
-                "args": getattr(tool_call, "args", {}),
+                "args": args if isinstance(args, dict) else {},
                 "id": getattr(tool_call, "id", ""),
             }
         )
@@ -294,7 +297,6 @@ class ModelDriver:
         self._llm = llm
         self._tools = list(tools) if tools is not None else None
         self._tool_registry = tool_registry
-        self._bound_llm: Any | None = None
         self._action_parser = action_parser or ActionParser()
 
     async def invoke(
@@ -304,8 +306,10 @@ class ModelDriver:
         tools: Sequence[Any] | None = None,
     ) -> ModelTurn:
         available_tools = await self._resolve_tools(tools)
-        model = self._bind_tools(available_tools)
-        response = await model.ainvoke(list(messages))
+        response = await self._llm.complete(
+            list(messages),
+            tools=[to_tool_def(tool) for tool in available_tools],
+        )
         actions = self._action_parser.parse(response)
         metadata = {
             "response_type": type(response).__name__,
@@ -324,18 +328,6 @@ class ModelDriver:
             self._tools = list(resolved)
             return list(resolved)
         return []
-
-    def _bind_tools(self, tools: Sequence[Any]) -> Any:
-        if self._bound_llm is not None:
-            return self._bound_llm
-        if not tools or not hasattr(self._llm, "bind_tools"):
-            self._bound_llm = self._llm
-            return self._bound_llm
-        try:
-            self._bound_llm = self._llm.bind_tools(list(tools))
-        except NotImplementedError:
-            self._bound_llm = self._llm
-        return self._bound_llm
 
 
 def _message_content(response: Any) -> str:

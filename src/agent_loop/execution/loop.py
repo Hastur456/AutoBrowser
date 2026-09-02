@@ -43,8 +43,6 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from langchain_core.messages import BaseMessage, HumanMessage
-
 from src.browser import is_browser_tool_name, to_canonical_browser_name
 from src.contracts import PlanStep, ToolRequest, ToolResult
 from src.harness.memory import ensure_message_history
@@ -53,6 +51,7 @@ from src.harness.runtime import (
     HARNESS_STATE_OVERRIDES_CONFIG_KEY,
 )
 from src.harness.tools import tool_name
+from src.messages import Message, user_message
 
 from src.agent_loop.actions import normalize_tool_request
 from src.agent_loop.model import ModelDriver
@@ -168,7 +167,7 @@ def _is_browser_tabs_tool(name: str) -> bool:
     return is_browser_tool_name(name) and to_canonical_browser_name(name) == "browser_tabs"
 
 
-def _build_history(resources: EngineResources, state: LoopState) -> list[BaseMessage]:
+def _build_history(resources: EngineResources, state: LoopState) -> list[Message]:
     """Seed durable message history with the real system prompt (as ``BrowserHarness`` does).
 
     Copies ``state.messages`` before handing it to ``ensure_message_history`` so the
@@ -296,7 +295,7 @@ class TurnController:
         )
         self._emit("model.requested", {"phase": "agent", "tool_count": len(self._tools)})
         model_turn = await self._model_driver.invoke(
-            [*messages, HumanMessage(turn_prompt)],
+            [*messages, user_message(turn_prompt)],
             tools=self._tools,
         )
         self._emit(
@@ -314,7 +313,7 @@ class TurnController:
         self,
         state: LoopState,
         action: Mapping[str, Any],
-        messages: list[BaseMessage],
+        messages: list[Message],
     ) -> dict[str, Any]:
         """Map a ``ProposedAction`` to a flat ``LoopState`` update.
 
@@ -441,7 +440,7 @@ class TurnController:
             return state, self._completion.status_from_state(state)
         return state, None
 
-    def _history(self, state: LoopState) -> list[BaseMessage]:
+    def _history(self, state: LoopState) -> list[Message]:
         return _build_history(self._resources, state)
 
     def _prompt_mapping(self, state: LoopState) -> dict[str, Any]:
@@ -587,7 +586,7 @@ class AgentLoopEngine:
 
         plan_prompt = self._resources.context.build_plan_prompt(self._plan_mapping(state))
         self._emit("model.requested", {"phase": "plan"})
-        response = await self._resources.llm.ainvoke([*messages, HumanMessage(plan_prompt)])
+        response = await self._resources.llm.complete([*messages, user_message(plan_prompt)])
         self._emit("model.responded", {"phase": "plan"})
 
         data = _json_object(_message_content(response))
@@ -606,7 +605,7 @@ class AgentLoopEngine:
             }
         )
 
-    def _history(self, state: LoopState) -> list[BaseMessage]:
+    def _history(self, state: LoopState) -> list[Message]:
         return _build_history(self._resources, state)
 
     def _plan_mapping(self, state: LoopState) -> dict[str, Any]:

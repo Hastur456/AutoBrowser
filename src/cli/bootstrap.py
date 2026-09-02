@@ -6,7 +6,7 @@ import argparse
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from langchain_ollama import ChatOllama
+from src.providers.ollama import ollama_llm_factory
 
 from src.browser import BrowserProvider
 from src.cli.agent_cli import run_cli
@@ -21,7 +21,7 @@ from src.mcp.playwright_runtime import close_mcp_session, load_browser_provider
 def build_session(
     args: argparse.Namespace,
     *,
-    llm_factory: Callable[..., Any] = ChatOllama,
+    llm_factory: Callable[..., Any] = ollama_llm_factory,
     start_chrome: Callable[[str, str, int], Any] = start_chrome_cdp,
     wait_for_cdp_port: Callable[[int, float], Awaitable[None]] = wait_for_port,
     browser_provider_loader: Callable[[int], Awaitable[BrowserProvider]] = load_browser_provider,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,7 +11,9 @@ from typing import Any
 from uuid import uuid4
 
 import yaml
-from langchain_core.language_models.fake import FakeListLLM
+
+from src.llm import ModelResponse
+from src.messages import Message
 
 from src.agent_loop.engine import native_task_runner
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
@@ -19,6 +22,33 @@ from src.agent_loop.replay import TraceSummary, print_action_sequence, summarize
 from src.browser import FakeBrowserProvider
 from src.harness.runtime import HARNESS_EVENT_METADATA_CONFIG_KEY, BrowserHarness
 from src.harness.tools import ToolRegistry
+
+
+class FakeChatModel:
+    """Deterministic provider-neutral model returning scenario responses in order.
+
+    Replaces the langchain ``FakeListLLM``: ``complete`` replays the next scripted
+    response verbatim as ``content`` (plan- and agent-turn JSON alike), so the eval
+    scenarios drive the engine over the neutral ``ChatModel`` contract end to end.
+    """
+
+    def __init__(self, responses: list[str]) -> None:
+        self._responses = list(responses)
+        self._index = 0
+
+    async def complete(
+        self,
+        messages: Sequence[Message],
+        *,
+        tools: Sequence[Any] = (),
+        **params: Any,
+    ) -> ModelResponse:
+        if not self._responses:
+            raise IndexError("FakeChatModel has no scripted responses.")
+        # Mirror ``FakeListLLM``: cycle through the scripted responses.
+        content = self._responses[self._index]
+        self._index = (self._index + 1) % len(self._responses)
+        return ModelResponse(content=content, finish_reason="stop")
 
 
 @dataclass(frozen=True)
@@ -101,7 +131,7 @@ async def run_scenario(scenario: EvalScenario) -> EvalResult:
     task_id = f"task-{uuid4().hex}"
     emitter = EventEmitter(sink, session_id=session_id)
     provider = FakeBrowserProvider(scenario.browser_snapshots)
-    llm = FakeListLLM(responses=scenario.model_responses)
+    llm = FakeChatModel(responses=scenario.model_responses)
     harness = BrowserHarness(
         llm=llm,
         tool_registry=ToolRegistry(providers=[provider]),

@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from typing import Any, NotRequired, TypedDict
 
-from langchain_core.messages import BaseMessage
-
 from src.contracts import (
     AgentDecision,
     PlanStep,
@@ -25,6 +23,7 @@ from src.contracts import (
     ToolRequest,
     ToolResult,
 )
+from src.messages import Message
 
 
 class BrowserState(TypedDict, total=False):
@@ -50,7 +49,7 @@ class AgentState(TypedDict, total=False):
     observation: str
     snapshot: str
     browser: BrowserState
-    messages: list[BaseMessage]
+    messages: list[Message]
 
     last_tool: str
     last_args: dict[str, Any]
