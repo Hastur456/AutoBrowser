@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 from typing import Any
 from uuid import uuid4
 
@@ -14,11 +13,6 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-try:
-    from langgraph.checkpoint.memory import InMemorySaver as _DefaultCheckpointSaver
-except ImportError:  # pragma: no cover - compatibility with older LangGraph releases
-    from langgraph.checkpoint.memory import MemorySaver as _DefaultCheckpointSaver
-
 from src.browser import is_browser_snapshot_name
 from src.contracts import CompactToolObservation, ToolRequest, ToolResult
 from src.state import AgentState
@@ -27,35 +21,6 @@ from src.harness.context import ContextBuilder
 MAX_TOOL_MESSAGE_REFS = 25
 ORIGINAL_USER_REQUEST_PREFIX = "Original user request:\n"
 USER_REQUEST_PREFIX = "User request"
-
-
-class MemoryManager:
-    """Own checkpoint saver creation for the harness runtime."""
-
-    def __init__(self, checkpoint_saver: Any | None = None) -> None:
-        self._checkpoint_saver = checkpoint_saver
-
-    def get_checkpoint_saver(self) -> Any:
-        """Return the configured checkpoint saver, creating an in-memory one if needed."""
-
-        if self._checkpoint_saver is None:
-            self._checkpoint_saver = _DefaultCheckpointSaver()
-        return self._checkpoint_saver
-
-    async def delete_thread(self, thread_id: str) -> None:
-        """Delete checkpoints for one task thread when the saver supports it."""
-
-        saver = self.get_checkpoint_saver()
-        delete = getattr(saver, "adelete_thread", None)
-        if callable(delete):
-            await delete(thread_id)
-            return
-
-        delete = getattr(saver, "delete_thread", None)
-        if callable(delete):
-            result = delete(thread_id)
-            if inspect.isawaitable(result):
-                await result
 
 
 def ensure_message_history(
@@ -282,7 +247,6 @@ def tool_result_message_content(
 
 
 __all__ = [
-    "MemoryManager",
     "append_ai_tool_call",
     "append_final_ai_response",
     "append_tool_message",

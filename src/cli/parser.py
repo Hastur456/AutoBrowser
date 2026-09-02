@@ -24,7 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
 
     parser = argparse.ArgumentParser(
-        description="Run the AutoBrowser LangGraph agent from the command line."
+        description="Run the AutoBrowser browser agent from the command line."
     )
     parser.add_argument("task", nargs="*", help="Task for the browser agent.")
     parser.add_argument("--task", "-t", dest="task_text", help="Task for the agent.")
@@ -108,7 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--recursion-limit",
         type=int,
         default=50,
-        help="LangGraph recursion limit. Default: 25",
+        help="Maximum agent turns (turn cap). Default: 50",
     )
     return parser
 

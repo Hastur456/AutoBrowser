@@ -2,8 +2,8 @@
 
 :class:`EngineResources` gathers exactly what :class:`~src.agent_loop.execution.loop.AgentExecutionLoop`
 needs to drive one goal — without a graph or a harness rewrite. It composes objects the
-harness already owns (tool registry, browser providers, prompt context, event emitter,
-memory) plus the reasoning ``llm``, which the harness does **not** store on itself
+harness already owns (tool registry, browser providers, prompt context, event emitter)
+plus the reasoning ``llm``, which the harness does **not** store on itself
 (``BrowserHarness.__init__`` passes ``llm`` straight into the graph builder), so it is
 supplied separately by the caller in ``SessionRuntime.run_task``.
 
@@ -39,7 +39,6 @@ class EngineResources:
     policy: Any
     context: Any
     events: Any
-    memory: Any
 
     @classmethod
     def from_harness(
@@ -64,7 +63,6 @@ class EngineResources:
             policy=getattr(harness, "policy", None),
             context=harness.context,
             events=events if events is not None else harness.events,
-            memory=getattr(harness, "memory", None),
         )
 
 

@@ -24,7 +24,6 @@ from src.agent_loop.execution.completion import (
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalRunRequest, GoalRunner
 from src.browser import BrowserProvider
-from src.harness.memory import MemoryManager
 from src.harness.runtime import (
     HARNESS_EVENT_METADATA_CONFIG_KEY,
     HARNESS_STATE_OVERRIDES_CONFIG_KEY,
@@ -131,7 +130,7 @@ class SessionConfig:
         )
 
     def task_config(self) -> dict[str, Any]:
-        """Return the LangGraph config shared by tasks in this session."""
+        """Return the task-run configuration shared by tasks in this session."""
 
         return {
             "recursion_limit": self.recursion_limit,
@@ -380,7 +379,6 @@ class SessionContext:
     events: SessionEventBus = field(default_factory=SessionEventBus)
     harness: BrowserHarness | None = None
     llm: Any | None = None
-    memory: MemoryManager | None = None
     tool_registry: ToolRegistry | None = None
     telemetry: TelemetryObserver = field(default_factory=TelemetryObserver)
     event_emitter: EventEmitter = field(default_factory=EventEmitter)
@@ -436,12 +434,10 @@ class SessionContext:
                 tools = list(await browser_provider.get_tools())
                 print_tools(tools)
 
-        self.memory = MemoryManager()
         self.tool_registry = ToolRegistry(providers=browser_providers)
         self.harness = harness_factory(
             llm=self.llm,
             tool_registry=self.tool_registry,
-            memory_manager=self.memory,
             telemetry=self.telemetry,
             event_emitter=self.event_emitter,
             compress_tools=self.config.compress_tools,
@@ -538,7 +534,6 @@ class SessionContext:
         )
         self.harness = None
         self.llm = None
-        self.memory = None
         self.tool_registry = None
         self.current_task = None
         self.metadata.last_activity = datetime.now(UTC)

@@ -3,7 +3,7 @@
 Historically this module built and owned the compiled LangGraph graph and exposed
 ``run``/``stream_updates``/``get_state_values`` over it. Control flow now lives in the explicit
 engine (:mod:`src.agent_loop.execution.loop`), so :class:`BrowserHarness` is a pure composition
-root: it holds the infrastructure collaborators (telemetry, events, memory, prompt context, tool
+root: it holds the infrastructure collaborators (telemetry, events, prompt context, tool
 registry, policy, and the reasoning ``llm``) that
 :meth:`~src.agent_loop.execution.resources.EngineResources.from_harness` reads to drive one goal.
 It imports nothing from ``src/agent/``.
@@ -17,7 +17,6 @@ from typing import Any
 from src.agent_loop.events import EventEmitter
 from src.agent_loop.tracing import EVENT_METADATA_CONFIG_KEY
 from src.harness.context import ContextBuilder
-from src.harness.memory import MemoryManager
 from src.harness.policy import PolicyEngine
 from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolLoader, ToolRegistry
@@ -33,7 +32,7 @@ class BrowserHarness:
     :meth:`~src.agent_loop.execution.resources.EngineResources.from_harness`, which reads
     ``tools`` (the :class:`~src.harness.tools.ToolRegistry`), ``policy``, ``context`` (the
     :class:`~src.harness.context.ContextBuilder` that owns the agent/planner prompts),
-    ``events`` and ``memory``. The reasoning ``llm`` is stored here for convenience but is
+    ``events``. The reasoning ``llm`` is stored here for convenience but is
     supplied explicitly to ``from_harness`` by ``SessionRuntime.run_task``.
     """
 
@@ -44,7 +43,6 @@ class BrowserHarness:
         tools: Sequence[Any] | None = None,
         tool_loader: ToolLoader | None = None,
         tool_registry: ToolRegistry | None = None,
-        memory_manager: MemoryManager | None = None,
         context_builder: ContextBuilder | None = None,
         telemetry: TelemetryObserver | None = None,
         policy_engine: PolicyEngine | None = None,
@@ -53,7 +51,6 @@ class BrowserHarness:
     ) -> None:
         self.telemetry = telemetry or TelemetryObserver()
         self.events = event_emitter or EventEmitter()
-        self.memory = memory_manager or MemoryManager()
         self.context = context_builder or ContextBuilder()
         self.tools = tool_registry or ToolRegistry(tools=tools, tool_loader=tool_loader)
         self.policy = policy_engine or PolicyEngine()
