@@ -14,7 +14,7 @@ from src.cli.parser import build_parser
 from src.cli.tasks import resolve_task
 from src.harness import chrome, langsmith
 from src.harness.chrome import start_chrome_cdp
-from src.mcp import mcp_setup, playwright_runtime
+from src.mcp import playwright_runtime
 
 
 class FakeTool:
@@ -239,28 +239,6 @@ async def test_load_browser_provider_wraps_raw_playwright_tools(
 
     assert isinstance(provider, PlaywrightMCPBrowserProvider)
     assert await provider.get_tools() == tools
-
-
-@pytest.mark.asyncio
-async def test_setup_mcp_uses_latest_playwright_mcp(monkeypatch) -> None:
-    captured: dict[str, Any] = {}
-
-    class FakeMCPClient:
-        def __init__(self, servers: dict[str, Any]) -> None:
-            captured["servers"] = servers
-
-        async def get_tools(self) -> list[Any]:
-            return []
-
-    monkeypatch.setenv("PORT", "9777")
-    monkeypatch.setattr(mcp_setup, "MultiServerMCPClient", FakeMCPClient)
-
-    await mcp_setup.setup_mcp()
-
-    args = captured["servers"]["browser"]["args"]
-    assert args[:2] == ["-y", "@playwright/mcp@latest"]
-    assert "mcp-server-playwright" not in args
-    assert "http://localhost:9777" in args
 
 
 @pytest.mark.asyncio

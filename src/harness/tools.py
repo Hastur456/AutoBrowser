@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from src.browser.provider import BrowserProvider
-from src.contracts import ToolDef
+from src.contracts import Tool, ToolDef
 
 ToolCollection = Sequence[Any]
 ToolLoadResult = ToolCollection | Awaitable[ToolCollection]
@@ -35,12 +35,14 @@ def tool_name(tool: Any) -> str:
 def to_tool_def(tool: Any) -> ToolDef:
     """Extract the model-visible ``ToolDef`` schema from a registered tool.
 
-    Registry tools today are duck-typed (``name``/``description`` plus either an
-    ``input_schema`` or a pydantic-style ``args_schema``), so no langchain import is
-    needed. Once tools become first-class ``ToolDef`` objects (the P5 neutralization)
-    this becomes the identity.
+    Registry tools are provider-neutral :class:`~src.contracts.Tool` objects whose
+    ``to_def()`` already yields the schema; plain duck-typed callables (``name``/
+    ``description`` plus ``input_schema`` or a pydantic-style ``args_schema``) are
+    still accepted without any langchain import.
     """
 
+    if isinstance(tool, Tool):
+        return tool.to_def()
     input_schema: Any = getattr(tool, "input_schema", None)
     if input_schema is None:
         args_schema = getattr(tool, "args_schema", None)

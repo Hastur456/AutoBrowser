@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from contextlib import AsyncExitStack
+import json
 import os
 from typing import Any
 
-from langchain_mcp_adapters.tools import load_mcp_tools
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from src.browser import BrowserProvider, PlaywrightMCPBrowserProvider
+from src.contracts import Tool
 
 
 class MCPRuntime:
@@ -75,12 +76,59 @@ async def close_mcp_session() -> None:
         _mcp_runtime = None
 
 
-async def load_browser_tools(port: int) -> list[Any]:
-    """Load Playwright MCP tools from a direct ClientSession."""
+async def load_browser_tools(port: int) -> list[Tool]:
+    """Load Playwright MCP tools as neutral ``Tool`` objects from the ClientSession.
+
+    Replaces ``langchain_mcp_adapters.load_mcp_tools``: the direct MCP session's
+    ``list_tools()``/``call_tool()`` drive each ``Tool``, so no langchain import is
+    needed. Tool schemas are preserved verbatim from the server's ``inputSchema``.
+    """
 
     os.environ["PORT"] = str(port)
     session = await get_mcp_session(port)
-    return list(await load_mcp_tools(session))
+    listed = await session.list_tools()
+    mcp_tools = getattr(listed, "tools", listed) or []
+    return [_mcp_tool(session, mcp_tool) for mcp_tool in mcp_tools]
+
+
+def _mcp_tool(session: ClientSession, mcp_tool: Any) -> Tool:
+    """Wrap one raw MCP tool definition into a neutral ``Tool`` bound to ``session``."""
+
+    name = str(getattr(mcp_tool, "name", "") or "")
+    raw_schema = getattr(mcp_tool, "inputSchema", None)
+    input_schema = raw_schema if isinstance(raw_schema, dict) else {}
+
+    async def invoke(**kwargs: Any) -> str:
+        result = await session.call_tool(name, arguments=dict(kwargs))
+        content = _mcp_content_to_text(result)
+        if getattr(result, "isError", False):
+            raise RuntimeError(content or f"MCP tool {name} failed.")
+        return content
+
+    return Tool(
+        name=name,
+        description=str(getattr(mcp_tool, "description", "") or ""),
+        input_schema=input_schema,
+        func=invoke,
+    )
+
+
+def _mcp_content_to_text(result: Any) -> str:
+    """Join an MCP ``CallToolResult`` content list into a single string."""
+
+    blocks = getattr(result, "content", None) or []
+    parts: list[str] = []
+    for block in blocks:
+        if getattr(block, "type", None) == "text":
+            text = str(getattr(block, "text", "") or "")
+            if text:
+                parts.append(text)
+            continue
+        try:
+            parts.append(json.dumps(block, ensure_ascii=False, default=str))
+        except TypeError:
+            parts.append(str(block))
+    return "\n".join(parts)
 
 
 async def load_browser_provider(port: int) -> BrowserProvider:

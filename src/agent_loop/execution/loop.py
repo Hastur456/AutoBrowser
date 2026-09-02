@@ -1,9 +1,9 @@
 """Engine-native execution loop: ``plan -> agent -> policy -> execute -> observe``.
 
-This is the **real** engine-native control flow for AutoBrowser — the explicit rewrite of
-what the LangGraph graph does today (``START -> plan -> agent -> policy -> executor ->
-observe -> agent``), driven by :class:`~src.agent_loop.actions.ProposedAction` over the typed
-:class:`~src.agent_loop.execution.state.LoopState` (never ``AgentState``).
+This is the **real** engine-native control flow for AutoBrowser — the explicit loop
+(``START -> plan -> agent -> policy -> executor -> observe -> agent``), driven by
+:class:`~src.agent_loop.actions.ProposedAction` over the typed
+:class:`~src.agent_loop.execution.state.LoopState`.
 
 Ownership is split so the engine is a control-flow owner, not a wrapper:
 
@@ -16,8 +16,8 @@ Ownership is split so the engine is a control-flow owner, not a wrapper:
 - Completion decisions live in :class:`~src.agent_loop.execution.guards.CompletionController`
   and observation building in :class:`~src.agent_loop.execution.observation.ObservationCompiler`.
 
-Firing order mirrors ``create_agent_node`` (``src/agent/nodes.py``) verbatim so the native
-path stays behaviorally aligned with the graph on the deterministic fake-browser scenarios.
+Firing order mirrors the legacy ``create_agent_node`` (now removed) so the native path stays
+behaviorally aligned on the deterministic fake-browser scenarios.
 Blocked policy short-circuits before execute/observe so ``consecutive_failures`` is counted
 once per blocked turn (matching v1's ``policy -> agent`` edge that skips the observer).
 

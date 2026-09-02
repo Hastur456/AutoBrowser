@@ -6,9 +6,7 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
-from langchain_core.tools import tool
-
-from src.contracts import ToolRequest, ToolResult
+from src.contracts import Tool, ToolRequest, ToolResult
 from src.state import AgentState
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
 from src.browser.names import is_browser_tool_name, to_playwright_browser_name
@@ -77,22 +75,19 @@ class FakeBrowserProvider(BrowserProvider):
             normalized_result["error_code"] = BROWSER_ERROR_ACTION_FAILED
         return normalized_result
 
-    def _build_tools(self) -> list[Any]:
-        @tool("browser_navigate")
+    def _build_tools(self) -> list[Tool]:
         async def browser_navigate(url: str) -> str:
             """Navigate to a URL in the fake browser."""
 
             self._advance_snapshot()
             return f"Navigated to {url}."
 
-        @tool("browser_snapshot")
         async def browser_snapshot(depth: int | None = None) -> str:
             """Return the current fake browser snapshot."""
 
             _ = depth
             return self._current_snapshot()
 
-        @tool("browser_click")
         async def browser_click(
             ref: str | None = None,
             target: str | None = None,
@@ -104,7 +99,6 @@ class FakeBrowserProvider(BrowserProvider):
             self._advance_snapshot()
             return f"Clicked ref {resolved_ref}."
 
-        @tool("browser_type")
         async def browser_type(
             text: str,
             ref: str | None = None,
@@ -117,7 +111,6 @@ class FakeBrowserProvider(BrowserProvider):
             self._advance_snapshot()
             return f"Typed into ref {resolved_ref}: {text}"
 
-        @tool("browser_hover")
         async def browser_hover(
             ref: str | None = None,
             target: str | None = None,
@@ -129,7 +122,6 @@ class FakeBrowserProvider(BrowserProvider):
             self._advance_snapshot()
             return f"Hovered ref {resolved_ref}."
 
-        @tool("browser_evaluate")
         async def browser_evaluate(
             expression: str | None = None,
             script: str | None = None,
@@ -149,13 +141,59 @@ class FakeBrowserProvider(BrowserProvider):
             }
 
         return [
-            browser_navigate,
-            browser_snapshot,
-            browser_click,
-            browser_type,
-            browser_hover,
-            browser_evaluate,
+            self._tool(browser_navigate, {"url": {"type": "string"}}, required=("url",)),
+            self._tool(browser_snapshot, {"depth": {"type": "integer"}}),
+            self._tool(
+                browser_click,
+                {
+                    "ref": {"type": "string"},
+                    "target": {"type": "string"},
+                },
+            ),
+            self._tool(
+                browser_type,
+                {
+                    "text": {"type": "string"},
+                    "ref": {"type": "string"},
+                    "target": {"type": "string"},
+                },
+                required=("text",),
+            ),
+            self._tool(
+                browser_hover,
+                {
+                    "ref": {"type": "string"},
+                    "target": {"type": "string"},
+                },
+            ),
+            self._tool(
+                browser_evaluate,
+                {
+                    "expression": {"type": "string"},
+                    "script": {"type": "string"},
+                },
+            ),
         ]
+
+    def _tool(
+        self,
+        func: Any,
+        properties: dict[str, Any],
+        *,
+        required: Sequence[str] = (),
+    ) -> Tool:
+        """Wrap one async fake-browser function into a neutral ``Tool``."""
+
+        return Tool(
+            name=func.__name__,
+            description=str(func.__doc__ or "").strip(),
+            input_schema={
+                "type": "object",
+                "properties": dict(properties),
+                **({"required": list(required)} if required else {}),
+            },
+            func=func,
+        )
 
     def _current_snapshot(self) -> str:
         return self._snapshots[self._snapshot_index]

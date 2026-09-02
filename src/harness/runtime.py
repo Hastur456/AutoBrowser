@@ -1,12 +1,9 @@
 """Harness composition root for the engine-native AutoBrowser execution loop.
 
-Historically this module built and owned the compiled LangGraph graph and exposed
-``run``/``stream_updates``/``get_state_values`` over it. Control flow now lives in the explicit
-engine (:mod:`src.agent_loop.execution.loop`), so :class:`BrowserHarness` is a pure composition
-root: it holds the infrastructure collaborators (telemetry, events, prompt context, tool
-registry, policy, and the reasoning ``llm``) that
+Control flow lives in the explicit engine (:mod:`src.agent_loop.execution.loop`), so
+:class:`BrowserHarness` is a pure composition root: it holds the infrastructure collaborators
+(telemetry, events, prompt context, tool registry, policy, and the reasoning ``llm``) that
 :meth:`~src.agent_loop.execution.resources.EngineResources.from_harness` reads to drive one goal.
-It imports nothing from ``src/agent/``.
 """
 
 from __future__ import annotations

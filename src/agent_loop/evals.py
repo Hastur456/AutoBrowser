@@ -27,7 +27,7 @@ from src.harness.tools import ToolRegistry
 class FakeChatModel:
     """Deterministic provider-neutral model returning scenario responses in order.
 
-    Replaces the langchain ``FakeListLLM``: ``complete`` replays the next scripted
+    Replaces the legacy langchain ``FakeListLLM`` eval fake: ``complete`` replays the next scripted
     response verbatim as ``content`` (plan- and agent-turn JSON alike), so the eval
     scenarios drive the engine over the neutral ``ChatModel`` contract end to end.
     """

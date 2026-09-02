@@ -1,9 +1,9 @@
 """Engine-native tool execution broker.
 
-Ported from ``src/agent/subgraphs/executor/nodes.py`` (``executor_node`` and its
-normalize/invoke/unknown-tool helpers). The dispatch behavior is preserved verbatim:
+Ported from the legacy executor node (``executor_node`` and its normalize/invoke/
+unknown-tool helpers, now removed). The dispatch behavior is preserved verbatim:
 empty-name short-circuit, per-provider ``normalize_request`` folding, name-map lookup
-via :meth:`ToolRegistry.get`, positional ``ainvoke(args)``, browser-aware unknown-tool
+via :meth:`ToolRegistry.get`, neutral ``invoke(args)`` dispatch, browser-aware unknown-tool
 result, broad ``except`` → ``status="error"``, and ``normalize_result`` folding.
 
 Unlike the graph node — which read/wrote ``AgentState`` — :class:`ToolBroker` takes the
@@ -15,17 +15,18 @@ tool request and a plain provider-facing state mapping (produced by
 
 from __future__ import annotations
 
+import inspect
 import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from src.contracts import ToolRequest, ToolResult
 from src.browser import (
     BROWSER_ERROR_UNKNOWN_ACTION,
     BrowserProvider,
     is_browser_tool_name,
     to_canonical_browser_name,
 )
+from src.contracts import ToolRequest, ToolResult
 from src.harness.tools import ToolRegistry
 
 
@@ -96,11 +97,18 @@ def _unknown_tool_result(
 
 async def _invoke_tool(tool: Any, request: ToolRequest) -> Any:
     args = dict(request.get("args") or {})
-    if hasattr(tool, "ainvoke"):
-        return await tool.ainvoke(args)
-    if hasattr(tool, "invoke"):
-        return tool.invoke(args)
-    return tool(**args)
+    invoke = getattr(tool, "invoke", None)
+    if callable(invoke):
+        result = invoke(args)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+    if callable(tool):
+        result = tool(**args)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+    raise TypeError(f"Tool {tool!r} is not invocable.")
 
 
 class ToolBroker:
