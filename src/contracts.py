@@ -15,6 +15,7 @@ Keep it that way — only standard-library / ``typing`` imports belong here.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any, Literal, NotRequired, TypedDict
 
 AgentDecision = Literal["tool_call", "replan", "done"]
@@ -37,6 +38,22 @@ class PlanStep(TypedDict, total=False):
     id: int
     description: str
     status: Literal["pending", "in_progress", "completed"]
+
+
+@dataclass(frozen=True)
+class ToolDef:
+    """Model-visible tool schema, independent of any provider.
+
+    ``input_schema`` is a JSON Schema object (the MCP shape). Each chat provider
+    gets a thin adapter that normalizes it into its own wire format (for example
+    the OpenAI ``{"type": "function", ...}`` envelope Ollama expects). The
+    executable handler is not part of this schema — the harness registry pairs a
+    ``ToolDef`` with a callable at composition time.
+    """
+
+    name: str
+    description: str = ""
+    input_schema: dict[str, Any] = field(default_factory=dict)
 
 
 class ToolRequest(TypedDict, total=False):
@@ -101,6 +118,7 @@ __all__ = [
     "PolicyDecision",
     "PolicyEvent",
     "RecoveryCounters",
+    "ToolDef",
     "ToolRequest",
     "ToolResult",
     "ToolStatus",
