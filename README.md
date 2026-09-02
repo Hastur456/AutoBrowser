@@ -177,11 +177,7 @@ python -m pytest tests\test_prompts.py
 | Path | Purpose |
 | --- | --- |
 | `main.py` | CLI parsing and wiring the process into the session runtime. |
-| `src/agent/` | LangGraph graph assembly, state, prompts, reasoning node, and routers. |
 | `src/agent_loop/` | Runtime-facing action contracts, eventing, tracing, replay/evals, batch/export helpers, context assembly, and goal lifecycle boundaries around the current graph engine. |
-| `src/agent/subgraphs/planner/` | Planning graph and planner prompt. |
-| `src/agent/subgraphs/executor/` | Tool execution graph and provider-backed request/result normalization. |
-| `src/agent/subgraphs/observer/` | Tool-result observation, snapshot handling, and compact summaries. |
 | `src/browser/` | Browser provider contracts, canonical names, Playwright MCP adapter, and fake browser backend. |
 | `src/harness/` | Session runtime, graph harness, context, memory, tools, policy, and telemetry boundaries. |
 | `src/mcp/` | Playwright MCP process/session lifecycle helpers and provider loading. |
