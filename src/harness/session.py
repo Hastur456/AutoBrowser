@@ -105,10 +105,9 @@ class SessionConfig:
     cdp_port: int
     cdp_timeout: float
     recursion_limit: int
-    tracing_enabled: bool
 
     @classmethod
-    def from_args(cls, args: Any, *, tracing_enabled: bool) -> "SessionConfig":
+    def from_args(cls, args: Any) -> "SessionConfig":
         """Build session configuration from parsed CLI args."""
 
         return cls(
@@ -126,7 +125,6 @@ class SessionConfig:
             cdp_port=args.cdp_port,
             cdp_timeout=args.cdp_timeout,
             recursion_limit=args.recursion_limit,
-            tracing_enabled=tracing_enabled,
         )
 
     def task_config(self) -> dict[str, Any]:
@@ -140,7 +138,6 @@ class SessionConfig:
                 "temperature": self.temperature,
                 "show_state": self.show_state,
                 "hide_snapshot": self.hide_snapshot,
-                "langsmith_tracing": self.tracing_enabled,
                 "compress_tools": self.compress_tools,
                 "agent_loop": self.agent_loop,
             },

@@ -12,14 +12,13 @@ from collections.abc import Sequence
 from typing import Any
 
 from src.agent_loop.events import EventEmitter
-from src.agent_loop.tracing import EVENT_METADATA_CONFIG_KEY
 from src.harness.context import ContextBuilder
 from src.harness.policy import PolicyEngine
 from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolLoader, ToolRegistry
 
 HARNESS_STATE_OVERRIDES_CONFIG_KEY = "_autobrowser_state_overrides"
-HARNESS_EVENT_METADATA_CONFIG_KEY = EVENT_METADATA_CONFIG_KEY
+HARNESS_EVENT_METADATA_CONFIG_KEY = "_autobrowser_event_metadata"
 
 
 class BrowserHarness:
