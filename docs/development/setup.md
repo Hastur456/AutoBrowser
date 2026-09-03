@@ -143,7 +143,7 @@ python scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.j
 Compare deterministic fake-browser eval scenarios with the baseline:
 
 ```powershell
-python scripts/run_evals.py --baseline tests\evals\baselines\langgraph_v1.json
+python scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
 ```
 
 ## Development Guidelines

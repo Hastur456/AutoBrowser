@@ -1,10 +1,10 @@
 """Native Ollama chat provider implementing the provider-neutral ``ChatModel``.
 
-Replaces the ``langchain_ollama.ChatOllama`` factory: this adapter talks to a local Ollama
-server over ``/api/chat`` through the ``ollama`` Python client (already a dependency) and
-exposes the :class:`~src.llm.ChatModel.complete` contract the engine drives. The ``ollama``
-package is imported lazily so importing this module never requires Ollama tooling unless a
-model is actually constructed.
+This adapter talks to a local Ollama server over ``/api/chat`` through the
+``ollama`` Python client (already a dependency) and exposes the
+:class:`~src.llm.ChatModel.complete` contract the engine drives. The ``ollama``
+package is imported lazily so importing this module never requires Ollama tooling
+unless a model is actually constructed.
 
 Only wire concerns live here: neutral ``Message``/``ToolDef`` objects are serialized to
 Ollama's request shape and the reply is parsed back into a :class:`~src.llm.ModelResponse`.

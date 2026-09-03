@@ -1,9 +1,7 @@
 """Neutral model/LLM defaults and provider-agnostic chat contract.
 
-Historically ``DEFAULT_OLLAMA_MODEL`` (and the ``ChatOllama`` factory) lived in
-``src/agent/agent.py`` next to the now-removed LangGraph graph builder. This module
-is the graph-free home for those constants and for the provider-neutral model
-contract the engine drives: a :class:`ChatModel` returns a :class:`ModelResponse`
+``DEFAULT_OLLAMA_MODEL`` and the provider-neutral model contract the engine
+drives live here: a :class:`ChatModel` returns a :class:`ModelResponse`
 from a list of :class:`~src.messages.Message`, optionally given tool schemas.
 
 A concrete provider (e.g. Ollama) is a thin adapter that (a) serializes

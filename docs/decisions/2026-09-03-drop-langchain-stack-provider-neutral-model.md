@@ -87,9 +87,9 @@ Tradeoffs and risks:
 - `AgentState`/`BrowserState` remain type-only `TypedDict`s in `src/state.py`
   for annotation; `Message` list types replace the old langchain `BaseMessage`
   annotations in loop/harness code.
-- The eval baseline file is still named `tests/evals/baselines/langgraph_v1.json`
-  (a historical golden set); it is data, not a dependency, and can be renamed
-  without code impact when desired.
+- The eval baseline metrics file (`tests/evals/baselines/agent_loop_v1.json`) is
+  scenario data, not a dependency; it was renamed as part of this cleanup to drop
+  the legacy stack label.
 
 ## Alternatives Considered
 

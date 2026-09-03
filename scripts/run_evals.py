@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run AutoBrowser scenario evals against the current LangGraph loop."""
+"""Run AutoBrowser scenario evals against the engine-native loop."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def main() -> int:
     parser.add_argument(
         "--baseline",
         type=Path,
-        default=Path("tests/evals/baselines/langgraph_v1.json"),
+        default=Path("tests/evals/baselines/agent_loop_v1.json"),
         help="Baseline metrics JSON to compare against.",
     )
     args = parser.parse_args()

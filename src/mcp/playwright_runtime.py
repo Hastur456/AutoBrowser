@@ -79,9 +79,8 @@ async def close_mcp_session() -> None:
 async def load_browser_tools(port: int) -> list[Tool]:
     """Load Playwright MCP tools as neutral ``Tool`` objects from the ClientSession.
 
-    Replaces ``langchain_mcp_adapters.load_mcp_tools``: the direct MCP session's
-    ``list_tools()``/``call_tool()`` drive each ``Tool``, so no langchain import is
-    needed. Tool schemas are preserved verbatim from the server's ``inputSchema``.
+    The direct MCP session's ``list_tools()``/``call_tool()`` drive each ``Tool``;
+    tool schemas are preserved verbatim from the server's ``inputSchema``.
     """
 
     os.environ["PORT"] = str(port)

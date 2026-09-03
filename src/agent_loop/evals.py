@@ -27,9 +27,9 @@ from src.harness.tools import ToolRegistry
 class FakeChatModel:
     """Deterministic provider-neutral model returning scenario responses in order.
 
-    Replaces the legacy langchain ``FakeListLLM`` eval fake: ``complete`` replays the next scripted
-    response verbatim as ``content`` (plan- and agent-turn JSON alike), so the eval
-    scenarios drive the engine over the neutral ``ChatModel`` contract end to end.
+    ``complete`` replays the next scripted response verbatim as ``content``
+    (plan- and agent-turn JSON alike), so the eval scenarios drive the engine
+    over the neutral ``ChatModel`` contract end to end.
     """
 
     def __init__(self, responses: list[str]) -> None:
@@ -45,7 +45,7 @@ class FakeChatModel:
     ) -> ModelResponse:
         if not self._responses:
             raise IndexError("FakeChatModel has no scripted responses.")
-        # Mirror ``FakeListLLM``: cycle through the scripted responses.
+        # Cycle through the scripted responses for deterministic replay.
         content = self._responses[self._index]
         self._index = (self._index + 1) % len(self._responses)
         return ModelResponse(content=content, finish_reason="stop")

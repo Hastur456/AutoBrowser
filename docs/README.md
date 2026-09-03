@@ -33,11 +33,11 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   historical note for removing the transitional `outcomes.py` compatibility
   layer; completed by the engine-native ADR.
 - [Agent Loop Engine Migration Touchpoints](development/2026-08-08-agent-loop-engine-migration-touchpoints.md):
-  historical checklist of the legacy LangGraph, harness, browser, eval, CLI, and
+  historical checklist of the legacy agent-loop, harness, browser, eval, CLI, and
   exporter coupling that the completed engine migration removed.
 - [Native Agent Loop Engine ADR](decisions/2026-08-31-native-agent-loop-engine.md):
   the engine-native `AgentLoopEngine` is the sole runtime; `src/agent/` and all
-  LangGraph control flow are removed.
+  compiled-graph control flow are removed.
 - [Session-Scoped Agent Context Memory ADR](decisions/2026-07-25-session-scoped-agent-context-memory.md):
   decision record for preserving useful agent context across tasks in one
   interactive session.

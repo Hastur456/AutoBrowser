@@ -2,7 +2,7 @@
 
 These lock the wire-role semantics (``system``/``user``/``assistant``/``tool``),
 the exact ``tool_call_id`` pairing rule, and the OpenAI-compatible ``ToolCall``
-shape before the LangChain message layer is migrated onto them.
+shape that the engine drives over ``ChatModel.complete``.
 """
 
 from __future__ import annotations

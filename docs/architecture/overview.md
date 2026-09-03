@@ -39,8 +39,8 @@ structure.
 | `tests/` | Pytest coverage for engine behavior, harness boundaries, Agent Loop contracts, CLI, prompts, tools, batch/export, and deterministic eval scenarios. |
 | `scripts/` | Utility scripts for batch runs, session exports, trace replay/export, and eval baseline checks. |
 
-The legacy `src/agent/` LangGraph graph, its `planner`/`executor`/`observer`
-subgraphs, `src/agent_loop/adapters/langgraph.py`, and
+The legacy `src/agent/` compiled-graph runtime, its `planner`/`executor`/`observer`
+stages, the `src/agent_loop/adapters/` bridge, and
 `src/cli/task_runner.py` were removed; see
 [docs/decisions/2026-08-31-native-agent-loop-engine.md](../decisions/2026-08-31-native-agent-loop-engine.md).
 
@@ -194,7 +194,7 @@ lifecycle. It loads raw MCP tools and wraps them with
 All tasks in one interactive session share a session identity derived from
 `SessionContext.session_id`, passed into each task config as
 `configurable.thread_id`. Each `TaskRecord` still receives its own `task_id` for
-persisted task history and message attribution; there is no LangGraph checkpoint
+persisted task history and message attribution; there is no checkpoint
 thread anymore, and `goal_id == task_id`.
 
 After each task, `SessionRuntime` remembers the latest loop state in

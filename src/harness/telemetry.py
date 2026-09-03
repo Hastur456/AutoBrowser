@@ -18,7 +18,7 @@ class TraceContext:
 
 
 class TelemetryObserver:
-    """Log harness events and provide a future LangSmith integration point."""
+    """Log harness events and local trace metadata."""
 
     def __init__(self, logger: logging.Logger | None = None) -> None:
         self._logger = logger or logging.getLogger("autobrowser.telemetry")

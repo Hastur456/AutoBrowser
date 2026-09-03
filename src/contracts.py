@@ -3,10 +3,10 @@
 Single, dependency-free home for the typed tool/plan/observation contracts and the
 control-loop thresholds shared across the agent-loop layers.
 
-This module imports nothing from ``src/agent/``, ``src/agent_loop/``, ``src/harness/`` or
-``src/browser/``. That is the whole point: either agent loop can depend on it without a
-circular import, and the engine-native path carries **no** dependency on the legacy graph.
-Keep it that way — only standard-library / ``typing`` imports belong here.
+This module imports nothing from ``src/agent_loop/``, ``src/harness/`` or
+``src/browser/``. That is the whole point: any layer can depend on it without a
+circular import. Keep it that way — only standard-library / ``typing`` imports
+belong here.
 """
 
 from __future__ import annotations
@@ -59,9 +59,8 @@ class Tool:
 
     The harness registry and executor hold these; the model sees only the schema
     (via :meth:`Tool.to_def`) while the executor dispatches to :meth:`Tool.invoke`.
-    Replaces the langchain ``StructuredTool`` objects that used to flow through the
-    registry, keeping the same duck-typed surface (``name``/``description``/
-    ``input_schema``/async invocation) without any langchain import.
+    ``input_schema`` is a JSON-Schema object, so any chat provider can advertise
+    the tool without a framework-specific wrapper.
 
     ``func`` is an async callable invoked as ``func(**args)``.
     """

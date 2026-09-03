@@ -64,17 +64,18 @@ Harness responsibilities:
 
 `ContextBuilder` defaults to legacy prompt rendering. Set `AUTOBROWSER_CONTEXT_MODE=assembled` to use the assembled context path backed by `src/agent_loop/context.py`; set `AUTOBROWSER_CONTEXT_MODE=legacy` for rollback while validating prompt changes.
 
-The LangGraph migration is complete: `src/agent/`, `src/agent_loop/adapters/langgraph.py`,
-`src/cli/task_runner.py`, and the legacy `LegacyAgentStateObservationCompiler` are removed, and
+The engine-native migration is complete: the legacy `src/agent/` compiled-graph runtime, the
+`src/agent_loop/adapters/` bridge, `src/cli/task_runner.py`, and the legacy
+`LegacyAgentStateObservationCompiler` are removed, and
 `AgentLoopEngine` is the sole runtime (see
 [docs/decisions/2026-08-31-native-agent-loop-engine.md](docs/decisions/2026-08-31-native-agent-loop-engine.md)).
 `AUTOBROWSER_AGENT_LOOP`/`SessionConfig.agent_loop` are inert compatibility surface.
 
-The LangChain/LangGraph/LangSmith dependency stack is fully removed: model access goes through the
+Model access goes through the
 provider-neutral `ChatModel` contract in `src/llm.py`, implemented by thin provider adapters in
 `src/providers/` (for example `ollama.py`); tools are neutral `Tool`/`ToolDef` objects defined in
 `src/contracts.py`; and conversation history is carried as provider-neutral `Message` lists
-(`src/messages.py`, on `LoopState.messages`) with no checkpoint saver and no LangSmith tracing.
+(`src/messages.py`, on `LoopState.messages`) with no checkpoint saver.
 
 Do not hardcode Playwright MCP behavior into the agent loop. Browser-specific backends should be registered through `BrowserProvider` and `ToolRegistry` or injected through `BrowserHarness` so tools can be swapped or mocked in CI. Keep the engine-native contracts and the frozen `LoopState` stable unless a change explicitly requires touching them.
 
@@ -188,7 +189,7 @@ python scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.j
 Run deterministic fake-browser eval baselines:
 
 ```powershell
-python scripts/run_evals.py --baseline tests\evals\baselines\langgraph_v1.json
+python scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
 ```
 
 Start the interactive REPL with:

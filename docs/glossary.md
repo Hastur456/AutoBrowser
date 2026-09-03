@@ -21,7 +21,7 @@
 | `browser_snapshot` | Source-of-truth browser observation containing visible page state and element refs. |
 | Canonical browser action | Provider-neutral browser action name such as `browser.snapshot`, mapped to backend-specific tool names by adapters. |
 | ChatModel | Provider-neutral chat protocol in `src/llm.py`: `async complete(messages, *, tools, **params) -> ModelResponse`. Provider adapters implement it; the engine drives it and never sees provider objects. |
-| Checkpointer | Removed. The former LangGraph checkpoint saver is gone; durable history is carried on `LoopState.messages` and `SessionContext.state`, shaped by the functional `MemoryManager`. |
+| Checkpointer | Removed. There is no checkpoint saver; durable history is carried on `LoopState.messages` and `SessionContext.state`, shaped by the functional `MemoryManager`. |
 | Compact observation | Short observer output derived from a tool result and used by the next agent step. |
 | ContextAssembler | Runtime-facing context builder in `src/agent_loop/context.py` that renders ordered prompt blocks for the assembled context path. |
 | Direct search URL fallback | Navigating directly to a site's search results URL when UI search controls do not make progress. |
@@ -44,7 +44,7 @@
 | ModelResponse | Canonical provider-neutral model reply (`content` and/or `tool_calls`, plus `finish_reason`) returned by a `ChatModel`. |
 | Native observation compiler | Engine-side compiler (`NativeObservationCompiler`) that maps an `AgentLoopResult` to its terminal status and session state. |
 | Observer | Engine phase that translates tool results and snapshots into compact loop state updates. |
-| Ollama provider | Thin `ChatModel` adapter in `src/providers/ollama.py` (`OllamaChatModel` / `ollama_llm_factory`) that maps neutral `Message`/`ToolDef` objects to Ollama's `/api/chat` shape and parses replies into `ModelResponse`; replaces the former LangChain `ChatOllama` factory. |
+| Ollama provider | Thin `ChatModel` adapter in `src/providers/ollama.py` (`OllamaChatModel` / `ollama_llm_factory`) that maps neutral `Message`/`ToolDef` objects to Ollama's `/api/chat` shape and parses replies into `ModelResponse`. |
 | Planner | Engine phase that creates or revises compact task plans. |
 | Playwright MCP | Browser automation tool provider whose snapshot refs drive interactions. |
 | PlaywrightMCPBrowserProvider | Browser provider adapter that wraps Playwright MCP tools and normalizes request/result schema differences. |
@@ -58,17 +58,17 @@
 | SessionMetadata | Session-owned metadata such as started time, last activity, task count, and runtime version. |
 | Session records | Runtime-local JSON files under `.autobrowser/sessions/<session_id>/`, currently `session.json` and `tasks.json`. |
 | SessionRuntime | Process-lifetime coordinator that runs the session loop, delegates lifecycle state to `SessionContext`, and sends each task to `GoalRunner`. |
-| Session-scoped thread ID | Stable `configurable.thread_id` derived from `SessionContext.session_id` and reused for all tasks in one interactive session; used for attribution, not a LangGraph checkpoint. |
+| Session-scoped thread ID | Stable `configurable.thread_id` derived from `SessionContext.session_id` and reused for all tasks in one interactive session; used for attribution, not a checkpoint thread. |
 | SessionState | Mutable mapping wrapper for shared session-level state that should not require a dedicated typed field yet. |
 | State override channel | Harness-internal config entry (`HARNESS_STATE_OVERRIDES_CONFIG_KEY`) used to inject carried session state into the next engine run; stripped before the engine sees the task config. |
 | Session workspace | Runtime-local directory under `.autobrowser/sessions/<session_id>/workspace/` for downloads, screenshots, temp files, and artifacts. |
 | Snapshot depth | Tool argument that controls how much visible hierarchy `browser_snapshot` returns. |
 | Task boundary reset | Clearing task-local loop fields such as plan, final answer, errors, policy state, tool request/result, and retry counters before a new task starts. |
 | Task ID | Generated identifier stored on `TaskRecord` and loop state to attribute one user request inside a session (`goal_id == task_id`). |
-| Task thread ID | Deprecated term for the former per-task LangGraph checkpoint thread ID; replaced by the session-scoped thread ID plus per-task `task_id`. |
+| Task thread ID | Deprecated term for the former per-task checkpoint thread ID; replaced by the session-scoped thread ID plus per-task `task_id`. |
 | TaskRecord | Session history entry for one user task, including task ID, task text, result, start time, and finish time. |
 | Task lifecycle | One user request delegated to the engine, ending when `AgentLoopEngine` reaches a terminal `AgentLoopResult`. |
-| Tool | Provider-neutral executable tool (`src/contracts.py`): `name`, async `func`, `description`, and JSON-Schema `input_schema`; `to_def()` yields the model-visible `ToolDef`, and `invoke()` dispatches with `**args`. Replaces the former LangChain `StructuredTool`. |
+| Tool | Provider-neutral executable tool (`src/contracts.py`): `name`, async `func`, `description`, and JSON-Schema `input_schema`; `to_def()` yields the model-visible `ToolDef`, and `invoke()` dispatches with `**args`. |
 | ToolCall | A single tool invocation proposed by an assistant `Message` (`id`, `name`, `arguments`). |
 | ToolDef | Provider-neutral, model-visible tool schema (`name`, `description`, `input_schema`) independent of any provider. |
 | ToolRegistry | Lazy registry that exposes tools from static lists, generic providers, browser providers, or MCP clients. |

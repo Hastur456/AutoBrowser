@@ -211,7 +211,7 @@ plan (model call #0) -> while turn <= cap:
 `AgentLoopResult`. The runtime infrastructure is injected through
 `SessionRuntime` and `BrowserHarness` in `src/harness/` and bundled for the
 engine by `EngineResources.from_harness`. The engine owns reasoning, routing,
-execution, and observation; there is no compiled LangGraph graph.
+execution, and observation; there is no compiled graph.
 
 Browser-specific request and result adaptation lives under `src/browser/`.
 Production runs use `PlaywrightMCPBrowserProvider`; tests can use
