@@ -2,7 +2,7 @@
 
 This diagram shows the engine-native control flow owned by `AgentLoopEngine`
 (`src/agent_loop/execution/loop.py`), driven through `TurnController` for one
-goal run. There is no compiled LangGraph graph.
+goal run. There is no compiled graph.
 
 ```mermaid
 flowchart TD

@@ -8,7 +8,7 @@ import pytest
 from src.agent_loop.evals import assert_scenario_result, run_scenario
 from tests.evals.runner import load_scenarios
 
-BASELINE_PATH = Path("tests/evals/baselines/langgraph_v1.json")
+BASELINE_PATH = Path("tests/evals/baselines/agent_loop_v1.json")
 
 
 @pytest.mark.asyncio
@@ -20,7 +20,7 @@ async def test_eval_scenarios_pass_configured_assertions(scenario) -> None:
 
 
 @pytest.mark.asyncio
-async def test_eval_scenarios_match_langgraph_v1_baseline() -> None:
+async def test_eval_scenarios_match_baseline() -> None:
     baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
     results = {}
     for scenario in load_scenarios():

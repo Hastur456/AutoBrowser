@@ -1,20 +1,18 @@
 """Provider-neutral state contracts and control-loop thresholds.
 
 Single, dependency-free home for the typed tool/plan/observation contracts and the
-control-loop thresholds shared by both agent-loop implementations:
+control-loop thresholds shared across the agent-loop layers.
 
-- the legacy LangGraph graph in ``src/agent/`` — ``src/agent/state.py`` re-exports every
-  name here unchanged for backward compatibility; and
-- the engine-native execution package in ``src/agent_loop/execution/``.
-
-This module imports nothing from ``src/agent/``, ``src/agent_loop/``, ``src/harness/`` or
-``src/browser/``. That is the whole point: either agent loop can depend on it without a
-circular import, and the engine-native path carries **no** dependency on the legacy graph.
-Keep it that way — only standard-library / ``typing`` imports belong here.
+This module imports nothing from ``src/agent_loop/``, ``src/harness/`` or
+``src/browser/``. That is the whole point: any layer can depend on it without a
+circular import. Keep it that way — only standard-library / ``typing`` imports
+belong here.
 """
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field
 from typing import Any, Literal, NotRequired, TypedDict
 
 AgentDecision = Literal["tool_call", "replan", "done"]
@@ -37,6 +35,54 @@ class PlanStep(TypedDict, total=False):
     id: int
     description: str
     status: Literal["pending", "in_progress", "completed"]
+
+
+@dataclass(frozen=True)
+class ToolDef:
+    """Model-visible tool schema, independent of any provider.
+
+    ``input_schema`` is a JSON Schema object (the MCP shape). Each chat provider
+    gets a thin adapter that normalizes it into its own wire format (for example
+    the OpenAI ``{"type": "function", ...}`` envelope Ollama expects). The
+    executable handler is not part of this schema — :class:`Tool` pairs a
+    ``ToolDef`` shape with an async invoker at registration time.
+    """
+
+    name: str
+    description: str = ""
+    input_schema: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Tool:
+    """Provider-neutral executable tool: a ``ToolDef`` schema plus an async invoker.
+
+    The harness registry and executor hold these; the model sees only the schema
+    (via :meth:`Tool.to_def`) while the executor dispatches to :meth:`Tool.invoke`.
+    ``input_schema`` is a JSON-Schema object, so any chat provider can advertise
+    the tool without a framework-specific wrapper.
+
+    ``func`` is an async callable invoked as ``func(**args)``.
+    """
+
+    name: str
+    func: Callable[..., Awaitable[Any]] = field(repr=False, compare=False)
+    description: str = ""
+    input_schema: dict[str, Any] = field(default_factory=dict)
+
+    def to_def(self) -> ToolDef:
+        """Return the model-visible ``ToolDef`` schema for this tool."""
+
+        return ToolDef(
+            name=self.name,
+            description=self.description,
+            input_schema=self.input_schema,
+        )
+
+    async def invoke(self, args: Mapping[str, Any] | None = None) -> Any:
+        """Execute the tool with ``args`` as keyword arguments."""
+
+        return await self.func(**dict(args or {}))
 
 
 class ToolRequest(TypedDict, total=False):
@@ -101,6 +147,8 @@ __all__ = [
     "PolicyDecision",
     "PolicyEvent",
     "RecoveryCounters",
+    "Tool",
+    "ToolDef",
     "ToolRequest",
     "ToolResult",
     "ToolStatus",

@@ -71,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--recursion-limit",
         type=int,
         default=50,
-        help="LangGraph recursion limit. Default: 50",
+        help="Agent-loop recursion limit. Default: 50",
     )
     parser.add_argument(
         "--chrome-path",

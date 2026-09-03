@@ -22,7 +22,7 @@ sequenceDiagram
   CLI->>Session: Build config and run session
   Session->>Context: initialize()
   Context->>Context: Create workspace and metadata
-  Context->>Context: Create model, memory, tools, telemetry
+  Context->>Context: Create model, tools, telemetry
   Context->>Files: Write session.json
   opt Browser tools enabled
     Context->>MCP: Start Chrome/CDP and load tools

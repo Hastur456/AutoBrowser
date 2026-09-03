@@ -22,7 +22,7 @@ CONTEXT_MODE_ASSEMBLED = "assembled"
 
 
 class ContextBuilder:
-    """Build prompt context and initial graph state for the agent loop."""
+    """Build prompt context and initial state for the agent loop."""
 
     def __init__(
         self,
@@ -66,11 +66,10 @@ class ContextBuilder:
     def build_plan_prompt(self, state: Mapping[str, Any]) -> str:
         """Return the planner prompt for the current state.
 
-        Mirrors ``plan_node`` (``src/agent/subgraphs/planner/nodes.py``): the planner
-        message is the ``PLANNER_SYSTEM_PROMPT`` and ``PLANNER_USER_PROMPT`` joined by a
-        blank line, with the observation defaulting to ``"No observation yet."``. This is
-        the sanctioned prompt-assembly boundary for the engine-native loop, which must not
-        import planner prompts from ``src/agent/`` directly.
+        The planner message is the ``PLANNER_SYSTEM_PROMPT`` and ``PLANNER_USER_PROMPT``
+        joined by a blank line, with the observation defaulting to
+        ``"No observation yet."``. This is the sanctioned prompt-assembly boundary for the
+        engine-native loop, which must not import planner prompts from the engine itself.
         """
 
         task = str(state.get("task", "") or "").strip()
@@ -99,7 +98,7 @@ class ContextBuilder:
         task: str,
         overrides: Mapping[str, Any] | None = None,
     ) -> AgentState:
-        """Build the initial state passed into the compiled LangGraph."""
+        """Build the initial state mapping for one task, applying any overrides."""
 
         state: AgentState = {"task": task}
         if overrides:

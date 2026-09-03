@@ -341,11 +341,6 @@ class AgentCli(cmd2.Cmd):
         return None
 
     async def _call_tool(self, tool: Any, payload: dict[str, Any]) -> Any:
-        for method_name in ("ainvoke", "arun"):
-            method = getattr(tool, method_name, None)
-            if callable(method):
-                return await method(payload)
-
         invoke = getattr(tool, "invoke", None)
         if callable(invoke):
             result = invoke(payload)
@@ -358,6 +353,8 @@ class AgentCli(cmd2.Cmd):
             if inspect.isawaitable(result):
                 return await result
             return result
+
+        raise TypeError(f"Tool {tool!r} is not invocable.")
 
         raise TypeError(f"Unsupported tool type: {type(tool).__name__}")
 

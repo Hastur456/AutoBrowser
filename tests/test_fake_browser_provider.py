@@ -59,9 +59,9 @@ async def test_fake_provider_advances_snapshots_after_successful_actions() -> No
     provider = FakeBrowserProvider([first_snapshot, second_snapshot])
     tools_by_name = {tool.name: tool for tool in await provider.get_tools()}
 
-    assert await tools_by_name["browser_snapshot"].ainvoke({}) == first_snapshot
-    assert await tools_by_name["browser_click"].ainvoke({"ref": "e14"}) == "Clicked ref e14."
-    assert await tools_by_name["browser_snapshot"].ainvoke({}) == second_snapshot
+    assert await tools_by_name["browser_snapshot"].invoke({}) == first_snapshot
+    assert await tools_by_name["browser_click"].invoke({"ref": "e14"}) == "Clicked ref e14."
+    assert await tools_by_name["browser_snapshot"].invoke({}) == second_snapshot
 
 
 @pytest.mark.asyncio
@@ -71,7 +71,7 @@ async def test_fake_provider_evaluate_does_not_advance_snapshot() -> None:
     provider = FakeBrowserProvider([first_snapshot, second_snapshot])
     tools_by_name = {tool.name: tool for tool in await provider.get_tools()}
 
-    result = await tools_by_name["browser_evaluate"].ainvoke(
+    result = await tools_by_name["browser_evaluate"].invoke(
         {"expression": "document.title"}
     )
 
@@ -80,7 +80,7 @@ async def test_fake_provider_evaluate_does_not_advance_snapshot() -> None:
         "expression": "document.title",
         "snapshot": first_snapshot,
     }
-    assert await tools_by_name["browser_snapshot"].ainvoke({}) == first_snapshot
+    assert await tools_by_name["browser_snapshot"].invoke({}) == first_snapshot
     assert second_snapshot != first_snapshot
 
 

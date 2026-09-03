@@ -5,14 +5,14 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 
 ## Start Here
 
-- [Architecture Overview](architecture/overview.md): project purpose, graph
-  shape, runtime boundaries, and browser semantics.
+- [Architecture Overview](architecture/overview.md): project purpose, engine
+  loop shape, runtime boundaries, and browser semantics.
 - [Development Setup](development/setup.md): environment setup, tests, CLI
   usage, and prompt-change workflow.
 - [Browser Agent Rules](development/browser-agent-rules.md): Playwright MCP
   interaction rules and search-flow debugging guidance.
-- [Diagrams](diagrams/index.md): Mermaid diagrams for graph, session runtime,
-  and harness boundaries.
+- [Diagrams](diagrams/index.md): Mermaid diagrams for the agent loop, session
+  runtime, and harness boundaries.
 - [Session Runtime Change](development/2026-07-23-session-runtime-change.md):
   implementation note for the long-lived session and `SessionContext` refactor.
 - [Browser Engine Migration Branch](development/2026-07-26-browser-engine-migration.md):
@@ -33,11 +33,11 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   historical note for removing the transitional `outcomes.py` compatibility
   layer; completed by the engine-native ADR.
 - [Agent Loop Engine Migration Touchpoints](development/2026-08-08-agent-loop-engine-migration-touchpoints.md):
-  historical checklist of the legacy LangGraph, harness, browser, eval, CLI, and
+  historical checklist of the legacy agent-loop, harness, browser, eval, CLI, and
   exporter coupling that the completed engine migration removed.
 - [Native Agent Loop Engine ADR](decisions/2026-08-31-native-agent-loop-engine.md):
   the engine-native `AgentLoopEngine` is the sole runtime; `src/agent/` and all
-  LangGraph control flow are removed.
+  compiled-graph control flow are removed.
 - [Session-Scoped Agent Context Memory ADR](decisions/2026-07-25-session-scoped-agent-context-memory.md):
   decision record for preserving useful agent context across tasks in one
   interactive session.
@@ -54,7 +54,8 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 
 - Keep docs aligned with observed code and configuration.
 - Preserve historical ADRs; add superseding records instead of rewriting them.
-- Update diagrams when graph nodes, session lifecycle, harness boundaries,
-  browser provider boundaries, policy routing, or MCP integration changes.
+- Update diagrams when engine phases, loop boundaries, session lifecycle,
+  harness boundaries, browser provider boundaries, policy routing, or MCP
+  integration changes.
 - Update prompt documentation and `tests/test_prompts.py` together when agent
   behavior rules change.

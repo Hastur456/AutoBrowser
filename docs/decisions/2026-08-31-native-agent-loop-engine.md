@@ -3,6 +3,11 @@
 Status: Accepted
 Date: 2026-08-31
 
+> **Update (2026-09-03):** [Drop LangChain/LangGraph/LangSmith Stack](2026-09-03-drop-langchain-stack-provider-neutral-model.md)
+> extends this ADR. The engine-native decision stands, but the LangGraph
+> checkpoint-saver, `MemoryManager`-on-harness, `ChatOllama`, and LangSmith
+> tracing remnants this record mentions were removed by that later change.
+
 ## Context
 
 AutoBrowser's control flow was historically owned by a compiled LangGraph graph

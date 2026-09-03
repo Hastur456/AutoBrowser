@@ -20,8 +20,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
-from langchain_core.messages import BaseMessage
-
 from src.contracts import (
     MAX_CONSECUTIVE_FAILURES,
     MAX_REPLANS,
@@ -32,6 +30,7 @@ from src.contracts import (
     ToolRequest,
     ToolResult,
 )
+from src.messages import Message
 
 # Flat update keys that live on the nested BrowserState rather than LoopState.
 BROWSER_STATE_FIELDS = frozenset(
@@ -81,7 +80,7 @@ class LoopState:
     plan: list[PlanStep] = field(default_factory=list)
     current_step: int = 0
 
-    messages: list[BaseMessage] = field(default_factory=list)
+    messages: list[Message] = field(default_factory=list)
 
     decision: str = ""
     tool_request: ToolRequest = field(default_factory=dict)

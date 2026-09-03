@@ -17,7 +17,6 @@ from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.agent_loop.execution.resources import EngineResources
 from src.browser import FakeBrowserProvider
 from src.harness.context import ContextBuilder
-from src.harness.memory import MemoryManager
 from src.harness.policy import PolicyEngine
 from src.harness.runtime import BrowserHarness
 from src.harness.telemetry import TelemetryObserver
@@ -38,7 +37,6 @@ def test_browser_harness_wires_default_collaborators() -> None:
 
     assert isinstance(harness.telemetry, TelemetryObserver)
     assert isinstance(harness.events, EventEmitter)
-    assert isinstance(harness.memory, MemoryManager)
     assert isinstance(harness.context, ContextBuilder)
     assert isinstance(harness.tools, ToolRegistry)
     assert isinstance(harness.policy, PolicyEngine)
@@ -51,7 +49,6 @@ def test_browser_harness_preserves_injected_collaborators() -> None:
     tool_registry = ToolRegistry(tools=tools)
     context_builder = ContextBuilder(system_prompt="HARNESS PROMPT")
     policy_engine = CustomPolicyEngine()
-    memory = MemoryManager()
     telemetry = TelemetryObserver()
     events = EventEmitter(InMemoryEventSink(), session_id="session-1")
     llm = object()
@@ -59,7 +56,6 @@ def test_browser_harness_preserves_injected_collaborators() -> None:
     harness = BrowserHarness(
         llm=llm,
         tool_registry=tool_registry,
-        memory_manager=memory,
         context_builder=context_builder,
         telemetry=telemetry,
         policy_engine=policy_engine,
@@ -70,7 +66,6 @@ def test_browser_harness_preserves_injected_collaborators() -> None:
     assert harness.tools is tool_registry
     assert harness.context is context_builder
     assert harness.policy is policy_engine
-    assert harness.memory is memory
     assert harness.telemetry is telemetry
     assert harness.events is events
     assert harness.llm is llm
@@ -94,13 +89,11 @@ async def test_engine_resources_from_harness_bundles_collaborators() -> None:
     tool_registry = ToolRegistry(tools=tools, providers=[provider])
     context_builder = ContextBuilder(system_prompt="HARNESS PROMPT")
     policy_engine = CustomPolicyEngine()
-    memory = MemoryManager()
     events = EventEmitter(InMemoryEventSink(), session_id="session-1")
     harness = BrowserHarness(
         tool_registry=tool_registry,
         context_builder=context_builder,
         policy_engine=policy_engine,
-        memory_manager=memory,
         event_emitter=events,
     )
     llm = object()
@@ -113,7 +106,6 @@ async def test_engine_resources_from_harness_bundles_collaborators() -> None:
     assert resources.policy is policy_engine
     assert resources.context is context_builder
     assert resources.events is events
-    assert resources.memory is memory
 
 
 def test_engine_resources_from_harness_overrides_events() -> None:
@@ -123,21 +115,3 @@ def test_engine_resources_from_harness_overrides_events() -> None:
     resources = EngineResources.from_harness(harness, llm=object(), events=session_events)
 
     assert resources.events is session_events
-
-
-@pytest.mark.asyncio
-async def test_memory_manager_deletes_task_thread() -> None:
-    saver = FakeCheckpointSaver()
-    memory = MemoryManager(checkpoint_saver=saver)
-
-    await memory.delete_thread("task-123")
-
-    assert saver.deleted_threads == ["task-123"]
-
-
-class FakeCheckpointSaver:
-    def __init__(self) -> None:
-        self.deleted_threads: list[str] = []
-
-    async def adelete_thread(self, thread_id: str) -> None:
-        self.deleted_threads.append(thread_id)

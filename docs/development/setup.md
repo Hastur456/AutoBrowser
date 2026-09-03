@@ -50,7 +50,7 @@ Run Agent Loop contract and observability tests after changing `src/agent_loop/`
 or scripts that consume session traces:
 
 ```powershell
-python -m pytest tests\test_agent_loop_events.py tests\test_agent_loop_tracing.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py
+python -m pytest tests\test_agent_loop_events.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py tests\test_messages.py
 python -m pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
 python -m pytest tests\test_context_assembler.py tests\test_goal_runner.py
 ```
@@ -143,7 +143,7 @@ python scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.j
 Compare deterministic fake-browser eval scenarios with the baseline:
 
 ```powershell
-python scripts/run_evals.py --baseline tests\evals\baselines\langgraph_v1.json
+python scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
 ```
 
 ## Development Guidelines
@@ -151,8 +151,11 @@ python scripts/run_evals.py --baseline tests\evals\baselines\langgraph_v1.json
 - Keep engine, state, and prompt changes in `src/agent_loop/` (`execution/`,
   `state.py`, `prompts.py`).
 - Keep Agent Loop action contracts, model action parsing, event records,
-  tracing, replay/eval helpers, batch/export helpers, context assembly, skills,
+  replay/eval helpers, batch/export helpers, context assembly, skills,
   and goal lifecycle boundaries in `src/agent_loop/`.
+- Keep the provider-neutral chat contract (`ChatModel`/`ModelResponse`) in
+  `src/llm.py`, the chat `Message`/`ToolCall` types in `src/messages.py`, and
+  backend wire-format adapters in `src/providers/`.
 - Keep browser backend contracts, canonical browser names, error codes, and
   backend adapters in `src/browser/`.
 - Keep session and runtime infrastructure changes in `src/harness/`.

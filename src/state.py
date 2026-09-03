@@ -1,20 +1,17 @@
-"""Provider-neutral graph state contracts.
+"""Provider-neutral type-only state shapes.
 
-``AgentState`` (the LangGraph-shaped top-level loop state) and its ``BrowserState``
-sub-shape historically lived in ``src/agent/state.py`` alongside the now-removed
-LangGraph graph. The provider-neutral tool/plan/observation contracts remain in
-:mod:`src.contracts`; ``AgentState`` is kept here for the harness/browser layers that
-still annotate their collaborators with the full loop-state shape.
+``AgentState`` and its ``BrowserState`` sub-shape are type-only TypedDicts kept
+for the harness/browser layers that still annotate their collaborators with the
+full loop-state shape; nothing constructs them for control flow. The
+provider-neutral tool/plan/observation contracts live in :mod:`src.contracts`.
 
-This module imports nothing from ``src/agent/``, ``src/agent_loop/``,
+This module imports nothing from ``src/agent_loop/``,
 ``src/harness/`` or ``src/browser/``.
 """
 
 from __future__ import annotations
 
 from typing import Any, NotRequired, TypedDict
-
-from langchain_core.messages import BaseMessage
 
 from src.contracts import (
     AgentDecision,
@@ -25,6 +22,7 @@ from src.contracts import (
     ToolRequest,
     ToolResult,
 )
+from src.messages import Message
 
 
 class BrowserState(TypedDict, total=False):
@@ -50,7 +48,7 @@ class AgentState(TypedDict, total=False):
     observation: str
     snapshot: str
     browser: BrowserState
-    messages: list[BaseMessage]
+    messages: list[Message]
 
     last_tool: str
     last_args: dict[str, Any]

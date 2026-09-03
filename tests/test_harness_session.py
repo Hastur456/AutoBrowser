@@ -117,7 +117,6 @@ def make_config(**overrides: Any) -> SessionConfig:
         "cdp_port": 9555,
         "cdp_timeout": 1.0,
         "recursion_limit": 10,
-        "tracing_enabled": False,
     }
     values.update(overrides)
     return SessionConfig(**values)

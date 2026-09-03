@@ -32,17 +32,19 @@ engine-native execution loop. The CLI entry point is `main.py`. Core code lives 
 - `src/agent_loop/execution/`: the engine-native control loop — `AgentLoopEngine`,
   `TurnController`, the frozen `LoopState`, completion/observation/guards/policy
   helpers, `EngineResources`, and `native_task_runner`.
-- `src/agent_loop/`: runtime-facing action contracts, model action parsing, eventing, tracing, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary around the engine.
+- `src/agent_loop/`: runtime-facing action contracts, model action parsing, eventing, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary around the engine.
 - `src/contracts.py`: provider-neutral typed tool/plan/observation contracts and loop thresholds (no imports from the loop, harness, or browser layers).
 - `src/state.py`: type-only `AgentState`/`BrowserState` TypedDicts kept for annotation.
-- `src/llm.py`: model defaults such as `DEFAULT_OLLAMA_MODEL` and the `ChatOllama` factory.
+- `src/messages.py`: dependency-free provider-neutral chat `Message`/`ToolCall` types shared by the engine and providers.
+- `src/llm.py`: model defaults (`DEFAULT_OLLAMA_MODEL`) and the provider-neutral `ChatModel`/`ModelResponse` chat contract.
+- `src/providers/`: provider adapters (e.g. `ollama.py`) that implement `ChatModel` by mapping neutral `Message`/`ToolDef` objects to a backend wire format.
 - `src/browser/`: provider-neutral browser contracts, canonical browser names, backend adapters, shared browser errors, and fake browser tools for tests.
 - `src/cli/`: `cmd2` interactive CLI, command catalog, output formatting, parser, and bootstrap wiring.
 - `src/harness/`: session runtime and runtime infrastructure bundled into `EngineResources` for the engine.
 - `src/mcp/`: Playwright MCP process/session lifecycle helpers and provider loading.
 - `docs/`: architecture, development setup, decisions, diagrams, research notes, and glossary.
 
-Tests live in `tests/`. Utility scripts live in `scripts/`, including graph visualization, batch runs, session exports, trace replay/export, LangSmith trace export, and eval baseline helpers. Runtime or local-only folders such as `.venv/`, `.pytest_cache/`, `node_modules/`, `.codegraph/`, `.playwright-mcp/`, `.autobrowser/`, `profile/`, `baseline/`, and `__pycache__/` should not be treated as source.
+Tests live in `tests/`. Utility scripts live in `scripts/`, including batch runs, session exports, event-trace replay, agent-trace export, and eval baseline helpers. Runtime or local-only folders such as `.venv/`, `.pytest_cache/`, `node_modules/`, `.codegraph/`, `.playwright-mcp/`, `.autobrowser/`, `profile/`, `baseline/`, and `__pycache__/` should not be treated as source.
 
 ## Harness Architecture
 
@@ -55,18 +57,25 @@ Harness responsibilities:
 - `session.py`: owns the process-long session lifecycle through `SessionRuntime` and `SessionContext`.
 - `runtime.py`: composition root that holds the infrastructure collaborators `EngineResources.from_harness` reads; it no longer compiles/runs/streams a graph.
 - `context.py`: context and initial state construction, including system prompt injection.
-- `memory.py`: checkpoint saver ownership and durable conversation history helpers.
+- `memory.py`: functional conversation-history shaping over `Message` lists (no checkpoint saver; the durable history lives on `LoopState.messages`, not on a memory service).
 - `tools.py`: pluggable tool registry for static tools, generic providers, browser providers, and MCP clients.
 - `policy.py`: policy checks and policy engine boundary.
-- `telemetry.py`: tracing/logging boundary.
+- `telemetry.py`: local trace-metadata and error logging boundary.
 
 `ContextBuilder` defaults to legacy prompt rendering. Set `AUTOBROWSER_CONTEXT_MODE=assembled` to use the assembled context path backed by `src/agent_loop/context.py`; set `AUTOBROWSER_CONTEXT_MODE=legacy` for rollback while validating prompt changes.
 
-The LangGraph migration is complete: `src/agent/`, `src/agent_loop/adapters/langgraph.py`,
-`src/cli/task_runner.py`, and the legacy `LegacyAgentStateObservationCompiler` are removed, and
+The engine-native migration is complete: the legacy `src/agent/` compiled-graph runtime, the
+`src/agent_loop/adapters/` bridge, `src/cli/task_runner.py`, and the legacy
+`LegacyAgentStateObservationCompiler` are removed, and
 `AgentLoopEngine` is the sole runtime (see
 [docs/decisions/2026-08-31-native-agent-loop-engine.md](docs/decisions/2026-08-31-native-agent-loop-engine.md)).
 `AUTOBROWSER_AGENT_LOOP`/`SessionConfig.agent_loop` are inert compatibility surface.
+
+Model access goes through the
+provider-neutral `ChatModel` contract in `src/llm.py`, implemented by thin provider adapters in
+`src/providers/` (for example `ollama.py`); tools are neutral `Tool`/`ToolDef` objects defined in
+`src/contracts.py`; and conversation history is carried as provider-neutral `Message` lists
+(`src/messages.py`, on `LoopState.messages`) with no checkpoint saver.
 
 Do not hardcode Playwright MCP behavior into the agent loop. Browser-specific backends should be registered through `BrowserProvider` and `ToolRegistry` or injected through `BrowserHarness` so tools can be swapped or mocked in CI. Keep the engine-native contracts and the frozen `LoopState` stable unless a change explicitly requires touching them.
 
@@ -140,7 +149,7 @@ python -m pytest tests\test_harness_session.py tests\test_harness_runtime.py
 python -m pytest tests\test_main_cli.py
 python -m pytest tests\test_prompts.py
 python -m pytest tests\test_browser_contracts.py tests\test_fake_browser_provider.py tests\test_playwright_mcp_provider.py
-python -m pytest tests\test_agent_loop_events.py tests\test_agent_loop_tracing.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py
+python -m pytest tests\test_agent_loop_events.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py tests\test_messages.py
 python -m pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
 python -m pytest tests\test_context_assembler.py tests\test_goal_runner.py
 ```
@@ -180,7 +189,7 @@ python scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.j
 Run deterministic fake-browser eval baselines:
 
 ```powershell
-python scripts/run_evals.py --baseline tests\evals\baselines\langgraph_v1.json
+python scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
 ```
 
 Start the interactive REPL with:

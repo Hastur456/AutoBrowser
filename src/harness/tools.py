@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from src.browser.provider import BrowserProvider
+from src.contracts import Tool, ToolDef
 
 ToolCollection = Sequence[Any]
 ToolLoadResult = ToolCollection | Awaitable[ToolCollection]
@@ -15,7 +16,7 @@ ToolLoader = Callable[[], ToolLoadResult]
 
 @runtime_checkable
 class MCPToolClient(Protocol):
-    """Protocol for clients that can expose LangChain-compatible tools."""
+    """Protocol for clients that can expose a collection of tools."""
 
     async def get_tools(self) -> ToolCollection:
         """Return the tools exposed by the client."""
@@ -29,6 +30,32 @@ def tool_name(tool: Any) -> str:
     """Return the stable name used to bind and execute a tool."""
 
     return str(getattr(tool, "name", getattr(tool, "__name__", "")))
+
+
+def to_tool_def(tool: Any) -> ToolDef:
+    """Extract the model-visible ``ToolDef`` schema from a registered tool.
+
+    Registry tools are provider-neutral :class:`~src.contracts.Tool` objects whose
+    ``to_def()`` already yields the schema; plain duck-typed callables (``name``/
+    ``description`` plus ``input_schema`` or a pydantic-style ``args_schema``) are
+    still accepted directly.
+    """
+
+    if isinstance(tool, Tool):
+        return tool.to_def()
+    input_schema: Any = getattr(tool, "input_schema", None)
+    if input_schema is None:
+        args_schema = getattr(tool, "args_schema", None)
+        model_json_schema = getattr(args_schema, "model_json_schema", None)
+        if callable(model_json_schema):
+            input_schema = model_json_schema()
+    if input_schema is None:
+        input_schema = {}
+    return ToolDef(
+        name=tool_name(tool),
+        description=str(getattr(tool, "description", "") or ""),
+        input_schema=input_schema if isinstance(input_schema, dict) else {},
+    )
 
 
 class ToolRegistry:
@@ -108,5 +135,6 @@ __all__ = [
     "ToolProvider",
     "ToolSource",
     "ToolRegistry",
+    "to_tool_def",
     "tool_name",
 ]

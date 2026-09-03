@@ -6,12 +6,8 @@ result into observation text. These are pure browser-schema leaves — no agent 
 no plan reasoning — so they belong in the browser layer per the project layering rules
 ("browser schema adaptation goes in ``src/browser/``").
 
-Both agent-loop implementations consume these:
-
-- the legacy LangGraph observer (``src/agent/subgraphs/observer/utils.py`` re-exports these
-  names unchanged for backward compatibility); and
-- the engine-native execution package (``src/agent_loop/execution/``), which imports directly
-  from here.
+The engine-native execution package (``src/agent_loop/execution/``) imports these
+directly; the legacy graph observer that once re-exported these names was removed.
 
 Deliberately **not** here: plan/step-completion heuristics (hardcoded natural-language term
 lists and keyword matching used to auto-advance the plan). Those are agent-loop reasoning, not

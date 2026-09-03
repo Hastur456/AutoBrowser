@@ -1,15 +1,15 @@
 """Engine-native execution package for the explicit AutoBrowser agent loop.
 
-This sub-package holds the engine-native rewrite of the control flow that today
-lives in the LangGraph graph (`src/agent/`). It is additive and gated behind the
-``engine_native`` flag; LangGraph stays the default and rollback path until
-scenario-eval parity is proven.
+This sub-package owns the control flow of the sole runtime: planning, reasoning,
+routing, execution, and observation drive the explicit :class:`AgentLoopEngine`
+in :mod:`src.agent_loop.execution.loop`. There is no compiled graph; the legacy
+graph runtime was removed.
 
 The modules here operate on the typed :class:`~src.agent_loop.execution.state.LoopState`
 dataclass instead of the legacy ``AgentState`` TypedDict, and import **nothing** from
 ``src/agent/``: neutral contracts/thresholds come from :mod:`src.contracts`, browser-schema
 leaves from :mod:`src.browser.observation`, and message builders from :mod:`src.harness.memory`.
-Only the stateful control logic is ported here; those stateless leaves are reused as-is.
+Only the stateful control logic lives here; those stateless leaves are reused as-is.
 """
 
 from __future__ import annotations

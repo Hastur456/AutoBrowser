@@ -1,6 +1,6 @@
 """Engine-native guards, terminal checks, and repeat/ineffective tracking.
 
-Ported from ``src/agent/utils.py`` (the LangGraph agent-node helpers). The control
+Ported from the legacy agent-loop guard helpers. The control
 logic and every user-facing string are preserved verbatim; only the state access is
 rewritten from ``AgentState``-dict ``.get(...)`` reads to typed
 :class:`~src.agent_loop.execution.state.LoopState` attribute access. Each function

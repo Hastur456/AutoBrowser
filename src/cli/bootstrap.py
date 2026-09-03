@@ -6,14 +6,13 @@ import argparse
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from langchain_ollama import ChatOllama
+from src.providers.ollama import ollama_llm_factory
 
 from src.browser import BrowserProvider
 from src.cli.agent_cli import run_cli
 from src.cli.output import print_tools
 from src.cli.tasks import resolve_initial_task
 from src.harness.chrome import start_chrome_cdp, wait_for_port
-from src.harness.langsmith import configure_langsmith_tracing
 from src.harness.session import SessionConfig, SessionRuntime
 from src.mcp.playwright_runtime import close_mcp_session, load_browser_provider
 
@@ -21,20 +20,18 @@ from src.mcp.playwright_runtime import close_mcp_session, load_browser_provider
 def build_session(
     args: argparse.Namespace,
     *,
-    llm_factory: Callable[..., Any] = ChatOllama,
+    llm_factory: Callable[..., Any] = ollama_llm_factory,
     start_chrome: Callable[[str, str, int], Any] = start_chrome_cdp,
     wait_for_cdp_port: Callable[[int, float], Awaitable[None]] = wait_for_port,
     browser_provider_loader: Callable[[int], Awaitable[BrowserProvider]] = load_browser_provider,
     close_mcp: Callable[[], Awaitable[None]] = close_mcp_session,
     tool_printer: Callable[[list[Any]], None] | None = print_tools,
-    tracing_configurator: Callable[[], bool] = configure_langsmith_tracing,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[..., None] = print,
 ) -> SessionRuntime:
     """Build a process-long session runtime from parsed CLI arguments."""
 
-    tracing_enabled = tracing_configurator()
-    session_config = SessionConfig.from_args(args, tracing_enabled=tracing_enabled)
+    session_config = SessionConfig.from_args(args)
     return SessionRuntime(
         session_config,
         llm_factory=llm_factory,
