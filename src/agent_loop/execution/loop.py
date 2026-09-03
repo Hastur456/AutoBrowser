@@ -60,7 +60,7 @@ from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import LoopState
 from src.agent_loop.execution.tools import ToolBroker
 from src.agent_loop.model import ModelDriver
-from src.agent_loop.outcomes import CompletionStatus
+from src.contracts import CompletionStatus
 from src.browser import is_browser_tool_name, to_canonical_browser_name
 from src.contracts import PlanStep, ToolRequest, ToolResult
 from src.harness.memory import ensure_message_history

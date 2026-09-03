@@ -17,10 +17,7 @@ from src.agent_loop.events import (
     EventEmitter,
     JsonlEventSink,
 )
-from src.agent_loop.execution.completion import (
-    NativeObservationCompiler,
-    native_latest_state_loader,
-)
+from src.agent_loop.execution.completion import native_latest_state_loader
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalRunRequest, GoalRunner
 from src.browser import BrowserProvider
@@ -663,7 +660,6 @@ class SessionRuntime:
             task_runner=native_task_runner(resources),
             event_emitter=self.context.event_emitter,
             latest_state_loader=load_latest_state,
-            observation_compiler=NativeObservationCompiler(),
         )
         try:
             goal_result = await runner.run(request)

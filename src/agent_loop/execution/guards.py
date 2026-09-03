@@ -42,7 +42,7 @@ from src.agent_loop.execution.state import (
 )
 
 if TYPE_CHECKING:
-    from src.agent_loop.outcomes import CompletionStatus
+    from src.contracts import CompletionStatus
 
 REPEATED_SNAPSHOT_OBSERVATION_FINAL_ANSWER = (
     "Stopped because browser_snapshot returned the same visible state "

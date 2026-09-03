@@ -28,10 +28,7 @@ from src.agent_loop.execution.guards import (
     terminal_guard,
     tool_request_update,
 )
-from src.agent_loop.execution.completion import (
-    NativeObservationCompiler,
-    native_latest_state_loader,
-)
+from src.agent_loop.execution.completion import native_latest_state_loader
 from src.agent_loop.execution.loop import (
     AgentLoopEngine,
     AgentLoopResult,
@@ -74,7 +71,6 @@ __all__ = [
     "EngineResources",
     "HumanInputCallback",
     "LoopState",
-    "NativeObservationCompiler",
     "ObservationCompiler",
     "ToolBroker",
     "TurnController",

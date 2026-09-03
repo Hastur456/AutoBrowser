@@ -98,9 +98,10 @@ config, injects carried session state, persists latest state into
 `SessionContext`, and marks task history finished or failed. `GoalRunner` owns
 the goal lifecycle boundary for that task: it emits `goal.started`, delegates to
 `native_task_runner` (which composes `EngineResources` from `BrowserHarness`),
-invokes a `LatestStateLoader`, emits `goal.completed` or `goal.failed`, and
-returns a `GoalRunResult` with explicit terminal status. The current `goal_id`
-is equal to the task id.
+captures carry-forward state through a `LatestStateLoader`, reads the terminal
+`AgentLoopResult.status` directly, emits `goal.completed`, `goal.blocked`,
+`goal.cancelled`, or `goal.failed`, and returns a `GoalRunResult` with explicit
+terminal status. The current `goal_id` is equal to the task id.
 
 `GoalRunner` is not an agent engine. It does not choose actions, inspect model
 messages for semantic completion, call tools, manage retry counters, enforce
@@ -109,10 +110,13 @@ control-flow owner: it builds the initial plan, then drives a bounded `while`
 loop of `TurnController` turns and returns a terminal `AgentLoopResult` with
 `status`/`final_answer`/`session_state`/`state`/`turns`.
 
-`src/agent_loop/outcomes.py` contains only the stable provider-neutral
-`GoalState` types, `CompletionGuard`, and `goal_status_from_completion` used by
-`GoalRunner`. The legacy `LegacyAgentStateObservationCompiler` was removed once
-`AgentLoopResult` became the terminal contract.
+The transitional `src/agent_loop/outcomes.py` module is deleted. `GoalRunner`
+consumes the engine's terminal `AgentLoopResult` directly — there is no
+observation-compiler or completion-guard indirection between the engine result
+and the goal lifecycle. The surviving provider-neutral status literals
+(`CompletionStatus`/`GoalStatus`) and `goal_status_from_completion()` live in
+`src/contracts.py`; the legacy `LegacyAgentStateObservationCompiler` was removed
+once `AgentLoopResult` became the terminal contract.
 
 Other `src/agent_loop/` modules are runtime-facing contracts and diagnostics
 around the engine:

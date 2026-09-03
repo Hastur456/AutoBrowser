@@ -68,9 +68,10 @@ the planner prompt. The former context-mode switch (`legacy` vs `assembled`) and
 legacy `ContextBuilder` (with its `.format(...)`-based user prompt) were removed.
 
 The engine-native migration is complete: the legacy `src/agent/` compiled-graph runtime, the
-`src/agent_loop/adapters/` bridge, `src/cli/task_runner.py`, and the legacy
-`LegacyAgentStateObservationCompiler` are removed, and
-`AgentLoopEngine` is the sole runtime (see
+`src/agent_loop/adapters/` bridge, `src/cli/task_runner.py`, and the transitional
+`src/agent_loop/outcomes.py` compatibility layer (the `GoalState` compile/guard indirection
+and the legacy `LegacyAgentStateObservationCompiler`) are removed — `GoalRunner` now consumes
+the terminal `AgentLoopResult` directly — and `AgentLoopEngine` is the sole runtime (see
 [docs/decisions/2026-08-31-native-agent-loop-engine.md](docs/decisions/2026-08-31-native-agent-loop-engine.md)).
 `AUTOBROWSER_AGENT_LOOP`/`SessionConfig.agent_loop` are inert compatibility surface.
 
