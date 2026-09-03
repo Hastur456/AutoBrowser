@@ -13,18 +13,19 @@
 | Batch run | Execution of JSONL Golden Set scenarios through fresh `SessionRuntime` instances, with metadata written under `.autobrowser/batches/<batch_id>/`. |
 | BrowserAction | Provider-neutral typed browser request using canonical `browser.*` action names. |
 | Browser error code | Shared browser-layer error vocabulary such as `invalid_ref`, `unknown_action`, and `action_failed`. |
-| BrowserHarness | Runtime composition root that holds context, tools, memory, policy, telemetry, and events; `EngineResources.from_harness` bundles them for the engine. |
+| BrowserHarness | Runtime composition root that holds context, tools, policy, telemetry, events, and the reasoning `llm`; `EngineResources.from_harness` bundles them for the engine. |
 | BrowserProvider | Protocol for browser backends that expose tools and normalize browser tool requests and results. |
 | BrowserResult | Provider-neutral browser action result shape with status, content, error, and optional error code. |
 | `browser_evaluate` | Browser tool fallback for cases where snapshots cannot expose required information. |
 | `browser_find` | Browser tool for plain-text search; not reliable for structured link or attribute extraction. |
 | `browser_snapshot` | Source-of-truth browser observation containing visible page state and element refs. |
 | Canonical browser action | Provider-neutral browser action name such as `browser.snapshot`, mapped to backend-specific tool names by adapters. |
-| Checkpointer | Persistence component owned by `MemoryManager`; retained for history/thread-deletion helpers, not for control flow. |
+| ChatModel | Provider-neutral chat protocol in `src/llm.py`: `async complete(messages, *, tools, **params) -> ModelResponse`. Provider adapters implement it; the engine drives it and never sees provider objects. |
+| Checkpointer | Removed. The former LangGraph checkpoint saver is gone; durable history is carried on `LoopState.messages` and `SessionContext.state`, shaped by the functional `MemoryManager`. |
 | Compact observation | Short observer output derived from a tool result and used by the next agent step. |
 | ContextAssembler | Runtime-facing context builder in `src/agent_loop/context.py` that renders ordered prompt blocks for the assembled context path. |
 | Direct search URL fallback | Navigating directly to a site's search results URL when UI search controls do not make progress. |
-| EngineResources | Bundled runtime collaborators (`llm`, `tool_registry`, `browser_providers`, `policy`, `context`, `events`, `memory`) built from `BrowserHarness` and passed to `AgentLoopEngine`. |
+| EngineResources | Bundled runtime collaborators (`llm`, `tool_registry`, `browser_providers`, `policy`, `context`, `events`) built from `BrowserHarness` and passed to `AgentLoopEngine`. |
 | EventRecord | Durable JSON-safe event envelope for session, goal, engine, model, action, policy, tool, observation, and terminal lifecycle events. |
 | Executor | Engine phase that resolves and invokes approved tool requests through `ToolBroker`/`ToolRegistry`. |
 | Export row | JSONL task-level analytics row produced by `scripts/export_sessions.py` from persisted session, task, event, feedback, and batch metadata. |
@@ -38,13 +39,18 @@
 | LatestStateLoader | Callable port injected into `GoalRunner` to load latest loop state from the current harness/config, with fallback to the task result's session state. |
 | LoopState | The frozen dataclass (in `src/agent_loop/execution/state.py`) that carries all loop state; `apply()` is strict and rejects unknown keys. |
 | MCP | Model Context Protocol, used here for browser tool integration. |
+| MemoryManager | Functional (stateless) history service in `src/harness/memory.py` that shapes a `list[Message]` — seeding the user task, appending tool calls/results, compacting snapshots — and returns new lists; the durable history lives on `LoopState.messages`, not on the service. |
+| Message | Provider-neutral chat message (`src/messages.py`) with a `system`/`user`/`assistant`/`tool` role; assistant messages may carry `tool_calls`, and a `tool` message pairs a result back to exactly one `ToolCall.id`. |
+| ModelResponse | Canonical provider-neutral model reply (`content` and/or `tool_calls`, plus `finish_reason`) returned by a `ChatModel`. |
 | Native observation compiler | Engine-side compiler (`NativeObservationCompiler`) that maps an `AgentLoopResult` to its terminal status and session state. |
 | Observer | Engine phase that translates tool results and snapshots into compact loop state updates. |
+| Ollama provider | Thin `ChatModel` adapter in `src/providers/ollama.py` (`OllamaChatModel` / `ollama_llm_factory`) that maps neutral `Message`/`ToolDef` objects to Ollama's `/api/chat` shape and parses replies into `ModelResponse`; replaces the former LangChain `ChatOllama` factory. |
 | Planner | Engine phase that creates or revises compact task plans. |
 | Playwright MCP | Browser automation tool provider whose snapshot refs drive interactions. |
 | PlaywrightMCPBrowserProvider | Browser provider adapter that wraps Playwright MCP tools and normalizes request/result schema differences. |
 | PolicyEngine | Harness boundary that classifies tool requests as approved, needing human input, or blocked. |
 | ProposedAction | Provider-neutral model action contract (`answer`/`tool_call`/`update_plan`/`ask_user`/`delegate`/`compact_memory`/`stop`) parsed from a model turn and mapped to `LoopState` updates by the engine. |
+| Provider adapter | Thin adapter that implements `ChatModel` by serializing neutral `Message`/`ToolDef` objects to a backend wire format and parsing the reply back into a `ModelResponse`. |
 | ref | Ephemeral Playwright MCP element identifier such as `e123`; valid only for the snapshot that produced it. |
 | SessionConfig | Args-derived configuration used to initialize a long-lived `SessionRuntime` and shared task config. |
 | SessionContext | Root object for one process-scoped session; owns session state, task history, workspace, artifacts, events, and runtime handles. |
@@ -62,6 +68,9 @@
 | Task thread ID | Deprecated term for the former per-task LangGraph checkpoint thread ID; replaced by the session-scoped thread ID plus per-task `task_id`. |
 | TaskRecord | Session history entry for one user task, including task ID, task text, result, start time, and finish time. |
 | Task lifecycle | One user request delegated to the engine, ending when `AgentLoopEngine` reaches a terminal `AgentLoopResult`. |
+| Tool | Provider-neutral executable tool (`src/contracts.py`): `name`, async `func`, `description`, and JSON-Schema `input_schema`; `to_def()` yields the model-visible `ToolDef`, and `invoke()` dispatches with `**args`. Replaces the former LangChain `StructuredTool`. |
+| ToolCall | A single tool invocation proposed by an assistant `Message` (`id`, `name`, `arguments`). |
+| ToolDef | Provider-neutral, model-visible tool schema (`name`, `description`, `input_schema`) independent of any provider. |
 | ToolRegistry | Lazy registry that exposes tools from static lists, generic providers, browser providers, or MCP clients. |
 | Trace replay | Loading `events.jsonl` records to summarize terminal status and print compact action sequences for diagnostics or eval failures. |
 | Turn cap | `DEFAULT_TURN_CAP` (50) upper bound on engine turns before the run is blocked. |

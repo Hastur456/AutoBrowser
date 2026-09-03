@@ -25,13 +25,11 @@ flowchart LR
   Session --> GoalRunner[GoalRunner]
   GoalRunner --> Engine[AgentLoopEngine]
   Harness --> ContextBuilder[ContextBuilder]
-  Harness --> Memory[MemoryManager]
   Harness --> Tools[ToolRegistry]
   Harness --> Policy[PolicyEngine]
   Harness --> Telemetry[TelemetryObserver]
   Engine --> Resources[EngineResources]
   Resources --> ContextBuilder
-  Resources --> Memory
   Resources --> Tools
   Resources --> Policy
   Resources --> LLM
@@ -54,6 +52,9 @@ The boundary is intentional: `SessionRuntime` coordinates interaction lifecycle,
 pure composition root (no graph), and `AgentLoopEngine` owns reasoning and state
 transitions over a frozen `LoopState`. Browser-specific schema adaptation is
 owned by `BrowserProvider` adapters registered in `ToolRegistry`, not by the
-engine. `SessionRuntime` carries useful state between tasks through
-`SessionContext.state` and resets task-local fields before the next run, while
-session metadata remains available in `.autobrowser`.
+engine. Conversation history is not a harness or `EngineResources` resource:
+`src/harness/memory.py` provides functional message-shaping helpers the engine
+calls, and the durable `list[Message]` is carried on `LoopState.messages` /
+`SessionContext.state`. `SessionRuntime` carries useful state between tasks
+through `SessionContext.state` and resets task-local fields before the next run,
+while session metadata remains available in `.autobrowser`.

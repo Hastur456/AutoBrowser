@@ -65,6 +65,13 @@ contracts live in `src/contracts.py` (imports nothing from `src/agent_loop/`,
 type-only TypedDicts in `src/state.py` for annotation; prompts are consolidated in
 `src/agent_loop/prompts.py`; model defaults are in `src/llm.py`.
 
+The LangChain/LangGraph/LangSmith dependency stack is gone. Model access runs over the
+provider-neutral `ChatModel` contract in `src/llm.py`, implemented by thin adapters in
+`src/providers/` (e.g. `ollama.py`). Tools are neutral `Tool`/`ToolDef` objects in
+`src/contracts.py`. Conversation history is a provider-neutral `list[Message]`
+(`src/messages.py`) carried on `LoopState.messages` — shaped by the functional helpers in
+`src/harness/memory.py`, never by a checkpoint saver or LangSmith.
+
 ## Ownership Chain & Layering Rules
 
 ```text
@@ -78,9 +85,11 @@ Each layer is hard-fenced; **respect the boundary the code is trying to keep**:
 - `src/agent_loop/goals.py` — `GoalRunner`: one-task lifecycle + goal events only. Must not
   choose actions, judge completion, touch routing/counters/policy, or run a model loop.
 - `src/harness/runtime.py` — `BrowserHarness`: per-task composition root. Injects
-  `ContextBuilder`, `MemoryManager`, `ToolRegistry`, `PolicyEngine`, `TelemetryObserver`
-  and holds `EngineResources.from_harness` sources. There is no graph to stream and no
-  recursion-limit recovery here anymore.
+  `ContextBuilder`, `ToolRegistry`, `PolicyEngine`, `TelemetryObserver`, `EventEmitter`
+  and holds `EngineResources.from_harness` sources. It does not own memory; history shaping
+  is a functional helper set in `src/harness/memory.py` and the durable list lives on
+  `LoopState.messages`. There is no graph to stream and no recursion-limit recovery here
+  anymore.
 - `src/agent_loop/execution/` — the engine owns **only** reasoning, routing, execution,
   observation. Infrastructure goes in `src/harness/`; browser schema adaptation goes in
   `src/browser/`.
@@ -173,6 +182,6 @@ Focused test groups are grouped by area in `AGENTS.md` / `docs/development/setup
   behavioral change additive and covered by the native tests; keep `goal_id == task_id`.
 - Redact secrets (token/password/credential/api_key/authorization) before persisting events.
   `agent_trace.jsonl` is a diagnostic sidecar, **not** the metrics source of truth.
-- Update `docs/diagrams/` when engine nodes, subgraph boundaries, session lifecycle, harness
+- Update `docs/diagrams/` when engine phases, loop boundaries, session lifecycle, harness
   injection, policy routing, or MCP integration change. Add superseding ADRs; don't rewrite
   historical ones.

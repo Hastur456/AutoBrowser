@@ -27,15 +27,17 @@ structure.
 | `main.py` | CLI parsing and wiring the process into `SessionRuntime`. |
 | `src/cli/` | `cmd2` interactive REPL, parser, output formatting, and session bootstrap. |
 | `src/agent_loop/execution/` | The engine-native control loop: `AgentLoopEngine`, `TurnController`, the frozen `LoopState`, completion/observation/guards/policy helpers, `EngineResources`, and `native_task_runner`. |
-| `src/agent_loop/` | Runtime-facing action contracts, model action parsing, lifecycle events, tracing, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary. |
+| `src/agent_loop/` | Runtime-facing action contracts, model action parsing, lifecycle events, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary. |
 | `src/contracts.py` | Provider-neutral typed tool/plan/observation contracts and control-loop thresholds (no imports from the loop, harness, or browser layers). |
 | `src/state.py` | Type-only `AgentState`/`BrowserState` TypedDicts kept for harness/browser annotation. |
-| `src/llm.py` | Model defaults such as `DEFAULT_OLLAMA_MODEL` and the `ChatOllama` factory. |
+| `src/messages.py` | Dependency-free provider-neutral chat `Message`/`ToolCall` types shared by the engine and providers. |
+| `src/llm.py` | Model defaults (`DEFAULT_OLLAMA_MODEL`) and the provider-neutral `ChatModel`/`ModelResponse` chat contract the engine drives. |
+| `src/providers/` | Thin `ChatModel` adapters (for example `ollama.py`) that serialize `Message`/`ToolDef` to a backend wire format and parse replies into `ModelResponse`. |
 | `src/browser/` | Provider-neutral browser contracts, canonical browser names, backend adapters, and fake browser tools for tests. |
 | `src/harness/` | Session runtime, harness composition root, context, memory, tools, policy, and telemetry boundaries. |
 | `src/mcp/` | Playwright MCP process/session lifecycle helpers and provider loading. |
 | `tests/` | Pytest coverage for engine behavior, harness boundaries, Agent Loop contracts, CLI, prompts, tools, batch/export, and deterministic eval scenarios. |
-| `scripts/` | Utility scripts for batch runs, session exports, trace replay/export, LangSmith trace export, and eval baseline checks. |
+| `scripts/` | Utility scripts for batch runs, session exports, trace replay/export, and eval baseline checks. |
 
 The legacy `src/agent/` LangGraph graph, its `planner`/`executor`/`observer`
 subgraphs, `src/agent_loop/adapters/langgraph.py`, and
@@ -116,9 +118,10 @@ Other `src/agent_loop/` modules are runtime-facing contracts and diagnostics
 around the engine:
 
 - `actions.py` and `model.py` define provider-neutral proposed actions and a
-  model response parser/driver.
-- `events.py`, `tracing.py`, `replay.py`, and `metrics.py` provide durable
-  event records, compact trace projections, replay summaries, and metric
+  model response parser/driver that drives the provider-neutral `ChatModel`
+  contract.
+- `events.py`, `replay.py`, and `metrics.py` provide durable event records
+  (including the `AgentTraceSink` projection), replay summaries, and metric
   extraction.
 - `batch.py`, `export.py`, and `evals.py` power Golden Set runs, session export
   rows, and deterministic fake-browser scenario checks.
@@ -146,9 +149,8 @@ These files are runtime artifacts and are ignored by git.
 infrastructure consumed by one task execution. It holds:
 
 - `ContextBuilder`: builds per-turn prompts and owns system prompt injection.
-- `MemoryManager`: owns checkpoint saver and durable message history helpers.
 - `ToolRegistry`: lazily loads static tools, generic providers, browser
-  providers, and MCP clients.
+  providers, and MCP clients, and exposes provider-neutral `Tool` objects.
 - `PolicyEngine`: classifies tool requests before execution.
 - `TelemetryObserver`: logs local trace metadata and errors.
 - `EventEmitter`: durable goal/model/action/policy/tool/observation events.
@@ -157,6 +159,13 @@ infrastructure consumed by one task execution. It holds:
 (plus `browser_providers` from the registry) for `AgentLoopEngine`. This keeps
 the engine focused on reasoning/control flow, keeps task lifecycle separate from
 session lifecycle, and keeps runtime concerns replaceable in tests.
+
+Conversation history is not stored on the harness. The functional `MemoryManager`
+in `src/harness/memory.py` shapes a `list[Message]` — seeding the user task,
+appending assistant tool calls and tool results, compacting superseded browser
+snapshots, and formatting tool-message bodies — through module-level helpers the
+engine calls. The durable history itself lives on `LoopState.messages` and in the
+cross-task `SessionContext.state` carry-forward; there is no checkpoint saver.
 
 ## Browser Provider Boundary
 

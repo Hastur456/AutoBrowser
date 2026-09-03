@@ -4,6 +4,11 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-09-03 Drop LangChain/LangGraph/LangSmith Stack](2026-09-03-drop-langchain-stack-provider-neutral-model.md):
+  removes the whole LangChain/LangGraph/LangSmith dependency stack and defines
+  the provider-neutral `ChatModel`/`ModelResponse` contract, `Message`/`ToolCall`
+  types, and `Tool`/`ToolDef` objects the engine drives (extends the engine-native
+  ADR below; the checkpoint-saver and LangSmith notes there no longer apply).
 - [2026-08-31 Native Agent Loop Engine](2026-08-31-native-agent-loop-engine.md):
   the engine-native `AgentLoopEngine` is the sole runtime; `src/agent/` and all
   LangGraph control flow are removed (supersedes the LangGraph-thread decisions
