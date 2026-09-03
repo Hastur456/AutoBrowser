@@ -1,4 +1,4 @@
-LEGACY_AGENT_SYSTEM_PROMPT = """You are the reasoning module for an AutoBrowser agent.
+AGENT_SYSTEM_PROMPT = """You are the reasoning module for an AutoBrowser agent.
 Use the bound tools when an external browser action is needed.
 Do not invent tool names. If a browser action is needed, call one of the bound tools.
 Return a final answer only when the task is complete.
@@ -171,68 +171,8 @@ When no tool call is needed, return only JSON with one of these shapes:
 
 Do not describe a tool call in text. Use the native tool-calling interface."""
 
-LEGACY_AGENT_USER_PROMPT = """Task:
-{task}
-
-Plan:
-{plan}
-
-Current step index:
-{current_step}
-
-Latest observation:
-{observation}
-
-Consecutive tool failures:
-{consecutive_failures}
-
-Repeated tool request count:
-{repeat_count}
-
-Snapshot reuse rule:
-If the latest observation says browser.snapshot is already current or says to
-reuse the existing snapshot/refs, do not call browser.snapshot again with any
-depth. Continue from the snapshot in the message history and its available
-refs. If the visible snapshot is insufficient for the next step, prefer
-browser_find or browser.evaluate; otherwise replan.
-
-Choose the next action."""
-
-CORE_RUNTIME_PROMPT = LEGACY_AGENT_SYSTEM_PROMPT.split(
-    "\n\nFollow the browser contract:",
-    maxsplit=1,
-)[0]
-BROWSER_CONTRACT_PROMPT = LEGACY_AGENT_SYSTEM_PROMPT.split(
-    "\n\nFollow the browser contract:",
-    maxsplit=1,
-)[1].split(
-    "\n\n**Critical rules for task completion:**",
-    maxsplit=1,
-)[0].strip()
-COMPLETION_PROMPT = LEGACY_AGENT_SYSTEM_PROMPT.split(
-    "\n\n**Critical rules for task completion:**",
-    maxsplit=1,
-)[1].split(
-    "\n\n**Preventing infinite loops:**",
-    maxsplit=1,
-)[0].strip()
-LOOP_GUARD_PROMPT = LEGACY_AGENT_SYSTEM_PROMPT.split(
-    "\n\n**Preventing infinite loops:**",
-    maxsplit=1,
-)[1].split(
-    "\n\n**Plan management:**",
-    maxsplit=1,
-)[0].strip()
-OUTPUT_FORMAT_PROMPT = LEGACY_AGENT_SYSTEM_PROMPT.split(
-    "\n\nWhen no tool call is needed,",
-    maxsplit=1,
-)[1].strip()
-
-AGENT_SYSTEM_PROMPT = LEGACY_AGENT_SYSTEM_PROMPT
-AGENT_USER_PROMPT = LEGACY_AGENT_USER_PROMPT
-
 # Task-planning prompts (moved here from the removed ``src/agent/subgraphs/planner/``).
-# ``ContextBuilder.build_plan_prompt`` renders these for the engine-native plan step.
+# ``ContextAssembler.plan_prompt`` renders these for the engine-native plan step.
 PLANNER_SYSTEM_PROMPT = """You are the planning module for a browser automation agent.
 Create a very short, practical plan for completing the user's browser task.
 Prefer 1-3 steps.
@@ -331,25 +271,9 @@ Return only JSON with this shape:
   "next_observation_hint": "what snapshot/evaluate/network detail may be needed next"
 }"""
 
-
-def render_compatibility_system_prompt() -> str:
-    """Return the legacy system prompt for compatibility and rollback."""
-
-    return LEGACY_AGENT_SYSTEM_PROMPT
-
-
 __all__ = [
     "AGENT_SYSTEM_PROMPT",
-    "AGENT_USER_PROMPT",
-    "BROWSER_CONTRACT_PROMPT",
-    "COMPLETION_PROMPT",
-    "CORE_RUNTIME_PROMPT",
-    "LEGACY_AGENT_SYSTEM_PROMPT",
-    "LEGACY_AGENT_USER_PROMPT",
-    "LOOP_GUARD_PROMPT",
     "OBSERVER_SYSTEM_PROMPT",
-    "OUTPUT_FORMAT_PROMPT",
     "PLANNER_SYSTEM_PROMPT",
     "PLANNER_USER_PROMPT",
-    "render_compatibility_system_prompt",
 ]

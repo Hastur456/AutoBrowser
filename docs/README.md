@@ -25,8 +25,8 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   current observability sources and JSONL contracts for batch scenarios, run
   indexes, feedback, metrics, and export rows.
 - [Context Assembler And Prompt Split Plan](development/2026-08-01-context-assembler-prompt-split.md):
-  current plan and rollback switch for assembled context rendering through
-  `AUTOBROWSER_CONTEXT_MODE`.
+  historical plan for the assembled-context path; completed — `ContextAssembler` is the only
+  prompt-construction implementation and the legacy context-mode switch was removed.
 - [GoalRunner Branch Plan](development/2026-08-01-goal-runner-branch-plan.md):
   current one-task lifecycle boundary between `SessionRuntime` and the engine.
 - [Agent Loop Legacy Outcomes Cleanup](development/2026-08-05-agent-loop-legacy-outcomes.md):

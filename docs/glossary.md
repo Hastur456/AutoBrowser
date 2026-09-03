@@ -7,7 +7,7 @@
 | AgentLoopResult | Frozen terminal result of one engine run: `status` (`done`/`blocked`/`cancelled`), `final_answer`, `session_state`, `state`, and `turns`. |
 | Agent step | The reasoning phase of a `TurnController` turn that chooses a tool call, a replan, or a done decision. |
 | AgentTraceSink | Event sink that writes compact human-readable trace projections beside durable event records. |
-| Assembled context | Deterministic prompt representation produced by `ContextAssembler` when `AUTOBROWSER_CONTEXT_MODE=assembled`. |
+| Assembled context | Deterministic, ordered prompt blocks produced by `ContextAssembler` (`src/agent_loop/context.py`), the canonical prompt-construction path. |
 | ArtifactRegistry | Session-owned registry for durable outputs such as screenshots, downloads, reports, or extracted files. |
 | AutoBrowser | The browser automation agent implemented in this repository. |
 | Batch run | Execution of JSONL Golden Set scenarios through fresh `SessionRuntime` instances, with metadata written under `.autobrowser/batches/<batch_id>/`. |
@@ -23,7 +23,7 @@
 | ChatModel | Provider-neutral chat protocol in `src/llm.py`: `async complete(messages, *, tools, **params) -> ModelResponse`. Provider adapters implement it; the engine drives it and never sees provider objects. |
 | Checkpointer | Removed. There is no checkpoint saver; durable history is carried on `LoopState.messages` and `SessionContext.state`, shaped by the functional `MemoryManager`. |
 | Compact observation | Short observer output derived from a tool result and used by the next agent step. |
-| ContextAssembler | Runtime-facing context builder in `src/agent_loop/context.py` that renders ordered prompt blocks for the assembled context path. |
+| ContextAssembler | The sole prompt-construction boundary in `src/agent_loop/context.py`: builds the durable system prompt, the per-turn user prompt, and the planner prompt from ordered `ContextBlock`s. |
 | Direct search URL fallback | Navigating directly to a site's search results URL when UI search controls do not make progress. |
 | EngineResources | Bundled runtime collaborators (`llm`, `tool_registry`, `browser_providers`, `policy`, `context`, `events`) built from `BrowserHarness` and passed to `AgentLoopEngine`. |
 | EventRecord | Durable JSON-safe event envelope for session, goal, engine, model, action, policy, tool, observation, and terminal lifecycle events. |

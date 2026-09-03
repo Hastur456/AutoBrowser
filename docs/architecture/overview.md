@@ -125,8 +125,9 @@ around the engine:
   extraction.
 - `batch.py`, `export.py`, and `evals.py` power Golden Set runs, session export
   rows, and deterministic fake-browser scenario checks.
-- `context.py`, `prompts.py`, and `skills.py` provide the assembled context
-  path selected with `AUTOBROWSER_CONTEXT_MODE=assembled`.
+- `context.py`, `prompts.py`, and `skills.py` implement the canonical prompt-construction
+  path: `ContextAssembler` builds the durable system prompt, the per-turn user prompt, and the
+  planner prompt from typed context blocks.
 
 The interactive CLI in `src/cli/agent_cli.py` wraps a prepared
 `SessionRuntime`. It keeps all asynchronous session operations on one dedicated
@@ -148,7 +149,8 @@ These files are runtime artifacts and are ignored by git.
 `BrowserHarness` in `src/harness/runtime.py` is the composition root for runtime
 infrastructure consumed by one task execution. It holds:
 
-- `ContextBuilder`: builds per-turn prompts and owns system prompt injection.
+- `ContextAssembler`: the sole prompt-construction boundary — durable system
+  prompt injection, per-turn user prompt, and planner prompt.
 - `ToolRegistry`: lazily loads static tools, generic providers, browser
   providers, and MCP clients, and exposes provider-neutral `Tool` objects.
 - `PolicyEngine`: classifies tool requests before execution.

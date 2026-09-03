@@ -2,17 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from src.agent_loop.prompts import AGENT_SYSTEM_PROMPT
-from src.agent_loop.prompts import AGENT_USER_PROMPT
-from src.agent_loop.prompts import BROWSER_CONTRACT_PROMPT
-from src.agent_loop.prompts import COMPLETION_PROMPT
-from src.agent_loop.prompts import CORE_RUNTIME_PROMPT
-from src.agent_loop.prompts import LOOP_GUARD_PROMPT
-from src.agent_loop.prompts import OBSERVER_SYSTEM_PROMPT
-from src.agent_loop.prompts import OUTPUT_FORMAT_PROMPT
-from src.agent_loop.prompts import PLANNER_SYSTEM_PROMPT
-from src.agent_loop.prompts import render_compatibility_system_prompt
-
+from src.agent_loop.prompts import (
+    AGENT_SYSTEM_PROMPT,
+    OBSERVER_SYSTEM_PROMPT,
+    PLANNER_SYSTEM_PROMPT,
+)
 
 PROMPT_CONSTRAINTS = {
     "core": (
@@ -31,7 +25,7 @@ PROMPT_CONSTRAINTS = {
         "follow observer correction hints",
         "if the observation or policy says the last browser action did not change",
         "latest browser.snapshot",
-        "available refs",
+        "do not request another snapshot",
     ),
     "completion": (
         "the task is not complete until you have extracted the list of results",
@@ -51,21 +45,10 @@ def test_agent_prompt_constraint_inventory(
     category: str,
     requirements: tuple[str, ...],
 ) -> None:
-    prompt = " ".join(
-        f"{AGENT_SYSTEM_PROMPT}\n{AGENT_USER_PROMPT}".lower().split()
-    )
+    prompt = " ".join(AGENT_SYSTEM_PROMPT.lower().split())
     missing = [requirement for requirement in requirements if requirement not in prompt]
 
     assert not missing, f"{category} constraints missing from agent prompt: {missing}"
-
-
-def test_compatibility_renderer_preserves_legacy_system_prompt() -> None:
-    assert render_compatibility_system_prompt() == AGENT_SYSTEM_PROMPT
-    assert CORE_RUNTIME_PROMPT
-    assert BROWSER_CONTRACT_PROMPT
-    assert COMPLETION_PROMPT
-    assert LOOP_GUARD_PROMPT
-    assert OUTPUT_FORMAT_PROMPT
 
 
 def test_agent_prompt_requires_search_input_inspection_before_submit() -> None:
@@ -113,56 +96,3 @@ def test_observer_prompt_reports_search_field_alignment() -> None:
     assert "avoid asking for another snapshot" in prompt
     assert "never hint toward a" in prompt
     assert "double-click" in prompt
-
-
-def test_agent_user_prompt_golden_browser_turn() -> None:
-    rendered = AGENT_USER_PROMPT.format(
-        task="find articles about browser automation",
-        plan="1. [in_progress] Search for articles",
-        current_step=0,
-        observation="The latest snapshot shows a searchbox ref=e123.",
-        consecutive_failures=1,
-        repeat_count=0,
-    )
-
-    assert rendered == """Task:
-find articles about browser automation
-
-Plan:
-1. [in_progress] Search for articles
-
-Current step index:
-0
-
-Latest observation:
-The latest snapshot shows a searchbox ref=e123.
-
-Consecutive tool failures:
-1
-
-Repeated tool request count:
-0
-
-Snapshot reuse rule:
-If the latest observation says browser.snapshot is already current or says to
-reuse the existing snapshot/refs, do not call browser.snapshot again with any
-depth. Continue from the snapshot in the message history and its available
-refs. If the visible snapshot is insufficient for the next step, prefer
-browser_find or browser.evaluate; otherwise replan.
-
-Choose the next action."""
-
-
-def test_agent_user_prompt_golden_non_browser_turn() -> None:
-    rendered = AGENT_USER_PROMPT.format(
-        task="summarize the provided notes",
-        plan="No plan yet.",
-        current_step=0,
-        observation="No observation yet.",
-        consecutive_failures=0,
-        repeat_count=0,
-    )
-
-    assert "Task:\nsummarize the provided notes" in rendered
-    assert "Latest observation:\nNo observation yet." in rendered
-    assert rendered.endswith("Choose the next action.")

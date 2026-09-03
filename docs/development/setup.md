@@ -114,10 +114,9 @@ Useful flags include `--show-state`, `--show-tools`, `--json`,
 `--recursion-limit`. `--loop` remains accepted as a compatibility flag, but the
 CLI now uses the long-lived session loop by default.
 
-Set `AUTOBROWSER_CONTEXT_MODE=assembled` to route per-turn prompt construction
-through `src/agent_loop/context.py`. The default is `legacy`; use
-`AUTOBROWSER_CONTEXT_MODE=legacy` as the rollback path while the assembled
-context path is still being validated.
+Per-turn prompt construction runs through `ContextAssembler` in
+`src/agent_loop/context.py` — the single prompt-construction path. The former
+context-mode switch (and its `legacy` rollback path) was removed.
 
 ## Batch, Export, Replay, And Evals
 

@@ -11,8 +11,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from src.agent_loop.context import ContextAssembler
 from src.agent_loop.events import EventEmitter
-from src.harness.context import ContextBuilder
 from src.harness.policy import PolicyEngine
 from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolLoader, ToolRegistry
@@ -27,7 +27,8 @@ class BrowserHarness:
     The engine reaches these collaborators through
     :meth:`~src.agent_loop.execution.resources.EngineResources.from_harness`, which reads
     ``tools`` (the :class:`~src.harness.tools.ToolRegistry`), ``policy``, ``context`` (the
-    :class:`~src.harness.context.ContextBuilder` that owns the agent/planner prompts),
+    :class:`~src.agent_loop.context.ContextAssembler` that is the sole prompt-construction
+    boundary),
     ``events``. The reasoning ``llm`` is stored here for convenience but is
     supplied explicitly to ``from_harness`` by ``SessionRuntime.run_task``.
     """
@@ -39,7 +40,7 @@ class BrowserHarness:
         tools: Sequence[Any] | None = None,
         tool_loader: ToolLoader | None = None,
         tool_registry: ToolRegistry | None = None,
-        context_builder: ContextBuilder | None = None,
+        context_assembler: ContextAssembler | None = None,
         telemetry: TelemetryObserver | None = None,
         policy_engine: PolicyEngine | None = None,
         event_emitter: EventEmitter | None = None,
@@ -47,7 +48,7 @@ class BrowserHarness:
     ) -> None:
         self.telemetry = telemetry or TelemetryObserver()
         self.events = event_emitter or EventEmitter()
-        self.context = context_builder or ContextBuilder()
+        self.context = context_assembler or ContextAssembler()
         self.tools = tool_registry or ToolRegistry(tools=tools, tool_loader=tool_loader)
         self.policy = policy_engine or PolicyEngine()
         self.llm = llm
@@ -55,7 +56,7 @@ class BrowserHarness:
 
 
 __all__ = [
-    "BrowserHarness",
     "HARNESS_EVENT_METADATA_CONFIG_KEY",
     "HARNESS_STATE_OVERRIDES_CONFIG_KEY",
+    "BrowserHarness",
 ]

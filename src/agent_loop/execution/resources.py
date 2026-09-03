@@ -25,9 +25,9 @@ from src.harness.tools import ToolRegistry
 class EngineResources:
     """Immutable bundle of the collaborators the native execution loop needs.
 
-    ``context`` is the harness :class:`~src.harness.context.ContextBuilder` (the sanctioned
-    prompt-assembly boundary that owns ``build_turn_prompt``/``build_plan_prompt`` and knows
-    about the agent/planner prompts); ``events`` is the session ``EventEmitter`` whose sink
+    ``context`` is the :class:`~src.agent_loop.context.ContextAssembler` (the sanctioned
+    prompt-assembly boundary that owns ``get_system_prompt``/``user_turn_prompt``/
+    ``plan_prompt`` and knows about the agent/planner prompts); ``events`` is the session ``EventEmitter`` whose sink
     chain applies redaction and whose ``sequence`` the goal watchdog polls; ``policy`` is the
     legacy ``PolicyEngine`` carried for inspection only (native classification uses the pure
     functions in :mod:`src.agent_loop.execution.policy`, not this object).
@@ -47,7 +47,7 @@ class EngineResources:
         *,
         llm: Any,
         events: Any | None = None,
-    ) -> "EngineResources":
+    ) -> EngineResources:
         """Compose resources from an initialized ``BrowserHarness`` plus the ``llm``.
 
         ``events`` defaults to ``harness.events`` but can be overridden so the loop emits

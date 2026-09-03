@@ -85,7 +85,7 @@ Each layer is hard-fenced; **respect the boundary the code is trying to keep**:
 - `src/agent_loop/goals.py` — `GoalRunner`: one-task lifecycle + goal events only. Must not
   choose actions, judge completion, touch routing/counters/policy, or run a model loop.
 - `src/harness/runtime.py` — `BrowserHarness`: per-task composition root. Injects
-  `ContextBuilder`, `ToolRegistry`, `PolicyEngine`, `TelemetryObserver`, `EventEmitter`
+  `ContextAssembler`, `ToolRegistry`, `PolicyEngine`, `TelemetryObserver`, `EventEmitter`
   and holds `EngineResources.from_harness` sources. It does not own memory; history shaping
   is a functional helper set in `src/harness/memory.py` and the durable list lives on
   `LoopState.messages`. There is no graph to stream and no recursion-limit recovery here
@@ -148,8 +148,6 @@ engine sees it.
 - `AUTOBROWSER_AGENT_LOOP` (also `--agent-loop`) — **inert.** The engine-native path is the
   only runtime; the flag and `SessionConfig.agent_loop` parse for CLI compatibility but do
   not change routing.
-- `AUTOBROWSER_CONTEXT_MODE` — `legacy` (default) | `assembled`. `assembled` renders per-turn
-  prompts through `ContextAssembler` (`src/agent_loop/context.py`); `legacy` is the rollback.
 
 ## Commands
 

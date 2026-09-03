@@ -24,12 +24,12 @@ flowchart LR
   MCPRuntime --> PlaywrightProvider[PlaywrightMCPBrowserProvider]
   Session --> GoalRunner[GoalRunner]
   GoalRunner --> Engine[AgentLoopEngine]
-  Harness --> ContextBuilder[ContextBuilder]
+  Harness --> ContextAssembler[ContextAssembler]
   Harness --> Tools[ToolRegistry]
   Harness --> Policy[PolicyEngine]
   Harness --> Telemetry[TelemetryObserver]
   Engine --> Resources[EngineResources]
-  Resources --> ContextBuilder
+  Resources --> ContextAssembler
   Resources --> Tools
   Resources --> Policy
   Resources --> LLM

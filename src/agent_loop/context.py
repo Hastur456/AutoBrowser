@@ -1,15 +1,32 @@
-"""Deterministic context block assembly for agent prompts."""
+"""Deterministic context assembly: the single prompt-construction boundary.
+
+:class:`ContextAssembler` is the only implementation responsible for prompt
+construction: it owns the durable system prompt, builds ordered, typed context
+blocks for a turn (:meth:`ContextAssembler.assemble`), and renders the planner
+prompt (:meth:`ContextAssembler.plan_prompt`). The legacy ``ContextBuilder`` in
+``src/harness/context.py`` and the ``legacy``/``assembled`` context-mode switch
+were removed — there is one execution path and one way to build prompts.
+"""
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, Mapping, Sequence
+from typing import Any, Literal
 
+from src.agent_loop.prompts import (
+    AGENT_SYSTEM_PROMPT,
+    PLANNER_SYSTEM_PROMPT,
+    PLANNER_USER_PROMPT,
+)
 from src.agent_loop.skills import browser_agent_rules_resource
 from src.browser.names import is_browser_tool_name
 from src.harness.tools import tool_name
 
 ContextRole = Literal["system", "user", "developer"]
+
+# Closing directive appended to the assembled per-turn user prompt.
+ACTION_INSTRUCTION = "Choose the next action."
 
 
 @dataclass(frozen=True)
@@ -40,7 +57,20 @@ class AssembledContext:
 
 
 class ContextAssembler:
-    """Build deterministic system and turn prompt context."""
+    """Build deterministic system, turn, and plan prompt context.
+
+    This is the sanctioned prompt-assembly boundary for the engine-native loop:
+    it knows the agent system prompt and the agent/planner prompts, so the engine
+    never imports prompt resources itself.
+    """
+
+    def __init__(self, system_prompt: str | None = None) -> None:
+        self._system_prompt = system_prompt or AGENT_SYSTEM_PROMPT
+
+    def get_system_prompt(self) -> str:
+        """Return the system prompt injected into durable message history."""
+
+        return self._system_prompt
 
     def assemble(
         self,
@@ -79,6 +109,45 @@ class ContextAssembler:
         ]
         return "\n\n".join(
             f"{block.name}:\n{block.content.strip()}" for block in selected
+        )
+
+    def user_turn_prompt(
+        self,
+        state: Mapping[str, Any],
+        *,
+        tools: Sequence[Any] | None = None,
+    ) -> str:
+        """Return the assembled per-turn user prompt for one agent step.
+
+        The rendered user blocks are closed with the action instruction so the
+        model always sees the decision directive even when no state block has
+        meaningful content.
+        """
+
+        prompt = self.assemble(state, tools=tools).turn_prompt.strip()
+        if not prompt:
+            return ACTION_INSTRUCTION
+        return f"{prompt}\n\n{ACTION_INSTRUCTION}"
+
+    def plan_prompt(self, state: Mapping[str, Any]) -> str:
+        """Return the planner prompt for the current state.
+
+        The planner message is the ``PLANNER_SYSTEM_PROMPT`` and ``PLANNER_USER_PROMPT``
+        joined by a blank line, with the observation defaulting to
+        ``"No observation yet."``. This is the sanctioned prompt-assembly boundary for the
+        engine-native loop, which must not import planner prompts from the engine itself.
+        """
+
+        task = str(state.get("task", "") or "").strip()
+        observation = str(state.get("observation", "") or "")
+        return "\n\n".join(
+            [
+                PLANNER_SYSTEM_PROMPT,
+                PLANNER_USER_PROMPT.format(
+                    task=task,
+                    observation=observation or "No observation yet.",
+                ),
+            ]
         )
 
     def _state_blocks(
@@ -187,6 +256,7 @@ def _is_browser_relevant(
 
 
 __all__ = [
+    "ACTION_INSTRUCTION",
     "AssembledContext",
     "ContextAssembler",
     "ContextBlock",

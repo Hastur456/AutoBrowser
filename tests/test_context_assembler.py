@@ -2,11 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.agent_loop.context import AssembledContext
-from src.agent_loop.context import ContextAssembler
-from src.agent_loop.context import ContextBlock
-from src.agent_loop.prompts import AGENT_SYSTEM_PROMPT
-from src.agent_loop.prompts import render_compatibility_system_prompt
+from src.agent_loop.context import AssembledContext, ContextAssembler, ContextBlock
 from src.agent_loop.skills import browser_agent_rules_resource
 
 
@@ -125,5 +121,30 @@ def test_context_assembler_render_can_filter_roles() -> None:
     assert rendered == "System:\nruntime\n\nDeveloper:\nrules"
 
 
-def test_compatibility_prompt_is_available_from_agent_loop_boundary() -> None:
-    assert render_compatibility_system_prompt() == AGENT_SYSTEM_PROMPT
+def test_context_assembler_is_the_only_prompt_boundary() -> None:
+    assembler = ContextAssembler()
+
+    assert assembler.get_system_prompt().startswith(
+        "You are the reasoning module for an AutoBrowser agent."
+    )
+    assert assembler.plan_prompt(
+        {"task": "find a product", "observation": "Searchbox is visible."}
+    ).startswith("You are the planning module for a browser automation agent.")
+
+
+def test_user_turn_prompt_appends_action_instruction() -> None:
+    prompt = ContextAssembler().user_turn_prompt(
+        {
+            "task": "find a product",
+            "plan": [{"id": 1, "status": "in_progress", "description": "Search"}],
+            "observation": "Searchbox is visible.",
+        }
+    )
+
+    assert prompt.startswith("Task:\nfind a product")
+    assert "Observation:\nSearchbox is visible." in prompt
+    assert prompt.endswith("\n\nChoose the next action.")
+
+
+def test_user_turn_prompt_falls_back_to_action_instruction() -> None:
+    assert ContextAssembler().user_turn_prompt({}) == "Choose the next action."
