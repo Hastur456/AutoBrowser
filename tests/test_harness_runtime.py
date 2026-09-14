@@ -15,7 +15,6 @@ from src.agent_loop.context import ContextAssembler
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.agent_loop.execution.resources import EngineResources
 from src.browser import FakeBrowserProvider
-from src.harness.policy import PolicyEngine
 from src.harness.runtime import BrowserHarness
 from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolRegistry
@@ -25,11 +24,6 @@ class FakeTool:
     name = "fake_tool"
 
 
-class CustomPolicyEngine(PolicyEngine):
-    def classify_tool_request(self, state, request):  # type: ignore[override]
-        return "blocked", "custom policy"
-
-
 def test_browser_harness_wires_default_collaborators() -> None:
     harness = BrowserHarness()
 
@@ -37,7 +31,6 @@ def test_browser_harness_wires_default_collaborators() -> None:
     assert isinstance(harness.events, EventEmitter)
     assert isinstance(harness.context, ContextAssembler)
     assert isinstance(harness.tools, ToolRegistry)
-    assert isinstance(harness.policy, PolicyEngine)
     assert harness.llm is None
     assert harness.compress_tools is False
 
@@ -46,7 +39,6 @@ def test_browser_harness_preserves_injected_collaborators() -> None:
     tools = [FakeTool()]
     tool_registry = ToolRegistry(tools=tools)
     context_assembler = ContextAssembler(system_prompt="HARNESS PROMPT")
-    policy_engine = CustomPolicyEngine()
     telemetry = TelemetryObserver()
     events = EventEmitter(InMemoryEventSink(), session_id="session-1")
     llm = object()
@@ -56,14 +48,12 @@ def test_browser_harness_preserves_injected_collaborators() -> None:
         tool_registry=tool_registry,
         context_assembler=context_assembler,
         telemetry=telemetry,
-        policy_engine=policy_engine,
         event_emitter=events,
         compress_tools=True,
     )
 
     assert harness.tools is tool_registry
     assert harness.context is context_assembler
-    assert harness.policy is policy_engine
     assert harness.telemetry is telemetry
     assert harness.events is events
     assert harness.llm is llm
@@ -86,12 +76,10 @@ async def test_engine_resources_from_harness_bundles_collaborators() -> None:
     tools = [FakeTool()]
     tool_registry = ToolRegistry(tools=tools, providers=[provider])
     context_assembler = ContextAssembler(system_prompt="HARNESS PROMPT")
-    policy_engine = CustomPolicyEngine()
     events = EventEmitter(InMemoryEventSink(), session_id="session-1")
     harness = BrowserHarness(
         tool_registry=tool_registry,
         context_assembler=context_assembler,
-        policy_engine=policy_engine,
         event_emitter=events,
     )
     llm = object()
@@ -101,7 +89,6 @@ async def test_engine_resources_from_harness_bundles_collaborators() -> None:
     assert resources.llm is llm
     assert resources.tool_registry is tool_registry
     assert resources.browser_providers == [provider]
-    assert resources.policy is policy_engine
     assert resources.context is context_assembler
     assert resources.events is events
 

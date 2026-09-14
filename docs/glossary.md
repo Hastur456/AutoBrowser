@@ -48,7 +48,7 @@
 | Planner | Engine phase that creates or revises compact task plans. |
 | Playwright MCP | Browser automation tool provider whose snapshot refs drive interactions. |
 | PlaywrightMCPBrowserProvider | Browser provider adapter that wraps Playwright MCP tools and normalizes request/result schema differences. |
-| PolicyEngine | Harness boundary that classifies tool requests as approved, needing human input, or blocked. |
+| Policy | Engine-owned classification in `src/agent_loop/execution/policy.py` that labels a tool request `approved`, `needs_human`, or `blocked` before execution. |
 | ProposedAction | Provider-neutral model action contract (`answer`/`tool_call`/`update_plan`/`ask_user`/`delegate`/`compact_memory`/`stop`) parsed from a model turn and mapped to `LoopState` updates by the engine. |
 | Provider adapter | Thin adapter that implements `ChatModel` by serializing neutral `Message`/`ToolDef` objects to a backend wire format and parsing the reply back into a `ModelResponse`. |
 | ref | Ephemeral Playwright MCP element identifier such as `e123`; valid only for the snapshot that produced it. |

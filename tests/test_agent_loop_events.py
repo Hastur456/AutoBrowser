@@ -4,6 +4,8 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from src.agent_loop.events import (
     AgentTraceSink,
     CompositeEventSink,
@@ -58,6 +60,23 @@ def test_event_record_serializes_to_redacted_json() -> None:
     json.dumps(payload)
 
 
+def test_event_record_round_trips_and_rejects_missing_type() -> None:
+    record = EventRecord(
+        type="goal.started",
+        source="test",
+        timestamp=datetime(2026, 7, 27, tzinfo=UTC),
+        payload={"task": "inspect page"},
+    )
+
+    restored = EventRecord.from_json_dict(json.loads(json.dumps(record.to_json_dict())))
+
+    assert restored.type == "goal.started"
+    assert restored.payload == {"task": "inspect page"}
+
+    with pytest.raises(ValueError, match="'type'"):
+        EventRecord.from_json_dict({"source": "test", "payload": {}})
+
+
 def test_jsonl_event_sink_writes_loadable_records(tmp_path: Path) -> None:
     path = tmp_path / "events.jsonl"
     sink = JsonlEventSink(path)
@@ -87,9 +106,9 @@ def test_agent_trace_sink_projects_high_level_events_only(tmp_path: Path) -> Non
         goal_id="task-1",
     )
     emitter.emit(
-        "graph.node_finished",
+        "model.requested",
         source="test",
-        payload={"node": "agent", "update": {"decision": "tool_call"}},
+        payload={"turn": 1, "message_count": 4},
         task_id="task-1",
         goal_id="task-1",
     )

@@ -28,15 +28,14 @@ class EngineResources:
     ``context`` is the :class:`~src.agent_loop.context.ContextAssembler` (the sanctioned
     prompt-assembly boundary that owns ``get_system_prompt``/``user_turn_prompt``/
     ``plan_prompt`` and knows about the agent/planner prompts); ``events`` is the session ``EventEmitter`` whose sink
-    chain applies redaction and whose ``sequence`` the goal watchdog polls; ``policy`` is the
-    legacy ``PolicyEngine`` carried for inspection only (native classification uses the pure
-    functions in :mod:`src.agent_loop.execution.policy`, not this object).
+    chain applies redaction and whose ``sequence`` the goal watchdog polls. Tool-request
+    classification is not a resource: the loop calls the pure functions in
+    :mod:`src.agent_loop.execution.policy` directly.
     """
 
     llm: Any
     tool_registry: ToolRegistry
     browser_providers: Sequence[BrowserProvider]
-    policy: Any
     context: Any
     events: Any
 
@@ -60,7 +59,6 @@ class EngineResources:
             llm=llm,
             tool_registry=tool_registry,
             browser_providers=list(tool_registry.get_browser_providers()),
-            policy=getattr(harness, "policy", None),
             context=harness.context,
             events=events if events is not None else harness.events,
         )

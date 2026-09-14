@@ -68,10 +68,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run without loading MCP browser tools.",
     )
     parser.add_argument(
-        "--recursion-limit",
+        "--turn-cap",
         type=int,
         default=50,
-        help="Agent-loop recursion limit. Default: 50",
+        help="Maximum agent turns (turn cap). Default: 50",
     )
     parser.add_argument(
         "--chrome-path",
@@ -157,7 +157,7 @@ def _batch_config(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "model": args.model,
         "no_mcp": args.no_mcp,
-        "recursion_limit": args.recursion_limit,
+        "turn_cap": args.turn_cap,
         "chrome_path": args.chrome_path,
         "user_data_dir": args.user_data_dir,
         "cdp_port": args.cdp_port,

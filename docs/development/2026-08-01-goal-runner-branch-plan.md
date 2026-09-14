@@ -4,6 +4,14 @@ Branch: `feat/goal-runner`
 Source plan: [Codex-Claude Runtime Migration Plan](../research/2026-07-26-codex-claude-runtime-migration-plan.md)
 Status: Implemented through Slice 6
 
+> **Historical.** The `GoalRunner` boundary this plan describes still exists
+> (`src/agent_loop/goals.py`), but every LangGraph reference below is a snapshot of the
+> pre-engine runtime: the compiled graph was removed and `AgentLoopEngine` is now the only
+> execution path. The `-> task_runner -> BrowserHarness -> LangGraph` chain quoted below,
+> and the claim that "the existing LangGraph engine remains the only behavior path", no
+> longer hold. See the
+> [native agent loop engine ADR](../decisions/2026-08-31-native-agent-loop-engine.md).
+
 ## Goal
 
 Add `GoalRunner` as the component responsible for the lifecycle of one user

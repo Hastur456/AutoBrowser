@@ -111,7 +111,7 @@ python main.py --show-state --task "inspect page"
 Useful flags include `--show-state`, `--show-tools`, `--json`,
 `--hide-snapshot`, `--compress-tools`, `--model`, `--temperature`,
 `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, and
-`--recursion-limit`. `--loop` remains accepted as a compatibility flag, but the
+`--turn-cap`. `--loop` remains accepted as a compatibility flag, but the
 CLI now uses the long-lived session loop by default.
 
 Per-turn prompt construction runs through `ContextAssembler` in

@@ -132,7 +132,7 @@ python main.py --show-state --hide-snapshot --task "inspect page"
 Useful flags include `--show-state`, `--show-tools`, `--json`,
 `--hide-snapshot`, `--compress-tools`, `--model`, `--temperature`,
 `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, and
-`--recursion-limit`. `--loop` is still accepted for compatibility.
+`--turn-cap`. `--loop` is still accepted for compatibility.
 
 ## Test
 

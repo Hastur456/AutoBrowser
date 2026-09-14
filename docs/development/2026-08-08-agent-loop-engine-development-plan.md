@@ -1,5 +1,11 @@
 # 2026-08-08 Agent Loop Engine Development Plan
 
+> **Complete.** The engine this plan builds shipped: `AgentLoopEngine` is the sole
+> runtime and the LangGraph fallback the plan wanted to keep "until v2 passes scenario
+> parity" was removed rather than retained. Statements below about LangGraph remaining the
+> active fallback or a documented v1 compatibility path no longer describe the code. See
+> the [native agent loop engine ADR](../decisions/2026-08-31-native-agent-loop-engine.md).
+
 Branch: `feat/agent-loop-engine`
 Sources:
 - [2026-08-06 AgentLoopEngine Architecture Review](../research/2026-08-06-agentloopengine-architecture-review.md)

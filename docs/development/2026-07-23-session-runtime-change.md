@@ -2,6 +2,11 @@
 
 This note records the code changes from the long-lived session runtime update.
 
+> **Historical.** The LangGraph checkpoints and thread IDs described below belonged to the
+> compiled-graph runtime, which has been removed. Session-scoped context handling survives
+> on `LoopState.messages`; the graph it fed does not. See the
+> [native agent loop engine ADR](../decisions/2026-08-31-native-agent-loop-engine.md).
+
 ## What Changed
 
 - Added `src/harness/session.py` with `SessionConfig` and `SessionRuntime`.

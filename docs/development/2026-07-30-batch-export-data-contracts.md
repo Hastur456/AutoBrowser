@@ -24,7 +24,7 @@ Available fields:
 - `session_id`: stable session identifier.
 - `initialized`: whether process-scoped resources were active at last persist.
 - `current_task`: current task text while a task is running, otherwise null.
-- `config`: serialized `SessionConfig`, including model, MCP, CDP, recursion,
+- `config`: serialized `SessionConfig`, including model, MCP, CDP, turn cap,
   and display options.
 - `metadata`: `started_at`, `last_activity`, `task_count`, and optional
   `runtime_version`.
@@ -107,9 +107,9 @@ Exporter use:
 ### `scripts/run_evals.py` And `tests/evals`
 
 `scripts/run_evals.py` runs deterministic scenario fixtures from
-`tests/evals/scenarios/*.yaml` through the current LangGraph loop with fake
+`tests/evals/scenarios/*.yaml` through the engine-native `AgentLoopEngine` with fake
 model and fake browser providers. Results are compared with
-`tests/evals/baselines/langgraph_v1.json`.
+`tests/evals/baselines/agent_loop_v1.json`.
 
 These evals are not real batch runs:
 
@@ -380,7 +380,7 @@ python scripts/run_batch.py --tasks tasks.jsonl --no-mcp --continue-on-error
 Run with browser tools enabled:
 
 ```powershell
-python scripts/run_batch.py --tasks tasks.jsonl --continue-on-error --model llama3.1 --recursion-limit 50 --chrome-path "C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir "C:\temp\chrome_debug_profile" --cdp-port 9222
+python scripts/run_batch.py --tasks tasks.jsonl --continue-on-error --model llama3.1 --turn-cap 50 --chrome-path "C:\Program Files\Google\Chrome\Application\chrome.exe" --user-data-dir "C:\temp\chrome_debug_profile" --cdp-port 9222
 ```
 
 The batch runner creates:

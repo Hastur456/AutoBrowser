@@ -2,7 +2,7 @@
 
 Control flow lives in the explicit engine (:mod:`src.agent_loop.execution.loop`), so
 :class:`BrowserHarness` is a pure composition root: it holds the infrastructure collaborators
-(telemetry, events, prompt context, tool registry, policy, and the reasoning ``llm``) that
+(telemetry, events, prompt context, tool registry, and the reasoning ``llm``) that
 :meth:`~src.agent_loop.execution.resources.EngineResources.from_harness` reads to drive one goal.
 """
 
@@ -13,7 +13,6 @@ from typing import Any
 
 from src.agent_loop.context import ContextAssembler
 from src.agent_loop.events import EventEmitter
-from src.harness.policy import PolicyEngine
 from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolLoader, ToolRegistry
 
@@ -26,7 +25,7 @@ class BrowserHarness:
 
     The engine reaches these collaborators through
     :meth:`~src.agent_loop.execution.resources.EngineResources.from_harness`, which reads
-    ``tools`` (the :class:`~src.harness.tools.ToolRegistry`), ``policy``, ``context`` (the
+    ``tools`` (the :class:`~src.harness.tools.ToolRegistry`), ``context`` (the
     :class:`~src.agent_loop.context.ContextAssembler` that is the sole prompt-construction
     boundary),
     ``events``. The reasoning ``llm`` is stored here for convenience but is
@@ -42,7 +41,6 @@ class BrowserHarness:
         tool_registry: ToolRegistry | None = None,
         context_assembler: ContextAssembler | None = None,
         telemetry: TelemetryObserver | None = None,
-        policy_engine: PolicyEngine | None = None,
         event_emitter: EventEmitter | None = None,
         compress_tools: bool = False,
     ) -> None:
@@ -50,7 +48,6 @@ class BrowserHarness:
         self.events = event_emitter or EventEmitter()
         self.context = context_assembler or ContextAssembler()
         self.tools = tool_registry or ToolRegistry(tools=tools, tool_loader=tool_loader)
-        self.policy = policy_engine or PolicyEngine()
         self.llm = llm
         self.compress_tools = compress_tools
 

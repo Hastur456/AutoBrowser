@@ -2,7 +2,14 @@
 
 Branch: `feat/agent-loop-observability`
 Source plan: [Codex-Claude Runtime Migration Plan](../research/2026-07-26-codex-claude-runtime-migration-plan.md)
-Status: Planned
+Status: Planned (superseded)
+
+> **Historical.** Every "current LangGraph loop" reference below predates the
+> engine-native runtime; the compiled graph was removed. The observability surface this
+> plan tracked — typed events, JSONL traces, replay helpers, scenario evals, and baseline
+> comparison — did ship; its baseline now lives at
+> `tests/evals/baselines/agent_loop_v1.json`. See the
+> [native agent loop engine ADR](../decisions/2026-08-31-native-agent-loop-engine.md).
 
 ## Goal
 
@@ -379,7 +386,7 @@ LangGraph loop against stored expected metrics.
 Initial baseline file:
 
 ```text
-tests/evals/baselines/langgraph_v1.json
+tests/evals/baselines/agent_loop_v1.json
 ```
 
 Suggested command:
@@ -391,7 +398,7 @@ python -m pytest tests\test_agent_loop_evals.py
 Optional script:
 
 ```powershell
-python scripts\run_evals.py --engine langgraph-v1 --baseline tests\evals\baselines\langgraph_v1.json
+python scripts\run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
 ```
 
 Baseline policy:
@@ -515,7 +522,7 @@ python -m pytest tests\test_agent_loop_evals.py
 Files:
 
 - `tests/evals/scenarios/*.yaml`
-- `tests/evals/baselines/langgraph_v1.json`
+- `tests/evals/baselines/agent_loop_v1.json`
 - `tests/test_agent_loop_evals.py`
 
 Deliverables:

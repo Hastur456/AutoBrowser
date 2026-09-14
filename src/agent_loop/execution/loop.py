@@ -506,7 +506,7 @@ class AgentLoopEngine:
         goal_id: str = "",
         session_id: str | None = None,
         state_overrides: Mapping[str, Any] | None = None,
-        recursion_limit: int | None = None,
+        turn_cap: int | None = None,
         event_context: Mapping[str, Any] | None = None,
     ) -> AgentLoopResult:
         """Run the loop to a terminal state and return the :class:`AgentLoopResult`."""
@@ -517,7 +517,7 @@ class AgentLoopEngine:
             "task_id": ctx.get("task_id", task_id),
             "goal_id": ctx.get("goal_id", goal_id or task_id),
         }
-        turn_cap = max(1, int(recursion_limit or DEFAULT_TURN_CAP))
+        turn_cap = max(1, int(turn_cap or DEFAULT_TURN_CAP))
 
         tools = list(await self._resources.tool_registry.get_all())
         browser_tabs_available = any(
@@ -642,9 +642,9 @@ def native_task_runner(
     ) -> AgentLoopResult:
         state_overrides = task_config.get(HARNESS_STATE_OVERRIDES_CONFIG_KEY) or {}
         event_metadata = dict(task_config.get(HARNESS_EVENT_METADATA_CONFIG_KEY) or {})
-        recursion_limit = int(
-            task_config.get("recursion_limit")
-            or getattr(session_config, "recursion_limit", DEFAULT_TURN_CAP)
+        turn_cap = int(
+            task_config.get("turn_cap")
+            or getattr(session_config, "turn_cap", DEFAULT_TURN_CAP)
             or DEFAULT_TURN_CAP
         )
         compress_tools = bool(getattr(session_config, "compress_tools", False))
@@ -660,7 +660,7 @@ def native_task_runner(
             goal_id=str(event_metadata.get("goal_id", "")),
             session_id=event_metadata.get("session_id"),
             state_overrides=state_overrides,
-            recursion_limit=recursion_limit,
+            turn_cap=turn_cap,
             event_context=event_metadata,
         )
 

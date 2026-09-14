@@ -88,10 +88,10 @@ Each layer is hard-fenced; **respect the boundary the code is trying to keep**:
 - `src/agent_loop/goals.py` — `GoalRunner`: one-task lifecycle + goal events only. Must not
   choose actions, judge completion, touch routing/counters/policy, or run a model loop.
 - `src/harness/runtime.py` — `BrowserHarness`: per-task composition root. Injects
-  `ContextAssembler`, `ToolRegistry`, `PolicyEngine`, `TelemetryObserver`, `EventEmitter`
+  `ContextAssembler`, `ToolRegistry`, `TelemetryObserver`, `EventEmitter`
   and holds `EngineResources.from_harness` sources. It does not own memory; history shaping
   is a functional helper set in `src/harness/memory.py` and the durable list lives on
-  `LoopState.messages`. There is no graph to stream and no recursion-limit recovery here
+  `LoopState.messages`. There is no graph to stream and no turn-cap recovery here
   anymore.
 - `src/agent_loop/execution/` — the engine owns **only** reasoning, routing, execution,
   observation. Infrastructure goes in `src/harness/`; browser schema adaptation goes in
@@ -128,7 +128,7 @@ The agent is **snapshot-driven, not selector-driven** (see `docs/development/bro
   snapshot; prefer typing into an editable control, then fall back to a direct search URL
   (e.g. Ozon `https://www.ozon.ru/search/?text=<query>`).
 
-These rules are **duplicated across prompts, `PolicyEngine`, the observer, and provider
+These rules are **duplicated across prompts, the policy functions, the observer, and provider
 tests**. Changing one layer can reintroduce stale-ref/loop bugs — keep them aligned, and
 don't remove an invariant from a prompt unless policy/observer/evals still enforce it.
 `FakeBrowserProvider` (`src/browser/fake.py`) exercises this behavior deterministically

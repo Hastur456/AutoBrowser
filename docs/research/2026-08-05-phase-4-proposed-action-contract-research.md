@@ -3,6 +3,12 @@
 Status: Research
 Date: 2026-08-05
 
+> **Superseded.** The typed `ProposedAction` contract and `ModelDriver` boundary this note
+> scoped are now live (`src/agent_loop/actions.py`, `src/agent_loop/model.py`) and drive
+> the engine-native loop. The LangGraph-era rollback considerations below no longer apply:
+> the compiled graph was removed. See the
+> [native agent loop engine ADR](../decisions/2026-08-31-native-agent-loop-engine.md).
+
 ## Question
 
 Phase 4 of the Codex-Claude migration plan asks for an explicit

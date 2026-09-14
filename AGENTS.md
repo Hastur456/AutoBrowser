@@ -34,7 +34,7 @@ engine-native execution loop. The CLI entry point is `main.py`. Core code lives 
   helpers, `EngineResources`, and `native_task_runner`.
 - `src/agent_loop/`: runtime-facing action contracts, model action parsing, eventing, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary around the engine.
 - `src/contracts.py`: provider-neutral typed tool/plan/observation contracts and loop thresholds (no imports from the loop, harness, or browser layers).
-- `src/state.py`: type-only `AgentState`/`BrowserState` TypedDicts kept for annotation.
+- `src/state.py`: type-only `AgentState` TypedDict kept for browser-layer annotation.
 - `src/messages.py`: dependency-free provider-neutral chat `Message`/`ToolCall` types shared by the engine and providers.
 - `src/llm.py`: model defaults (`DEFAULT_OLLAMA_MODEL`) and the provider-neutral `ChatModel`/`ModelResponse` chat contract.
 - `src/providers/`: provider adapters (e.g. `ollama.py`) that implement `ChatModel` by mapping neutral `Message`/`ToolDef` objects to a backend wire format.
@@ -218,7 +218,7 @@ REPL commands include:
 - `help [command]`: show command help.
 - `exit` or `quit`: exit the CLI.
 
-Useful CLI flags include `--loop`, `--show-state`, `--hide-snapshot`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, and `--recursion-limit`.
+Useful CLI flags include `--loop`, `--show-state`, `--hide-snapshot`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, and `--turn-cap`.
 
 ## Coding Style & Naming Conventions
 

@@ -13,10 +13,6 @@ EventType = Literal[
     "session.started",
     "session.closed",
     "goal.started",
-    "graph.started",
-    "graph.node_started",
-    "graph.node_finished",
-    "graph.failed",
     "model.requested",
     "model.responded",
     "action.proposed",
@@ -99,9 +95,12 @@ class EventRecord:
             if isinstance(raw_timestamp, str)
             else datetime.now(UTC)
         )
+        raw_type = data.get("type")
+        if not raw_type:
+            raise ValueError("Event record is missing a 'type' field.")
         return cls(
             event_id=str(data.get("event_id") or f"event-{uuid4().hex}"),
-            type=str(data.get("type") or "graph.started"),  # type: ignore[arg-type]
+            type=str(raw_type),  # type: ignore[arg-type]
             timestamp=timestamp,
             session_id=_optional_str(data.get("session_id")),
             goal_id=_optional_str(data.get("goal_id")),

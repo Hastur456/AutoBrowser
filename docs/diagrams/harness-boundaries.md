@@ -26,12 +26,10 @@ flowchart LR
   GoalRunner --> Engine[AgentLoopEngine]
   Harness --> ContextAssembler[ContextAssembler]
   Harness --> Tools[ToolRegistry]
-  Harness --> Policy[PolicyEngine]
   Harness --> Telemetry[TelemetryObserver]
   Engine --> Resources[EngineResources]
   Resources --> ContextAssembler
   Resources --> Tools
-  Resources --> Policy
   Resources --> LLM
   Tools --> StaticTools[Static tools]
   Tools --> Providers[Generic providers]

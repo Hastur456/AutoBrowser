@@ -7,10 +7,12 @@ behavioral notes for the AutoBrowser agent.
 
 ### Agent Loop Runtime
 
-AutoBrowser currently has a LangGraph browser-task loop. The next architectural
-step is an AutoBrowser-owned runtime loop inspired by Claude Code and Codex:
-typed events, context assembly, tool brokering, permissions, hooks, skills,
-subagents, durable traces, and scenario evals.
+AutoBrowser runs an AutoBrowser-owned runtime loop: the engine-native
+`AgentLoopEngine` (`src/agent_loop/execution/loop.py`) drives a bounded
+plan → reason → policy → execute → observe cycle with typed events, context
+assembly, tool brokering, permissions, skills, durable traces, and scenario
+evals. There is no compiled graph; see the
+[native agent loop engine ADR](../decisions/2026-08-31-native-agent-loop-engine.md).
 
 See [Agent Loop Runtime Research](2026-07-26-agent-loop-runtime-research.md).
 See also [Codex-Claude Runtime Migration Plan](2026-07-26-codex-claude-runtime-migration-plan.md)
@@ -18,8 +20,8 @@ for a phased implementation plan.
 
 ### Proposed Action Contract
 
-Phase 4 of the migration plan introduces a typed `ProposedAction` contract and
-`ModelDriver` boundary before the LangGraph loop is replaced.
+Phase 4 of the migration plan introduced the typed `ProposedAction` contract and
+the `ModelDriver` boundary; both are now live and drive the engine-native loop.
 
 See [Phase 4 ProposedAction Contract Research](2026-08-05-phase-4-proposed-action-contract-research.md).
 
@@ -31,7 +33,7 @@ Recent execution traces showed a failure mode on dynamic commerce pages:
 2. A snapshot exposes a visible Search button or search affordance.
 3. The agent clicks that button instead of typing into the editable input.
 4. The visible snapshot does not change.
-5. The agent repeats the same click/snapshot cycle until the recursion limit.
+5. The agent repeats the same click/snapshot cycle until the turn cap.
 
 Current mitigation is split between prompts and runtime guards:
 
@@ -71,14 +73,16 @@ Open questions:
   lossy?
 - Should compression be disabled automatically for result-list extraction?
 
-### Recursion-Limit Recovery
+### Turn-Cap Exhaustion
 
-`BrowserHarness` attempts to return the latest checkpoint if the graph hits
-`GraphRecursionError` after a final answer has already been produced.
+`AgentLoopEngine` bounds every task with `DEFAULT_TURN_CAP` (50, overridable per
+session via `--turn-cap` / `SessionConfig.turn_cap`). Reaching the cap ends the
+goal with a terminal `blocked` status rather than a checkpoint resume.
 
 Open questions:
 
-- Should non-final recursion failures produce a partial diagnostic answer?
+- Should turn-cap exhaustion produce a partial diagnostic answer instead of only
+  the blocked reason?
 - Which loop patterns should be promoted from prompt guidance into hard policy?
 - How should repeated non-progress be surfaced in CLI output?
 

@@ -29,7 +29,7 @@ structure.
 | `src/agent_loop/execution/` | The engine-native control loop: `AgentLoopEngine`, `TurnController`, the frozen `LoopState`, completion/observation/guards/policy helpers, `EngineResources`, and `native_task_runner`. |
 | `src/agent_loop/` | Runtime-facing action contracts, model action parsing, lifecycle events, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary. |
 | `src/contracts.py` | Provider-neutral typed tool/plan/observation contracts and control-loop thresholds (no imports from the loop, harness, or browser layers). |
-| `src/state.py` | Type-only `AgentState`/`BrowserState` TypedDicts kept for harness/browser annotation. |
+| `src/state.py` | Type-only `AgentState` TypedDict kept for browser-layer annotation. |
 | `src/messages.py` | Dependency-free provider-neutral chat `Message`/`ToolCall` types shared by the engine and providers. |
 | `src/llm.py` | Model defaults (`DEFAULT_OLLAMA_MODEL`) and the provider-neutral `ChatModel`/`ModelResponse` chat contract the engine drives. |
 | `src/providers/` | Thin `ChatModel` adapters (for example `ollama.py`) that serialize `Message`/`ToolDef` to a backend wire format and parse replies into `ModelResponse`. |
@@ -157,7 +157,8 @@ infrastructure consumed by one task execution. It holds:
   prompt injection, per-turn user prompt, and planner prompt.
 - `ToolRegistry`: lazily loads static tools, generic providers, browser
   providers, and MCP clients, and exposes provider-neutral `Tool` objects.
-- `PolicyEngine`: classifies tool requests before execution.
+- Policy functions (`src/agent_loop/execution/policy.py`): classify tool
+  requests before execution.
 - `TelemetryObserver`: logs local trace metadata and errors.
 - `EventEmitter`: durable goal/model/action/policy/tool/observation events.
 
@@ -280,7 +281,8 @@ must use only the latest `ToolResult` JSON.
 
 ## Policy
 
-`PolicyEngine` currently blocks missing tool requests, routes sensitive tool
+The engine's policy functions (`src/agent_loop/execution/policy.py`) block
+missing tool requests, route sensitive tool
 names containing markers such as `payment`, `purchase`, `delete_account`, or
 `credential` to human approval, blocks accumulated ineffective browser actions,
 and blocks redundant identical snapshot requests when the current snapshot is
