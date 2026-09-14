@@ -3,6 +3,12 @@
 Status: Research
 Date: 2026-07-26
 
+> **Superseded.** This note argues for replacing the LangGraph loop with an
+> AutoBrowser-owned runtime. That migration is complete: the compiled graph was removed
+> and `AgentLoopEngine` is the only execution path. Read this as the reasoning behind the
+> change, not as a description of the current runtime. See the
+> [native agent loop engine ADR](../decisions/2026-08-31-native-agent-loop-engine.md).
+
 ## Question
 
 AutoBrowser currently uses a LangGraph browser-task loop. The next product

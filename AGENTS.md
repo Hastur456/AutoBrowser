@@ -34,7 +34,7 @@ engine-native execution loop. The CLI entry point is `main.py`. Core code lives 
   helpers, `EngineResources`, and `native_task_runner`.
 - `src/agent_loop/`: runtime-facing action contracts, model action parsing, eventing, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary around the engine.
 - `src/contracts.py`: provider-neutral typed tool/plan/observation contracts and loop thresholds (no imports from the loop, harness, or browser layers).
-- `src/state.py`: type-only `AgentState`/`BrowserState` TypedDicts kept for annotation.
+- `src/state.py`: type-only `AgentState` TypedDict kept for browser-layer annotation.
 - `src/messages.py`: dependency-free provider-neutral chat `Message`/`ToolCall` types shared by the engine and providers.
 - `src/llm.py`: model defaults (`DEFAULT_OLLAMA_MODEL`) and the provider-neutral `ChatModel`/`ModelResponse` chat contract.
 - `src/providers/`: provider adapters (e.g. `ollama.py`) that implement `ChatModel` by mapping neutral `Message`/`ToolDef` objects to a backend wire format.
@@ -56,18 +56,22 @@ Harness responsibilities:
 
 - `session.py`: owns the process-long session lifecycle through `SessionRuntime` and `SessionContext`.
 - `runtime.py`: composition root that holds the infrastructure collaborators `EngineResources.from_harness` reads; it no longer compiles/runs/streams a graph.
-- `context.py`: context and initial state construction, including system prompt injection.
+- `context.py` no longer exists in `src/harness/`: prompt construction lives in `ContextAssembler` (`src/agent_loop/context.py`), the sole boundary injected as `harness.context`.
 - `memory.py`: functional conversation-history shaping over `Message` lists (no checkpoint saver; the durable history lives on `LoopState.messages`, not on a memory service).
 - `tools.py`: pluggable tool registry for static tools, generic providers, browser providers, and MCP clients.
 - `policy.py`: policy checks and policy engine boundary.
 - `telemetry.py`: local trace-metadata and error logging boundary.
 
-`ContextBuilder` defaults to legacy prompt rendering. Set `AUTOBROWSER_CONTEXT_MODE=assembled` to use the assembled context path backed by `src/agent_loop/context.py`; set `AUTOBROWSER_CONTEXT_MODE=legacy` for rollback while validating prompt changes.
+`ContextAssembler` in `src/agent_loop/context.py` is the only prompt-construction
+path — it builds the durable system prompt, the assembled per-turn user prompt, and
+the planner prompt. The former context-mode switch (`legacy` vs `assembled`) and the
+legacy `ContextBuilder` (with its `.format(...)`-based user prompt) were removed.
 
 The engine-native migration is complete: the legacy `src/agent/` compiled-graph runtime, the
-`src/agent_loop/adapters/` bridge, `src/cli/task_runner.py`, and the legacy
-`LegacyAgentStateObservationCompiler` are removed, and
-`AgentLoopEngine` is the sole runtime (see
+`src/agent_loop/adapters/` bridge, `src/cli/task_runner.py`, and the transitional
+`src/agent_loop/outcomes.py` compatibility layer (the `GoalState` compile/guard indirection
+and the legacy `LegacyAgentStateObservationCompiler`) are removed — `GoalRunner` now consumes
+the terminal `AgentLoopResult` directly — and `AgentLoopEngine` is the sole runtime (see
 [docs/decisions/2026-08-31-native-agent-loop-engine.md](docs/decisions/2026-08-31-native-agent-loop-engine.md)).
 `AUTOBROWSER_AGENT_LOOP`/`SessionConfig.agent_loop` are inert compatibility surface.
 
@@ -214,7 +218,7 @@ REPL commands include:
 - `help [command]`: show command help.
 - `exit` or `quit`: exit the CLI.
 
-Useful CLI flags include `--loop`, `--show-state`, `--hide-snapshot`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, and `--recursion-limit`.
+Useful CLI flags include `--loop`, `--show-state`, `--hide-snapshot`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, and `--turn-cap`.
 
 ## Coding Style & Naming Conventions
 

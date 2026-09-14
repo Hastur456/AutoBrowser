@@ -1,5 +1,16 @@
 # 2026-08-05 Agent Loop Legacy Outcomes Cleanup
 
+## Status: Complete (2026-09-03)
+
+The cleanup this plan tracked is done. `src/agent_loop/outcomes.py` was **deleted**;
+`GoalRunner` now consumes the engine's terminal `AgentLoopResult` directly and no longer
+accepts or invokes `ObservationCompiler`/`CompletionGuard`. `GoalState`,
+`GoalStateCompletionGuard`, and the `NativeObservationCompiler` adapter are gone. The
+surviving provider-neutral `CompletionStatus`/`GoalStatus` literals and
+`goal_status_from_completion()` moved to `src/contracts.py`, and terminal results map to
+`goal.completed`/`goal.blocked`/`goal.cancelled`/`goal.failed`. The migration gate below is
+satisfied by the current code; the rest of this page is historical context.
+
 ## Context
 
 `src/agent_loop/outcomes.py` is a transitional compatibility layer between

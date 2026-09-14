@@ -18,6 +18,8 @@ from typing import Any, Literal, NotRequired, TypedDict
 AgentDecision = Literal["tool_call", "replan", "done"]
 PolicyDecision = Literal["approved", "needs_human", "blocked"]
 ToolStatus = Literal["success", "error"]
+GoalStatus = Literal["completed", "failed", "cancelled", "blocked"]
+CompletionStatus = Literal["continue", "done", "blocked", "cancelled"]
 
 # Control-loop thresholds. Shared here so the legacy graph and the engine-native loop
 # cannot drift. ``MAX_SNAPSHOT_RECOVERIES`` is currently dormant (not exercised by the
@@ -135,6 +137,21 @@ class PolicyEvent(TypedDict, total=False):
     human_response: Any
 
 
+def goal_status_from_completion(status: CompletionStatus) -> GoalStatus | None:
+    """Map a loop completion status into a terminal goal status.
+
+    ``"done"`` becomes ``"completed"``; ``"blocked"`` and ``"cancelled"`` map through;
+    any other value (such as the non-terminal ``"continue"``) is not a terminal goal
+    outcome and maps to ``None``.
+    """
+
+    if status == "done":
+        return "completed"
+    if status in {"blocked", "cancelled"}:
+        return status
+    return None
+
+
 __all__ = [
     "MAX_CONSECUTIVE_FAILURES",
     "MAX_REPLANS",
@@ -143,6 +160,9 @@ __all__ = [
     "MAX_UNCHANGED_SNAPSHOTS",
     "AgentDecision",
     "CompactToolObservation",
+    "CompletionStatus",
+    "GoalStatus",
+    "goal_status_from_completion",
     "PlanStep",
     "PolicyDecision",
     "PolicyEvent",

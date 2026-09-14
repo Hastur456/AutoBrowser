@@ -51,13 +51,11 @@ from src.agent_loop.metrics import EventMetrics, extract_event_metrics
 __all__ = [
     "ActionKind",
     "ActionParser",
-    "ActionKind",
     "AnswerAction",
     "AgentTraceSink",
     "AskUserAction",
     "AgentLoopEngine",
     "AgentLoopResult",
-    "AgentTraceSink",
     "BatchScenario",
     "BatchSessionFactory",
     "BatchSessionRuntime",

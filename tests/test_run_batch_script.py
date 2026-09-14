@@ -15,7 +15,7 @@ from scripts import run_batch as run_batch_script
 class FakeConfig:
     model: str
     no_mcp: bool
-    recursion_limit: int
+    turn_cap: int
     chrome_path: str
     user_data_dir: str
     cdp_port: int
@@ -41,7 +41,7 @@ async def test_run_batch_from_args_passes_session_factory_and_batch_options(
             "--model",
             "test-model",
             "--no-mcp",
-            "--recursion-limit",
+            "--turn-cap",
             "7",
             "--chrome-path",
             "chrome-test.exe",
@@ -84,7 +84,7 @@ async def test_run_batch_from_args_passes_session_factory_and_batch_options(
     assert calls["batch_kwargs"]["config"] == {
         "model": "test-model",
         "no_mcp": True,
-        "recursion_limit": 7,
+        "turn_cap": 7,
         "chrome_path": "chrome-test.exe",
         "user_data_dir": "profile-test",
         "cdp_port": 9555,
@@ -182,7 +182,7 @@ def _fake_session_from_args(args: argparse.Namespace) -> FakeSession:
         FakeConfig(
             model=args.model,
             no_mcp=args.no_mcp,
-            recursion_limit=args.recursion_limit,
+            turn_cap=args.turn_cap,
             chrome_path=args.chrome_path,
             user_data_dir=args.user_data_dir,
             cdp_port=args.cdp_port,

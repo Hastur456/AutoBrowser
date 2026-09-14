@@ -71,7 +71,7 @@ class EvalScenario:
     model_responses: list[str]
     browser_snapshots: list[str]
     assertions: EvalAssertions
-    recursion_limit: int = 25
+    turn_cap: int = 25
 
 
 @dataclass(frozen=True)
@@ -119,7 +119,7 @@ def load_scenario(path: Path) -> EvalScenario:
             max_repeated_actions=assertions.get("max_repeated_actions"),
             max_policy_blocks=assertions.get("max_policy_blocks"),
         ),
-        recursion_limit=int(data.get("recursion_limit", 25) or 25),
+        turn_cap=int(data.get("turn_cap", 25) or 25),
     )
 
 
@@ -154,7 +154,7 @@ async def run_scenario(scenario: EvalScenario) -> EvalResult:
         },
     }
     session_config = SimpleNamespace(
-        recursion_limit=scenario.recursion_limit,
+        turn_cap=scenario.turn_cap,
         compress_tools=False,
     )
     try:

@@ -29,7 +29,7 @@ structure.
 | `src/agent_loop/execution/` | The engine-native control loop: `AgentLoopEngine`, `TurnController`, the frozen `LoopState`, completion/observation/guards/policy helpers, `EngineResources`, and `native_task_runner`. |
 | `src/agent_loop/` | Runtime-facing action contracts, model action parsing, lifecycle events, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary. |
 | `src/contracts.py` | Provider-neutral typed tool/plan/observation contracts and control-loop thresholds (no imports from the loop, harness, or browser layers). |
-| `src/state.py` | Type-only `AgentState`/`BrowserState` TypedDicts kept for harness/browser annotation. |
+| `src/state.py` | Type-only `AgentState` TypedDict kept for browser-layer annotation. |
 | `src/messages.py` | Dependency-free provider-neutral chat `Message`/`ToolCall` types shared by the engine and providers. |
 | `src/llm.py` | Model defaults (`DEFAULT_OLLAMA_MODEL`) and the provider-neutral `ChatModel`/`ModelResponse` chat contract the engine drives. |
 | `src/providers/` | Thin `ChatModel` adapters (for example `ollama.py`) that serialize `Message`/`ToolDef` to a backend wire format and parse replies into `ModelResponse`. |
@@ -98,9 +98,10 @@ config, injects carried session state, persists latest state into
 `SessionContext`, and marks task history finished or failed. `GoalRunner` owns
 the goal lifecycle boundary for that task: it emits `goal.started`, delegates to
 `native_task_runner` (which composes `EngineResources` from `BrowserHarness`),
-invokes a `LatestStateLoader`, emits `goal.completed` or `goal.failed`, and
-returns a `GoalRunResult` with explicit terminal status. The current `goal_id`
-is equal to the task id.
+captures carry-forward state through a `LatestStateLoader`, reads the terminal
+`AgentLoopResult.status` directly, emits `goal.completed`, `goal.blocked`,
+`goal.cancelled`, or `goal.failed`, and returns a `GoalRunResult` with explicit
+terminal status. The current `goal_id` is equal to the task id.
 
 `GoalRunner` is not an agent engine. It does not choose actions, inspect model
 messages for semantic completion, call tools, manage retry counters, enforce
@@ -109,10 +110,13 @@ control-flow owner: it builds the initial plan, then drives a bounded `while`
 loop of `TurnController` turns and returns a terminal `AgentLoopResult` with
 `status`/`final_answer`/`session_state`/`state`/`turns`.
 
-`src/agent_loop/outcomes.py` contains only the stable provider-neutral
-`GoalState` types, `CompletionGuard`, and `goal_status_from_completion` used by
-`GoalRunner`. The legacy `LegacyAgentStateObservationCompiler` was removed once
-`AgentLoopResult` became the terminal contract.
+The transitional `src/agent_loop/outcomes.py` module is deleted. `GoalRunner`
+consumes the engine's terminal `AgentLoopResult` directly — there is no
+observation-compiler or completion-guard indirection between the engine result
+and the goal lifecycle. The surviving provider-neutral status literals
+(`CompletionStatus`/`GoalStatus`) and `goal_status_from_completion()` live in
+`src/contracts.py`; the legacy `LegacyAgentStateObservationCompiler` was removed
+once `AgentLoopResult` became the terminal contract.
 
 Other `src/agent_loop/` modules are runtime-facing contracts and diagnostics
 around the engine:
@@ -125,8 +129,9 @@ around the engine:
   extraction.
 - `batch.py`, `export.py`, and `evals.py` power Golden Set runs, session export
   rows, and deterministic fake-browser scenario checks.
-- `context.py`, `prompts.py`, and `skills.py` provide the assembled context
-  path selected with `AUTOBROWSER_CONTEXT_MODE=assembled`.
+- `context.py`, `prompts.py`, and `skills.py` implement the canonical prompt-construction
+  path: `ContextAssembler` builds the durable system prompt, the per-turn user prompt, and the
+  planner prompt from typed context blocks.
 
 The interactive CLI in `src/cli/agent_cli.py` wraps a prepared
 `SessionRuntime`. It keeps all asynchronous session operations on one dedicated
@@ -148,10 +153,12 @@ These files are runtime artifacts and are ignored by git.
 `BrowserHarness` in `src/harness/runtime.py` is the composition root for runtime
 infrastructure consumed by one task execution. It holds:
 
-- `ContextBuilder`: builds per-turn prompts and owns system prompt injection.
+- `ContextAssembler`: the sole prompt-construction boundary — durable system
+  prompt injection, per-turn user prompt, and planner prompt.
 - `ToolRegistry`: lazily loads static tools, generic providers, browser
   providers, and MCP clients, and exposes provider-neutral `Tool` objects.
-- `PolicyEngine`: classifies tool requests before execution.
+- Policy functions (`src/agent_loop/execution/policy.py`): classify tool
+  requests before execution.
 - `TelemetryObserver`: logs local trace metadata and errors.
 - `EventEmitter`: durable goal/model/action/policy/tool/observation events.
 
@@ -274,7 +281,8 @@ must use only the latest `ToolResult` JSON.
 
 ## Policy
 
-`PolicyEngine` currently blocks missing tool requests, routes sensitive tool
+The engine's policy functions (`src/agent_loop/execution/policy.py`) block
+missing tool requests, route sensitive tool
 names containing markers such as `payment`, `purchase`, `delete_account`, or
 `credential` to human approval, blocks accumulated ineffective browser actions,
 and blocks redundant identical snapshot requests when the current snapshot is

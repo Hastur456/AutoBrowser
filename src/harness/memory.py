@@ -25,10 +25,17 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import uuid4
 
+from src.agent_loop.context import ContextAssembler
 from src.browser import is_browser_snapshot_name
 from src.contracts import CompactToolObservation, ToolRequest, ToolResult
-from src.harness.context import ContextBuilder
-from src.messages import Message, ToolCall, assistant_message, system_message, tool_message, user_message
+from src.messages import (
+    Message,
+    ToolCall,
+    assistant_message,
+    system_message,
+    tool_message,
+    user_message,
+)
 
 MAX_TOOL_MESSAGE_REFS = 25
 ORIGINAL_USER_REQUEST_PREFIX = "Original user request:\n"
@@ -38,7 +45,7 @@ USER_REQUEST_PREFIX = "User request"
 class MemoryManager:
     """Functional history service over provider-neutral ``Message`` lists."""
 
-    def __init__(self, context: ContextBuilder | None = None) -> None:
+    def __init__(self, context: ContextAssembler | None = None) -> None:
         self._context = context
 
     # -- seeding ------------------------------------------------------------
@@ -81,7 +88,7 @@ class MemoryManager:
     def _system_prompt(self) -> str:
         if self._context is not None:
             return self._context.get_system_prompt()
-        return ContextBuilder().get_system_prompt()
+        return ContextAssembler().get_system_prompt()
 
     # -- compaction ---------------------------------------------------------
 

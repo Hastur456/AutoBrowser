@@ -47,21 +47,24 @@ Control flow lives in `src/agent_loop/execution/`, not in a compiled graph:
   it raises `ValueError` on unknown keys. `LoopState()` constructs with all
   defaults; `to_session_state()` yields the `SESSION_STATE_KEYS` dict carried
   across tasks.
-- `completion.py` — `CompletionController`, `NativeObservationCompiler`,
-  `native_latest_state_loader` (AgentLoopResult → terminal status / session state).
+- `completion.py` — `native_latest_state_loader` (unwraps the
+  `AgentLoopResult.session_state` carry-forward for the next task).
 - `guards.py`, `policy.py`, `observation.py`, `tools.py`, `resources.py` — the
-  loop guards, policy fns, observation compiler, tool broker, and
-  `EngineResources` bundling.
+  loop guards (including `CompletionController`), policy fns, observation
+  compiler, tool broker, and `EngineResources` bundling.
 
 `AgentLoopResult(status, final_answer, session_state, state, turns=0)` is a frozen
 dataclass exported from `src.agent_loop.execution.loop.__all__`. `status` is always
 terminal (`"done"`/`"blocked"`/`"cancelled"`).
 
-The old `src/agent/` compiled-graph runtime is **deleted**. `src/agent_loop/outcomes.py`
-holds only the stable provider-neutral `GoalState` types; the legacy
+The old `src/agent/` compiled-graph runtime is **deleted**, and the transitional
+`src/agent_loop/outcomes.py` is **deleted** too — its `GoalState`,
+`ObservationCompiler`, and completion guards were removed once `GoalRunner`
+started consuming the terminal `AgentLoopResult` directly. The legacy
 `src/agent_loop/adapters/` bridge and `src/cli/task_runner.py` are gone. Neutral typed
 contracts live in `src/contracts.py` (imports nothing from `src/agent_loop/`,
-`src/harness/`, or `src/browser/`); `AgentState`/`BrowserState` remain as
+`src/harness/`, or `src/browser/`), including the `CompletionStatus`/`GoalStatus`
+literals and `goal_status_from_completion()`; `AgentState`/`BrowserState` remain as
 type-only TypedDicts in `src/state.py` for annotation; prompts are consolidated in
 `src/agent_loop/prompts.py`; model defaults are in `src/llm.py`.
 
@@ -85,10 +88,10 @@ Each layer is hard-fenced; **respect the boundary the code is trying to keep**:
 - `src/agent_loop/goals.py` — `GoalRunner`: one-task lifecycle + goal events only. Must not
   choose actions, judge completion, touch routing/counters/policy, or run a model loop.
 - `src/harness/runtime.py` — `BrowserHarness`: per-task composition root. Injects
-  `ContextBuilder`, `ToolRegistry`, `PolicyEngine`, `TelemetryObserver`, `EventEmitter`
+  `ContextAssembler`, `ToolRegistry`, `TelemetryObserver`, `EventEmitter`
   and holds `EngineResources.from_harness` sources. It does not own memory; history shaping
   is a functional helper set in `src/harness/memory.py` and the durable list lives on
-  `LoopState.messages`. There is no graph to stream and no recursion-limit recovery here
+  `LoopState.messages`. There is no graph to stream and no turn-cap recovery here
   anymore.
 - `src/agent_loop/execution/` — the engine owns **only** reasoning, routing, execution,
   observation. Infrastructure goes in `src/harness/`; browser schema adaptation goes in
@@ -125,7 +128,7 @@ The agent is **snapshot-driven, not selector-driven** (see `docs/development/bro
   snapshot; prefer typing into an editable control, then fall back to a direct search URL
   (e.g. Ozon `https://www.ozon.ru/search/?text=<query>`).
 
-These rules are **duplicated across prompts, `PolicyEngine`, the observer, and provider
+These rules are **duplicated across prompts, the policy functions, the observer, and provider
 tests**. Changing one layer can reintroduce stale-ref/loop bugs — keep them aligned, and
 don't remove an invariant from a prompt unless policy/observer/evals still enforce it.
 `FakeBrowserProvider` (`src/browser/fake.py`) exercises this behavior deterministically
@@ -148,8 +151,6 @@ engine sees it.
 - `AUTOBROWSER_AGENT_LOOP` (also `--agent-loop`) — **inert.** The engine-native path is the
   only runtime; the flag and `SessionConfig.agent_loop` parse for CLI compatibility but do
   not change routing.
-- `AUTOBROWSER_CONTEXT_MODE` — `legacy` (default) | `assembled`. `assembled` renders per-turn
-  prompts through `ContextAssembler` (`src/agent_loop/context.py`); `legacy` is the rollback.
 
 ## Commands
 

@@ -1,13 +1,13 @@
 # Browser Provider Boundary
 
 This diagram shows how browser-specific adaptation is isolated behind
-`BrowserProvider` implementations while the agent graph and executor keep using
+`BrowserProvider` implementations while the engine and executor keep using
 the shared tool registry and state contracts.
 
 ```mermaid
 sequenceDiagram
-  participant Agent as Agent graph
-  participant Policy as PolicyEngine
+  participant Agent as AgentLoopEngine
+  participant Policy as policy functions
   participant Executor
   participant Registry as ToolRegistry
   participant Provider as BrowserProvider

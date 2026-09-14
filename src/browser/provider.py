@@ -7,8 +7,6 @@ from typing import Any, Protocol, runtime_checkable
 
 from src.contracts import ToolRequest, ToolResult
 from src.state import AgentState
-# TODO: Circular Import
-# from src.agent_loop.execution.state import LoopState
 
 
 @runtime_checkable

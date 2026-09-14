@@ -17,10 +17,7 @@ from src.agent_loop.events import (
     EventEmitter,
     JsonlEventSink,
 )
-from src.agent_loop.execution.completion import (
-    NativeObservationCompiler,
-    native_latest_state_loader,
-)
+from src.agent_loop.execution.completion import native_latest_state_loader
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalRunRequest, GoalRunner
 from src.browser import BrowserProvider
@@ -104,7 +101,7 @@ class SessionConfig:
     user_data_dir: str
     cdp_port: int
     cdp_timeout: float
-    recursion_limit: int
+    turn_cap: int
 
     @classmethod
     def from_args(cls, args: Any) -> "SessionConfig":
@@ -124,14 +121,14 @@ class SessionConfig:
             user_data_dir=args.user_data_dir,
             cdp_port=args.cdp_port,
             cdp_timeout=args.cdp_timeout,
-            recursion_limit=args.recursion_limit,
+            turn_cap=args.turn_cap,
         )
 
     def task_config(self) -> dict[str, Any]:
         """Return the task-run configuration shared by tasks in this session."""
 
         return {
-            "recursion_limit": self.recursion_limit,
+            "turn_cap": self.turn_cap,
             "run_name": "AutoBrowser CLI task",
             "metadata": {
                 "model": self.model,
@@ -663,7 +660,6 @@ class SessionRuntime:
             task_runner=native_task_runner(resources),
             event_emitter=self.context.event_emitter,
             latest_state_loader=load_latest_state,
-            observation_compiler=NativeObservationCompiler(),
         )
         try:
             goal_result = await runner.run(request)

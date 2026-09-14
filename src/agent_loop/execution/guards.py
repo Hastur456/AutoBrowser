@@ -33,6 +33,11 @@ from src.harness.memory import (
     with_tool_call_id,
 )
 
+from src.agent_loop.execution.policy import (
+    SNAPSHOT_REUSE_MARKER,
+    SNAPSHOT_REUSE_MARKERS,
+    _snapshot_reuse_was_blocked,
+)
 from src.agent_loop.execution.state import (
     MAX_CONSECUTIVE_FAILURES,
     MAX_REPLANS,
@@ -42,18 +47,13 @@ from src.agent_loop.execution.state import (
 )
 
 if TYPE_CHECKING:
-    from src.agent_loop.outcomes import CompletionStatus
+    from src.contracts import CompletionStatus
 
 REPEATED_SNAPSHOT_OBSERVATION_FINAL_ANSWER = (
     "Stopped because browser_snapshot returned the same visible state "
     "three consecutive times. Latest observation:\n\n{observation}"
 )
 
-SNAPSHOT_REUSE_MARKERS = (
-    "browser.snapshot is already current",
-    "browser_snapshot is already current",
-)
-SNAPSHOT_REUSE_MARKER = SNAPSHOT_REUSE_MARKERS[0]
 REPEATED_SNAPSHOT_FINAL_ANSWER = (
     "Stopped because browser.snapshot was requested three consecutive times "
     "without a meaningful state change. Latest observation:\n\n{observation}"
@@ -226,15 +226,6 @@ def _has_reusable_current_snapshot(state: LoopState) -> bool:
         and not bool(state.browser.needs_fresh_snapshot)
         and not has_invalid_ref_text(state.error)
     )
-
-
-def _snapshot_reuse_was_blocked(state: LoopState) -> bool:
-    policy_event = state.policy_event or {}
-    reason = str(policy_event.get("reason", "") or "")
-    observation = str(state.observation or "")
-    error = str(state.error or "")
-    payload = "\n".join([reason, observation, error]).lower()
-    return any(marker in payload for marker in SNAPSHOT_REUSE_MARKERS)
 
 
 def _snapshot_reuse_replan_update(state: LoopState) -> dict[str, Any]:

@@ -1,5 +1,13 @@
 # Итог исследования
 
+> **Superseded (2026-09-14).** Это ревью описывает состояние до завершения миграции:
+> тогда LangGraph ещё владел control flow, а `PolicyEngine` был живой границей в
+> `src/harness/`. Сейчас скомпилированный граф удалён, `AgentLoopEngine` — единственный
+> рантайм, а классификация запросов живёт в чистых функциях
+> `src/agent_loop/execution/policy.py`. Читайте документ как обоснование перехода, а не
+> как описание текущего кода. См.
+> [ADR о native agent loop engine](../decisions/2026-08-31-native-agent-loop-engine.md).
+
 С учётом Glossary и Architecture Overview текущий проект уже имеет почти все необходимые границы для миграции:
 
 - `SessionRuntime` — session lifecycle;

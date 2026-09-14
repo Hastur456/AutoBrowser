@@ -116,7 +116,7 @@ def make_config(**overrides: Any) -> SessionConfig:
         "user_data_dir": "profile",
         "cdp_port": 9555,
         "cdp_timeout": 1.0,
-        "recursion_limit": 10,
+        "turn_cap": 10,
     }
     values.update(overrides)
     return SessionConfig(**values)

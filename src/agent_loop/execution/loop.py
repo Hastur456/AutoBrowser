@@ -25,7 +25,7 @@ Decoupling: this module imports **nothing** from ``src/agent/``. It reuses the a
 engine-native model/action layer (:mod:`src.agent_loop.model`, :mod:`src.agent_loop.actions`),
 the ported control logic in this package, the neutral contracts in :mod:`src.contracts`, and
 harness leaves (message history, tool registry, event metadata keys). The planner prompt is
-reached through :meth:`ContextBuilder.build_plan_prompt` — the sanctioned prompt boundary.
+reached through :meth:`ContextAssembler.plan_prompt` — the sanctioned prompt boundary.
 
 Event contract: only existing ``EventType`` literals are emitted (``model.requested`` /
 ``model.responded``, ``action.proposed``, ``policy.decided``, ``approval.requested``,
@@ -43,19 +43,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from src.browser import is_browser_tool_name, to_canonical_browser_name
-from src.contracts import PlanStep, ToolRequest, ToolResult
-from src.harness.memory import ensure_message_history
-from src.harness.runtime import (
-    HARNESS_EVENT_METADATA_CONFIG_KEY,
-    HARNESS_STATE_OVERRIDES_CONFIG_KEY,
-)
-from src.harness.tools import tool_name
-from src.messages import Message, user_message
-
 from src.agent_loop.actions import normalize_tool_request
-from src.agent_loop.model import ModelDriver
-from src.agent_loop.outcomes import CompletionStatus
 from src.agent_loop.execution.guards import (
     CompletionController,
     blocked_response,
@@ -71,6 +59,17 @@ from src.agent_loop.execution.policy import classify_tool_request, policy_update
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import LoopState
 from src.agent_loop.execution.tools import ToolBroker
+from src.agent_loop.model import ModelDriver
+from src.contracts import CompletionStatus
+from src.browser import is_browser_tool_name, to_canonical_browser_name
+from src.contracts import PlanStep, ToolRequest, ToolResult
+from src.harness.memory import ensure_message_history
+from src.harness.runtime import (
+    HARNESS_EVENT_METADATA_CONFIG_KEY,
+    HARNESS_STATE_OVERRIDES_CONFIG_KEY,
+)
+from src.harness.tools import tool_name
+from src.messages import Message, user_message
 
 HumanInputCallback = Callable[[ToolRequest, str], Awaitable[bool]]
 
@@ -289,9 +288,9 @@ class TurnController:
             snapshot_request.update(stale_snapshot_update)
             return snapshot_request
 
-        turn_prompt = self._resources.context.build_turn_prompt(
+        turn_prompt = self._resources.context.user_turn_prompt(
             self._prompt_mapping(state),
-            self._tools,
+            tools=self._tools,
         )
         self._emit("model.requested", {"phase": "agent", "tool_count": len(self._tools)})
         model_turn = await self._model_driver.invoke(
@@ -507,7 +506,7 @@ class AgentLoopEngine:
         goal_id: str = "",
         session_id: str | None = None,
         state_overrides: Mapping[str, Any] | None = None,
-        recursion_limit: int | None = None,
+        turn_cap: int | None = None,
         event_context: Mapping[str, Any] | None = None,
     ) -> AgentLoopResult:
         """Run the loop to a terminal state and return the :class:`AgentLoopResult`."""
@@ -518,7 +517,7 @@ class AgentLoopEngine:
             "task_id": ctx.get("task_id", task_id),
             "goal_id": ctx.get("goal_id", goal_id or task_id),
         }
-        turn_cap = max(1, int(recursion_limit or DEFAULT_TURN_CAP))
+        turn_cap = max(1, int(turn_cap or DEFAULT_TURN_CAP))
 
         tools = list(await self._resources.tool_registry.get_all())
         browser_tabs_available = any(
@@ -584,7 +583,7 @@ class AgentLoopEngine:
         prior_replans = int(state.replan_count or 0)
         replan_count = prior_replans + 1 if state.plan else prior_replans
 
-        plan_prompt = self._resources.context.build_plan_prompt(self._plan_mapping(state))
+        plan_prompt = self._resources.context.plan_prompt(self._plan_mapping(state))
         self._emit("model.requested", {"phase": "plan"})
         response = await self._resources.llm.complete([*messages, user_message(plan_prompt)])
         self._emit("model.responded", {"phase": "plan"})
@@ -643,9 +642,9 @@ def native_task_runner(
     ) -> AgentLoopResult:
         state_overrides = task_config.get(HARNESS_STATE_OVERRIDES_CONFIG_KEY) or {}
         event_metadata = dict(task_config.get(HARNESS_EVENT_METADATA_CONFIG_KEY) or {})
-        recursion_limit = int(
-            task_config.get("recursion_limit")
-            or getattr(session_config, "recursion_limit", DEFAULT_TURN_CAP)
+        turn_cap = int(
+            task_config.get("turn_cap")
+            or getattr(session_config, "turn_cap", DEFAULT_TURN_CAP)
             or DEFAULT_TURN_CAP
         )
         compress_tools = bool(getattr(session_config, "compress_tools", False))
@@ -661,7 +660,7 @@ def native_task_runner(
             goal_id=str(event_metadata.get("goal_id", "")),
             session_id=event_metadata.get("session_id"),
             state_overrides=state_overrides,
-            recursion_limit=recursion_limit,
+            turn_cap=turn_cap,
             event_context=event_metadata,
         )
 

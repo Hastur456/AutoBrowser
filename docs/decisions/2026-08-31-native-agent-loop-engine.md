@@ -78,8 +78,10 @@ engine. No LangGraph graph owns the agent loop anymore.
   (`SessionRuntime.run_forever` prints the terminal `final_answer`; the cmd2
   `AgentCli._on_task_done` prints it too).
 - **Feature flags:** `AUTOBROWSER_AGENT_LOOP` and `SessionConfig.agent_loop` are
-  kept inert — the flag parses, but the native path always runs. `AUTOBROWSER_CONTEXT_MODE`
-  still selects `legacy` vs `assembled` prompt rendering.
+  kept inert — the flag parses, but the native path always runs. Prompt construction
+  is handled solely by `ContextAssembler`; the former assembled/legacy context-mode
+  switch (and the `ContextBuilder` it selected between) was removed after the assembled
+  pipeline became stable.
 
 ## Consequences
 

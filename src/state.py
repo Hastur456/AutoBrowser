@@ -1,9 +1,9 @@
 """Provider-neutral type-only state shapes.
 
-``AgentState`` and its ``BrowserState`` sub-shape are type-only TypedDicts kept
-for the harness/browser layers that still annotate their collaborators with the
-full loop-state shape; nothing constructs them for control flow. The
-provider-neutral tool/plan/observation contracts live in :mod:`src.contracts`.
+``AgentState`` is a type-only TypedDict kept for the browser layer that still
+annotates its collaborators with the full loop-state shape; nothing constructs it
+for control flow. The provider-neutral tool/plan/observation contracts live in
+:mod:`src.contracts`.
 
 This module imports nothing from ``src/agent_loop/``,
 ``src/harness/`` or ``src/browser/``.
@@ -25,13 +25,6 @@ from src.contracts import (
 from src.messages import Message
 
 
-class BrowserState(TypedDict, total=False):
-    """Browser context owned by observation state."""
-
-    snapshot: str
-    needs_fresh_snapshot: bool
-
-
 class AgentState(TypedDict, total=False):
     """Top-level loop state for the Plan -> Execute -> Observe loop."""
 
@@ -47,7 +40,7 @@ class AgentState(TypedDict, total=False):
 
     observation: str
     snapshot: str
-    browser: BrowserState
+    browser: dict[str, Any]
     messages: list[Message]
 
     last_tool: str
@@ -78,5 +71,4 @@ class AgentState(TypedDict, total=False):
 
 __all__ = [
     "AgentState",
-    "BrowserState",
 ]

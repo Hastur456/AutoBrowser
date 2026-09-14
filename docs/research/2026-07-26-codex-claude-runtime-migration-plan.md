@@ -3,6 +3,12 @@
 Status: Research
 Date: 2026-07-26
 
+> **Superseded.** This plan describes migrating off the LangGraph-centered runtime. The
+> migration completed: the compiled graph, `src/agent/`, and the transitional adapters are
+> removed, and `AgentLoopEngine` is the only execution path. The phases below are a record
+> of how that happened, not pending work. See the
+> [native agent loop engine ADR](../decisions/2026-08-31-native-agent-loop-engine.md).
+
 ## Purpose
 
 This plan describes how to migrate AutoBrowser from a LangGraph-centered

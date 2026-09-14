@@ -105,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Seconds to wait for Chrome CDP port. Default: 30",
     )
     parser.add_argument(
-        "--recursion-limit",
+        "--turn-cap",
         type=int,
         default=50,
         help="Maximum agent turns (turn cap). Default: 50",

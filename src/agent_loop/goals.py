@@ -6,19 +6,19 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.agent_loop.events import EventEmitter
-from src.agent_loop.outcomes import (
-    CompletionGuard,
-    GoalStateCompletionGuard,
-    GoalStatus,
-    ObservationCompiler,
-    goal_status_from_completion,
-)
+from src.contracts import GoalStatus, goal_status_from_completion
+
+if TYPE_CHECKING:
+    from src.agent_loop.execution.loop import AgentLoopResult
 
 
-TaskRunner = Callable[[Any, str, Any, dict[str, Any]], Awaitable[Any]]
+TaskRunner = Callable[
+    [Any, str, Any, dict[str, Any]],
+    Awaitable["AgentLoopResult"],
+]
 LatestStateLoader = Callable[
     [Mapping[str, Any], Any | None],
     Awaitable[dict[str, object] | None],
@@ -63,25 +63,20 @@ class GoalRunner:
         task_runner: TaskRunner,
         event_emitter: EventEmitter,
         latest_state_loader: LatestStateLoader,
-        observation_compiler: ObservationCompiler | None = None,
-        completion_guard: CompletionGuard | None = None,
     ) -> None:
         self._harness = harness
         self._session_config = session_config
         self._task_runner = task_runner
         self._event_emitter = event_emitter
         self._latest_state_loader = latest_state_loader
-        if observation_compiler is None:
-            # Imported lazily: execution.completion → execution.loop pulls in the engine
-            # and its resource composition, which must not load at goals import time.
-            from src.agent_loop.execution.completion import NativeObservationCompiler
-
-            observation_compiler = NativeObservationCompiler()
-        self._observation_compiler = observation_compiler
-        self._completion_guard = completion_guard or GoalStateCompletionGuard()
 
     async def run(self, request: GoalRunRequest) -> GoalRunResult:
-        """Run one goal and emit terminal lifecycle events."""
+        """Run one goal and emit terminal lifecycle events from the native result.
+
+        The task runner returns a terminal :class:`AgentLoopResult` whose ``status`` is
+        already explicit, so this method does not compile observations or infer completion
+        from agent-internal state.
+        """
 
         task_config = dict(request.config)
         timeout_seconds = _goal_timeout_seconds(self._session_config)
@@ -140,13 +135,7 @@ class GoalRunner:
             timeout_seconds=latest_state_timeout_seconds,
             suppress_errors=True,
         )
-        goal_state = self._observation_compiler.compile(
-            latest_state=latest_state,
-            result=result,
-        )
-        status = goal_status_from_completion(
-            self._completion_guard.status(goal_state)
-        )
+        status = _goal_status_from_result(result)
         if status is None:
             nonterminal_error = RuntimeError(
                 "Goal runner finished without a terminal goal state."
@@ -160,9 +149,8 @@ class GoalRunner:
             )
             raise nonterminal_error
 
-        event_type = "goal.blocked" if status == "blocked" else "goal.completed"
         self._event_emitter.emit(
-            event_type,
+            _goal_event_type(status),
             source="harness.session",
             payload={"task": request.task, "result": result},
             task_id=request.task_id,
@@ -280,8 +268,36 @@ class GoalRunner:
             if suppress_errors:
                 if isinstance(fallback, Mapping):
                     return dict(fallback)
+                session_state = getattr(fallback, "session_state", None)
+                if isinstance(session_state, Mapping):
+                    return dict(session_state)
                 return None
             raise
+
+
+def _goal_status_from_result(result: Any) -> GoalStatus | None:
+    """Derive a terminal goal status from a native ``AgentLoopResult``.
+
+    Imported lazily so importing this module does not pull in the engine and its resource
+    composition. A result that is not an ``AgentLoopResult`` (or carries a non-terminal
+    status such as ``"continue"``) yields ``None`` so ``run()`` fails it explicitly.
+    """
+
+    from src.agent_loop.execution.loop import AgentLoopResult
+
+    if isinstance(result, AgentLoopResult):
+        return goal_status_from_completion(result.status)
+    return None
+
+
+def _goal_event_type(status: GoalStatus) -> str:
+    """Map a terminal goal status to its lifecycle event name."""
+
+    if status == "blocked":
+        return "goal.blocked"
+    if status == "cancelled":
+        return "goal.cancelled"
+    return "goal.completed"
 
 
 def _goal_timeout_seconds(session_config: Any) -> float:
@@ -340,13 +356,10 @@ async def _cancel_pending(task: asyncio.Task[Any]) -> None:
 
 
 __all__ = [
-    "CompletionGuard",
     "GoalRunRequest",
     "GoalRunResult",
     "GoalRunner",
-    "GoalStateCompletionGuard",
     "GoalStatus",
     "LatestStateLoader",
-    "ObservationCompiler",
     "TaskRunner",
 ]

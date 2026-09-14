@@ -140,7 +140,7 @@ def _is_policy_block(payload: Mapping[str, Any]) -> bool:
 
 
 def _is_error_event(event: _EventView) -> bool:
-    if event.type in {"graph.failed", "goal.failed"}:
+    if event.type == "goal.failed":
         return True
     if event.type != "tool.finished":
         return False

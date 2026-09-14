@@ -63,7 +63,6 @@ def test_extract_event_metrics_for_failed_trace_counts_errors() -> None:
             start + timedelta(seconds=3),
             {"tool_result": {"status": "error", "error": "invalid ref"}},
         ),
-        _event("graph.failed", start + timedelta(seconds=4), {"error": "boom"}),
         _event("goal.failed", start + timedelta(seconds=5), {"error": "boom"}),
     ]
 
@@ -76,7 +75,7 @@ def test_extract_event_metrics_for_failed_trace_counts_errors() -> None:
     assert metrics.policy_block_count == 1
     assert metrics.approval_request_count == 0
     assert metrics.observation_count == 0
-    assert metrics.error_count == 3
+    assert metrics.error_count == 2
     assert metrics.final_answer == ""
 
 

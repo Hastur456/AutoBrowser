@@ -14,7 +14,8 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Diagrams](diagrams/index.md): Mermaid diagrams for the agent loop, session
   runtime, and harness boundaries.
 - [Session Runtime Change](development/2026-07-23-session-runtime-change.md):
-  implementation note for the long-lived session and `SessionContext` refactor.
+  historical note for the long-lived session and `SessionContext` refactor; its
+  LangGraph checkpoint wording predates the engine-native runtime.
 - [Browser Engine Migration Branch](development/2026-07-26-browser-engine-migration.md):
   branch-level note for the provider boundary, fake backend, snapshot freshness
   guard, and related tests.
@@ -25,10 +26,12 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   current observability sources and JSONL contracts for batch scenarios, run
   indexes, feedback, metrics, and export rows.
 - [Context Assembler And Prompt Split Plan](development/2026-08-01-context-assembler-prompt-split.md):
-  current plan and rollback switch for assembled context rendering through
-  `AUTOBROWSER_CONTEXT_MODE`.
+  historical plan for the assembled-context path; completed — `ContextAssembler` is the only
+  prompt-construction implementation and the legacy context-mode switch was removed.
 - [GoalRunner Branch Plan](development/2026-08-01-goal-runner-branch-plan.md):
-  current one-task lifecycle boundary between `SessionRuntime` and the engine.
+  historical plan for the one-task lifecycle boundary between `SessionRuntime` and the
+  engine; completed — the engine-native loop described in that plan is now the only
+  runtime, so its LangGraph-era wording is a snapshot of the past.
 - [Agent Loop Legacy Outcomes Cleanup](development/2026-08-05-agent-loop-legacy-outcomes.md):
   historical note for removing the transitional `outcomes.py` compatibility
   layer; completed by the engine-native ADR.

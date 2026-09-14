@@ -58,7 +58,7 @@ def make_args(**overrides: Any) -> argparse.Namespace:
         "user_data_dir": "profile",
         "cdp_port": 9222,
         "cdp_timeout": 1,
-        "recursion_limit": 3,
+        "turn_cap": 3,
     }
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -128,7 +128,7 @@ def test_parser_accepts_cli_flags() -> None:
             "9333",
             "--cdp-timeout",
             "5",
-            "--recursion-limit",
+            "--turn-cap",
             "7",
         ]
     )
@@ -147,7 +147,7 @@ def test_parser_accepts_cli_flags() -> None:
     assert args.user_data_dir == "profile"
     assert args.cdp_port == 9333
     assert args.cdp_timeout == 5
-    assert args.recursion_limit == 7
+    assert args.turn_cap == 7
 
 
 def test_parser_accepts_agent_loop_flag() -> None:
