@@ -114,7 +114,7 @@ build initial plan (model call #0) -> while turn <= cap:
 ```
 
 `policy` routes to `human_input` for sensitive tools; a blocked or denied tool
-short-circuits back to the loop. `DEFAULT_TURN_CAP = 50` bounds the loop.
+short-circuits back to the loop. `settings.loop.turn_cap` (default 50) bounds the loop.
 
 ## Browser Semantics (Hard Invariant)
 
@@ -145,6 +145,21 @@ policy state, errors, retry/replan/repeat counters) before the next task. Carrie
 injected through the harness-internal state-override key
 (`HARNESS_STATE_OVERRIDES_CONFIG_KEY`), which is stripped from the task config before the
 engine sees it.
+
+## Configuration
+
+Every tunable lives in `src/config.py` — a pydantic-settings root read at call time through
+`get_settings()`. There are **no scattered module constants**; adding one is a regression.
+`src/config.py` is a neutral leaf like `src/contracts.py` and imports nothing from
+`src/agent_loop/`, `src/harness/`, or `src/browser/`. See
+`docs/decisions/2026-09-16-typed-settings-module.md` and the `.env.example` template.
+
+Names are `AUTOBROWSER_<SECTION>__<FIELD>` over eight sections (`llm`, `browser`, `loop`,
+`observation`, `memory`, `events`, `storage`, `flags`). Env outranks `.env` outranks the code
+defaults; an empty value means "not set"; sections are `frozen` with `extra="forbid"`.
+`AUTOBROWSER_LLM__API_KEY` is passed to the provider as an explicit `Authorization: Bearer`
+header — the vendor `OLLAMA_API_KEY` is no longer read. Adding a setting means updating
+`tests/test_config.py`, which fails when `.env.example` drifts from the code.
 
 ## Feature Flags (env vars)
 

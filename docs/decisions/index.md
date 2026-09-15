@@ -4,6 +4,10 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-09-16 Typed Settings Module](2026-09-16-typed-settings-module.md):
+  consolidates every tunable into `src/config.py`, a pydantic-settings root
+  using `AUTOBROWSER_<SECTION>__<FIELD>` names; removes the flat vendor names
+  and the `load_dotenv()` path, and wires the provider API key explicitly.
 - [2026-09-03 Drop LangChain/LangGraph/LangSmith Stack](2026-09-03-drop-langchain-stack-provider-neutral-model.md):
   removes the whole LangChain/LangGraph/LangSmith dependency stack and defines
   the provider-neutral `ChatModel`/`ModelResponse` contract, `Message`/`ToolCall`

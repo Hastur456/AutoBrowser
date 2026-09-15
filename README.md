@@ -218,7 +218,7 @@ plan (model call #0) -> while turn <= cap:
       tool_call -> policy -> (human_input?) -> execute -> observe
 ```
 
-`DEFAULT_TURN_CAP = 50` bounds the loop, and each run returns a terminal
+`settings.loop.turn_cap` (default 50) bounds the loop, and each run returns a terminal
 `AgentLoopResult`. The runtime infrastructure is injected through
 `SessionRuntime` and `BrowserHarness` in `src/harness/` and bundled for the
 engine by `EngineResources.from_harness`. The engine owns reasoning, routing,

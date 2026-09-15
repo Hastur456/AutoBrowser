@@ -19,6 +19,52 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
+## Configuration
+
+Every tunable lives in `src/config.py` — a pydantic-settings root read through
+`get_settings()`. There are no scattered module constants to edit and no second
+configuration path. `src/config.py` is a neutral leaf like `src/contracts.py`:
+it imports nothing from `src/agent_loop/`, `src/harness/`, or `src/browser/`.
+See [the settings ADR](../decisions/2026-09-16-typed-settings-module.md).
+
+Names follow `AUTOBROWSER_<SECTION>__<FIELD>`. The sections are `llm`,
+`browser`, `loop`, `observation`, `memory`, `events`, `storage`, and `flags`:
+
+```env
+AUTOBROWSER_BROWSER__CHROME_PATH=C:/Program Files/Google/Chrome/Application/chrome.exe
+AUTOBROWSER_BROWSER__USER_DATA_DIR=C:/temp/chrome_debug_profile
+AUTOBROWSER_BROWSER__CDP_PORT=9222
+AUTOBROWSER_LLM__MODEL=gpt-oss:20b-cloud
+AUTOBROWSER_LOOP__TURN_CAP=50
+```
+
+Copy `.env.example` to `.env` and uncomment what you want to change. The example
+file documents every field with its real default, so a verbatim copy is a no-op.
+A test (`tests/test_config.py`) fails if a setting is added without being
+documented there, or if a documented default drifts from the code.
+
+Rules that matter in practice:
+
+- **Precedence.** A real environment variable outranks `.env`, which outranks
+  the defaults in `src/config.py`.
+- **Empty means unset.** `AUTOBROWSER_X=` leaves the default alone; it does not
+  set an empty value.
+- **Windows paths use forward slashes.** `python-dotenv` decodes escape
+  sequences inside *double-quoted* values, so `"C:\temp"` silently becomes a tab
+  character. Forward slashes are safe under every quoting style.
+- **Unknown fields are rejected.** Each section is `frozen` and `extra="forbid"`,
+  so a typo in a field name fails loudly instead of being ignored.
+- **Credentials stay in one place.** `AUTOBROWSER_LLM__API_KEY` is a `SecretStr`
+  handed to the provider as an explicit `Authorization: Bearer` header; leave it
+  unset for a local Ollama daemon. The same key is no longer read from the
+  vendor `OLLAMA_API_KEY`. `AUTOBROWSER_LLM__HOST` is optional and, when unset,
+  the provider still falls back to `OLLAMA_HOST` and then to a local daemon.
+
+Settings are read at call time through `get_settings()`, not captured at import,
+so `reload_settings()` re-reads the environment for tests and long-lived
+processes. CLI flags such as `--chrome-path`, `--cdp-port`, `--model`, and
+`--turn-cap` override individual fields for one run.
+
 ## Test Commands
 
 Run the full test suite:

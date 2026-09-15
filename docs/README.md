@@ -38,6 +38,10 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Agent Loop Engine Migration Touchpoints](development/2026-08-08-agent-loop-engine-migration-touchpoints.md):
   historical checklist of the legacy agent-loop, harness, browser, eval, CLI, and
   exporter coupling that the completed engine migration removed.
+- [Typed Settings Module ADR](decisions/2026-09-16-typed-settings-module.md):
+  the decision record for consolidating every tunable into the typed
+  pydantic-settings root in `src/config.py`, with `AUTOBROWSER_<SECTION>__<FIELD>`
+  names replacing the flat vendor variables.
 - [Native Agent Loop Engine ADR](decisions/2026-08-31-native-agent-loop-engine.md):
   the engine-native `AgentLoopEngine` is the sole runtime; `src/agent/` and all
   compiled-graph control flow are removed.
