@@ -10,16 +10,21 @@ from typing import Any
 
 from src.agent_loop.events import EventRecord
 from src.agent_loop.metrics import extract_event_metrics
+from src.config import get_settings
 
 
 def collect_session_export_rows(
-    sessions_dir: Path = Path(".autobrowser") / "sessions",
+    sessions_dir: Path | None = None,
     feedback_path: Path | None = None,
     batches_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """Collect export rows from every session directory under ``sessions_dir``."""
+    """Collect export rows from every session directory under ``sessions_dir``.
 
-    root = Path(sessions_dir)
+    ``sessions_dir`` defaults to ``settings.storage.sessions_dir``; sibling paths
+    (``feedback.jsonl``, ``batches``) are derived from its parent unless given.
+    """
+
+    root = Path(sessions_dir) if sessions_dir is not None else get_settings().storage.sessions_dir
     if not root.exists():
         return []
     feedback = _load_feedback_index(

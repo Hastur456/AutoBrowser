@@ -1,12 +1,14 @@
-"""Provider-neutral state contracts and control-loop thresholds.
+"""Provider-neutral state contracts.
 
-Single, dependency-free home for the typed tool/plan/observation contracts and the
-control-loop thresholds shared across the agent-loop layers.
+Single, dependency-free home for the typed tool/plan/observation contracts shared
+across the agent-loop layers.
 
-This module imports nothing from ``src/agent_loop/``, ``src/harness/`` or
-``src/browser/``. That is the whole point: any layer can depend on it without a
-circular import. Keep it that way — only standard-library / ``typing`` imports
-belong here.
+Control-loop thresholds and tunables live in :mod:`src.config` (``settings.loop``),
+which is equally dependency-free, so both the leaf contracts and the configured
+thresholds stay reachable without a circular import. Keep this module free of
+``src/agent_loop/``, ``src/harness/`` and ``src/browser/`` imports — that is the
+whole point: any layer can depend on it. Only standard-library / ``typing``
+imports belong here.
 """
 
 from __future__ import annotations
@@ -20,15 +22,6 @@ PolicyDecision = Literal["approved", "needs_human", "blocked"]
 ToolStatus = Literal["success", "error"]
 GoalStatus = Literal["completed", "failed", "cancelled", "blocked"]
 CompletionStatus = Literal["continue", "done", "blocked", "cancelled"]
-
-# Control-loop thresholds. Shared here so the legacy graph and the engine-native loop
-# cannot drift. ``MAX_SNAPSHOT_RECOVERIES`` is currently dormant (not exercised by the
-# engine-native path).
-MAX_REPLANS = 3
-MAX_CONSECUTIVE_FAILURES = 3
-MAX_SNAPSHOT_RECOVERIES = 1
-MAX_STEPS_WITHOUT_PLAN_ADVANCE = 8
-MAX_UNCHANGED_SNAPSHOTS = 3
 
 
 class PlanStep(TypedDict, total=False):
@@ -153,11 +146,6 @@ def goal_status_from_completion(status: CompletionStatus) -> GoalStatus | None:
 
 
 __all__ = [
-    "MAX_CONSECUTIVE_FAILURES",
-    "MAX_REPLANS",
-    "MAX_SNAPSHOT_RECOVERIES",
-    "MAX_STEPS_WITHOUT_PLAN_ADVANCE",
-    "MAX_UNCHANGED_SNAPSHOTS",
     "AgentDecision",
     "CompactToolObservation",
     "CompletionStatus",

@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
+from src.config import get_settings
+
 
 @dataclass(frozen=True)
 class BatchScenario:
@@ -63,7 +65,7 @@ async def run_batch(
     *,
     tasks_path: Path,
     session_factory: BatchSessionFactory,
-    batches_dir: Path = Path(".autobrowser") / "batches",
+    batches_dir: Path | None = None,
     batch_id: str | None = None,
     config: Mapping[str, Any] | None = None,
     continue_on_error: bool = False,
@@ -73,6 +75,8 @@ async def run_batch(
     tasks_file = Path(tasks_path)
     scenarios = load_batch_scenarios(tasks_file)
     batch_id = batch_id or f"batch-{uuid4().hex}"
+    if batches_dir is None:
+        batches_dir = get_settings().storage.batches_dir
     batch_dir = Path(batches_dir) / batch_id
     batch_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(tasks_file, batch_dir / "tasks.jsonl")

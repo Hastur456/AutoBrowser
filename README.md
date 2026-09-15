@@ -48,13 +48,21 @@ For browser-enabled runs, make sure `npx` can start Playwright MCP. The CLI uses
 
 ## Configuration
 
-The CLI reads `.env` automatically. Common settings are:
+All settings live in `src/config.py` and are read from `.env` automatically. Names are
+`AUTOBROWSER_<SECTION>__<FIELD>`; the environment outranks the file. Common settings are:
 
 ```env
-CHROME_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe
-USER_DATA_DIR=C:\temp\chrome_debug_profile
-PORT=9222
+AUTOBROWSER_BROWSER__CHROME_PATH=C:/Program Files/Google/Chrome/Application/chrome.exe
+AUTOBROWSER_BROWSER__USER_DATA_DIR=C:/temp/chrome_debug_profile
+AUTOBROWSER_BROWSER__CDP_PORT=9222
+AUTOBROWSER_LLM__MODEL=gpt-oss:20b-cloud
 ```
+
+Write Windows paths with forward slashes: `python-dotenv` decodes escape sequences inside
+double-quoted values, so `"C:\temp"` silently becomes a tab character.
+
+`AUTOBROWSER_LLM__API_KEY` is passed to the provider as an `Authorization: Bearer` header;
+leave it unset for a local Ollama daemon. `AUTOBROWSER_LLM__HOST` is likewise optional.
 
 Each of these can also be overridden from the command line with `--chrome-path`,
 `--user-data-dir`, and `--cdp-port`.
@@ -182,7 +190,7 @@ python -m pytest tests\test_prompts.py
 | `main.py` | CLI parsing and wiring the process into the session runtime. |
 | `src/contracts.py` | Provider-neutral typed tool/plan/observation contracts and loop thresholds (imports nothing from the loop, harness, or browser layers). |
 | `src/messages.py` | Dependency-free provider-neutral chat `Message`/`ToolCall` types shared by the engine and providers. |
-| `src/llm.py` | Model defaults (`DEFAULT_OLLAMA_MODEL`) and the provider-neutral `ChatModel`/`ModelResponse` chat contract. |
+| `src/llm.py` | The provider-neutral `ChatModel`/`ModelResponse` chat contract. |
 | `src/providers/` | Provider adapters (e.g. `ollama.py`) that map neutral `Message`/`ToolDef` objects to a backend wire format. |
 | `src/agent_loop/` | Runtime-facing action contracts and model parsing, events, trace replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary around the engine-native `AgentLoopEngine`. |
 | `src/browser/` | Browser provider contracts, canonical names, Playwright MCP adapter, and fake browser backend. |

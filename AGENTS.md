@@ -36,7 +36,8 @@ engine-native execution loop. The CLI entry point is `main.py`. Core code lives 
 - `src/contracts.py`: provider-neutral typed tool/plan/observation contracts and loop thresholds (no imports from the loop, harness, or browser layers).
 - `src/state.py`: type-only `AgentState` TypedDict kept for browser-layer annotation.
 - `src/messages.py`: dependency-free provider-neutral chat `Message`/`ToolCall` types shared by the engine and providers.
-- `src/llm.py`: model defaults (`DEFAULT_OLLAMA_MODEL`) and the provider-neutral `ChatModel`/`ModelResponse` chat contract.
+- `src/llm.py`: the provider-neutral `ChatModel`/`ModelResponse` chat contract. Model
+  defaults live in `src/config.py` (`settings.llm`).
 - `src/providers/`: provider adapters (e.g. `ollama.py`) that implement `ChatModel` by mapping neutral `Message`/`ToolDef` objects to a backend wire format.
 - `src/browser/`: provider-neutral browser contracts, canonical browser names, backend adapters, shared browser errors, and fake browser tools for tests.
 - `src/cli/`: `cmd2` interactive CLI, command catalog, output formatting, parser, and bootstrap wiring.
@@ -73,7 +74,7 @@ The engine-native migration is complete: the legacy `src/agent/` compiled-graph 
 and the legacy `LegacyAgentStateObservationCompiler`) are removed — `GoalRunner` now consumes
 the terminal `AgentLoopResult` directly — and `AgentLoopEngine` is the sole runtime (see
 [docs/decisions/2026-08-31-native-agent-loop-engine.md](docs/decisions/2026-08-31-native-agent-loop-engine.md)).
-`AUTOBROWSER_AGENT_LOOP`/`SessionConfig.agent_loop` are inert compatibility surface.
+`AUTOBROWSER_FLAGS__AGENT_LOOP`/`SessionConfig.agent_loop` are inert compatibility surface.
 
 Model access goes through the
 provider-neutral `ChatModel` contract in `src/llm.py`, implemented by thin provider adapters in

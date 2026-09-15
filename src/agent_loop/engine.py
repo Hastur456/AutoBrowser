@@ -9,7 +9,6 @@ imports (``from src.agent_loop.engine import AgentLoopEngine, AgentLoopResult``)
 from __future__ import annotations
 
 from src.agent_loop.execution.loop import (
-    DEFAULT_TURN_CAP,
     AgentLoopEngine,
     AgentLoopResult,
     HumanInputCallback,
@@ -19,7 +18,6 @@ from src.agent_loop.execution.loop import (
 )
 
 __all__ = [
-    "DEFAULT_TURN_CAP",
     "AgentLoopEngine",
     "AgentLoopResult",
     "HumanInputCallback",

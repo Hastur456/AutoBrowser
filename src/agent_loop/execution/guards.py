@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from src.config import get_settings
 from src.contracts import ToolRequest
 from src.browser.observation import (
     REF_INTERACTION_TOOLS,
@@ -38,13 +39,7 @@ from src.agent_loop.execution.policy import (
     SNAPSHOT_REUSE_MARKERS,
     _snapshot_reuse_was_blocked,
 )
-from src.agent_loop.execution.state import (
-    MAX_CONSECUTIVE_FAILURES,
-    MAX_REPLANS,
-    MAX_STEPS_WITHOUT_PLAN_ADVANCE,
-    MAX_UNCHANGED_SNAPSHOTS,
-    LoopState,
-)
+from src.agent_loop.execution.state import LoopState
 
 if TYPE_CHECKING:
     from src.contracts import CompletionStatus
@@ -122,39 +117,42 @@ def _replan_response(observation: str, **updates: Any) -> dict[str, Any]:
 
 
 def _terminal_guard(state: LoopState) -> dict[str, Any] | None:
+    limits = get_settings().loop
+
     if state.decision == "done" and state.final_answer:
         return _done_response(state, str(state.final_answer or ""))
 
     replan_count = int(state.replan_count or 0)
-    if replan_count >= MAX_REPLANS:
+    if replan_count >= limits.max_replans:
         observation = str(state.observation or "No observation available.")
         return _blocked_response(
             state,
             (
-                f"Blocked: replanning reached the limit of {MAX_REPLANS}. "
+                f"Blocked: replanning reached the limit of {limits.max_replans}. "
                 f"Last observation: {observation}"
             ),
         )
 
     failures = int(state.consecutive_failures or 0)
-    if failures >= MAX_CONSECUTIVE_FAILURES:
+    if failures >= limits.max_consecutive_failures:
         error = str(state.error or "Unknown tool failure.")
         return _blocked_response(
             state,
             (
                 "Blocked: tool execution failed "
-                f"{MAX_CONSECUTIVE_FAILURES} consecutive times. Last error: {error}"
+                f"{limits.max_consecutive_failures} consecutive times. "
+                f"Last error: {error}"
             ),
         )
 
     steps_without_plan_advance = int(state.steps_without_plan_advance or 0)
-    if steps_without_plan_advance >= MAX_STEPS_WITHOUT_PLAN_ADVANCE:
+    if steps_without_plan_advance >= limits.max_steps_without_plan_advance:
         observation = str(state.observation or "No observation available.")
         return _blocked_response(
             state,
             (
                 "Blocked: the current plan step did not advance after "
-                f"{MAX_STEPS_WITHOUT_PLAN_ADVANCE} successful tool steps. "
+                f"{limits.max_steps_without_plan_advance} successful tool steps. "
                 f"Last observation: {observation}"
             ),
         )
@@ -189,13 +187,13 @@ class CompletionController:
         """Terminate the run when ``browser_snapshot`` repeats an unchanged view.
 
         Mirrors the legacy ``compile_observation`` block: only a successful snapshot whose
-        unchanged streak reached :data:`MAX_UNCHANGED_SNAPSHOTS` ends the goal, and the
-        terminal observation is replaced by the final-answer text verbatim.
+        unchanged streak reached ``settings.loop.max_unchanged_snapshots`` ends the goal, and
+        the terminal observation is replaced by the final-answer text verbatim.
         """
 
         if status != "success" or not is_snapshot:
             return None
-        if int(unchanged_snapshot_count or 0) < MAX_UNCHANGED_SNAPSHOTS:
+        if int(unchanged_snapshot_count or 0) < get_settings().loop.max_unchanged_snapshots:
             return None
         final_answer = REPEATED_SNAPSHOT_OBSERVATION_FINAL_ANSWER.format(
             observation=observation
@@ -573,9 +571,6 @@ stale_snapshot_retry_update = _stale_snapshot_retry_update
 
 
 __all__ = [
-    "MAX_CONSECUTIVE_FAILURES",
-    "MAX_REPLANS",
-    "MAX_STEPS_WITHOUT_PLAN_ADVANCE",
     "REPEATED_SNAPSHOT_FINAL_ANSWER",
     "REPEATED_SNAPSHOT_OBSERVATION_FINAL_ANSWER",
     "SNAPSHOT_REUSE_MARKER",

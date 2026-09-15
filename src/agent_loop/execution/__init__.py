@@ -48,10 +48,6 @@ from src.agent_loop.execution.policy import (
 )
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import (
-    MAX_CONSECUTIVE_FAILURES,
-    MAX_REPLANS,
-    MAX_STEPS_WITHOUT_PLAN_ADVANCE,
-    MAX_UNCHANGED_SNAPSHOTS,
     BrowserState,
     LoopState,
 )
@@ -59,10 +55,6 @@ from src.agent_loop.execution.tools import ToolBroker
 
 __all__ = [
     "BLOCKED_TOOL_MARKERS",
-    "MAX_CONSECUTIVE_FAILURES",
-    "MAX_REPLANS",
-    "MAX_STEPS_WITHOUT_PLAN_ADVANCE",
-    "MAX_UNCHANGED_SNAPSHOTS",
     "REPEATED_SNAPSHOT_FINAL_ANSWER",
     "SNAPSHOT_REUSE_MARKERS",
     "AgentLoopEngine",

@@ -18,7 +18,8 @@ components instead of one function that does everything:
   :class:`~src.agent_loop.execution.guards.CompletionController` (the unchanged-snapshot
   terminal), so no completion policy lives inside observation building.
 
-Snapshot fingerprinting, unchanged-snapshot termination at :data:`MAX_UNCHANGED_SNAPSHOTS`,
+Snapshot fingerprinting, unchanged-snapshot termination at
+``settings.loop.max_unchanged_snapshots``,
 ineffective-action detection, browser-state clearing, ``consecutive_failures`` accounting,
 stale/invalid-ref handling, and pending-tab tracking are preserved byte-for-byte; only the
 structure changes. State access is typed :class:`~src.agent_loop.execution.state.LoopState`
@@ -56,7 +57,7 @@ from src.browser.adapters import element_description_from_snapshot
 from src.harness.memory import append_tool_message, tool_result_message_content
 
 from src.agent_loop.execution.guards import CompletionController
-from src.agent_loop.execution.state import MAX_UNCHANGED_SNAPSHOTS, LoopState
+from src.agent_loop.execution.state import LoopState
 
 _SNAPSHOT_UNCHANGED_NOTE = (
     "The last browser action did not change the visible snapshot. "
@@ -425,7 +426,6 @@ def compile_observation(
 
 
 __all__ = [
-    "MAX_UNCHANGED_SNAPSHOTS",
     "BrowserReduction",
     "BrowserStateReducer",
     "NormalizedToolResult",

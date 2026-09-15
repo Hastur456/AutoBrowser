@@ -13,11 +13,9 @@ delimiter, so ``browser.cdp_port`` is ``AUTOBROWSER_BROWSER__CDP_PORT``::
     AUTOBROWSER_LOOP__TURN_CAP=25
     AUTOBROWSER_BROWSER__CDP_PORT=9333
 
-Pre-existing flat names (``PORT``, ``CHROME_PATH``, ``USER_DATA_DIR``,
-``OLLAMA_HOST``, ``OLLAMA_API_KEY``, ``AUTOBROWSER_AGENT_LOOP``) still resolve
-through :class:`LegacyEnvSource`, which sits *below* the environment and
-``.env`` sources — a canonical name always outranks its legacy spelling, and
-no existing `.env` file has to change.
+Write Windows paths with forward slashes. ``python-dotenv`` decodes escape
+sequences inside *double-quoted* values, so ``"C:\\temp"`` silently becomes a
+tab character; forward slashes sidestep the hazard under every quoting style.
 
 Usage::
 
@@ -34,9 +32,8 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Mapping
+from typing import Annotated
 
-from dotenv import dotenv_values
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -46,12 +43,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from pydantic.fields import FieldInfo
-from pydantic_settings import (
-    BaseSettings,
-    PydanticBaseSettingsSource,
-    SettingsConfigDict,
-)
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 #: Env var namespace for every setting.
 ENV_PREFIX = "AUTOBROWSER_"
@@ -195,6 +187,17 @@ class LoopSettings(_Section):
         Field(
             ge=1,
             description="Identical consecutive snapshots before the loop stops.",
+        ),
+    ] = 3
+
+    max_ineffective_actions: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Browser actions that changed nothing in a row before further "
+                "tool calls are blocked and the agent must replan."
+            ),
         ),
     ] = 3
 
@@ -344,69 +347,6 @@ class FlagsSettings(_Section):
     ] = False
 
 
-class LegacyEnvSource(PydanticBaseSettingsSource):
-    """Fallback source for env var names that predate this config module.
-
-    Canonical ``AUTOBROWSER_<SECTION>__<FIELD>`` names always win: this source
-    sits below the environment and ``.env`` sources in the priority chain and
-    only supplies values for legacy flat names that are still set, in
-    ``os.environ`` or in the configured ``.env`` file.
-    """
-
-    #: Legacy env var name -> dotted field path inside :class:`Settings`.
-    LEGACY_NAMES: ClassVar[Mapping[str, str]] = {
-        "OLLAMA_MODEL": "llm.model",
-        "OLLAMA_HOST": "llm.host",
-        "OLLAMA_API_KEY": "llm.api_key",
-        "CHROME_PATH": "browser.chrome_path",
-        "USER_DATA_DIR": "browser.user_data_dir",
-        "PORT": "browser.cdp_port",
-        "AUTOBROWSER_AGENT_LOOP": "flags.agent_loop",
-    }
-
-    def get_field_value(
-        self,
-        field: FieldInfo,
-        field_name: str,
-    ) -> tuple[Any, str, bool]:
-        """Unused: :meth:`__call__` resolves the whole legacy mapping at once."""
-
-        return None, field_name, False
-
-    def __call__(self) -> dict[str, Any]:
-        """Return legacy values as a nested dict keyed by section name."""
-
-        file_values = self._file_values()
-        data: dict[str, Any] = {}
-        for env_name, dotted_path in self.LEGACY_NAMES.items():
-            raw = os.environ.get(env_name, file_values.get(env_name))
-            if raw is None:
-                continue
-            value = str(raw).strip()
-            if not value:
-                continue
-            section, _, field_name = dotted_path.partition(".")
-            data.setdefault(section, {})[field_name] = value
-        return data
-
-    def _file_values(self) -> dict[str, str]:
-        """Return the configured ``.env`` file contents as plain strings."""
-
-        env_file = self.settings_cls.model_config.get("env_file")
-        if isinstance(env_file, (list, tuple)):
-            env_file = env_file[0] if env_file else None
-        if not env_file:
-            return {}
-        path = Path(str(env_file))
-        if not path.is_file():
-            return {}
-        return {
-            str(key): str(value)
-            for key, value in dotenv_values(path).items()
-            if value is not None
-        }
-
-
 class Settings(BaseSettings):
     """Root settings object; build once per process via :func:`get_settings`.
 
@@ -419,6 +359,7 @@ class Settings(BaseSettings):
         env_nested_delimiter=ENV_NESTED_DELIMITER,
         env_file=".env",
         env_file_encoding="utf-8",
+        env_ignore_empty=True,
         case_sensitive=False,
         extra="ignore",
         frozen=True,
@@ -432,25 +373,6 @@ class Settings(BaseSettings):
     events: EventSettings = Field(default_factory=EventSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     flags: FlagsSettings = Field(default_factory=FlagsSettings)
-
-    @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        """Insert the legacy-name fallback below the env and ``.env`` sources."""
-
-        return (
-            init_settings,
-            env_settings,
-            dotenv_settings,
-            LegacyEnvSource(settings_cls),
-            file_secret_settings,
-        )
 
 
 @lru_cache(maxsize=1)
@@ -474,7 +396,6 @@ __all__ = [
     "EventSettings",
     "FlagsSettings",
     "LLMSettings",
-    "LegacyEnvSource",
     "LoopSettings",
     "MemorySettings",
     "ObservationSettings",

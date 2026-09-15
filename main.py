@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-from dotenv import load_dotenv
-
 from src.cli.bootstrap import run_agent_cli
 from src.cli.parser import build_parser
-
-load_dotenv()
 
 
 def main() -> int:

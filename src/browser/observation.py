@@ -24,11 +24,10 @@ from __future__ import annotations
 from typing import Any
 import re
 
+from src.config import get_settings
 from src.contracts import CompactToolObservation, ToolResult
 
 
-MAX_CONTENT_PREVIEW_CHARS = 1200
-MAX_REFS_IN_OBSERVATION = 25
 REF_PATTERN = re.compile(r"\bref=([A-Za-z][A-Za-z0-9_-]*)\b")
 REF_VALUE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 TAB_INDEX_PATTERN = re.compile(r"\bTab\s+(?P<index>\d+)\b", re.IGNORECASE)
@@ -70,9 +69,15 @@ STALE_OR_MISSING_ELEMENT_PATTERNS = tuple(
 )
 
 
-def compact_text(value: Any, limit: int = MAX_CONTENT_PREVIEW_CHARS) -> str:
-    """Return a deterministic text preview within a character budget."""
+def compact_text(value: Any, limit: int | None = None) -> str:
+    """Return a deterministic text preview within a character budget.
 
+    ``limit`` defaults to ``settings.observation.max_content_preview_chars``,
+    resolved at call time so configuration changes take effect immediately.
+    """
+
+    if limit is None:
+        limit = get_settings().observation.max_content_preview_chars
     text = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not text:
         return ""
@@ -240,6 +245,7 @@ def _observation_lines(
     content = str(result.get("content", "") or "")
     error = str(result.get("error", "") or "")
     payload = content if content else error
+    max_refs = get_settings().observation.max_refs_in_observation
 
     if status == "error":
         lines = ["Tool failed."]
@@ -263,7 +269,7 @@ def _observation_lines(
         if payload:
             lines.append(raw_text(payload))
         if refs:
-            shown_refs = "\n".join(refs[:MAX_REFS_IN_OBSERVATION])
+            shown_refs = "\n".join(refs[:max_refs])
             lines.extend(["Refs:", shown_refs])
         return [line for line in lines if line]
 
@@ -273,7 +279,7 @@ def _observation_lines(
     if visible_state:
         lines.append(compact_text(visible_state))
     if refs:
-        shown_refs = "\n".join(refs[:MAX_REFS_IN_OBSERVATION])
+        shown_refs = "\n".join(refs[:max_refs])
         lines.extend(["Refs:", shown_refs])
     hint = compact.get("next_observation_hint", "")
     if hint:

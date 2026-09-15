@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.agent_loop.export import collect_session_export_rows
+from src.config import get_settings
 
 
 def export_sessions(
@@ -38,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--sessions-dir",
         type=Path,
-        default=Path(".autobrowser") / "sessions",
+        default=get_settings().storage.sessions_dir,
         help="Directory containing .autobrowser session subdirectories.",
     )
     parser.add_argument(

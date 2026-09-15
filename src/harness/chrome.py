@@ -27,10 +27,14 @@ def start_chrome_cdp(
         return None
 
     if not chrome_path:
-        raise RuntimeError("CHROME_PATH is not set. Pass --chrome-path or set it in .env.")
+        raise RuntimeError(
+            "Chrome path is not configured. Pass --chrome-path or set "
+            "AUTOBROWSER_BROWSER__CHROME_PATH."
+        )
     if not user_data_dir:
         raise RuntimeError(
-            "USER_DATA_DIR is not set. Pass --user-data-dir or set it in .env."
+            "Chrome user data dir is not configured. Pass --user-data-dir or set "
+            "AUTOBROWSER_BROWSER__USER_DATA_DIR."
         )
 
     return subprocess.Popen(

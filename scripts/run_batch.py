@@ -19,9 +19,8 @@ if str(ROOT) not in sys.path:
 
 from src.agent_loop.batch import run_batch
 from src.cli.bootstrap import build_session
-from src.cli.parser import DEFAULT_CDP_PORT, DEFAULT_CHROME_PATH, DEFAULT_USER_DATA_DIR
+from src.config import get_settings
 from src.harness.session import SessionRuntime
-from src.llm import DEFAULT_OLLAMA_MODEL
 
 SessionBuilder = Callable[[argparse.Namespace], SessionRuntime]
 BatchRunner = Callable[..., Awaitable[dict[str, Any]]]
@@ -45,6 +44,8 @@ async def run_batch_from_args(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    settings = get_settings()
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--tasks",
@@ -59,8 +60,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model",
-        default=DEFAULT_OLLAMA_MODEL,
-        help=f"Ollama model name. Default: {DEFAULT_OLLAMA_MODEL}",
+        default=settings.llm.model,
+        help=f"Ollama model name. Default: {settings.llm.model}",
     )
     parser.add_argument(
         "--no-mcp",
@@ -70,24 +71,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--turn-cap",
         type=int,
-        default=50,
-        help="Maximum agent turns (turn cap). Default: 50",
+        default=settings.loop.turn_cap,
+        help=f"Maximum agent turns (turn cap). Default: {settings.loop.turn_cap}",
     )
     parser.add_argument(
         "--chrome-path",
-        default=DEFAULT_CHROME_PATH,
-        help="Path to Chrome executable. Defaults to CHROME_PATH from .env.",
+        default=str(settings.browser.chrome_path),
+        help=(
+            "Path to Chrome executable. Defaults to "
+            "AUTOBROWSER_BROWSER__CHROME_PATH."
+        ),
     )
     parser.add_argument(
         "--user-data-dir",
-        default=DEFAULT_USER_DATA_DIR,
-        help="Chrome user data directory. Defaults to USER_DATA_DIR from .env.",
+        default=str(settings.browser.user_data_dir),
+        help=(
+            "Chrome user data directory. Defaults to "
+            "AUTOBROWSER_BROWSER__USER_DATA_DIR."
+        ),
     )
     parser.add_argument(
         "--cdp-port",
         type=int,
-        default=DEFAULT_CDP_PORT,
-        help=f"Chrome DevTools Protocol port. Default: {DEFAULT_CDP_PORT}",
+        default=settings.browser.cdp_port,
+        help=f"Chrome DevTools Protocol port. Default: {settings.browser.cdp_port}",
     )
     _add_session_defaults(parser)
     return parser
@@ -142,14 +149,15 @@ def _is_port_open(port: int) -> bool:
 
 
 def _add_session_defaults(parser: argparse.ArgumentParser) -> None:
+    settings = get_settings()
     parser.set_defaults(
-        temperature=0.0,
+        temperature=settings.llm.temperature,
         show_state=False,
         hide_snapshot=False,
         show_tools=False,
         json=False,
         compress_tools=False,
-        cdp_timeout=30.0,
+        cdp_timeout=settings.browser.cdp_timeout_seconds,
     )
 
 

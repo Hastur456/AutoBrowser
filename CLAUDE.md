@@ -148,7 +148,7 @@ engine sees it.
 
 ## Feature Flags (env vars)
 
-- `AUTOBROWSER_AGENT_LOOP` (also `--agent-loop`) — **inert.** The engine-native path is the
+- `AUTOBROWSER_FLAGS__AGENT_LOOP` (also `--agent-loop`) — **inert.** The engine-native path is the
   only runtime; the flag and `SessionConfig.agent_loop` parse for CLI compatibility but do
   not change routing.
 

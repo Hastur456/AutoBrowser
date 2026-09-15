@@ -1,27 +1,20 @@
-"""Argument parser for the AutoBrowser CLI."""
+"""Argument parser for the AutoBrowser CLI.
+
+Every default is read from :mod:`src.config` at parse time, so CLI flags override
+the configured value only when explicitly supplied.
+"""
 
 from __future__ import annotations
 
 import argparse
-import os
 
-from src.llm import DEFAULT_OLLAMA_MODEL
-
-DEFAULT_CDP_PORT = int(os.getenv("PORT", "9222"))
-DEFAULT_CHROME_PATH = os.getenv(
-    "CHROME_PATH",
-    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-)
-DEFAULT_USER_DATA_DIR = os.getenv("USER_DATA_DIR", r"C:\temp\chrome_debug_profile")
-
-
-def _env_flag(name: str) -> bool:
-    value = os.getenv(name, "").strip().lower()
-    return value in {"1", "true", "yes", "on"}
+from src.config import get_settings
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
+
+    settings = get_settings()
 
     parser = argparse.ArgumentParser(
         description="Run the AutoBrowser browser agent from the command line."
@@ -36,14 +29,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model",
-        default=DEFAULT_OLLAMA_MODEL,
-        help=f"Ollama model name. Default: {DEFAULT_OLLAMA_MODEL}",
+        default=settings.llm.model,
+        help=f"Ollama model name. Default: {settings.llm.model}",
     )
     parser.add_argument(
         "--temperature",
         type=float,
-        default=0.0,
-        help="LLM temperature. Default: 0",
+        default=settings.llm.temperature,
+        help=f"LLM temperature. Default: {settings.llm.temperature}",
     )
     parser.add_argument(
         "--show-state",
@@ -79,43 +72,50 @@ def build_parser() -> argparse.ArgumentParser:
         "--agent-loop",
         dest="agent_loop",
         action=argparse.BooleanOptionalAction,
-        default=_env_flag("AUTOBROWSER_AGENT_LOOP"),
-        help="Use the explicit AgentLoopEngine shell. Default: AUTOBROWSER_AGENT_LOOP.",
+        default=settings.flags.agent_loop,
+        help=(
+            "Use the explicit AgentLoopEngine shell. Default: "
+            "AUTOBROWSER_FLAGS__AGENT_LOOP."
+        ),
     )
     parser.add_argument(
         "--chrome-path",
-        default=DEFAULT_CHROME_PATH,
-        help="Path to Chrome executable. Defaults to CHROME_PATH from .env.",
+        default=str(settings.browser.chrome_path),
+        help=(
+            "Path to Chrome executable. Defaults to "
+            "AUTOBROWSER_BROWSER__CHROME_PATH."
+        ),
     )
     parser.add_argument(
         "--user-data-dir",
-        default=DEFAULT_USER_DATA_DIR,
-        help="Chrome user data directory. Defaults to USER_DATA_DIR from .env.",
+        default=str(settings.browser.user_data_dir),
+        help=(
+            "Chrome user data directory. Defaults to "
+            "AUTOBROWSER_BROWSER__USER_DATA_DIR."
+        ),
     )
     parser.add_argument(
         "--cdp-port",
         type=int,
-        default=DEFAULT_CDP_PORT,
-        help=f"Chrome DevTools Protocol port. Default: {DEFAULT_CDP_PORT}",
+        default=settings.browser.cdp_port,
+        help=f"Chrome DevTools Protocol port. Default: {settings.browser.cdp_port}",
     )
     parser.add_argument(
         "--cdp-timeout",
         type=float,
-        default=30.0,
-        help="Seconds to wait for Chrome CDP port. Default: 30",
+        default=settings.browser.cdp_timeout_seconds,
+        help=(
+            "Seconds to wait for Chrome CDP port. "
+            f"Default: {settings.browser.cdp_timeout_seconds}"
+        ),
     )
     parser.add_argument(
         "--turn-cap",
         type=int,
-        default=50,
-        help="Maximum agent turns (turn cap). Default: 50",
+        default=settings.loop.turn_cap,
+        help=f"Maximum agent turns (turn cap). Default: {settings.loop.turn_cap}",
     )
     return parser
 
 
-__all__ = [
-    "DEFAULT_CDP_PORT",
-    "DEFAULT_CHROME_PATH",
-    "DEFAULT_USER_DATA_DIR",
-    "build_parser",
-]
+__all__ = ["build_parser"]
