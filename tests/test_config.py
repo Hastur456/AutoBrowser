@@ -12,13 +12,14 @@ Covers three things:
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from src.config import Settings, get_settings
+from src.config import ENV_NESTED_DELIMITER, ENV_PREFIX, Settings, get_settings
 from src.providers.ollama import OllamaChatModel
 
 
@@ -330,3 +331,69 @@ def test_settings_are_immutable(settings: Any) -> None:
 
 def test_get_settings_is_cached(settings: Any) -> None:
     assert get_settings() is get_settings()
+
+
+# --------------------------------------------------------------------------
+# .env.example stays in sync with the model
+# --------------------------------------------------------------------------
+
+EXAMPLE_ENV = Path(__file__).resolve().parents[1] / ".env.example"
+
+#: Matches both a live ``AUTOBROWSER_X=v`` line and a commented ``# AUTOBROWSER_X=v``.
+_EXAMPLE_LINE = re.compile(
+    r"^(?:#\s*)?(?P<name>AUTOBROWSER_[A-Z0-9_]*(?:__[A-Z0-9_]*)?)\s*=(?P<value>.*)$"
+)
+
+
+def _canonical_env_names() -> set[str]:
+    """Derive the expected env var name for every field of every section."""
+
+    names: set[str] = set()
+    for section, field in Settings.model_fields.items():
+        for name in field.annotation.model_fields:
+            names.add(
+                f"{ENV_PREFIX}{section.upper()}{ENV_NESTED_DELIMITER}{name.upper()}"
+            )
+    return names
+
+
+def _example_lines() -> list[tuple[str, str]]:
+    """Return ``(name, value)`` for every setting documented in the template."""
+
+    matches = []
+    for line in EXAMPLE_ENV.read_text(encoding="utf-8").splitlines():
+        match = _EXAMPLE_LINE.match(line)
+        if match:
+            matches.append((match.group("name"), match.group("value")))
+    return matches
+
+
+def test_env_example_documents_every_setting() -> None:
+    documented = {name for name, _ in _example_lines()}
+
+    assert documented == _canonical_env_names()
+
+
+def test_env_example_documents_each_setting_once() -> None:
+    names = [name for name, _ in _example_lines()]
+
+    assert len(names) == len(set(names))
+
+
+def test_env_example_values_are_the_actual_defaults(
+    settings: Any,
+    tmp_path: Path,
+) -> None:
+    """Uncommenting the whole template must reproduce the defaults exactly.
+
+    This is what makes the file trustworthy as a reference: it cannot document
+    a default that the code no longer has.
+    """
+
+    uncommented = "\n".join(
+        f"{name}={value}" for name, value in _example_lines()
+    )
+    example_env = tmp_path / "example.env"
+    example_env.write_text(uncommented + "\n", encoding="utf-8")
+
+    assert settings(_env_file=str(example_env)) == settings()

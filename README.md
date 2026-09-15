@@ -49,7 +49,10 @@ For browser-enabled runs, make sure `npx` can start Playwright MCP. The CLI uses
 ## Configuration
 
 All settings live in `src/config.py` and are read from `.env` automatically. Names are
-`AUTOBROWSER_<SECTION>__<FIELD>`; the environment outranks the file. Common settings are:
+`AUTOBROWSER_<SECTION>__<FIELD>`; the environment outranks the file.
+
+`.env.example` documents every setting with its default — copy it to `.env` and uncomment
+what you want to change. Common settings are:
 
 ```env
 AUTOBROWSER_BROWSER__CHROME_PATH=C:/Program Files/Google/Chrome/Application/chrome.exe
