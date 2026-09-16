@@ -61,6 +61,22 @@ AUTOBROWSER_BROWSER__CDP_PORT=9222
 AUTOBROWSER_LLM__MODEL=gpt-oss:20b-cloud
 ```
 
+A YAML file can layer underneath the environment for values that are awkward to spell as
+env vars. Point at it explicitly — nothing is discovered automatically, so a `config.yaml`
+sitting in the repository does nothing until it is named:
+
+```powershell
+$env:AUTOBROWSER_CONFIG_FILE="config.local.yaml"; python main.py
+```
+
+Precedence, highest first: `Settings(...)` kwargs → `AUTOBROWSER_*` env → `.env` → the YAML
+file → secret files. Merging is per field, so an env var overrides a single value and leaves
+the rest of the file standing. `config.example.yaml` shows the shape and lists the accepted
+values; a copy may hold `llm.api_key`, so keep it out of git (`config.local.yaml` and
+`secrets.yaml` are already git-ignored). Because `.env` outranks the file, the `.env` in this
+repository — which pins `AUTOBROWSER_LLM__MODEL` and `AUTOBROWSER_BROWSER__CDP_PORT` — wins
+over those two fields.
+
 Write Windows paths with forward slashes: `python-dotenv` decodes escape sequences inside
 double-quoted values, so `"C:\temp"` silently becomes a tab character.
 

@@ -14,6 +14,12 @@ env/
 .env.*
 !.env.example
 
+# Local settings files: a copy of config.example.yaml may hold llm.api_key.
+# Shared, non-secret profiles belong in a committed config.yaml instead.
+config.local.yaml
+config.local.yml
+secrets.yaml
+
 # IDEs and Editors
 .vscode/
 .idea/

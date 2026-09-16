@@ -17,6 +17,29 @@ Write Windows paths with forward slashes. ``python-dotenv`` decodes escape
 sequences inside *double-quoted* values, so ``"C:\\temp"`` silently becomes a
 tab character; forward slashes sidestep the hazard under every quoting style.
 
+A YAML file can layer underneath the environment for tunables that are awkward
+to spell as env vars -- a whole ``llm:`` block, ``reasoning_effort``, an
+``api_key``. It is strictly opt-in: no file is discovered implicitly, so the
+active configuration is never a function of which files happen to sit in the
+working directory. Name it explicitly::
+
+    AUTOBROWSER_CONFIG_FILE=config.local.yaml python main.py --task "..."
+
+Precedence, highest first:
+
+1. Keyword args passed to ``Settings(...)`` (tests, scripts, callers).
+2. ``AUTOBROWSER_*`` environment variables.
+3. ``.env``.
+4. The YAML file named by ``AUTOBROWSER_CONFIG_FILE``.
+5. Docker/Kubernetes secret files.
+
+Sources merge *deeply*, field by field, so ``AUTOBROWSER_LOOP__TURN_CAP=25``
+overrides that one field while every other value the file set -- including
+every other field of the same section -- stays in force. A name in the file
+that matches no section, or no field of a matching section, is rejected at
+startup rather than silently ignored. See ``config.example.yaml`` for the
+shape; YAML needs PyYAML, already pinned in ``requirements.txt``.
+
 Usage::
 
     from src.config import get_settings
@@ -25,6 +48,7 @@ Usage::
     settings.loop.turn_cap            # 50
     settings.browser.cdp_port         # 9222
     settings.storage.sessions_dir     # .autobrowser/sessions
+    settings.llm.reasoning_effort     # None unless .env or the YAML file sets it
 """
 
 from __future__ import annotations
@@ -32,8 +56,9 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, Literal
 
+import yaml
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -43,13 +68,23 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    YamlConfigSettingsSource,
+)
 
 #: Env var namespace for every setting.
 ENV_PREFIX = "AUTOBROWSER_"
 
 #: Separator between a section and a field in an env var name.
 ENV_NESTED_DELIMITER = "__"
+
+#: Env var naming an explicit YAML settings file. Never set means "no file
+#: source"; set but missing means the process refuses to start (see
+#: :func:`_resolve_config_path`).
+CONFIG_FILE_ENV_VAR = "AUTOBROWSER_CONFIG_FILE"
 
 
 class _Section(BaseModel):
@@ -68,6 +103,12 @@ class LLMSettings(_Section):
     ``host``/``api_key`` are left as ``None`` by default so the underlying
     client keeps its own discovery (``OLLAMA_HOST``, ``~/.ollama``, a local
     daemon on the default port).
+
+    The reasoning budget fields are recorded here for providers that separate
+    reasoning tokens from output tokens. They are declarative for now:
+    ``src/providers/ollama.py`` forwards only ``temperature`` (plus the
+    ``num_predict``/``num_ctx``/``top_p``/``seed`` call params), so setting them
+    changes no request until that adapter is taught the parameter.
     """
 
     model: Annotated[
@@ -96,6 +137,40 @@ class LLMSettings(_Section):
         SecretStr | None,
         Field(
             description="Provider API key. Never logged; use .get_secret_value().",
+        ),
+    ] = None
+
+    reasoning_effort: Annotated[
+        Literal["minimal", "low", "medium", "high"] | None,
+        Field(
+            description=(
+                "How much reasoning to spend, for providers that expose a "
+                "level rather than a token count. ``None`` leaves the choice "
+                "to the provider."
+            ),
+        ),
+    ] = None
+
+    max_output_tokens: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            description=(
+                "Cap on generated output tokens, reasoning included for "
+                "providers that do not budget it separately. ``None`` lets "
+                "the provider decide."
+            ),
+        ),
+    ] = None
+
+    max_reasoning_tokens: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            description=(
+                "Cap on reasoning/thinking tokens specifically, for providers "
+                "that budget them apart from output tokens."
+            ),
         ),
     ] = None
 
@@ -347,6 +422,69 @@ class FlagsSettings(_Section):
     ] = False
 
 
+def _resolve_config_path() -> Path | None:
+    """Return the explicitly configured YAML file, or ``None``.
+
+    The path cannot be a settings field itself -- the file has to be located
+    before the model that would describe it exists -- so it comes from
+    :data:`CONFIG_FILE_ENV_VAR` and nothing else. No working-directory scan:
+    a stray ``config.yaml`` must not silently change what the process does.
+    """
+
+    configured = os.environ.get(CONFIG_FILE_ENV_VAR)
+    if not configured:
+        return None
+
+    path = Path(os.path.expandvars(configured)).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"{CONFIG_FILE_ENV_VAR} points at a file that does not exist: {path}"
+        )
+    return path
+
+
+class _YamlFileSettingsSource(YamlConfigSettingsSource):
+    """YAML settings source that names its file when the file is at fault.
+
+    ``YamlConfigSettingsSource`` parses in ``__init__`` and reports a malformed
+    document as a bare ``yaml.YAMLError`` with no hint of which file produced
+    it, which is what makes a typo in a hand-written file hard to place. So the
+    parse is intercepted at ``_read_file`` -- the method the base class calls to
+    turn one path into a mapping -- rather than at ``__call__``.
+    """
+
+    def __init__(self, settings_cls: type[BaseSettings], path: Path) -> None:
+        # The base class parses inside ``__init__``, before it has stored
+        # ``settings_cls``, so both are captured here for ``_read_file``.
+        self._settings_cls = settings_cls
+        self.config_path = path
+        super().__init__(settings_cls, yaml_file=path)
+
+    def _read_file(self, file_path: Path) -> dict[str, Any]:
+        try:
+            data = super()._read_file(file_path)
+        except (yaml.YAMLError, UnicodeDecodeError, OSError) as exc:
+            raise ValueError(f"Could not read {self.config_path}: {exc}") from exc
+
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"{self.config_path} must contain a mapping of settings sections "
+                f"at the top level, got {type(data).__name__}."
+            )
+
+        # ``Settings`` itself is ``extra="ignore"``, deliberately, so that
+        # unrelated keys in ``.env`` do not break startup. That leniency would
+        # turn a mistyped section name in this file -- ``loops:`` for ``loop:``
+        # -- into silently ignored configuration, so it is checked here.
+        unknown = sorted(set(data) - set(self._settings_cls.model_fields))
+        if unknown:
+            raise ValueError(
+                f"{self.config_path} has unknown section(s) {unknown}; "
+                f"expected any of {sorted(self._settings_cls.model_fields)}."
+            )
+        return data
+
+
 class Settings(BaseSettings):
     """Root settings object; build once per process via :func:`get_settings`.
 
@@ -374,6 +512,41 @@ class Settings(BaseSettings):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     flags: FlagsSettings = Field(default_factory=FlagsSettings)
 
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Slot the optional YAML file between ``.env`` and secret files.
+
+        Order is priority, highest first: init kwargs > ``AUTOBROWSER_*`` env
+        > ``.env`` > YAML file > Docker/Kubernetes secrets. Field defaults are
+        appended by ``BaseSettings`` itself and lose to all of them.
+
+        pydantic-settings folds the sources with a deep update, so a value from
+        a higher-priority source replaces exactly one field and leaves the rest
+        of the file's section standing. The file source is omitted entirely
+        when :data:`CONFIG_FILE_ENV_VAR` is unset, which keeps the environment
+        and ``.env`` behaving as they did before this source existed.
+        """
+
+        sources: list[PydanticBaseSettingsSource] = [
+            init_settings,
+            env_settings,
+            dotenv_settings,
+        ]
+
+        config_path = _resolve_config_path()
+        if config_path is not None:
+            sources.append(_YamlFileSettingsSource(settings_cls, config_path))
+
+        sources.append(file_secret_settings)
+        return tuple(sources)
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
@@ -383,7 +556,8 @@ def get_settings() -> Settings:
 
 
 def reload_settings() -> Settings:
-    """Drop the cached settings and re-read the environment and ``.env``."""
+    """Drop the cached settings and re-read the environment, ``.env`` and the
+    YAML file named by :data:`CONFIG_FILE_ENV_VAR`."""
 
     get_settings.cache_clear()
     return get_settings()
@@ -391,6 +565,7 @@ def reload_settings() -> Settings:
 
 __all__ = [
     "BrowserSettings",
+    "CONFIG_FILE_ENV_VAR",
     "ENV_NESTED_DELIMITER",
     "ENV_PREFIX",
     "EventSettings",

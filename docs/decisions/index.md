@@ -4,6 +4,11 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-09-16 Opt-In YAML Settings File](2026-09-16-opt-in-yaml-settings-file.md):
+  adds a YAML file as a fourth, strictly opt-in settings source (`AUTOBROWSER_CONFIG_FILE`,
+  no working-directory scan) below `.env` and above secret files; deep per-field merging, and
+  the `llm.reasoning_effort`/`max_output_tokens`/`max_reasoning_tokens` fields. Supersedes the
+  typed-settings ADR's rejection of a config file format.
 - [2026-09-16 Typed Settings Module](2026-09-16-typed-settings-module.md):
   consolidates every tunable into `src/config.py`, a pydantic-settings root
   using `AUTOBROWSER_<SECTION>__<FIELD>` names; removes the flat vendor names

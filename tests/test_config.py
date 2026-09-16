@@ -1,25 +1,35 @@
 """Tests for the central settings module (:mod:`src.config`).
 
-Covers three things:
+Covers four things:
 
 1. **Parity** — the configured defaults still equal the module constants they
    replaced, so extracting them was behaviour-preserving.
 2. **Resolution** — canonical ``AUTOBROWSER_<SECTION>__<FIELD>`` names, the
    legacy flat names, and their precedence.
 3. **Validation** — bounds, the phase-timeout clamp, and unknown-key rejection.
+4. **The YAML file source** — opt-in activation, its priority against the
+   environment and ``.env``, deep per-field merging, and its failure modes.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import textwrap
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
-from src.config import ENV_NESTED_DELIMITER, ENV_PREFIX, Settings, get_settings
+from src.config import (
+    CONFIG_FILE_ENV_VAR,
+    ENV_NESTED_DELIMITER,
+    ENV_PREFIX,
+    Settings,
+    get_settings,
+)
 from src.providers.ollama import OllamaChatModel
 
 
@@ -277,6 +287,221 @@ def test_without_a_key_the_client_keeps_its_own_discovery(settings: Any) -> None
 
 
 # --------------------------------------------------------------------------
+# The YAML file source
+# --------------------------------------------------------------------------
+
+
+def _write_config(tmp_path: Path, text: str, name: str = "config.yaml") -> Path:
+    """Write a YAML settings file, dedented, and return its path."""
+
+    path = tmp_path / name
+    path.write_text(textwrap.dedent(text).lstrip("\n"), encoding="utf-8")
+    return path
+
+
+def _point_at(
+    monkeypatch: pytest.MonkeyPatch,
+    path: Path,
+) -> Path:
+    """Activate the file source for ``path`` and return it."""
+
+    monkeypatch.setenv(CONFIG_FILE_ENV_VAR, str(path))
+    return path
+
+
+def test_a_config_file_named_by_the_env_var_is_read(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _point_at(
+        monkeypatch,
+        _write_config(tmp_path, "loop:\n  turn_cap: 17\nbrowser:\n  cdp_port: 9333\n"),
+    )
+
+    config = settings()
+
+    assert config.loop.turn_cap == 17
+    assert config.browser.cdp_port == 9333
+
+
+def test_a_config_file_can_supply_the_api_key_as_a_secret(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A nested ``SecretStr`` from a file source stays a secret."""
+
+    _point_at(monkeypatch, _write_config(tmp_path, "llm:\n  api_key: sk-from-file\n"))
+
+    config = settings()
+
+    assert config.llm.api_key is not None
+    assert "sk-from-file" not in repr(config.llm.api_key)
+    assert config.llm.api_key.get_secret_value() == "sk-from-file"
+
+
+def test_env_overrides_one_field_without_dropping_the_rest_of_the_section(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An env var is a scalpel here, not a sledgehammer.
+
+    This is what makes the file usable as a checked-in profile: overriding the
+    model for one run must not discard the temperature and reasoning effort the
+    file set in the same section.
+    """
+
+    _point_at(
+        monkeypatch,
+        _write_config(
+            tmp_path,
+            "llm:\n  model: from-file\n  temperature: 0.5\n  reasoning_effort: high\n",
+        ),
+    )
+    monkeypatch.setenv("AUTOBROWSER_LLM__MODEL", "from-env")
+
+    config = settings()
+
+    assert config.llm.model == "from-env"
+    assert config.llm.temperature == 0.5
+    assert config.llm.reasoning_effort == "high"
+
+
+def test_dotenv_outranks_the_config_file(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".env").write_text(
+        "AUTOBROWSER_LOOP__TURN_CAP=11\n",
+        encoding="utf-8",
+    )
+    _point_at(
+        monkeypatch,
+        _write_config(tmp_path, "loop:\n  turn_cap: 7\n  max_replans: 9\n"),
+    )
+
+    config = settings()
+
+    assert config.loop.turn_cap == 11
+    assert config.loop.max_replans == 9
+
+
+def test_init_kwargs_outrank_the_env_and_the_config_file(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _point_at(monkeypatch, _write_config(tmp_path, "loop:\n  turn_cap: 7\n"))
+    monkeypatch.setenv("AUTOBROWSER_LOOP__TURN_CAP", "11")
+
+    assert settings(loop={"turn_cap": 5}).loop.turn_cap == 5
+
+
+def test_without_the_env_var_no_config_file_is_discovered(
+    settings: Any,
+    tmp_path: Path,
+) -> None:
+    """There is no working-directory scan, by design.
+
+    A file the user forgot about must not be able to change what the process
+    does, so ``config.yaml`` and ``config.local.yaml`` sitting right there are
+    ignored until named explicitly.
+    """
+
+    (tmp_path / "config.yaml").write_text("loop:\n  turn_cap: 7\n", encoding="utf-8")
+    (tmp_path / "config.local.yaml").write_text(
+        "loop:\n  turn_cap: 9\n",
+        encoding="utf-8",
+    )
+
+    assert settings().loop.turn_cap == 50
+
+
+def test_a_missing_config_file_fails_loudly(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Silently falling back to the defaults would hide a typo in the path."""
+
+    monkeypatch.setenv(CONFIG_FILE_ENV_VAR, str(tmp_path / "absent.yaml"))
+
+    with pytest.raises(FileNotFoundError, match="absent.yaml"):
+        settings()
+
+
+def test_a_malformed_config_file_names_the_file(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = _point_at(
+        monkeypatch,
+        _write_config(tmp_path, "loop:\n  turn_cap: [7\n"),
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        settings()
+
+    assert str(path) in str(excinfo.value)
+
+
+def test_a_config_file_that_is_not_a_mapping_is_rejected(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _point_at(monkeypatch, _write_config(tmp_path, "- loop\n- llm\n"))
+
+    with pytest.raises(ValueError, match="mapping"):
+        settings()
+
+
+def test_an_unknown_section_in_the_config_file_is_rejected(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """``extra="ignore"`` on the root would otherwise swallow a mistyped section."""
+
+    _point_at(monkeypatch, _write_config(tmp_path, "loops:\n  turn_cap: 7\n"))
+
+    with pytest.raises(ValueError) as excinfo:
+        settings()
+
+    assert "loops" in str(excinfo.value)
+
+
+def test_an_unknown_field_in_the_config_file_is_rejected(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """``extra="forbid"`` on the sections, inherited from the model."""
+
+    _point_at(monkeypatch, _write_config(tmp_path, "loop:\n  turn_capp: 7\n"))
+
+    with pytest.raises(ValueError):
+        settings()
+
+
+def test_config_file_values_are_still_bounded(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The file goes through the same model validation as everything else."""
+
+    _point_at(monkeypatch, _write_config(tmp_path, "llm:\n  temperature: 5\n"))
+
+    with pytest.raises(ValueError):
+        settings()
+
+
+# --------------------------------------------------------------------------
 # Validation
 # --------------------------------------------------------------------------
 
@@ -334,10 +559,11 @@ def test_get_settings_is_cached(settings: Any) -> None:
 
 
 # --------------------------------------------------------------------------
-# .env.example stays in sync with the model
+# The example files stay in sync with the model
 # --------------------------------------------------------------------------
 
 EXAMPLE_ENV = Path(__file__).resolve().parents[1] / ".env.example"
+EXAMPLE_YAML = Path(__file__).resolve().parents[1] / "config.example.yaml"
 
 #: Matches both a live ``AUTOBROWSER_X=v`` line and a commented ``# AUTOBROWSER_X=v``.
 _EXAMPLE_LINE = re.compile(
@@ -397,3 +623,29 @@ def test_env_example_values_are_the_actual_defaults(
     example_env.write_text(uncommented + "\n", encoding="utf-8")
 
     assert settings(_env_file=str(example_env)) == settings()
+
+
+def test_the_example_config_file_reproduces_the_defaults(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A verbatim copy of ``config.example.yaml`` must be a no-op.
+
+    Same contract as the ``.env.example`` check above: the template cannot
+    document a value the code no longer has. Keys the file leaves commented out
+    are the ones whose default is "unset", so they never reach the parsed
+    document and are not compared.
+    """
+
+    defaults = settings()
+    documented = yaml.safe_load(EXAMPLE_YAML.read_text(encoding="utf-8"))
+    _point_at(monkeypatch, EXAMPLE_YAML)
+    loaded = settings()
+
+    assert documented, "config.example.yaml is empty"
+
+    for section in documented:
+        assert section in Settings.model_fields, f"unknown section: {section}"
+        assert getattr(loaded, section) == getattr(defaults, section), (
+            f"{section} in config.example.yaml no longer matches the code defaults"
+        )

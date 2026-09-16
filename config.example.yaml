@@ -1,0 +1,72 @@
+# AutoBrowser settings file -- template.
+#
+# Copy this to a name of your choosing and point the process at it explicitly:
+#
+#   AUTOBROWSER_CONFIG_FILE=config.local.yaml python main.py --task "inspect page"
+#
+# Nothing is discovered implicitly. With AUTOBROWSER_CONFIG_FILE unset this file
+# is never read, and a config.yaml sitting in the working directory is not
+# picked up behind your back -- the active configuration is always exactly the
+# file the variable names. If the variable names a file that does not exist, the
+# process refuses to start rather than quietly using the defaults.
+#
+# Every value below is the default the code already has, so copying this file
+# verbatim changes nothing. Commented-out keys are the ones whose default is
+# "unset"; the comment shows the values they accept.
+#
+# Precedence, highest first:
+#
+#   Settings(...) kwargs > AUTOBROWSER_* env > .env > this file > secrets
+#
+# Merging is per field, so an env var overrides one value without repeating the
+# section around it: AUTOBROWSER_LOOP__TURN_CAP=25 beats loop.turn_cap below and
+# leaves every other loop.* key here in force. That is what makes this file safe
+# to commit while .env stays machine-specific.
+#
+# The flip side of that order: .env outranks this file, so a value set here can
+# look ignored. This repository's own .env pins AUTOBROWSER_LLM__MODEL and
+# AUTOBROWSER_BROWSER__CDP_PORT -- comment those two lines out before expecting
+# llm.model or browser.cdp_port below to take effect.
+#
+# Section and field names mirror src/config.py exactly (llm, browser, loop,
+# observation, memory, events, storage, flags). A name matching no section, or
+# no field of a matching section, is rejected at startup instead of being
+# ignored. .env.example lists every field with its default.
+#
+# Secrets: llm.api_key works here. If you put one in, keep the file out of git
+# -- config.local.yaml and secrets.yaml are already in .gitignore -- or keep the
+# key in .env and use this file for non-secret tuning only.
+
+llm:
+  model: gpt-oss:20b-cloud
+  temperature: 0.0
+  # reasoning_effort: medium        # minimal | low | medium | high; unset = provider's choice
+  # max_output_tokens: 4096         # unset = provider's choice
+  # max_reasoning_tokens: 2048      # unset = provider's choice
+  # api_key: "sk-..."               # only in a git-ignored copy of this file
+  # host: "http://localhost:11434"
+
+loop:
+  turn_cap: 50
+  max_replans: 3
+  task_timeout_seconds: 300.0
+
+browser:
+  cdp_port: 9222
+  cdp_timeout_seconds: 30.0
+
+storage:
+  root_dir: .autobrowser
+
+# The remaining sections take the same shape:
+#
+# observation:
+#   max_content_preview_chars: 1200
+#   max_refs_in_observation: 25
+# memory:
+#   max_tool_message_refs: 25
+# events:
+#   max_string_chars: 20000
+#   agent_trace_max_text_chars: 500
+# flags:
+#   agent_loop: false
