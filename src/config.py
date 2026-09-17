@@ -17,8 +17,8 @@ Write Windows paths with forward slashes. ``python-dotenv`` decodes escape
 sequences inside *double-quoted* values, so ``"C:\\temp"`` silently becomes a
 tab character; forward slashes sidestep the hazard under every quoting style.
 
-A YAML file can layer underneath the environment for tunables that are awkward
-to spell as env vars -- a whole ``llm:`` block, ``reasoning_effort``, an
+A YAML file can layer *over* the environment for tunables that are awkward to
+spell as env vars -- a whole ``llm:`` block, ``reasoning_effort``, an
 ``api_key``. It is strictly opt-in: no file is discovered implicitly, so the
 active configuration is never a function of which files happen to sit in the
 working directory. Name it explicitly::
@@ -28,17 +28,21 @@ working directory. Name it explicitly::
 Precedence, highest first:
 
 1. Keyword args passed to ``Settings(...)`` (tests, scripts, callers).
-2. ``AUTOBROWSER_*`` environment variables.
-3. ``.env``.
-4. The YAML file named by ``AUTOBROWSER_CONFIG_FILE``.
+2. The YAML file named by ``AUTOBROWSER_CONFIG_FILE``.
+3. ``AUTOBROWSER_*`` environment variables.
+4. ``.env``.
 5. Docker/Kubernetes secret files.
 
-Sources merge *deeply*, field by field, so ``AUTOBROWSER_LOOP__TURN_CAP=25``
-overrides that one field while every other value the file set -- including
-every other field of the same section -- stays in force. A name in the file
-that matches no section, or no field of a matching section, is rejected at
-startup rather than silently ignored. See ``config.example.yaml`` for the
-shape; YAML needs PyYAML, already pinned in ``requirements.txt``.
+The file is a *partial profile*: it only has to name the fields it wants to
+settle, and each of those outranks every source below it. Sources merge
+*deeply*, field by field, so ``llm: {model: ...}`` in the file decides
+``llm.model`` while the rest of the ``llm`` block still resolves through the
+environment, ``.env`` and the defaults -- naming one field never freezes its
+neighbours. Naming the file therefore wins over ``AUTOBROWSER_*`` for the fields
+it sets: put a value there only if you mean it to stick. A name in the file that
+matches no section, or no field of a matching section, is rejected at startup
+rather than silently ignored. See ``config.example.yaml`` for the shape; YAML
+needs PyYAML, already pinned in ``requirements.txt``.
 
 Usage::
 
@@ -521,29 +525,29 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        """Slot the optional YAML file between ``.env`` and secret files.
+        """Slot the optional YAML file between init kwargs and the environment.
 
-        Order is priority, highest first: init kwargs > ``AUTOBROWSER_*`` env
-        > ``.env`` > YAML file > Docker/Kubernetes secrets. Field defaults are
-        appended by ``BaseSettings`` itself and lose to all of them.
+        Order is priority, highest first: init kwargs > YAML file >
+        ``AUTOBROWSER_*`` env > ``.env`` > Docker/Kubernetes secrets. Field
+        defaults are appended by ``BaseSettings`` itself and lose to all of them.
 
-        pydantic-settings folds the sources with a deep update, so a value from
-        a higher-priority source replaces exactly one field and leaves the rest
-        of the file's section standing. The file source is omitted entirely
-        when :data:`CONFIG_FILE_ENV_VAR` is unset, which keeps the environment
-        and ``.env`` behaving as they did before this source existed.
+        The file is a partial profile that outranks the environment: the fields
+        it names are settled by it, every field it omits still resolves through
+        the sources below. pydantic-settings folds the sources with a deep
+        update, so naming ``llm.model`` in the file leaves ``llm.temperature``
+        to the environment rather than blanking it. The source is omitted
+        entirely when :data:`CONFIG_FILE_ENV_VAR` is unset, which keeps the
+        environment and ``.env`` behaving as they did before it existed.
         """
 
-        sources: list[PydanticBaseSettingsSource] = [
-            init_settings,
-            env_settings,
-            dotenv_settings,
-        ]
+        sources: list[PydanticBaseSettingsSource] = [init_settings]
 
         config_path = _resolve_config_path()
         if config_path is not None:
             sources.append(_YamlFileSettingsSource(settings_cls, config_path))
 
+        sources.append(env_settings)
+        sources.append(dotenv_settings)
         sources.append(file_secret_settings)
         return tuple(sources)
 

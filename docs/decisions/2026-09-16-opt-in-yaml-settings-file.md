@@ -17,23 +17,29 @@ Two gaps have since shown up in that mechanism:
 - Sharing a profile between machines means sharing a `.env`, which is also where the API
   key lives. The one file that must never be committed is the one file that carries the
   non-secret tuning.
+- An environment variable is a whole-process, ambient thing: it cannot express "for this run,
+  use this model and this reasoning budget" without also being able to override the `.env`
+  that pins the machine's usual model. A profile therefore has to sit *above* the machine's
+  environment, not underneath it.
 
 ## Decision
 
-Add a YAML file as a **fourth, opt-in** settings source, slotted between `.env` and the
-secret-file source.
+Add a YAML file as a **fourth, opt-in** settings source, slotted between the init kwargs and
+the environment.
 
 - **Explicit activation only.** The file is read when and only when
   `AUTOBROWSER_CONFIG_FILE` names it. There is no working-directory scan, so `config.yaml`
   or `config.local.yaml` sitting in the repository changes nothing until it is named. A
   named-but-missing file raises `FileNotFoundError` rather than quietly falling back to
   the defaults.
-- **Precedence** (highest first): `Settings(...)` kwargs → `AUTOBROWSER_*` env vars →
-  `.env` → the YAML file → Docker/Kubernetes secret files → field defaults. pydantic-settings
-  folds the sources with `deep_update`, so a higher source replaces one field and leaves the
-  rest of the file's section standing. That is what lets an env var override `llm.model` for
-  a single run without discarding the `llm.temperature` and `llm.reasoning_effort` the file
-  set in the same block.
+- **Precedence** (highest first): `Settings(...)` kwargs → the YAML file →
+  `AUTOBROWSER_*` env vars → `.env` → Docker/Kubernetes secret files → field defaults.
+- **A partial profile that outranks the environment.** The file need not be complete, and
+  the fields it does name win over every source below. pydantic-settings folds the sources
+  with `deep_update`, so `llm: {model: ...}` in the file settles `llm.model` while the rest
+  of the `llm` block still resolves through env, `.env` and the defaults -- naming one field
+  never freezes its neighbours. That makes naming a file a deliberate act of taking control
+  of those fields, rather than a way to supply fallbacks.
 - **YAML only.** No JSON or TOML source. One human-edited format, one parser, one set of
   tests.
 - **Typo protection.** `Settings` is `extra="ignore"` so that unrelated keys in `.env`
@@ -51,8 +57,10 @@ secret-file source.
 
 Benefits:
 
-- Profiles can be committed (`config.yaml`) while secrets stay in `.env`, which keeps the
-  "never commit this file" rule off the file that everyone shares.
+- Secrets can leave `.env`: the file that holds the key is also the file that carries the
+  tuning, and the conventional names (`config.yaml`, `config.local.yaml`, `secrets.yaml`) are
+  git-ignored by default. A shared, non-secret profile is still possible — under a name of
+  its own, since the conventional ones are reserved for personal files.
 - Large, related changes ("use the reasoning model for the batch") are one edit instead of
   five environment variables.
 - Nothing changes for anyone who does not set `AUTOBROWSER_CONFIG_FILE`: the source is
@@ -60,11 +68,17 @@ Benefits:
 
 Tradeoffs and risks:
 
-- **`.env` outranks the file.** The repository's own `.env` pins
-  `AUTOBROWSER_LLM__MODEL` and `AUTOBROWSER_BROWSER__CDP_PORT`, so those two fields appear
-  to ignore the file until the corresponding `.env` lines are commented out. This is the
-  requested precedence and it is documented in `config.example.yaml`, but it is the first
-  thing a reader will hit.
+- **The file beats the environment, so it also beats CI.** Once a committed profile is named
+  in production, an `AUTOBROWSER_*` variable can no longer correct a field that file sets;
+  the remedy is to edit the file or stop naming it there. This is the price of making a named
+  profile authoritative, which is what makes "run this profile" a meaningful instruction. The
+  repository's own `.env` -- which pins `AUTOBROWSER_LLM__MODEL` and
+  `AUTOBROWSER_BROWSER__CDP_PORT` -- is overridden the same way, which is intended: a profile
+  exists to beat the machine's local defaults, not to sit underneath them.
+- **Two spellings for the same override compete.** Env is the machine-local escape hatch for
+  the fields the file does not name; the file wins wherever the two collide. Someone who
+  exports `AUTOBROWSER_LLM__MODEL` expecting it to win will be surprised once, so
+  `config.example.yaml` states the order at the top.
 - **The reasoning fields change no request yet.** `src/providers/ollama.py` forwards only
   `temperature` (plus the `num_predict`/`num_ctx`/`top_p`/`seed` call params), so these are
   recorded configuration until that adapter is taught the parameters. The field docstrings

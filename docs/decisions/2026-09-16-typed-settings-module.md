@@ -104,8 +104,9 @@ Tradeoffs and risks:
 
 - `src/config.py` — the module itself; its docstring is the field reference.
 - [2026-09-16 Opt-In YAML Settings File](2026-09-16-opt-in-yaml-settings-file.md)
-  — adds a YAML file source below `.env` and the reasoning-budget fields; its
-  "no config file format" alternative above is the decision that ADR revisits.
+  — adds a YAML file source that outranks `.env` and the environment as a partial
+  profile, plus the reasoning-budget fields; its "no config file format"
+  alternative above is the decision that ADR revisits.
 - `.env.example` — generated reference for every setting and its default.
 - `tests/test_config.py` — default parity, resolution, bounds, and
   `.env.example` drift checks.

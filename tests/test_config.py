@@ -341,55 +341,72 @@ def test_a_config_file_can_supply_the_api_key_as_a_secret(
     assert config.llm.api_key.get_secret_value() == "sk-from-file"
 
 
-def test_env_overrides_one_field_without_dropping_the_rest_of_the_section(
+def test_the_config_file_outranks_the_environment(
     settings: Any,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """An env var is a scalpel here, not a sledgehammer.
+    """A named file is a profile, not a fallback: the fields it names win."""
 
-    This is what makes the file usable as a checked-in profile: overriding the
-    model for one run must not discard the temperature and reasoning effort the
-    file set in the same section.
-    """
-
-    _point_at(
-        monkeypatch,
-        _write_config(
-            tmp_path,
-            "llm:\n  model: from-file\n  temperature: 0.5\n  reasoning_effort: high\n",
-        ),
-    )
+    _point_at(monkeypatch, _write_config(tmp_path, "llm:\n  model: from-file\n"))
     monkeypatch.setenv("AUTOBROWSER_LLM__MODEL", "from-env")
 
-    config = settings()
-
-    assert config.llm.model == "from-env"
-    assert config.llm.temperature == 0.5
-    assert config.llm.reasoning_effort == "high"
+    assert settings().llm.model == "from-file"
 
 
-def test_dotenv_outranks_the_config_file(
+def test_a_partial_config_file_leaves_the_other_fields_to_the_sources_below(
     settings: Any,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Naming one field must not freeze its neighbours.
+
+    The file decides ``llm.model`` and nothing else, so the rest of the ``llm``
+    section still comes from the environment and every untouched section from
+    ``.env`` or the defaults.
+    """
+
+    _point_at(monkeypatch, _write_config(tmp_path, "llm:\n  model: from-file\n"))
+    monkeypatch.setenv("AUTOBROWSER_LLM__TEMPERATURE", "0.5")
+    monkeypatch.setenv("AUTOBROWSER_LOOP__TURN_CAP", "11")
     (tmp_path / ".env").write_text(
-        "AUTOBROWSER_LOOP__TURN_CAP=11\n",
+        "AUTOBROWSER_LLM__REASONING_EFFORT=high\n",
         encoding="utf-8",
-    )
-    _point_at(
-        monkeypatch,
-        _write_config(tmp_path, "loop:\n  turn_cap: 7\n  max_replans: 9\n"),
     )
 
     config = settings()
 
+    assert config.llm.model == "from-file"
+    assert config.llm.temperature == 0.5
+    assert config.llm.reasoning_effort == "high"
     assert config.loop.turn_cap == 11
+    assert config.browser.cdp_port == 9222
+
+
+def test_the_config_file_outranks_dotenv(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The file sits above both env sources, so it beats a pinned value.
+
+    The repository ``.env`` is the realistic case: it pins ``llm.model`` and
+    ``browser.cdp_port``, and a profile is expected to be able to override them.
+    """
+
+    (tmp_path / ".env").write_text(
+        "AUTOBROWSER_LOOP__TURN_CAP=11\nAUTOBROWSER_LOOP__MAX_REPLANS=9\n",
+        encoding="utf-8",
+    )
+    _point_at(monkeypatch, _write_config(tmp_path, "loop:\n  turn_cap: 7\n"))
+
+    config = settings()
+
+    assert config.loop.turn_cap == 7
     assert config.loop.max_replans == 9
 
 
-def test_init_kwargs_outrank_the_env_and_the_config_file(
+def test_init_kwargs_outrank_the_config_file_and_the_environment(
     settings: Any,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

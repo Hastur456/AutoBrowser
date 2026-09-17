@@ -161,12 +161,14 @@ defaults; an empty value means "not set"; sections are `frozen` with `extra="for
 header — the vendor `OLLAMA_API_KEY` is no longer read. Adding a setting means updating
 `tests/test_config.py`, which fails when `.env.example` drifts from the code.
 
-A YAML file can slot in below `.env` as a fourth source, but only when
+A YAML file can slot in above the environment as a fourth source, but only when
 `AUTOBROWSER_CONFIG_FILE` names it — there is no working-directory scan, by design. Precedence
-is init kwargs > env > `.env` > YAML > secret files, and pydantic-settings merges deeply, so
-an env var overrides one field without discarding the rest of the file's section. The file
-source rejects unknown section names itself (the root is `extra="ignore"`). `config.example.yaml`
-is the template; `docs/decisions/2026-09-16-opt-in-yaml-settings-file.md` records why.
+is init kwargs > YAML > env > `.env` > secret files, and pydantic-settings merges deeply, so
+the file decides exactly the fields it names while everything else still resolves below it: a
+partial profile, not a full config, and one that beats `AUTOBROWSER_*` for the fields it sets.
+The file source rejects unknown section names itself (the root is `extra="ignore"`).
+`config.example.yaml` is the template;
+`docs/decisions/2026-09-16-opt-in-yaml-settings-file.md` records why.
 
 ## Feature Flags (env vars)
 

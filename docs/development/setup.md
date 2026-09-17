@@ -45,8 +45,15 @@ documented there, or if a documented default drifts from the code.
 
 Rules that matter in practice:
 
-- **Precedence.** A real environment variable outranks `.env`, which outranks
-  the defaults in `src/config.py`.
+- **Precedence.** `Settings(...)` kwargs outrank the YAML file named by
+  `AUTOBROWSER_CONFIG_FILE`, which outranks a real environment variable, which
+  outranks `.env`, which outranks the defaults in `src/config.py`.
+- **The YAML file is opt-in and partial.** Nothing is auto-discovered: a
+  `config.yaml` in the working directory is ignored until `AUTOBROWSER_CONFIG_FILE`
+  names it, and a named-but-missing file refuses to start rather than falling back.
+  The file only has to name the fields it means to decide -- those beat the
+  environment, and everything it omits still resolves below it. Template:
+  `config.example.yaml`.
 - **Empty means unset.** `AUTOBROWSER_X=` leaves the default alone; it does not
   set an empty value.
 - **Windows paths use forward slashes.** `python-dotenv` decodes escape
