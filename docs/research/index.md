@@ -75,7 +75,7 @@ Open questions:
 
 ### Turn-Cap Exhaustion
 
-`AgentLoopEngine` bounds every task with `DEFAULT_TURN_CAP` (50, overridable per
+`AgentLoopEngine` bounds every task with `settings.loop.turn_cap` (default 50, overridable per
 session via `--turn-cap` / `SessionConfig.turn_cap`). Reaching the cap ends the
 goal with a terminal `blocked` status rather than a checkpoint resume.
 

@@ -28,10 +28,11 @@ structure.
 | `src/cli/` | `cmd2` interactive REPL, parser, output formatting, and session bootstrap. |
 | `src/agent_loop/execution/` | The engine-native control loop: `AgentLoopEngine`, `TurnController`, the frozen `LoopState`, completion/observation/guards/policy helpers, `EngineResources`, and `native_task_runner`. |
 | `src/agent_loop/` | Runtime-facing action contracts, model action parsing, lifecycle events, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary. |
-| `src/contracts.py` | Provider-neutral typed tool/plan/observation contracts and control-loop thresholds (no imports from the loop, harness, or browser layers). |
+| `src/contracts.py` | Provider-neutral typed tool/plan/observation contracts (no imports from the loop, harness, or browser layers). |
+| `src/config.py` | Typed environment-driven settings — the single source of truth for every tunable. Neutral leaf like `src/contracts.py`; see [the settings ADR](../decisions/2026-09-16-typed-settings-module.md). |
 | `src/state.py` | Type-only `AgentState` TypedDict kept for browser-layer annotation. |
 | `src/messages.py` | Dependency-free provider-neutral chat `Message`/`ToolCall` types shared by the engine and providers. |
-| `src/llm.py` | Model defaults (`DEFAULT_OLLAMA_MODEL`) and the provider-neutral `ChatModel`/`ModelResponse` chat contract the engine drives. |
+| `src/llm.py` | The provider-neutral `ChatModel`/`ModelResponse` chat contract the engine drives. |
 | `src/providers/` | Thin `ChatModel` adapters (for example `ollama.py`) that serialize `Message`/`ToolDef` to a backend wire format and parse replies into `ModelResponse`. |
 | `src/browser/` | Provider-neutral browser contracts, canonical browser names, backend adapters, and fake browser tools for tests. |
 | `src/harness/` | Session runtime, harness composition root, context, memory, tools, policy, and telemetry boundaries. |
@@ -63,7 +64,7 @@ route to `human_input` when a tool needs human approval; a blocked or denied
 tool short-circuits back to the loop with a status-prefixed final answer.
 Otherwise the approved tool executes through `ToolBroker` and the observer
 compiles the result back into `LoopState`, which continues or terminates.
-`DEFAULT_TURN_CAP = 50` bounds the loop.
+`settings.loop.turn_cap` (default 50) bounds the loop.
 
 ## Runtime Boundary
 
@@ -309,11 +310,11 @@ The project follows Playwright MCP semantics:
 - Dynamic commerce pages can expose a search button before the editable input.
   Prompt rules now limit repeated search-button clicks and allow direct search
   URL fallback, especially for Ozon.
-- The turn cap (`DEFAULT_TURN_CAP = 50`) can be reached when the agent repeats
+- The turn cap (`settings.loop.turn_cap`, default 50) can be reached when the agent repeats
   tool calls without progress. Retry counters, observer hints, policy checks,
   and prompt rules are the current controls.
 - Tool-output compression must preserve enough snapshot/ref detail for safe
   follow-up actions.
-- `AUTOBROWSER_AGENT_LOOP`/`SessionConfig.agent_loop` are inert compatibility
+- `AUTOBROWSER_FLAGS__AGENT_LOOP`/`SessionConfig.agent_loop` are inert compatibility
   flags; they parse but do not change routing and can be removed once external
   tooling stops referencing them.

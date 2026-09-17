@@ -6,12 +6,12 @@ It is a frozen dataclass: every state transition returns a *new* `LoopState` via
 functions produce (mirroring the legacy graph-node update shape) and routes
 browser-scoped keys into the nested :class:`BrowserState`.
 
-Thresholds and typed contracts are imported (never redefined) from the neutral
-``src.contracts`` module so the legacy graph and the engine-native path cannot drift and
-the engine-native path carries no dependency on ``src/agent/``.
+Thresholds and typed contracts live in the neutral ``src.contracts`` /
+``src.config`` modules (never redefined here) so every layer cannot drift and the
+engine-native path carries no dependency on the removed ``src/agent/`` runtime.
 
-The dormant ``snapshot_recovery_count`` (``MAX_SNAPSHOT_RECOVERIES``) is intentionally
-excluded — it is not exercised by the scenarios this slice targets.
+The dormant ``snapshot_recovery_count`` (``settings.loop.max_snapshot_recoveries``)
+is intentionally excluded — it is not exercised by the scenarios this slice targets.
 """
 
 from __future__ import annotations
@@ -21,10 +21,6 @@ from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
 from src.contracts import (
-    MAX_CONSECUTIVE_FAILURES,
-    MAX_REPLANS,
-    MAX_STEPS_WITHOUT_PLAN_ADVANCE,
-    MAX_UNCHANGED_SNAPSHOTS,
     PlanStep,
     PolicyDecision,
     ToolRequest,
@@ -228,8 +224,4 @@ __all__ = [
     "BROWSER_STATE_FIELDS",
     "BrowserState",
     "LoopState",
-    "MAX_CONSECUTIVE_FAILURES",
-    "MAX_REPLANS",
-    "MAX_STEPS_WITHOUT_PLAN_ADVANCE",
-    "MAX_UNCHANGED_SNAPSHOTS",
 ]

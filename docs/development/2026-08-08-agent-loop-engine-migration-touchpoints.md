@@ -2,6 +2,16 @@
 
 Status: Migration warning note
 
+> **Historical — resolved.** Every touchpoint below has since been deleted or made
+> engine-native, and all migration gates at the end of this page are satisfied. The
+> `src/agent/` runtime, `src/agent_loop/outcomes.py`, `src/agent_loop/adapters/`,
+> `src/harness/context.py`, `src/harness/policy.py`, and `src/cli/task_runner.py` no
+> longer exist; `BrowserHarness` compiles no graph, browser providers no longer take
+> `AgentState`, policy returns typed decisions, and `AgentLoopEngine` is the only
+> execution path. The file lists, unresolved-verb tense, and migration gates below are
+> kept as a snapshot of the pre-engine runtime. See the
+> [native agent loop engine ADR](../decisions/2026-08-31-native-agent-loop-engine.md).
+
 ## Purpose
 
 This note records code that still couples the current runtime to the legacy

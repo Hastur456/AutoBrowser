@@ -21,6 +21,7 @@ from src.agent_loop.execution.completion import native_latest_state_loader
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalRunRequest, GoalRunner
 from src.browser import BrowserProvider
+from src.config import get_settings
 from src.harness.runtime import (
     HARNESS_EVENT_METADATA_CONFIG_KEY,
     HARNESS_STATE_OVERRIDES_CONFIG_KEY,
@@ -398,13 +399,15 @@ class SessionContext:
         now = datetime.now(UTC)
         self.metadata.started_at = now
         self.metadata.last_activity = now
-        self.session_dir = (Path(".autobrowser") / "sessions" / self.session_id).resolve()
+        self.session_dir = get_settings().storage.session_dir(self.session_id).resolve()
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.event_emitter = EventEmitter(
             _build_session_event_sink(self.session_dir),
             session_id=self.session_id,
         )
-        self.workspace = WorkspaceContext(self.session_dir / "workspace")
+        self.workspace = WorkspaceContext(
+            self.session_dir / get_settings().storage.workspace_subdir
+        )
         self.workspace.initialize()
 
         self.llm = llm_factory(
@@ -506,7 +509,9 @@ class SessionContext:
         """Persist session metadata and task records under .autobrowser."""
 
         if self.session_dir is None:
-            self.session_dir = (Path(".autobrowser") / "sessions" / self.session_id).resolve()
+            self.session_dir = get_settings().storage.session_dir(
+                self.session_id
+            ).resolve()
             self.session_dir.mkdir(parents=True, exist_ok=True)
         snapshot = self.snapshot()
         _write_json(self.session_dir / "session.json", snapshot)

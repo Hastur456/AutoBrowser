@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
+from src.config import get_settings
+
 EventType = Literal[
     "session.started",
     "session.closed",
@@ -36,8 +38,6 @@ SENSITIVE_KEY_MARKERS = (
     "authorization",
 )
 REDACTED_VALUE = "[REDACTED]"
-MAX_STRING_CHARS = 20_000
-AGENT_TRACE_MAX_TEXT_CHARS = 500
 AGENT_TRACE_EVENT_TYPES = {
     "goal.started",
     "model.responded",
@@ -245,8 +245,9 @@ def redact_json_safe(value: Any, *, key: str | None = None) -> Any:
     if isinstance(value, (list, tuple)):
         return [redact_json_safe(item) for item in value]
     if isinstance(value, str):
-        if len(value) > MAX_STRING_CHARS:
-            return f"{value[:MAX_STRING_CHARS]}... [truncated]"
+        limit = get_settings().events.max_string_chars
+        if len(value) > limit:
+            return f"{value[:limit]}... [truncated]"
         return value
     if isinstance(value, (int, float, bool)) or value is None:
         return value
@@ -363,8 +364,9 @@ def _compact_text(value: Any) -> str | None:
     normalized = " ".join(text.split()).strip()
     if not normalized:
         return None
-    if len(normalized) > AGENT_TRACE_MAX_TEXT_CHARS:
-        return f"{normalized[:AGENT_TRACE_MAX_TEXT_CHARS]}... [truncated]"
+    limit = get_settings().events.agent_trace_max_text_chars
+    if len(normalized) > limit:
+        return f"{normalized[:limit]}... [truncated]"
     return normalized
 
 

@@ -14,6 +14,15 @@ env/
 .env.*
 !.env.example
 
+# Settings profiles: a copy of config.example.yaml may hold llm.api_key, so the
+# conventional names are ignored by default. To commit a shared, non-secret
+# profile, give it a name of your own (and add it with `git add -f` if it
+# matches a pattern here).
+config.yaml
+config.local.yaml
+config.local.yml
+secrets.yaml
+
 # IDEs and Editors
 .vscode/
 .idea/

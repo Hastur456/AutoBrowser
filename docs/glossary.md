@@ -24,6 +24,7 @@
 | Checkpointer | Removed. There is no checkpoint saver; durable history is carried on `LoopState.messages` and `SessionContext.state`, shaped by the functional `MemoryManager`. |
 | Compact observation | Short observer output derived from a tool result and used by the next agent step. |
 | CompletionStatus | Loop completion status (`continue`/`done`/`blocked`/`cancelled`) carried on `AgentLoopResult`; `GoalRunner` maps it to a terminal `GoalStatus` via `goal_status_from_completion()` in `src/contracts.py`. |
+| Config section | One of the eight frozen pydantic sub-models on `Settings` (`llm`, `browser`, `loop`, `observation`, `memory`, `events`, `storage`, `flags`). Each owns an `AUTOBROWSER_<SECTION>__<FIELD>` environment namespace and rejects unknown keys. |
 | ContextAssembler | The sole prompt-construction boundary in `src/agent_loop/context.py`: builds the durable system prompt, the per-turn user prompt, and the planner prompt from ordered `ContextBlock`s. |
 | Direct search URL fallback | Navigating directly to a site's search results URL when UI search controls do not make progress. |
 | EngineResources | Bundled runtime collaborators (`llm`, `tool_registry`, `browser_providers`, `policy`, `context`, `events`) built from `BrowserHarness` and passed to `AgentLoopEngine`. |
@@ -62,6 +63,7 @@
 | SessionState | Mutable mapping wrapper for shared session-level state that should not require a dedicated typed field yet. |
 | State override channel | Harness-internal config entry (`HARNESS_STATE_OVERRIDES_CONFIG_KEY`) used to inject carried session state into the next engine run; stripped before the engine sees the task config. |
 | Session workspace | Runtime-local directory under `.autobrowser/sessions/<session_id>/workspace/` for downloads, screenshots, temp files, and artifacts. |
+| Settings | The pydantic-settings root in `src/config.py`, composed of eight config sections and read through `get_settings()`. A neutral leaf like `src/contracts.py`: it imports nothing from the loop, harness, or browser layers. |
 | Snapshot depth | Tool argument that controls how much visible hierarchy `browser_snapshot` returns. |
 | Task boundary reset | Clearing task-local loop fields such as plan, final answer, errors, policy state, tool request/result, and retry counters before a new task starts. |
 | Task ID | Generated identifier stored on `TaskRecord` and loop state to attribute one user request inside a session (`goal_id == task_id`). |
@@ -73,4 +75,4 @@
 | ToolDef | Provider-neutral, model-visible tool schema (`name`, `description`, `input_schema`) independent of any provider. |
 | ToolRegistry | Lazy registry that exposes tools from static lists, generic providers, browser providers, or MCP clients. |
 | Trace replay | Loading `events.jsonl` records to summarize terminal status and print compact action sequences for diagnostics or eval failures. |
-| Turn cap | `DEFAULT_TURN_CAP` (50) upper bound on engine turns before the run is blocked. |
+| Turn cap | `settings.loop.turn_cap` (default 50) upper bound on engine turns before the run is blocked; set via `AUTOBROWSER_LOOP__TURN_CAP`. |

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from src.agent_loop.events import EventEmitter
+from src.config import get_settings
 from src.contracts import GoalStatus, goal_status_from_completion
 
 if TYPE_CHECKING:
@@ -23,9 +24,6 @@ LatestStateLoader = Callable[
     [Mapping[str, Any], Any | None],
     Awaitable[dict[str, object] | None],
 ]
-DEFAULT_TASK_TIMEOUT_SECONDS = 300.0
-DEFAULT_PROGRESS_TIMEOUT_SECONDS = 120.0
-DEFAULT_LATEST_STATE_TIMEOUT_SECONDS = 15.0
 
 
 @dataclass(frozen=True)
@@ -310,7 +308,7 @@ def _goal_timeout_seconds(session_config: Any) -> float:
         value = getattr(session_config, attr, None)
         if isinstance(value, (int, float)) and value > 0:
             return float(value)
-    return DEFAULT_TASK_TIMEOUT_SECONDS
+    return get_settings().loop.task_timeout_seconds
 
 
 def _goal_progress_timeout_seconds(
@@ -327,7 +325,7 @@ def _goal_progress_timeout_seconds(
         value = getattr(session_config, attr, None)
         if isinstance(value, (int, float)) and value > 0:
             return min(float(value), total_timeout_seconds)
-    return min(DEFAULT_PROGRESS_TIMEOUT_SECONDS, total_timeout_seconds)
+    return min(get_settings().loop.progress_timeout_seconds, total_timeout_seconds)
 
 
 def _latest_state_timeout_seconds(
@@ -338,7 +336,7 @@ def _latest_state_timeout_seconds(
         value = getattr(session_config, attr, None)
         if isinstance(value, (int, float)) and value > 0:
             return min(float(value), total_timeout_seconds)
-    return min(DEFAULT_LATEST_STATE_TIMEOUT_SECONDS, total_timeout_seconds)
+    return min(get_settings().loop.latest_state_timeout_seconds, total_timeout_seconds)
 
 
 def _watchdog_poll_interval(timeout_seconds: float) -> float:

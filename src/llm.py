@@ -1,8 +1,11 @@
-"""Neutral model/LLM defaults and provider-agnostic chat contract.
+"""Neutral provider-agnostic chat contract.
 
-``DEFAULT_OLLAMA_MODEL`` and the provider-neutral model contract the engine
-drives live here: a :class:`ChatModel` returns a :class:`ModelResponse`
-from a list of :class:`~src.messages.Message`, optionally given tool schemas.
+The provider-neutral model contract the engine drives lives here: a
+:class:`ChatModel` returns a :class:`ModelResponse` from a list of
+:class:`~src.messages.Message`, optionally given tool schemas.
+
+Model names and sampling defaults are **not** defined here — they are
+configured in :mod:`src.config` (``settings.llm``).
 
 A concrete provider (e.g. Ollama) is a thin adapter that (a) serializes
 ``Message`` objects and ``ToolDef`` schemas into the provider wire format and
@@ -20,8 +23,6 @@ from typing import Any, Protocol, Sequence, runtime_checkable
 
 from src.contracts import ToolDef
 from src.messages import Message, ToolCall
-
-DEFAULT_OLLAMA_MODEL = "gpt-oss:20b-cloud"
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,5 @@ class ChatModel(Protocol):
 
 __all__ = [
     "ChatModel",
-    "DEFAULT_OLLAMA_MODEL",
     "ModelResponse",
 ]

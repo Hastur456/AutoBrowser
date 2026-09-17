@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from src.agent_loop import goals
 from src.agent_loop.execution.loop import AgentLoopResult
 from src.agent_loop.execution.state import BrowserState, LoopState
+from src.config import get_settings
 from src.harness.runtime import (
     HARNESS_EVENT_METADATA_CONFIG_KEY,
     HARNESS_STATE_OVERRIDES_CONFIG_KEY,
@@ -26,6 +26,13 @@ from src.harness.session import (
 )
 from src.harness.tools import ToolRegistry
 
+
+@pytest.fixture(autouse=True)
+def _reset_settings_cache():
+    """Keep env-driven config overrides from leaking between tests."""
+
+    yield
+    get_settings.cache_clear()
 
 class FakeLLM:
     pass
@@ -401,7 +408,8 @@ async def test_session_runtime_watchdog_failure_clears_active_task(
     tmp_path: Path,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(goals, "DEFAULT_PROGRESS_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setenv("AUTOBROWSER_LOOP__PROGRESS_TIMEOUT_SECONDS", "0.01")
+    get_settings.cache_clear()
     cancelled = False
 
     async def task_runner(

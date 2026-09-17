@@ -2,7 +2,8 @@
 
 Ported from ``src/harness/policy.py``. The classification rules and every reason string
 are preserved verbatim (blocked-tool markers → ``needs_human``;
-``ineffective_action_count >= 3`` → ``blocked``; snapshot-reuse → ``blocked``; otherwise
+``ineffective_action_count >= settings.loop.max_ineffective_actions`` → ``blocked``;
+snapshot-reuse → ``blocked``; otherwise
 ``approved``), plus the block-side effect (``consecutive_failures += 1``, a tool message,
 and the ``policy_event``). Only the state access is rewritten to typed
 :class:`~src.agent_loop.execution.state.LoopState` attribute reads; the returned flat
@@ -13,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.config import get_settings
 from src.contracts import PolicyDecision, ToolRequest
 from src.browser.observation import has_invalid_ref_text
 from src.browser import (
@@ -62,7 +64,7 @@ def classify_tool_request(
         return "needs_human", f"Tool requires human approval before use: {requested_name}"
 
     ineffective_action_count = int(state.ineffective_action_count or 0)
-    if ineffective_action_count >= 3:
+    if ineffective_action_count >= get_settings().loop.max_ineffective_actions:
         return (
             "blocked",
             "The last browser actions repeatedly did not change the visible page. "

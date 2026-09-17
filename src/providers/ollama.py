@@ -8,7 +8,12 @@ unless a model is actually constructed.
 
 Only wire concerns live here: neutral ``Message``/``ToolDef`` objects are serialized to
 Ollama's request shape and the reply is parsed back into a :class:`~src.llm.ModelResponse`.
-Host resolution delegates to the ``ollama`` client (which honours ``OLLAMA_HOST``).
+
+Connection settings come from :mod:`src.config` (``settings.llm``): ``host`` is handed to
+the client as ``base_url``, and a configured ``api_key`` becomes an explicit
+``Authorization: Bearer`` header. Passing the header ourselves (rather than relying on the
+client's own ``OLLAMA_API_KEY`` lookup) keeps every credential in one configuration module;
+when no key is configured the client's discovery is left untouched for local daemons.
 """
 
 from __future__ import annotations
@@ -18,29 +23,39 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from uuid import uuid4
 
+from pydantic import SecretStr
+
+from src.config import get_settings
 from src.contracts import ToolDef
-from src.llm import DEFAULT_OLLAMA_MODEL, ModelResponse
+from src.llm import ModelResponse, ChatModel
 from src.messages import Message, ToolCall
 
 
-class OllamaChatModel:
+class OllamaChatModel(ChatModel):
     """One Ollama model behind the provider-neutral :class:`ChatModel` contract."""
 
     def __init__(
         self,
-        model: str = DEFAULT_OLLAMA_MODEL,
-        temperature: float = 0.0,
+        model: str | None = None,
+        temperature: float | None = None,
         base_url: str | None = None,
         timeout: float | None = None,
         *,
         client: Any | None = None,
     ) -> None:
-        self._model = model
-        self._temperature = float(temperature)
+        settings = get_settings().llm
+        self._model = model if model is not None else settings.model
+        self._temperature = float(
+            temperature if temperature is not None else settings.temperature
+        )
         if client is None:
             from ollama import AsyncClient  # lazy: only needed when a model is built
 
-            client = AsyncClient(host=base_url, timeout=timeout)
+            client = AsyncClient(
+                host=base_url if base_url is not None else settings.host,
+                timeout=timeout,
+                headers=_auth_headers(settings.api_key),
+            )
         self._client = client
 
     async def complete(
@@ -65,13 +80,31 @@ class OllamaChatModel:
 
 
 def ollama_llm_factory(
-    model: str = DEFAULT_OLLAMA_MODEL,
-    temperature: float = 0.0,
+    model: str | None = None,
+    temperature: float | None = None,
     **kwargs: Any,
 ) -> OllamaChatModel:
-    """Build an :class:`OllamaChatModel` (signature-compatible with ``llm_factory``)."""
+    """Build an :class:`OllamaChatModel` (signature-compatible with ``llm_factory``).
+
+    Omitted ``model``/``temperature`` fall back to ``settings.llm``.
+    """
 
     return OllamaChatModel(model=model, temperature=temperature, **kwargs)
+
+
+def _auth_headers(api_key: SecretStr | None) -> dict[str, str] | None:
+    """Build the ``Authorization`` header for a configured API key.
+
+    Returns ``None`` — not an empty mapping — when no usable key is configured,
+    so a local Ollama daemon keeps the client's own credential discovery.
+    """
+
+    if api_key is None:
+        return None
+    key = api_key.get_secret_value().strip()
+    if not key:
+        return None
+    return {"Authorization": f"Bearer {key}"}
 
 
 def _options(temperature: float, params: Mapping[str, Any]) -> dict[str, Any]:

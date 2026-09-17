@@ -60,6 +60,7 @@ from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import LoopState
 from src.agent_loop.execution.tools import ToolBroker
 from src.agent_loop.model import ModelDriver
+from src.config import get_settings
 from src.contracts import CompletionStatus
 from src.browser import is_browser_tool_name, to_canonical_browser_name
 from src.contracts import PlanStep, ToolRequest, ToolResult
@@ -74,7 +75,6 @@ from src.messages import Message, user_message
 HumanInputCallback = Callable[[ToolRequest, str], Awaitable[bool]]
 
 EVENT_SOURCE = "agent_loop.execution"
-DEFAULT_TURN_CAP = 50
 
 
 @dataclass(frozen=True)
@@ -517,7 +517,7 @@ class AgentLoopEngine:
             "task_id": ctx.get("task_id", task_id),
             "goal_id": ctx.get("goal_id", goal_id or task_id),
         }
-        turn_cap = max(1, int(turn_cap or DEFAULT_TURN_CAP))
+        turn_cap = max(1, int(turn_cap or get_settings().loop.turn_cap))
 
         tools = list(await self._resources.tool_registry.get_all())
         browser_tabs_available = any(
@@ -644,8 +644,8 @@ def native_task_runner(
         event_metadata = dict(task_config.get(HARNESS_EVENT_METADATA_CONFIG_KEY) or {})
         turn_cap = int(
             task_config.get("turn_cap")
-            or getattr(session_config, "turn_cap", DEFAULT_TURN_CAP)
-            or DEFAULT_TURN_CAP
+            or getattr(session_config, "turn_cap", None)
+            or get_settings().loop.turn_cap
         )
         compress_tools = bool(getattr(session_config, "compress_tools", False))
 
@@ -668,7 +668,6 @@ def native_task_runner(
 
 
 __all__ = [
-    "DEFAULT_TURN_CAP",
     "EVENT_SOURCE",
     "AgentLoopEngine",
     "AgentLoopResult",

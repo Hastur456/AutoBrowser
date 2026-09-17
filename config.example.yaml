@@ -1,0 +1,153 @@
+# AutoBrowser settings file -- template.
+#
+# Copy this to a name of your choosing -- config.yaml and config.local.yaml are
+# both git-ignored -- and point the process at it explicitly:
+#
+#   AUTOBROWSER_CONFIG_FILE=config.yaml python main.py --task "inspect page"
+#
+# That name must be a real environment variable. A line in .env will not work:
+# the path is resolved before settings are built, from the process environment
+# only. See config.yaml for the PowerShell/cmd spellings.
+#
+# Nothing is discovered implicitly. With AUTOBROWSER_CONFIG_FILE unset this file
+# is never read, and a config.yaml sitting in the working directory is not
+# picked up behind your back -- the active configuration is always exactly the
+# file the variable names. If the variable names a file that does not exist, the
+# process refuses to start rather than quietly using the defaults.
+#
+# Every value below is the default the code already has, so copying this file
+# verbatim changes nothing. Commented-out keys are the ones whose default is
+# "unset"; the comment shows the values they accept.
+#
+# Precedence, highest first:
+#
+#   Settings(...) kwargs > this file > AUTOBROWSER_* env > .env > secrets
+#
+# This file is a partial profile: it only has to name the fields you want it to
+# decide, and those outrank everything below. Merging is per field, so naming
+# llm.model here settles llm.model and leaves the rest of the llm block to the
+# environment, .env and the defaults -- you never restate a whole section to
+# change one value, and you never disable the fields you stay silent about.
+#
+# Because the file outranks the environment, a value here also beats an
+# AUTOBROWSER_* variable and a .env line -- including this repository's own
+# .env, which pins AUTOBROWSER_LLM__MODEL and AUTOBROWSER_BROWSER__CDP_PORT.
+# That is what makes the file usable as a profile. Put something here only if
+# you mean it to stick, and comment the line out to hand that field back to the
+# environment.
+#
+# Section and field names mirror src/config.py exactly (llm, browser, loop,
+# observation, memory, events, storage, flags). A name matching no section, or
+# no field of a matching section, is rejected at startup instead of being
+# ignored. .env.example lists every field with its default.
+#
+# Secrets: llm.api_key works here, and the file you name outranks .env, so this
+# is a fine place to keep a key -- as long as the file stays out of git. The
+# conventional names (config.yaml, config.local.yaml, secrets.yaml) are already
+# in .gitignore, and a committed profile should be given a name of its own.
+
+llm:
+  # Chat model id, as the provider expects it.
+  model: gpt-oss:20b-cloud                      # (default)
+  # Sampling temperature. 0.0 keeps planning deterministic.
+  temperature: 0.0                              # (default)
+  # Base URL of the Ollama-compatible endpoint. null = unset: the provider then
+  # falls back to its own default (OLLAMA_HOST or localhost). Set this to point
+  # at a remote host.
+  host: http://localhost:11434          # (default) e.g. http://localhost:11434
+  # Ollama cloud key. This file holds a live secret, so it must stay out of git.
+  # A local daemon needs no key -- use null.
+  api_key: "YOUR_API_KEY"
+  # Reasoning budget. Accepted: minimal | low | medium | high. DECLARATIVE FOR
+  # NOW -- see the note under max_reasoning_tokens.
+  reasoning_effort: null                        # (default)
+  # Cap on generated tokens per model call. Same status as reasoning_effort.
+  max_output_tokens: null                       # (default) e.g. 4096, >= 1
+  # Cap on tokens spent on internal reasoning, when the model bills them
+  # separately from the answer. STATUS: src/providers/ollama.py forwards only
+  # temperature (plus num_predict/num_ctx/top_p/seed), so these three reasoning
+  # fields are recorded configuration until that adapter is taught the
+  # parameters -- setting them here changes no request yet.
+  max_reasoning_tokens: null                    # (default) e.g. 2048, >= 1
+
+# ---------------------------------------------------------------------------
+browser:
+  # Chrome binary to launch. Forward slashes: python-dotenv decodes escapes in
+  # double-quoted .env values, so "C:\temp" becomes a tab there.
+  chrome_path: "C:/Program Files/Google/Chrome/Application/chrome.exe"
+  # Persistent Chrome profile (logins, cookies, extensions) reused across runs.
+  user_data_dir: "C:/WebApps/AutoBrowser/profile"
+  # DevTools port Chrome is driven over.
+  cdp_port: 9222                                # (default)
+  # How long to wait for the CDP connection, in seconds.
+  cdp_timeout_seconds: 30.0                     # (default)
+
+# ---------------------------------------------------------------------------
+# Loop guards. Each counter aborts or forces a replan rather than letting the
+# engine spin; raising one trades tokens for persistence.
+loop:
+  # Hard bound on reasoning turns per task.
+  turn_cap: 50                                  # (default)
+  # How many times the engine may rebuild the plan for one task.
+  max_replans: 3                                # (default)
+  # Consecutive failed tool calls tolerated before the task is blocked.
+  max_consecutive_failures: 3                   # (default)
+  # Attempts to recover a missing/stale snapshot ref before giving up.
+  max_snapshot_recoveries: 1                    # (default)
+  # Turns without plan progress before a replan is forced.
+  max_steps_without_plan_advance: 8             # (default)
+  # Identical consecutive snapshots tolerated before a replan is forced.
+  max_unchanged_snapshots: 3                    # (default)
+  # Actions that changed no observable state before a replan is forced.
+  max_ineffective_actions: 3                    # (default)
+  # Wall-clock budget for one task, in seconds.
+  task_timeout_seconds: 300.0                   # (default)
+  # Silence in the event stream that means "stalled", in seconds. Clamped to
+  # task_timeout_seconds, so a smaller task budget shortens it automatically.
+  progress_timeout_seconds: 120.0               # (default)
+  # Budget for loading the latest carried-forward session state, in seconds.
+  # Clamped to task_timeout_seconds as well.
+  latest_state_timeout_seconds: 15.0            # (default)
+
+# ---------------------------------------------------------------------------
+# How much tool output reaches the model. Lower = cheaper prompts, higher = less
+# truncation. Truncation is always recorded in the observation.
+observation:
+  # Characters of page content kept per observation.
+  max_content_preview_chars: 1200               # (default)
+  # Snapshot element refs listed per observation.
+  max_refs_in_observation: 25                   # (default)
+
+# ---------------------------------------------------------------------------
+# Conversation history shaping (the durable list lives on LoopState.messages).
+memory:
+  # Snapshot refs kept on a tool message before older ones are elided.
+  max_tool_message_refs: 25                     # (default)
+
+# ---------------------------------------------------------------------------
+# Persisted event/trace detail under .autobrowser/sessions/<session_id>/.
+events:
+  # Longest string recorded in an event before it is truncated.
+  max_string_chars: 20000                       # (default)
+  # Text kept per entry in agent_trace.jsonl (a diagnostic sidecar, NOT the
+  # metrics source of truth).
+  agent_trace_max_text_chars: 500               # (default)
+
+# ---------------------------------------------------------------------------
+# Where runtime output lands.
+storage:
+  # Root for all session/batch output. Relative paths resolve from the CWD.
+  root_dir: .autobrowser                        # (default)
+  # <root_dir>/<sessions_subdir>/<session_id>/ -- session.json, tasks.json,
+  # events.jsonl, workspace/.
+  sessions_subdir: sessions                     # (default)
+  # <root_dir>/<batches_subdir>/ -- batch run records.
+  batches_subdir: batches                       # (default)
+  # Per-session scratch space for screenshots and artifacts.
+  workspace_subdir: workspace                   # (default)
+
+# ---------------------------------------------------------------------------
+flags:
+  # INERT. The engine-native AgentLoopEngine is the only runtime; this parses
+  # for CLI compatibility (--agent-loop) and changes no routing.
+  agent_loop: false                             # (default)

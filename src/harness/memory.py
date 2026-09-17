@@ -27,6 +27,7 @@ from uuid import uuid4
 
 from src.agent_loop.context import ContextAssembler
 from src.browser import is_browser_snapshot_name
+from src.config import get_settings
 from src.contracts import CompactToolObservation, ToolRequest, ToolResult
 from src.messages import (
     Message,
@@ -37,7 +38,6 @@ from src.messages import (
     user_message,
 )
 
-MAX_TOOL_MESSAGE_REFS = 25
 ORIGINAL_USER_REQUEST_PREFIX = "Original user request:\n"
 USER_REQUEST_PREFIX = "User request"
 
@@ -266,7 +266,8 @@ def _snapshot_tool_message(
 
     parts = [tool_name, summary]
     if refs:
-        parts.extend(["Refs:", "\n".join(refs[:MAX_TOOL_MESSAGE_REFS])])
+        limit = get_settings().memory.max_tool_message_refs
+        parts.extend(["Refs:", "\n".join(refs[:limit])])
     return "\n\n".join(part for part in parts if part)
 
 
@@ -282,7 +283,8 @@ def _raw_tool_message(result: ToolResult, refs: list[str]) -> str:
     if error:
         parts.extend(["Error:", error])
     if refs:
-        parts.extend(["Refs:", "\n".join(refs[:MAX_TOOL_MESSAGE_REFS])])
+        limit = get_settings().memory.max_tool_message_refs
+        parts.extend(["Refs:", "\n".join(refs[:limit])])
     return "\n\n".join(part for part in parts if part)
 
 

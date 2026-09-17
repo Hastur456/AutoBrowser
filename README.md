@@ -33,7 +33,7 @@ assumptions.
 - Chrome or Chromium for browser-enabled runs
 - An Ollama-compatible chat model for normal CLI execution
 
-The default model is `gpt-oss:20b-cloud`. Override it with `--model`.
+The default model is `gemma4:31b-cloud`. Override it with `--model`.
 
 ## Install
 
@@ -48,13 +48,52 @@ For browser-enabled runs, make sure `npx` can start Playwright MCP. The CLI uses
 
 ## Configuration
 
-The CLI reads `.env` automatically. Common settings are:
+All settings live in `src/config.py` and are read from `.env` automatically. Names are
+`AUTOBROWSER_<SECTION>__<FIELD>`; the environment outranks the file.
+
+`.env.example` documents every setting with its default — copy it to `.env` and uncomment
+what you want to change. Common settings are:
 
 ```env
-CHROME_PATH=C:\Program Files\Google\Chrome\Application\chrome.exe
-USER_DATA_DIR=C:\temp\chrome_debug_profile
-PORT=9222
+AUTOBROWSER_BROWSER__CHROME_PATH=C:/Program Files/Google/Chrome/Application/chrome.exe
+AUTOBROWSER_BROWSER__USER_DATA_DIR=C:/temp/chrome_debug_profile
+AUTOBROWSER_BROWSER__CDP_PORT=9222
+AUTOBROWSER_LLM__MODEL=gemma4:31-cloud
 ```
+
+A YAML file can layer *over* the environment for values that are awkward to spell as
+env vars — it works as a partial profile, so it only has to name what it changes.
+
+The configuration file is resolved as follows:
+
+1. If `AUTOBROWSER_CONFIG_FILE` is set, that path is used. If the file does not
+   exist, startup fails.
+2. If `AUTOBROWSER_CONFIG_FILE` is not set, the default `config.yaml` is used
+   when it exists.
+3. If neither file exists, configuration continues using environment variables,
+   `.env`, secret files, and Pydantic defaults.
+
+The default `config.yaml` is therefore optional. An explicitly configured file
+is mandatory and must exist.
+
+To use a specific configuration file:
+
+```powershell
+$env:AUTOBROWSER_CONFIG_FILE="config.local.yaml"; python main.py
+```
+
+That name has to be a real environment variable — a line in `.env` will not work, because the path is resolved before settings are built. Precedence, highest first: `Settings(...)` kwargs → the resolved YAML file, if present → `AUTOBROWSER_*` environment variables → `.env` → secret files → Pydantic defaults. The file is a partial profile: it only has to name the fields it should decide, and each of those outranks every source below, merging per field — naming `llm.model` there settles that field and leaves the rest of the
+`llm` block to the environment, `.env` and the defaults. Note that this also overrides the
+`.env` in this repository, which pins `AUTOBROWSER_LLM__MODEL` and
+`AUTOBROWSER_BROWSER__CDP_PORT`. `config.example.yaml` shows the shape and lists the accepted
+values; a copy may hold `llm.api_key`, so the conventional names — `config.yaml`,
+`config.local.yaml`, `secrets.yaml` — are git-ignored.
+
+Write Windows paths with forward slashes: `python-dotenv` decodes escape sequences inside
+double-quoted values, so `"C:\temp"` silently becomes a tab character.
+
+`AUTOBROWSER_LLM__API_KEY` is passed to the provider as an `Authorization: Bearer` header;
+leave it unset for a local Ollama daemon. `AUTOBROWSER_LLM__HOST` is likewise optional.
 
 Each of these can also be overridden from the command line with `--chrome-path`,
 `--user-data-dir`, and `--cdp-port`.
@@ -182,7 +221,8 @@ python -m pytest tests\test_prompts.py
 | `main.py` | CLI parsing and wiring the process into the session runtime. |
 | `src/contracts.py` | Provider-neutral typed tool/plan/observation contracts and loop thresholds (imports nothing from the loop, harness, or browser layers). |
 | `src/messages.py` | Dependency-free provider-neutral chat `Message`/`ToolCall` types shared by the engine and providers. |
-| `src/llm.py` | Model defaults (`DEFAULT_OLLAMA_MODEL`) and the provider-neutral `ChatModel`/`ModelResponse` chat contract. |
+| `src/llm.py` | The provider-neutral `ChatModel`/`ModelResponse` chat contract. |
+| `src/config.py` | Project configuration with functionality to load configuration from environment variables and a YAML file. |
 | `src/providers/` | Provider adapters (e.g. `ollama.py`) that map neutral `Message`/`ToolDef` objects to a backend wire format. |
 | `src/agent_loop/` | Runtime-facing action contracts and model parsing, events, trace replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary around the engine-native `AgentLoopEngine`. |
 | `src/browser/` | Browser provider contracts, canonical names, Playwright MCP adapter, and fake browser backend. |
@@ -207,7 +247,7 @@ plan (model call #0) -> while turn <= cap:
       tool_call -> policy -> (human_input?) -> execute -> observe
 ```
 
-`DEFAULT_TURN_CAP = 50` bounds the loop, and each run returns a terminal
+`settings.loop.turn_cap` (default 50) bounds the loop, and each run returns a terminal
 `AgentLoopResult`. The runtime infrastructure is injected through
 `SessionRuntime` and `BrowserHarness` in `src/harness/` and bundled for the
 engine by `EngineResources.from_harness`. The engine owns reasoning, routing,
