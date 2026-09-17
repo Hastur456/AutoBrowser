@@ -57,7 +57,7 @@ llm:
   host: http://localhost:11434          # (default) e.g. http://localhost:11434
   # Ollama cloud key. This file holds a live secret, so it must stay out of git.
   # A local daemon needs no key -- use null.
-  # api_key: "YOUR_API_KEY"
+  api_key: "YOUR_API_KEY"
   # Reasoning budget. Accepted: minimal | low | medium | high. DECLARATIVE FOR
   # NOW -- see the note under max_reasoning_tokens.
   reasoning_effort: null                        # (default)

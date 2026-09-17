@@ -19,11 +19,26 @@ tab character; forward slashes sidestep the hazard under every quoting style.
 
 A YAML file can layer *over* the environment for tunables that are awkward to
 spell as env vars -- a whole ``llm:`` block, ``reasoning_effort``, an
-``api_key``. It is strictly opt-in: no file is discovered implicitly, so the
-active configuration is never a function of which files happen to sit in the
-working directory. Name it explicitly::
+``api_key``.
 
-    AUTOBROWSER_CONFIG_FILE=config.local.yaml python main.py --task "..."
+The configuration file is resolved as follows:
+
+1. If `AUTOBROWSER_CONFIG_FILE` is set, that path is used. If the file does
+   not exist, startup fails.
+2. If `AUTOBROWSER_CONFIG_FILE` is not set, `DEFAULT_CONFIG_FILE_YAML` is
+   used when the default file exists.
+3. If neither file exists, configuration continues using the environment,
+   `.env`, secrets, and Pydantic defaults.
+
+The default YAML file is therefore optional, while an explicitly configured
+file is mandatory. The default file is only loaded when it actually exists;
+there is no error merely because `config.yaml` is absent.
+
+Name a specific file explicitly when you want to override the default::
+
+```
+AUTOBROWSER_CONFIG_FILE=config.local.yaml python main.py --task "..."
+```
 
 Precedence, highest first:
 
@@ -89,6 +104,8 @@ ENV_NESTED_DELIMITER = "__"
 #: source"; set but missing means the process refuses to start (see
 #: :func:`_resolve_config_path`).
 CONFIG_FILE_ENV_VAR = "AUTOBROWSER_CONFIG_FILE"
+ROOT_PATH = Path(__file__).resolve().parent.parent
+DEFAULT_CONFIG_FILE_YAML = ROOT_PATH / "config.yaml"
 
 
 class _Section(BaseModel):
@@ -427,7 +444,7 @@ class FlagsSettings(_Section):
 
 
 def _resolve_config_path() -> Path | None:
-    """Return the explicitly configured YAML file, or ``None``.
+    """Return the explicitly configured YAML file.
 
     The path cannot be a settings field itself -- the file has to be located
     before the model that would describe it exists -- so it comes from
@@ -436,15 +453,21 @@ def _resolve_config_path() -> Path | None:
     """
 
     configured = os.environ.get(CONFIG_FILE_ENV_VAR)
-    if not configured:
-        return None
 
-    path = Path(os.path.expandvars(configured)).expanduser()
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"{CONFIG_FILE_ENV_VAR} points at a file that does not exist: {path}"
-        )
-    return path
+    if not configured:
+        configured = DEFAULT_CONFIG_FILE_YAML
+
+        path = Path(os.path.expandvars(configured)).expanduser()
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"{CONFIG_FILE_ENV_VAR} points at a file that does not exist: {path}"
+            )
+        return path
+
+    if DEFAULT_CONFIG_FILE_YAML.is_file():
+        return DEFAULT_CONFIG_FILE_YAML
+
+    return None
 
 
 class _YamlFileSettingsSource(YamlConfigSettingsSource):

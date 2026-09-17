@@ -27,11 +27,11 @@ from pydantic import SecretStr
 
 from src.config import get_settings
 from src.contracts import ToolDef
-from src.llm import ModelResponse
+from src.llm import ModelResponse, ChatModel
 from src.messages import Message, ToolCall
 
 
-class OllamaChatModel:
+class OllamaChatModel(ChatModel):
     """One Ollama model behind the provider-neutral :class:`ChatModel` contract."""
 
     def __init__(

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Any, Literal, TypedDict
 
 AgentDecision = Literal["tool_call", "replan", "done"]
 PolicyDecision = Literal["approved", "needs_human", "blocked"]
