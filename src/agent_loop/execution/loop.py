@@ -224,10 +224,8 @@ class TurnController:
         self._compress_tools = compress_tools
         self._human_input = human_input or _deny_human_input
         self._source = source
-        self._broker = ToolBroker(
-            resources.tool_registry,
-            browser_providers=list(resources.browser_providers or []),
-        )
+        # normalizers are registered with the tool registry (ToolRegistry.get_normalizers)
+        self._broker = ToolBroker(resources.tool_registry)
         self._model_driver = ModelDriver(
             resources.llm,
             tool_registry=resources.tool_registry,

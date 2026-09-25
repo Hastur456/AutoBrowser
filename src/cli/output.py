@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 _NODE_LABELS = {
@@ -81,7 +82,6 @@ def print_step(
         "tool_result",
         "observation",
         "snapshot",
-        "refs",
         "last_tool",
         "last_args",
         "repeat_count",
@@ -94,14 +94,34 @@ def print_step(
 
 
 def print_tools(tools: list[Any]) -> None:
-    """Print loaded MCP tool names."""
+    """Print loaded MCP tool names (with the owning MCP server when known)."""
 
     print("MCP tools:")
     if not tools:
         print("- none")
         return
     for tool in tools:
-        print(f"- {getattr(tool, 'name', tool)}")
+        name = getattr(tool, "name", tool)
+        server = getattr(tool, "server", None)
+        print(f"- {name} [{server}]" if server else f"- {name}")
+
+
+def format_mcp_status(statuses: Mapping[str, Any]) -> list[str]:
+    """One line per MCP server: state, generation, last error."""
+
+    lines: list[str] = []
+    for name, status in statuses.items():
+        state = getattr(getattr(status, "state", None), "value", getattr(status, "state", "?"))
+        line = f"{name:<16} {state:<12} gen={getattr(status, 'generation', 0)}"
+        if getattr(status, "stateful", False):
+            line += " stateful"
+        if getattr(status, "catalog_stale", False):
+            line += " catalog=stale"
+        error = getattr(status, "last_error", None)
+        if error:
+            line += f" error={error}"
+        lines.append(line)
+    return lines
 
 
 def print_final_state(result: Any, as_json: bool) -> None:
@@ -124,6 +144,7 @@ def print_final_state(result: Any, as_json: bool) -> None:
 
 __all__ = [
     "SNAPSHOT_REDACTION",
+    "format_mcp_status",
     "format_state",
     "print_final_state",
     "print_step",

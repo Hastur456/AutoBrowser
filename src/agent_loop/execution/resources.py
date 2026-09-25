@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.browser import BrowserProvider
+from src.browser.normalization import ToolCallNormalizer, BrowserToolNormalizer
 from src.harness.tools import ToolRegistry
 
 
@@ -35,7 +36,7 @@ class EngineResources:
 
     llm: Any
     tool_registry: ToolRegistry
-    browser_providers: Sequence[BrowserProvider]
+    tool_normalizers: Sequence[ToolCallNormalizer]
     context: Any
     events: Any
 
@@ -58,7 +59,7 @@ class EngineResources:
         return cls(
             llm=llm,
             tool_registry=tool_registry,
-            browser_providers=list(tool_registry.get_browser_providers()),
+            tool_normalizers=BrowserToolNormalizer(),
             context=harness.context,
             events=events if events is not None else harness.events,
         )

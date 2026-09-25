@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import inspect
+import re
 import sys
 import threading
 from concurrent.futures import Future
@@ -16,8 +18,12 @@ from typing import Any, Iterable
 import cmd2
 from cmd2 import Cmd2ArgumentParser, with_argparser
 
+from src.cli.output import format_mcp_status
 from src.harness.session import SessionContext, SessionRuntime, TaskRecord
 from src.harness.tools import ToolRegistry
+from src.mcp import ConnectionState
+
+_URL_PATTERN = re.compile(r"https?://[^\s\"'<>`)\]]+")
 
 
 @dataclass(frozen=True)
@@ -41,6 +47,7 @@ COMMANDS: tuple[CommandSpec, ...] = (
     CommandSpec("Browser", "browser", "browser", "Show browser/tool status."),
     CommandSpec("Browser", "snapshot", "snapshot", "Save a screenshot to workspace/screenshots."),
     CommandSpec("Browser", "url", "url", "Show the current page URL."),
+    CommandSpec("MCP", "mcp", "mcp [reconnect N]", "Show MCP servers or restart server N."),
     CommandSpec("Service", "help", "help [command]", "Show command help."),
     CommandSpec("Service", "exit", "exit / quit", "Exit the CLI."),
     CommandSpec("Service", "status", "status", "Show short session and browser status."),
@@ -52,6 +59,10 @@ run_parser.add_argument("text", nargs=argparse.REMAINDER, help="Task text.")
 
 history_parser = Cmd2ArgumentParser(description="Show dialogue history.")
 history_parser.add_argument("limit", nargs="?", type=int, default=10, help="Number of messages.")
+
+mcp_parser = Cmd2ArgumentParser(description="Show MCP server status or restart a server.")
+mcp_parser.add_argument("action", nargs="?", choices=("status", "reconnect"), default="status")
+mcp_parser.add_argument("server", nargs="?", help="Server name (for reconnect).")
 
 
 class RuntimeLoop:
@@ -237,11 +248,37 @@ class AgentCli(cmd2.Cmd):
         """Show browser status."""
 
         context = self.runtime.context
-        browser_state = "disabled" if self.runtime.config.no_mcp else "available"
-        if not context.initialized:
-            browser_state = "not started" if not self.runtime.config.no_mcp else "disabled"
-        self.poutput(f"Browser: {browser_state}")
+        self.poutput(f"Browser: {self._browser_state()}")
+        mcp = context.mcp
+        if mcp is not None and mcp.browser_server:
+            self.poutput(f"Server:  {mcp.browser_server}")
         self.poutput(f"Tools:   {self._tool_count_text(context.tool_registry)}")
+
+    @with_argparser(mcp_parser)
+    def do_mcp(self, args: argparse.Namespace) -> None:
+        """Show MCP server status, or restart one server: mcp reconnect <name>."""
+
+        mcp = self.runtime.context.mcp
+        if mcp is None:
+            self.poutput("MCP is disabled." if self.runtime.config.no_mcp else "MCP is not started.")
+            return
+        if args.action == "reconnect":
+            name = args.server or mcp.browser_server
+            if not name:
+                self.perror("Server name is required.")
+                return
+            if self._is_task_running():
+                self.perror("Cannot reconnect while a task is running. Use 'cancel' first.")
+                return
+            try:
+                self._runtime_loop.run(mcp.manager.reconnect(name))
+            except Exception as exc:
+                self.perror(f"Reconnect failed: {exc}")
+                return
+            self.poutput(self._ok(f"Reconnected {name} (generation {mcp.manager.generation(name)})."))
+            return
+        for line in format_mcp_status(mcp.status()):
+            self.poutput(line)
 
     def do_snapshot(self, _: str) -> None:
         """Save a screenshot of the current page to workspace/screenshots."""
@@ -267,7 +304,7 @@ class AgentCli(cmd2.Cmd):
         """Show short session, browser, and task status."""
 
         context = self.runtime.context
-        browser = "off" if self.runtime.config.no_mcp else ("on" if context.initialized else "idle")
+        browser = self._browser_state()
         task = "running" if self._is_task_running() else "idle"
         self.poutput(
             f"session={context.session_id[:8]} status={task} "
@@ -296,10 +333,12 @@ class AgentCli(cmd2.Cmd):
 
         path = workspace.screenshots / f"snapshot-{datetime.now():%Y%m%d-%H%M%S}.png"
         tool = await self._get_tool("browser_take_screenshot", "browser_screenshot")
-        await self._call_tool(tool, {"filename": str(path)})
+        result = await self._call_tool_raw(tool, {"filename": str(path)})
 
         if not path.exists():
-            result = await self._call_tool(tool, {})
+            # the server saved the file elsewhere (or not at all): use the returned image
+            if self._image_bytes(result) is None:
+                result = await self._call_tool_raw(tool, {})
             await self._write_tool_image_result(path, result)
 
         self.runtime.context.artifacts.register("snapshot", path, kind="screenshot")
@@ -314,15 +353,15 @@ class AgentCli(cmd2.Cmd):
                 evaluate,
                 {"function": "() => window.location.href"},
             )
-            text = self._result_text(result).strip()
-            if text:
-                return text.strip('"')
+            url = self._extract_url(self._result_text(result))
+            if url:
+                return url
 
         snapshot = await self._get_optional_tool("browser_snapshot")
         if snapshot is None:
             return None
         text = self._result_text(await self._call_tool(snapshot, {}))
-        return self._extract_url_from_snapshot(text)
+        return self._extract_url(text)
 
     async def _get_tool(self, *names: str) -> Any:
         tool = await self._get_optional_tool(*names)
@@ -356,17 +395,35 @@ class AgentCli(cmd2.Cmd):
 
         raise TypeError(f"Tool {tool!r} is not invocable.")
 
-        raise TypeError(f"Unsupported tool type: {type(tool).__name__}")
+    async def _call_tool_raw(self, tool: Any, payload: dict[str, Any]) -> Any:
+        """Call a tool keeping binary content (MCP tools return ``CallToolResult``)."""
+
+        invoke_raw = getattr(tool, "invoke_raw", None)
+        if not callable(invoke_raw):
+            return await self._call_tool(tool, payload)
+        result = await invoke_raw(payload)
+        if getattr(result, "isError", False):
+            raise RuntimeError(self._result_text(result) or "Tool reported an error.")
+        return result
 
     async def _write_tool_image_result(self, path: Path, result: Any) -> None:
+        data = self._image_bytes(result)
+        if data is None:
+            raise RuntimeError("Screenshot tool did not create a file or return image bytes.")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+    def _image_bytes(self, result: Any) -> bytes | None:
+        if isinstance(result, bytes):
+            return result
         data = getattr(result, "data", None)
         if isinstance(data, bytes):
-            path.write_bytes(data)
-            return
-        if isinstance(result, bytes):
-            path.write_bytes(result)
-            return
-        raise RuntimeError("Screenshot tool did not create a file or return image bytes.")
+            return data
+        for block in getattr(result, "content", None) or []:
+            # MCP ImageContent: base64 ``data`` + ``mimeType``
+            if getattr(block, "type", None) == "image" and isinstance(getattr(block, "data", None), str):
+                return base64.b64decode(block.data)
+        return None
 
     def _start_background_task(self, task_text: str) -> None:
         self._task_done.clear()
@@ -451,6 +508,22 @@ class AgentCli(cmd2.Cmd):
             return self._style("failed", "red")
         return self._style("done", "green")
 
+    def _browser_state(self) -> str:
+        if self.runtime.config.no_mcp:
+            return "disabled"
+        context = self.runtime.context
+        mcp = context.mcp
+        if not context.initialized or mcp is None:
+            return "not started"
+        if not mcp.browser_server:
+            return "no browser server"
+        status = mcp.status().get(mcp.browser_server)
+        if status is None:
+            return "unknown"
+        if status.state is ConnectionState.READY:
+            return "on"
+        return status.state.value
+
     def _tool_count_text(self, registry: ToolRegistry | None) -> str:
         if registry is None:
             return "0"
@@ -476,14 +549,17 @@ class AgentCli(cmd2.Cmd):
                 return "\n".join(parts)
         return str(result)
 
-    def _extract_url_from_snapshot(self, text: str) -> str | None:
+    def _extract_url(self, text: str) -> str | None:
+        """First URL in a tool's text output (evaluate result or page snapshot)."""
+
         for line in text.splitlines():
-            stripped = line.strip()
+            stripped = line.strip().lstrip("-* ").strip()
             if stripped.lower().startswith(("url:", "page url:")):
-                return stripped.split(":", 1)[1].strip()
-            if stripped.startswith(("http://", "https://")):
-                return stripped
-        return None
+                match = _URL_PATTERN.search(stripped)
+                if match:
+                    return match.group(0)
+        match = _URL_PATTERN.search(text)
+        return match.group(0) if match else None
 
     def _format_dt(self, value: datetime | None) -> str:
         return value.isoformat(timespec="seconds") if value else "-"

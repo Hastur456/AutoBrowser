@@ -93,6 +93,7 @@ from pydantic_settings import (
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
+from src.mcp.config import MCPServerConfig
 
 #: Env var namespace for every setting.
 ENV_PREFIX = "AUTOBROWSER_"
@@ -538,6 +539,8 @@ class Settings(BaseSettings):
     events: EventSettings = Field(default_factory=EventSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     flags: FlagsSettings = Field(default_factory=FlagsSettings)
+    mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
+    browser_mcp_server: str | None = "playwright"
 
     @classmethod
     def settings_customise_sources(
