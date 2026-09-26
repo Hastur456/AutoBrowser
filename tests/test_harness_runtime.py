@@ -14,7 +14,7 @@ import pytest
 from src.agent_loop.context import ContextAssembler
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.agent_loop.execution.resources import EngineResources
-from src.browser import FakeBrowserProvider
+from src.harness.normalization import SchemaArgsNormalizer
 from src.harness.runtime import BrowserHarness
 from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolRegistry
@@ -72,9 +72,9 @@ async def test_browser_harness_composes_tool_registry_from_tools() -> None:
 
 @pytest.mark.asyncio
 async def test_engine_resources_from_harness_bundles_collaborators() -> None:
-    provider = FakeBrowserProvider(['- button "Catalog" ref=e14'])
     tools = [FakeTool()]
-    tool_registry = ToolRegistry(tools=tools, providers=[provider])
+    normalizer = SchemaArgsNormalizer()
+    tool_registry = ToolRegistry(tools=tools, normalizers=[normalizer])
     context_assembler = ContextAssembler(system_prompt="HARNESS PROMPT")
     events = EventEmitter(InMemoryEventSink(), session_id="session-1")
     harness = BrowserHarness(
@@ -88,7 +88,7 @@ async def test_engine_resources_from_harness_bundles_collaborators() -> None:
 
     assert resources.llm is llm
     assert resources.tool_registry is tool_registry
-    assert resources.browser_providers == [provider]
+    assert resources.tool_normalizers == [normalizer]
     assert resources.context is context_assembler
     assert resources.events is events
 

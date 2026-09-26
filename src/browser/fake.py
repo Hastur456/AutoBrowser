@@ -39,7 +39,10 @@ class FakeBrowserProvider(BrowserProvider):
     async def get_tools(self) -> Sequence[Any]:
         return list(self._tools)
 
-    def normalize_request(self, request: ToolRequest, state: AgentState) -> ToolRequest:
+    def normalize_request(
+        self, request: ToolRequest, state: AgentState, tools: Any = None
+    ) -> ToolRequest:
+        _ = tools
         normalized_request = dict(request)
         args = dict(request.get("args") or {})
         requested_name = str(request.get("name", "") or "").strip()

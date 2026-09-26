@@ -25,16 +25,18 @@ The configuration file is resolved as follows:
 
 1. If `AUTOBROWSER_CONFIG_FILE` is set, that path is used. If the file does
    not exist, startup fails.
-2. If `AUTOBROWSER_CONFIG_FILE` is not set, `DEFAULT_CONFIG_FILE_YAML` is
-   used when the default file exists.
-3. If neither file exists, configuration continues using the environment,
-   `.env`, secrets, and Pydantic defaults.
+2. If `AUTOBROWSER_CONFIG_FILE` is not set, `config.yaml` at the repo root
+   (`DEFAULT_CONFIG_FILE_YAML`) is used when it exists. This is a fixed path,
+   not a working-directory scan: a `config.yaml` elsewhere is never picked up.
+3. If neither exists, no file source is used at all.
 
-The default YAML file is therefore optional, while an explicitly configured
-file is mandatory. The default file is only loaded when it actually exists;
-there is no error merely because `config.yaml` is absent.
+`config.yaml` and `config.local.yaml` are git-ignored, so `config.yaml` at the
+repo root doubles as a personal default profile -- convenient for a local
+override (e.g. `llm.model`, a Chrome profile path) without exporting env vars
+every session, but it also means the file is set once per machine and easy to
+forget about; check it before puzzling over a setting that will not budge.
 
-Name a specific file explicitly when you want to override the default::
+Name a specific file explicitly to use something other than the default::
 
 ```
 AUTOBROWSER_CONFIG_FILE=config.local.yaml python main.py --task "..."
@@ -101,11 +103,15 @@ ENV_PREFIX = "AUTOBROWSER_"
 #: Separator between a section and a field in an env var name.
 ENV_NESTED_DELIMITER = "__"
 
-#: Env var naming an explicit YAML settings file. Never set means "no file
-#: source"; set but missing means the process refuses to start (see
-#: :func:`_resolve_config_path`).
+#: Env var naming an explicit YAML settings file. Set but missing means the process
+#: refuses to start; unset falls back to :data:`DEFAULT_CONFIG_FILE_YAML` when that
+#: exists (see :func:`_resolve_config_path`).
 CONFIG_FILE_ENV_VAR = "AUTOBROWSER_CONFIG_FILE"
 ROOT_PATH = Path(__file__).resolve().parent.parent
+#: Optional local profile, auto-loaded when present and no env var names another file.
+#: Fixed to the repo root regardless of the process's working directory; not a scan --
+#: a stray file elsewhere is never picked up. Git-ignored, so it is safe to keep secrets
+#: in it (see ``config.yaml``'s sibling ``config.example.yaml`` for the shape).
 DEFAULT_CONFIG_FILE_YAML = ROOT_PATH / "config.yaml"
 
 
@@ -473,30 +479,26 @@ class FlagsSettings(_Section):
 
 
 def _resolve_config_path() -> Path | None:
-    """Return the explicitly configured YAML file.
+    """Return the YAML file to load, if any.
 
-    The path cannot be a settings field itself -- the file has to be located
-    before the model that would describe it exists -- so it comes from
-    :data:`CONFIG_FILE_ENV_VAR` and nothing else. No working-directory scan:
-    a stray ``config.yaml`` must not silently change what the process does.
+    The path cannot be a settings field itself -- the file has to be located before the
+    model that would describe it exists. :data:`CONFIG_FILE_ENV_VAR` wins when set: the
+    file it names is mandatory (a typo must fail loudly, not fall back to defaults
+    silently). Unset falls back to :data:`DEFAULT_CONFIG_FILE_YAML` -- a fixed path, not a
+    working-directory scan -- when that file exists; otherwise there is no file source.
     """
 
     configured = os.environ.get(CONFIG_FILE_ENV_VAR)
 
     if not configured:
-        configured = DEFAULT_CONFIG_FILE_YAML
+        return DEFAULT_CONFIG_FILE_YAML if DEFAULT_CONFIG_FILE_YAML.is_file() else None
 
-        path = Path(os.path.expandvars(configured)).expanduser()
-        if not path.is_file():
-            raise FileNotFoundError(
-                f"{CONFIG_FILE_ENV_VAR} points at a file that does not exist: {path}"
-            )
-        return path
-
-    if DEFAULT_CONFIG_FILE_YAML.is_file():
-        return DEFAULT_CONFIG_FILE_YAML
-
-    return None
+    path = Path(os.path.expandvars(configured)).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"{CONFIG_FILE_ENV_VAR} points at a file that does not exist: {path}"
+        )
+    return path
 
 
 class _YamlFileSettingsSource(YamlConfigSettingsSource):
@@ -590,8 +592,10 @@ class Settings(BaseSettings):
         the sources below. pydantic-settings folds the sources with a deep
         update, so naming ``llm.model`` in the file leaves ``llm.temperature``
         to the environment rather than blanking it. The source is omitted
-        entirely when :data:`CONFIG_FILE_ENV_VAR` is unset, which keeps the
-        environment and ``.env`` behaving as they did before it existed.
+        entirely when :data:`CONFIG_FILE_ENV_VAR` is unset and
+        :data:`DEFAULT_CONFIG_FILE_YAML` (``config.yaml`` at the repo root) does not
+        exist either, which keeps the environment and ``.env`` behaving as they did
+        before this source existed.
         """
 
         sources: list[PydanticBaseSettingsSource] = [init_settings]
@@ -614,8 +618,9 @@ def get_settings() -> Settings:
 
 
 def reload_settings() -> Settings:
-    """Drop the cached settings and re-read the environment, ``.env`` and the
-    YAML file named by :data:`CONFIG_FILE_ENV_VAR`."""
+    """Drop the cached settings and re-read the environment, ``.env`` and the YAML
+    file (named by :data:`CONFIG_FILE_ENV_VAR`, or :data:`DEFAULT_CONFIG_FILE_YAML`
+    when that is unset)."""
 
     get_settings.cache_clear()
     return get_settings()
@@ -624,6 +629,7 @@ def reload_settings() -> Settings:
 __all__ = [
     "BrowserSettings",
     "CONFIG_FILE_ENV_VAR",
+    "DEFAULT_CONFIG_FILE_YAML",
     "ENV_NESTED_DELIMITER",
     "ENV_PREFIX",
     "EventSettings",

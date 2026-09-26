@@ -34,12 +34,12 @@ def test_forbidden_args_are_dropped() -> None:
 
 
 def test_canonical_name_resolves_to_exposed_tool() -> None:
-    # the stub vocabulary maps browser_press -> browser_press_key
-    tools = {"browser_press": tool("browser_press", {"key": {}})}
+    # names.py maps the canonical dotted action to the Playwright tool name.
+    tools = {"browser_click": tool("browser_click", {"ref": {}})}
     out = BrowserToolNormalizer().normalize_request(
-        {"name": "browser_press_key", "args": {"key": "Enter"}}, {}, tools
+        {"name": "browser.click", "args": {"ref": "e1"}}, {}, tools
     )
-    assert out["name"] == "browser_press"
+    assert out["name"] == "browser_click"
 
 
 def test_non_browser_requests_pass_through() -> None:

@@ -161,14 +161,18 @@ defaults; an empty value means "not set"; sections are `frozen` with `extra="for
 header — the vendor `OLLAMA_API_KEY` is no longer read. Adding a setting means updating
 `tests/test_config.py`, which fails when `.env.example` drifts from the code.
 
-A YAML file can slot in above the environment as a fourth source, but only when
-`AUTOBROWSER_CONFIG_FILE` names it — there is no working-directory scan, by design. Precedence
-is init kwargs > YAML > env > `.env` > secret files, and pydantic-settings merges deeply, so
-the file decides exactly the fields it names while everything else still resolves below it: a
-partial profile, not a full config, and one that beats `AUTOBROWSER_*` for the fields it sets.
-The file source rejects unknown section names itself (the root is `extra="ignore"`).
-`config.example.yaml` is the template;
-`docs/decisions/2026-09-16-opt-in-yaml-settings-file.md` records why.
+A YAML file can slot in above the environment as a fourth source: `AUTOBROWSER_CONFIG_FILE`
+names it explicitly (mandatory once set — a missing file fails startup), and with that unset,
+`config.yaml` at the repo root auto-loads if present — a fixed path, not a working-directory
+scan, and silent when absent. `config.yaml`/`config.local.yaml` are git-ignored, so the root
+file doubles as a personal default profile. Precedence is init kwargs > YAML > env > `.env` >
+secret files, and pydantic-settings merges deeply, so the file decides exactly the fields it
+names while everything else still resolves below it: a partial profile, not a full config, and
+one that beats `AUTOBROWSER_*` for the fields it sets. The file source rejects unknown section
+names itself (the root is `extra="ignore"`). `config.example.yaml` is the template;
+`docs/decisions/2026-09-16-opt-in-yaml-settings-file.md` records the original opt-in design,
+superseded on the activation question by
+`docs/decisions/2026-09-26-default-yaml-settings-file.md`.
 
 ## Feature Flags (env vars)
 

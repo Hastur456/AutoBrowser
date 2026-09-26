@@ -120,6 +120,20 @@ def _cancelling() -> bool:
     return bool(task is not None and task.cancelling())
 
 
+def _reap_abandoned_owner(task: asyncio.Task[Any]) -> None:
+    """Retrieve the outcome of an owner task shutdown gave up waiting for.
+
+    Only ever attached once ``_stop_owner`` has already stopped awaiting the task, so this
+    exists purely to prevent asyncio's "exception was never retrieved" warning once it
+    eventually finishes on its own.
+    """
+
+    if not task.cancelled():
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("MCP owner task finished after shutdown gave up on it: %s", _describe(exc))
+
+
 # --------------------------------------------------------------------------- runtime state
 
 
@@ -719,9 +733,19 @@ class MCPManager:
         managed.wake.set()
         # asyncio.wait never raises the owner's outcome (errors are in last_error)
         _, pending = await asyncio.wait({task}, timeout=timeout)
-        if pending:
-            task.cancel()  # exiting the contexts still happens inside the owner task
-            await asyncio.wait({task})
+        if not pending:
+            return
+        task.cancel()  # exiting the contexts still happens inside the owner task
+        _, pending = await asyncio.wait({task}, timeout=timeout)
+        if not pending:
+            return
+        # The owner is still stuck after its own cancellation: a raw Task.cancel() racing
+        # a third-party anyio cancel scope already unwinding (e.g. the SDK's own
+        # process-termination wait) can swallow the cancellation and block for as long as
+        # the child process takes to exit on its own -- observed up to the full duration of
+        # an in-flight, uncancellable server-side call. shutdown()/close() must stay bounded
+        # regardless, so give up waiting here and let the owner finish in the background.
+        task.add_done_callback(_reap_abandoned_owner)
 
     # ------------------------------------------------------------------ internal: ephemeral
 
