@@ -79,6 +79,9 @@ or choose a different strategy instead of asking for the same snapshot again.
 Treat these patterns as non-progress:
 
 - repeating the same tool call with the same arguments;
+- re-running a call that already returned an empty or identical result after
+  re-capturing `browser_snapshot` — an unchanged page means the earlier result
+  still holds (the Action History marks such calls "identical result Nx");
 - clicking the same Search button/search icon after an unchanged snapshot;
 - using `browser_find` for implementation words such as `search`, `input`,
   `textbox`, or `button` on localized pages;
@@ -89,7 +92,8 @@ Treat these patterns as non-progress:
 
 When non-progress is detected, replan to a different visible control, direct URL
 navigation, snapshot-based extraction, or a final answer with the data already
-available.
+available. If the task cannot be completed, finish as blocked with what was
+found instead of reporting it as done.
 
 ## Result Extraction
 

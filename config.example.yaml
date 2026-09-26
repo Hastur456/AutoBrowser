@@ -98,7 +98,8 @@ loop:
   max_steps_without_plan_advance: 8             # (default)
   # Identical consecutive snapshots tolerated before a replan is forced.
   max_unchanged_snapshots: 3                    # (default)
-  # Actions that changed no observable state before a replan is forced.
+  # Identical results of the same tool call before a further identical call is
+  # blocked and a replan is forced.
   max_ineffective_actions: 3                    # (default)
   # Wall-clock budget for one task, in seconds.
   task_timeout_seconds: 300.0                   # (default)
@@ -117,12 +118,19 @@ observation:
   max_content_preview_chars: 1200               # (default)
   # Snapshot element refs listed per observation.
   max_refs_in_observation: 25                   # (default)
+  # Recent tool calls rendered in the Action History context block.
+  action_history_limit: 12                      # (default)
+  # Characters of arguments/result kept per Action History entry.
+  action_history_preview_chars: 200             # (default)
 
 # ---------------------------------------------------------------------------
 # Conversation history shaping (the durable list lives on LoopState.messages).
 memory:
   # Snapshot refs kept on a tool message before older ones are elided.
   max_tool_message_refs: 25                     # (default)
+  # Older tool outputs longer than this are compacted once a newer result of the
+  # same tool exists; shorter outputs are always kept.
+  compact_tool_output_min_chars: 1000           # (default)
 
 # ---------------------------------------------------------------------------
 # Persisted event/trace detail under .autobrowser/sessions/<session_id>/.

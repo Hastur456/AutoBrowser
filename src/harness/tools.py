@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from src.contracts import Tool, ToolDef
@@ -47,6 +47,24 @@ def tool_name(tool: Any) -> str:
     """Return the stable name used to bind and execute a tool."""
 
     return str(getattr(tool, "name", getattr(tool, "__name__", "")))
+
+
+def tool_is_read_only(tool: Any) -> bool:
+    """True when the tool's server declared the MCP ``readOnlyHint`` annotation.
+
+    Protocol-level metadata, not a name list: a read-only tool cannot change the
+    environment, so state observed before the call stays valid after it. Tools without
+    annotations are conservatively treated as state-changing.
+    """
+
+    annotations = getattr(tool, "annotations", None)
+    if annotations is None:
+        return False
+    if isinstance(annotations, Mapping):
+        value = annotations.get("readOnlyHint", annotations.get("read_only_hint"))
+    else:
+        value = getattr(annotations, "readOnlyHint", None)
+    return value is True
 
 
 def to_tool_def(tool: Any) -> ToolDef:
@@ -174,5 +192,6 @@ __all__ = [
     "ToolSource",
     "ToolRegistry",
     "to_tool_def",
+    "tool_is_read_only",
     "tool_name",
 ]

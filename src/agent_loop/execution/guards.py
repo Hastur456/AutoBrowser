@@ -65,6 +65,7 @@ def _blocked_response(state: LoopState, reason: str) -> dict[str, Any]:
     return {
         "decision": "done",
         "final_answer": reason,
+        "completion_status": "blocked",
         "observation": reason,
         "error": reason,
         "messages": append_final_ai_response(messages, reason),
@@ -76,12 +77,16 @@ def _done_response(
     final_answer: str,
     *,
     messages: list[Any] | None = None,
+    status: str = "done",
     **updates: Any,
 ) -> dict[str, Any]:
+    """Terminal update; ``status`` is the explicit completion status of the run."""
+
     history = messages if messages is not None else ensure_message_history(_message_state(state))
     response = {
         "decision": "done",
         "final_answer": final_answer,
+        "completion_status": status,
         "messages": append_final_ai_response(history, final_answer),
         **_complete_plan_update(state),
     }
@@ -114,7 +119,11 @@ def _terminal_guard(state: LoopState) -> dict[str, Any] | None:
     limits = get_settings().loop
 
     if state.decision == "done" and state.final_answer:
-        return _done_response(state, str(state.final_answer or ""))
+        return _done_response(
+            state,
+            str(state.final_answer or ""),
+            status=str(state.completion_status or "done"),
+        )
 
     replan_count = int(state.replan_count or 0)
     if replan_count >= limits.max_replans:
@@ -191,16 +200,25 @@ class CompletionController:
         final_answer = REPEATED_SNAPSHOT_OBSERVATION_FINAL_ANSWER.format(
             observation=observation
         )
+        # A loop-protection stop is not task success.
         return {
             "decision": "done",
             "final_answer": final_answer,
+            "completion_status": "blocked",
             "observation": final_answer,
         }
 
     @staticmethod
     def status_from_state(state: LoopState) -> "CompletionStatus":
-        """Derive a terminal status from ``LoopState`` (ports ``_completion_status_from_agent_state``)."""
+        """Derive a terminal status from ``LoopState``.
 
+        The explicit ``completion_status`` set by the deciding code wins; the final-answer
+        prefix check is only a fallback for states that predate the field.
+        """
+
+        explicit = str(state.completion_status or "").strip().lower()
+        if explicit in {"done", "blocked", "cancelled"}:
+            return explicit  # type: ignore[return-value]
         final_answer = str(state.final_answer or "").strip()
         if not final_answer:
             return "continue"
@@ -304,6 +322,7 @@ def _guard_tool_request(state: LoopState, request: ToolRequest) -> dict[str, Any
                 **_done_response(
                     state,
                     REPEATED_SNAPSHOT_FINAL_ANSWER.format(observation=observation),
+                    status="blocked",
                 ),
                 "last_tool": request.get("name", ""),
                 "last_args": request.get("args", {}),

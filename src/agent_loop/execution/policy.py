@@ -1,7 +1,9 @@
 """Engine-native policy classification for tool execution.
 
 Ported from ``src/harness/policy.py``. Classification rules (blocked-tool markers →
-``needs_human``; snapshot-reuse → ``blocked``; otherwise ``approved``), plus the block-side
+``needs_human``; a call that already returned the identical result
+``settings.loop.max_ineffective_actions`` times (action journal, any tool) → ``blocked``;
+snapshot-reuse → ``blocked``; otherwise ``approved``), plus the block-side
 effect (``consecutive_failures += 1``, a tool message, and the ``policy_event``). State
 access is typed :class:`~src.agent_loop.execution.state.LoopState` attribute reads; the
 returned flat update dict is applied through :meth:`LoopState.apply`.
@@ -17,9 +19,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.config import get_settings
 from src.contracts import PolicyDecision, ToolRequest
 from src.harness.memory import append_tool_message
 
+from src.agent_loop.execution.progress import identical_outcome_count
 from src.agent_loop.execution.state import LoopState
 
 # Tool names the native loop relies on: the browser server's own names, exposed unprefixed
@@ -70,6 +74,20 @@ def classify_tool_request(
     name = requested_name.lower()
     if any(marker in name for marker in BLOCKED_TOOL_MARKERS):
         return "needs_human", f"Tool requires human approval before use: {requested_name}"
+
+    identical = identical_outcome_count(
+        state.action_history,
+        requested_name,
+        request.get("args") or {},
+    )
+    if identical >= get_settings().loop.max_ineffective_actions:
+        return (
+            "blocked",
+            f"Not executed: {requested_name} with these exact arguments already returned "
+            f"the identical result {identical} times in this task (see Action History). "
+            "Running it again cannot produce new information. Change the approach or the "
+            "evidence you rely on, or finish with what is known.",
+        )
 
     if name == SNAPSHOT_TOOL:
         needs_fresh_snapshot = bool(state.browser.needs_fresh_snapshot)

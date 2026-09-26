@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from src.browser.normalization import ToolCallNormalizer, BrowserToolNormalizer
+from src.harness.normalization import ToolCallNormalizer
 from src.harness.tools import ToolRegistry
 
 
@@ -58,7 +58,8 @@ class EngineResources:
         return cls(
             llm=llm,
             tool_registry=tool_registry,
-            tool_normalizers=BrowserToolNormalizer(),
+            # Same source the ToolBroker folds around every call.
+            tool_normalizers=list(getattr(tool_registry, "get_normalizers", list)()),
             context=harness.context,
             events=events if events is not None else harness.events,
         )

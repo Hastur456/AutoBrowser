@@ -56,6 +56,7 @@ from src.agent_loop.execution.guards import (
 )
 from src.agent_loop.execution.observation import ObservationCompiler
 from src.agent_loop.execution.policy import classify_tool_request, policy_updates
+from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import LoopState
 from src.agent_loop.execution.tools import ToolBroker
@@ -68,7 +69,7 @@ from src.harness.runtime import (
     HARNESS_EVENT_METADATA_CONFIG_KEY,
     HARNESS_STATE_OVERRIDES_CONFIG_KEY,
 )
-from src.harness.tools import tool_name
+from src.harness.tools import tool_is_read_only, tool_name
 from src.messages import Message, user_message
 
 HumanInputCallback = Callable[[ToolRequest, str], Awaitable[bool]]
@@ -223,7 +224,12 @@ class TurnController:
             resources.llm,
             tool_registry=resources.tool_registry,
         )
-        self._observation = ObservationCompiler(completion=completion)
+        self._observation = ObservationCompiler(
+            completion=completion,
+            read_only_tools=frozenset(
+                tool_name(tool) for tool in tools if tool_is_read_only(tool)
+            ),
+        )
 
     async def run_turn(self, state: LoopState) -> TurnResult:
         """Run one turn and describe what the engine should do next."""
@@ -356,17 +362,21 @@ class TurnController:
                     state,
                     f"Cancelled: {message}" if message else "Cancelled.",
                     messages=messages,
+                    status="cancelled",
                 )
+            # A failed or blocked stop is an honest "the task was not achieved".
             if status == "failed":
                 return done_response(
                     state,
                     f"Failed: {message}" if message else "Failed.",
                     messages=messages,
+                    status="blocked",
                 )
             return done_response(
                 state,
                 f"Blocked: {message}" if message else "Blocked.",
                 messages=messages,
+                status="blocked",
             )
 
         return replan_response("Unrecognized proposed action.")
@@ -444,6 +454,10 @@ class TurnController:
                 "decision": state.decision,
                 "tool_request": dict(state.tool_request),
                 "final_answer": state.final_answer,
+                "action_history": render_action_history(
+                    state.action_history,
+                    get_settings().observation.action_history_limit,
+                ),
             }
         )
         return mapping

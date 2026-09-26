@@ -292,8 +292,9 @@ class LoopSettings(_Section):
         Field(
             ge=1,
             description=(
-                "Browser actions that changed nothing in a row before further "
-                "tool calls are blocked and the agent must replan."
+                "Times the same tool call (same name and arguments) may return an "
+                "identical result before a further identical call is blocked and the "
+                "agent must replan."
             ),
         ),
     ] = 3
@@ -351,6 +352,22 @@ class ObservationSettings(_Section):
         ),
     ] = 25
 
+    action_history_limit: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="Recent tool calls rendered in the Action History context block.",
+        ),
+    ] = 12
+
+    action_history_preview_chars: Annotated[
+        int,
+        Field(
+            ge=16,
+            description="Characters of arguments/result kept per Action History entry.",
+        ),
+    ] = 200
+
 
 class MemorySettings(_Section):
     """Conversation-history shaping budgets (see ``src/harness/memory.py``)."""
@@ -362,6 +379,17 @@ class MemorySettings(_Section):
             description="Refs kept when a tool message is summarized into history.",
         ),
     ] = 25
+
+    compact_tool_output_min_chars: Annotated[
+        int,
+        Field(
+            ge=0,
+            description=(
+                "Older tool outputs longer than this are compacted once a newer "
+                "result of the same tool exists; shorter outputs are always kept."
+            ),
+        ),
+    ] = 1000
 
 
 class EventSettings(_Section):
