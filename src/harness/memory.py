@@ -26,7 +26,6 @@ from typing import Any
 from uuid import uuid4
 
 from src.agent_loop.context import ContextAssembler
-from src.browser import is_browser_snapshot_name
 from src.config import get_settings
 from src.contracts import CompactToolObservation, ToolRequest, ToolResult
 from src.messages import (
@@ -110,7 +109,6 @@ class MemoryManager:
             index
             for index, message in enumerate(history)
             if message.role == "tool"
-            and is_browser_snapshot_name(str(message.name or ""))
             and str(message.content or "").strip()
         ]
         if len(snapshot_indices) <= 1:
@@ -125,7 +123,6 @@ class MemoryManager:
                 content=(
                     f"{previous.name or 'browser_snapshot'} (historical)\n"
                     "Snapshot superseded by a more recent one. "
-                    "Use only the latest snapshot and its refs."
                 ),
                 name=previous.name,
             )
@@ -191,7 +188,6 @@ class MemoryManager:
         self,
         result: ToolResult,
         compact: CompactToolObservation,
-        refs: list[str],
         observation: str,
         *,
         compress: bool = False,
@@ -199,11 +195,11 @@ class MemoryManager:
         """Build a tool-message body, optionally compacting raw browser artifacts."""
 
         if not compress:
-            return _raw_tool_message(result, refs)
+            return _raw_tool_message(result)
 
         tool_name = str(result.get("name", "tool") or "tool").strip()
         if tool_name == "browser_snapshot":
-            return _snapshot_tool_message(result, compact, refs)
+            return _snapshot_tool_message(result, compact)
 
         status = str(result.get("status", "error") or "error")
         if status == "error":
@@ -252,7 +248,6 @@ def _raw_value(value: Any) -> str:
 def _snapshot_tool_message(
     result: ToolResult,
     compact: CompactToolObservation,
-    refs: list[str],
 ) -> str:
     tool_name = str(result.get("name", "browser_snapshot") or "browser_snapshot")
     status = str(result.get("status", "error") or "error")
@@ -261,17 +256,13 @@ def _snapshot_tool_message(
         return "\n\n".join(part for part in [tool_name, "Tool failed.", error] if part)
 
     summary = _safe_compact_value(compact.get("summary"), 300)
-    if not summary or summary.startswith("browser_snapshot returned success:"):
-        summary = f"Snapshot captured with {len(refs)} refs."
 
     parts = [tool_name, summary]
-    if refs:
-        limit = get_settings().memory.max_tool_message_refs
-        parts.extend(["Refs:", "\n".join(refs[:limit])])
+
     return "\n\n".join(part for part in parts if part)
 
 
-def _raw_tool_message(result: ToolResult, refs: list[str]) -> str:
+def _raw_tool_message(result: ToolResult) -> str:
     tool_name = str(result.get("name", "tool") or "tool").strip()
     status = str(result.get("status", "error") or "error")
     content = _raw_value(result.get("content", ""))
@@ -282,9 +273,6 @@ def _raw_tool_message(result: ToolResult, refs: list[str]) -> str:
         parts.extend(["Content:", content])
     if error:
         parts.extend(["Error:", error])
-    if refs:
-        limit = get_settings().memory.max_tool_message_refs
-        parts.extend(["Refs:", "\n".join(refs[:limit])])
     return "\n\n".join(part for part in parts if part)
 
 
@@ -340,7 +328,6 @@ def append_tool_message(
 def tool_result_message_content(
     result: ToolResult,
     compact: CompactToolObservation,
-    refs: list[str],
     observation: str,
     *,
     compress: bool = False,
@@ -350,7 +337,6 @@ def tool_result_message_content(
     return _DEFAULT_MEMORY.tool_result_content(
         result,
         compact,
-        refs,
         observation,
         compress=compress,
     )

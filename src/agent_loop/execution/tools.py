@@ -8,7 +8,7 @@ result, broad ``except`` -> ``status="error"``, and ``normalize_result`` folding
 Changes for the MCP Manager migration:
 
 * ``browser_providers`` (``BrowserProvider``) are replaced by stateless
-  :class:`~src.browser.normalization.ToolCallNormalizer` objects. They receive the current
+  :class:`~src.harness.normalization.ToolCallNormalizer` objects. They receive the current
   ``{name: tool}`` map instead of owning a tool list — tools come from the MCP Manager.
   Without explicit ``normalizers`` the broker uses ``ToolRegistry.get_normalizers()``
   (as it previously fell back to ``get_browser_providers()``).
@@ -28,13 +28,8 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from src.browser import (
-    BROWSER_ERROR_UNKNOWN_ACTION,
-    is_browser_tool_name,
-    to_canonical_browser_name,
-)
-from src.browser.normalization import ToolCallNormalizer
 from src.contracts import ToolRequest, ToolResult
+from src.harness.normalization import ToolCallNormalizer, as_normalizers
 from src.harness.tools import ToolRegistry
 
 
@@ -73,31 +68,6 @@ def _unknown_tool_result(
     tool_name: str,
     tools_by_name: Mapping[str, Any],
 ) -> ToolResult:
-    if is_browser_tool_name(tool_name):
-        available_browser_actions = (
-            ", ".join(
-                sorted(
-                    {
-                        to_canonical_browser_name(available_name)
-                        for available_name in tools_by_name
-                        if is_browser_tool_name(available_name)
-                    }
-                )
-            )
-            or "none"
-        )
-        display_name = to_canonical_browser_name(tool_name)
-        return {
-            "name": tool_name,
-            "status": "error",
-            "content": "",
-            "error": (
-                f"Unknown browser action: {display_name}. "
-                f"Available browser actions: {available_browser_actions}"
-            ),
-            "error_code": BROWSER_ERROR_UNKNOWN_ACTION,
-        }
-
     available = ", ".join(sorted(tools_by_name)) or "none"
     return {
         "name": tool_name,
@@ -129,12 +99,13 @@ class ToolBroker:
     def __init__(
         self,
         tool_registry: ToolRegistry,
-        normalizers: Sequence[ToolCallNormalizer] | None = None,
+        normalizers: ToolCallNormalizer | Sequence[ToolCallNormalizer] | None = None,
     ) -> None:
         self._registry = tool_registry
-        active_normalizers = list(normalizers or [])
+        active_normalizers = as_normalizers(normalizers)
         if not active_normalizers:
-            active_normalizers = tool_registry.get_normalizers()
+            get_normalizers = getattr(tool_registry, "get_normalizers", None)
+            active_normalizers = as_normalizers(get_normalizers() if callable(get_normalizers) else None)
         self._normalizers: list[ToolCallNormalizer] = active_normalizers
 
     async def execute(

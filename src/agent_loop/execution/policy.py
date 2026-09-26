@@ -1,30 +1,39 @@
 """Engine-native policy classification for tool execution.
 
-Ported from ``src/harness/policy.py``. The classification rules and every reason string
-are preserved verbatim (blocked-tool markers → ``needs_human``;
-``ineffective_action_count >= settings.loop.max_ineffective_actions`` → ``blocked``;
-snapshot-reuse → ``blocked``; otherwise
-``approved``), plus the block-side effect (``consecutive_failures += 1``, a tool message,
-and the ``policy_event``). Only the state access is rewritten to typed
-:class:`~src.agent_loop.execution.state.LoopState` attribute reads; the returned flat
-update dict is applied through :meth:`LoopState.apply`.
+Ported from ``src/harness/policy.py``. Classification rules (blocked-tool markers →
+``needs_human``; snapshot-reuse → ``blocked``; otherwise ``approved``), plus the block-side
+effect (``consecutive_failures += 1``, a tool message, and the ``policy_event``). State
+access is typed :class:`~src.agent_loop.execution.state.LoopState` attribute reads; the
+returned flat update dict is applied through :meth:`LoopState.apply`.
+
+Server-neutral: no element-ref or server-specific error-text parsing and no canonical
+tool-name mapping — tool names are compared exactly as the MCP bridge exposes them. The few
+names the loop itself issues (``browser_snapshot``, ``browser_tabs``) are defined here once.
+Whether a snapshot must be refreshed is decided only by ``browser.needs_fresh_snapshot``
+(set by the observation compiler, e.g. when the browser MCP server was restarted).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from src.config import get_settings
 from src.contracts import PolicyDecision, ToolRequest
-from src.browser.observation import has_invalid_ref_text
-from src.browser import (
-    is_browser_snapshot_name,
-    is_browser_tool_name,
-    to_canonical_browser_name,
-)
 from src.harness.memory import append_tool_message
 
 from src.agent_loop.execution.state import LoopState
+
+# Tool names the native loop relies on: the browser server's own names, exposed unprefixed
+# by the MCP bridge (``MCPToolSource(unprefixed_servers=[browser server])``).
+BROWSER_TOOL_PREFIX = "browser_"
+SNAPSHOT_TOOL = "browser_snapshot"
+TABS_TOOL = "browser_tabs"
+
+
+def is_browser_tool(name: Any) -> bool:
+    """True for tools of the browser server (``browser_*``)."""
+
+    return str(name or "").startswith(BROWSER_TOOL_PREFIX)
+
 
 BLOCKED_TOOL_MARKERS = (
     "payment",
@@ -59,46 +68,33 @@ def classify_tool_request(
 
     requested_name = str(request["name"]).strip()
     name = requested_name.lower()
-    canonical_name = to_canonical_browser_name(name) if is_browser_tool_name(name) else name
-    if any(marker in canonical_name for marker in BLOCKED_TOOL_MARKERS):
+    if any(marker in name for marker in BLOCKED_TOOL_MARKERS):
         return "needs_human", f"Tool requires human approval before use: {requested_name}"
 
-    ineffective_action_count = int(state.ineffective_action_count or 0)
-    if ineffective_action_count >= get_settings().loop.max_ineffective_actions:
-        return (
-            "blocked",
-            "The last browser actions repeatedly did not change the visible page. "
-            "Replan with a different control, a direct URL fallback, or finish with "
-            "the visible result instead of continuing UI retries.",
-        )
-
-    if is_browser_snapshot_name(canonical_name):
+    if name == SNAPSHOT_TOOL:
         needs_fresh_snapshot = bool(state.browser.needs_fresh_snapshot)
-        has_active_invalid_ref = has_invalid_ref_text(state.error)
         has_current_snapshot = bool(str(state.browser.snapshot or "").strip())
         requested_args = request.get("args") or {}
         last_snapshot_args = (
             state.last_args
-            if is_browser_snapshot_name(str(state.last_tool))
+            if str(state.last_tool or "") == SNAPSHOT_TOOL
             else {}
         )
         is_same_snapshot_request = requested_args == last_snapshot_args
         if (
             has_current_snapshot
             and not needs_fresh_snapshot
-            and not has_active_invalid_ref
             and (is_same_snapshot_request or _snapshot_reuse_was_blocked(state))
         ):
             return (
                 "blocked",
                 "browser.snapshot is already current. Reuse the existing snapshot "
-                "and refs instead of requesting another snapshot with varied depth. "
+                "instead of requesting another snapshot with varied depth. "
                 "Use browser_find or browser.evaluate only if the visible structure "
                 "is insufficient, or replan.",
             )
 
-    display_name = canonical_name if is_browser_tool_name(name) else requested_name
-    return "approved", f"Tool approved: {display_name}"
+    return "approved", f"Tool approved: {requested_name}"
 
 
 def policy_updates(
@@ -135,6 +131,10 @@ def policy_updates(
 
 __all__ = [
     "BLOCKED_TOOL_MARKERS",
+    "BROWSER_TOOL_PREFIX",
+    "SNAPSHOT_TOOL",
+    "TABS_TOOL",
+    "is_browser_tool",
     "SNAPSHOT_REUSE_MARKER",
     "SNAPSHOT_REUSE_MARKERS",
     "classify_tool_request",

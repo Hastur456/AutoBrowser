@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Iterable, Sequence
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from src.contracts import Tool, ToolDef
-
-if TYPE_CHECKING:
-    from src.browser.normalization import ToolCallNormalizer
+from src.harness.normalization import ToolCallNormalizer, as_normalizers
 
 ToolCollection = Sequence[Any]
 ToolLoadResult = ToolCollection | Awaitable[ToolCollection]
@@ -92,7 +90,7 @@ class ToolRegistry:
         tools: ToolCollection | None = None,
         providers: Iterable[ToolProvider] | None = None,
         tool_loader: ToolLoader | None = None,
-        normalizers: Iterable[ToolCallNormalizer] | None = None,
+        normalizers: ToolCallNormalizer | Iterable[ToolCallNormalizer] | None = None,
     ) -> None:
         self._tools = list(tools) if tools is not None else None
         self._pending: list[ToolProvider] = []
@@ -105,7 +103,7 @@ class ToolRegistry:
         if tool_loader is not None:
             self._pending.append(tool_loader)
         self._live_cache: dict[int, tuple[int, list[Any]]] = {}
-        self._normalizers = list(normalizers or [])
+        self._normalizers = as_normalizers(normalizers)
 
     async def get_all(self) -> list[Any]:
         """Return all registered tools: static ones plus the current live ones."""

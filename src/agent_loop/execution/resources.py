@@ -17,7 +17,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from src.browser import BrowserProvider
 from src.browser.normalization import ToolCallNormalizer, BrowserToolNormalizer
 from src.harness.tools import ToolRegistry
 

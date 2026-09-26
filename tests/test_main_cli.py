@@ -7,14 +7,12 @@ import pytest
 
 from src.agent_loop.execution.loop import AgentLoopResult
 from src.agent_loop.execution.state import LoopState
-from src.browser import PlaywrightMCPBrowserProvider
 from src.cli import bootstrap
 from src.cli.output import format_state, print_tools
 from src.cli.parser import build_parser
 from src.cli.tasks import resolve_task
 from src.harness import chrome
 from src.harness.chrome import start_chrome_cdp
-from src.mcp import playwright_runtime
 
 
 class FakeTool:
@@ -199,24 +197,6 @@ def test_start_chrome_launches_when_port_closed(monkeypatch) -> None:
     assert calls[0][0] == "chrome.exe"
     assert "--remote-debugging-port=9333" in calls[0]
     assert "--user-data-dir=profile" in calls[0]
-
-
-@pytest.mark.asyncio
-async def test_load_browser_provider_wraps_raw_playwright_tools(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    tools = [FakeTool("browser_snapshot")]
-
-    async def fake_load_browser_tools(port: int) -> list[FakeTool]:
-        assert port == 9777
-        return tools
-
-    monkeypatch.setattr(playwright_runtime, "load_browser_tools", fake_load_browser_tools)
-
-    provider = await playwright_runtime.load_browser_provider(9777)
-
-    assert isinstance(provider, PlaywrightMCPBrowserProvider)
-    assert await provider.get_tools() == tools
 
 
 @pytest.mark.asyncio

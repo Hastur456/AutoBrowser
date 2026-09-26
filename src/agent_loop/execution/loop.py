@@ -62,7 +62,6 @@ from src.agent_loop.execution.tools import ToolBroker
 from src.agent_loop.model import ModelDriver
 from src.config import get_settings
 from src.contracts import CompletionStatus
-from src.browser import is_browser_tool_name, to_canonical_browser_name
 from src.contracts import PlanStep, ToolRequest, ToolResult
 from src.harness.memory import ensure_message_history
 from src.harness.runtime import (
@@ -162,10 +161,6 @@ def _normalize_steps(raw_steps: Any, task: str) -> list[PlanStep]:
     return steps or default
 
 
-def _is_browser_tabs_tool(name: str) -> bool:
-    return is_browser_tool_name(name) and to_canonical_browser_name(name) == "browser_tabs"
-
-
 def _build_history(resources: EngineResources, state: LoopState) -> list[Message]:
     """Seed durable message history with the real system prompt (as ``BrowserHarness`` does).
 
@@ -209,7 +204,6 @@ class TurnController:
         resources: EngineResources,
         *,
         tools: list[Any],
-        browser_tabs_available: bool,
         event_ctx: Mapping[str, Any],
         completion: CompletionController,
         compress_tools: bool = False,
@@ -218,7 +212,6 @@ class TurnController:
     ) -> None:
         self._resources = resources
         self._tools = tools
-        self._browser_tabs_available = browser_tabs_available
         self._event_ctx = dict(event_ctx)
         self._completion = completion
         self._compress_tools = compress_tools
@@ -271,11 +264,6 @@ class TurnController:
             return replan_response("No plan is available.")
 
         messages = self._history(state)
-
-        if self._browser_tabs_available:
-            pending_tab = pending_tab_activation_request(state)
-            if pending_tab is not None:
-                return tool_request_update(state, messages, pending_tab)
 
         stale_snapshot_update = stale_snapshot_retry_update(state)
         if stale_snapshot_update.get("decision") == "replan":
@@ -518,13 +506,9 @@ class AgentLoopEngine:
         turn_cap = max(1, int(turn_cap or get_settings().loop.turn_cap))
 
         tools = list(await self._resources.tool_registry.get_all())
-        browser_tabs_available = any(
-            _is_browser_tabs_tool(tool_name(tool)) for tool in tools
-        )
         turn_controller = TurnController(
             self._resources,
             tools=tools,
-            browser_tabs_available=browser_tabs_available,
             event_ctx=self._event_ctx,
             completion=self._completion,
             compress_tools=self._compress_tools,
