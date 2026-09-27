@@ -62,9 +62,8 @@ The design space is explored in
   re-snapshot, as the [browser rules](../development/browser-agent-rules.md) require.
 - The manager never retries a `tools/call` after a timeout or connection loss (the SDK does
   not send `notifications/cancelled`, so the server may still complete the action).
-- Known gap: `build_mcp_runtime` reads `settings.browser.mcp_server`, while `Settings`
-  declares the root field `browser_mcp_server`; in practice the browser server resolves to
-  `"playwright"` whenever such an entry exists.
+- The browser server is chosen by the root setting `browser_mcp_server`; unset, it falls
+  back to the `playwright` entry when one exists, and an unknown name fails startup.
 - New dependency: `mcp>=1.24,<2`.
 
 ## Alternatives Considered

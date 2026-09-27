@@ -570,7 +570,9 @@ class Settings(BaseSettings):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     flags: FlagsSettings = Field(default_factory=FlagsSettings)
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
-    browser_mcp_server: str | None = "playwright"
+    #: Name of the ``mcp_servers`` entry that provides browser tools (exposed unprefixed).
+    #: ``None`` falls back to ``"playwright"`` when such an entry exists.
+    browser_mcp_server: str | None = None
 
     @classmethod
     def settings_customise_sources(

@@ -137,7 +137,7 @@ def build_mcp_runtime(
     """Build (not start) the session's MCP runtime from settings.
 
     Reads ``settings.mcp_servers`` (falls back to :func:`default_mcp_servers`) and
-    ``settings.browser.mcp_server`` (falls back to ``"playwright"`` when that server exists).
+    ``settings.browser_mcp_server`` (falls back to ``"playwright"`` when that server exists).
     """
 
     settings = settings if settings is not None else get_settings()
@@ -148,13 +148,12 @@ def build_mcp_runtime(
         {name: render_runtime_placeholders(config, values) for name, config in servers.items()}
     )
 
-    browser_settings = getattr(settings, "browser", None)
-    browser_server = getattr(browser_settings, "mcp_server", None)
+    browser_server = getattr(settings, "browser_mcp_server", None)
     if browser_server is None and DEFAULT_BROWSER_SERVER in registry:
         browser_server = DEFAULT_BROWSER_SERVER
     if browser_server is not None and browser_server not in registry:
         raise ValueError(
-            f"browser.mcp_server={browser_server!r} is not defined in mcp_servers "
+            f"browser_mcp_server={browser_server!r} is not defined in mcp_servers "
             f"({', '.join(registry) or 'none'})"
         )
 
