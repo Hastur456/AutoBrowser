@@ -1,6 +1,6 @@
 # Browser Provider Boundary
 
-Status: Accepted
+Status: Superseded by [ADR-2026-09-28: Universal MCP Manager](2026-09-28-universal-mcp-manager.md)
 Date: 2026-07-26
 
 ## Context

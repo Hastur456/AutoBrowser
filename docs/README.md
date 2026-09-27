@@ -48,8 +48,17 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Session-Scoped Agent Context Memory ADR](decisions/2026-07-25-session-scoped-agent-context-memory.md):
   decision record for preserving useful agent context across tasks in one
   interactive session.
+- [Universal MCP Manager ADR](decisions/2026-09-28-universal-mcp-manager.md):
+  every tool server is an `mcp_servers` entry managed by `MCPManager`;
+  supersedes the browser provider boundary.
+- [Server-Neutral Progress Journal ADR](decisions/2026-09-28-server-neutral-progress-journal.md):
+  action journal, `Action History`, repeat blocking and honest completion.
+- [MCP Manager Migration](development/2026-09-24-mcp-manager-migration.md):
+  migration guide from browser providers to the MCP Manager (Russian).
+- [Agent Loop Progress Recovery](development/2026-09-26-agent-loop-progress-recovery.md):
+  post-migration plan for progress detection and completion (Russian).
 - [Browser Provider Boundary ADR](decisions/2026-07-26-browser-provider-boundary.md):
-  decision record for moving Playwright MCP adaptation behind browser providers.
+  superseded record for the former Playwright adapter boundary.
 - [Task Memory Isolation ADR](decisions/2026-07-24-task-memory-isolation-and-session-persistence.md):
   superseded historical decision record for per-task checkpoint cleanup and
   `.autobrowser` session records.
@@ -62,7 +71,7 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - Keep docs aligned with observed code and configuration.
 - Preserve historical ADRs; add superseding records instead of rewriting them.
 - Update diagrams when engine phases, loop boundaries, session lifecycle,
-  harness boundaries, browser provider boundaries, policy routing, or MCP
+  harness boundaries, tool-call normalization, policy routing, or MCP
   integration changes.
 - Update prompt documentation and `tests/test_prompts.py` together when agent
   behavior rules change.

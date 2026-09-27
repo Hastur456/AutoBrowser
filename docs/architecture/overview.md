@@ -156,15 +156,16 @@ infrastructure consumed by one task execution. It holds:
 
 - `ContextAssembler`: the sole prompt-construction boundary — durable system
   prompt injection, per-turn user prompt, and planner prompt.
-- `ToolRegistry`: lazily loads static tools, generic providers, browser
-  providers, and MCP clients, and exposes provider-neutral `Tool` objects.
+- `ToolRegistry`: lazily loads static tools, generic providers, and live tool
+  sources such as `MCPToolSource`, and exposes provider-neutral `Tool` objects
+  plus the registered `ToolCallNormalizer`s.
 - Policy functions (`src/agent_loop/execution/policy.py`): classify tool
   requests before execution.
 - `TelemetryObserver`: logs local trace metadata and errors.
 - `EventEmitter`: durable goal/model/action/policy/tool/observation events.
 
 `EngineResources.from_harness(harness, llm=...)` bundles these collaborators
-(plus `browser_providers` from the registry) for `AgentLoopEngine`. This keeps
+(plus `tool_normalizers` from the registry) for `AgentLoopEngine`. This keeps
 the engine focused on reasoning/control flow, keeps task lifecycle separate from
 session lifecycle, and keeps runtime concerns replaceable in tests.
 
@@ -175,29 +176,26 @@ snapshots, and formatting tool-message bodies — through module-level helpers t
 engine calls. The durable history itself lives on `LoopState.messages` and in the
 cross-task `SessionContext.state` carry-forward; there is no checkpoint saver.
 
-## Browser Provider Boundary
+## MCP Runtime and Browser Boundary
 
-`src/browser/` is the provider-neutral browser boundary. It does not replace
-Playwright MCP semantics; it isolates backend-specific schema adaptation behind
-`BrowserProvider` implementations.
+All tool servers go through the universal MCP Manager
+([ADR](../decisions/2026-09-28-universal-mcp-manager.md),
+[diagram](../diagrams/mcp-runtime.md)). `src/mcp/` is server-agnostic:
+`ServerRegistry` holds the declarative `mcp_servers` entries (stdio or
+streamable HTTP), `MCPManager` owns connections, reconnects, discovery and
+shutdown, and the catalog holds discovered tools and `ServerStatus`.
 
-The current browser boundary includes:
+`src/harness/mcp_setup.py` builds the session's `MCPRuntime` from settings
+(falling back to Playwright MCP attached to the session Chrome over CDP when no
+servers are configured), fills `{cdp_port}`/`{cdp_endpoint}` placeholders, and
+fails startup if the browser server is not ready. `src/harness/mcp_tools.py`
+exposes catalog tools through `MCPToolSource`: the browser server keeps its
+unprefixed `browser_*` names; other servers use `server__tool`.
 
-- `BrowserProvider`: protocol for backends that expose tools and normalize
-  browser tool requests/results.
-- `BrowserAction` and `BrowserResult`: provider-neutral typed contracts.
-- `src/browser/names.py`: canonical `browser.*` names and mappings to
-  Playwright MCP tool names.
-- `src/browser/errors.py`: shared browser error codes such as `invalid_ref`,
-  `unknown_action`, and `action_failed`.
-- `PlaywrightMCPBrowserProvider`: production adapter for loaded Playwright MCP
-  tools.
-- `FakeBrowserProvider`: deterministic backend for tests that need browser
-  behavior without Chrome, CDP, or MCP.
-
-`src/mcp/playwright_runtime.py` still owns Playwright MCP process/session
-lifecycle. It loads raw MCP tools and wraps them with
-`PlaywrightMCPBrowserProvider` before the tools enter `ToolRegistry`.
+`src/browser/` now holds only the shared browser vocabulary: canonical
+`browser.*` names (`names.py`), error codes (`errors.py`), typed contracts
+(`contracts.py`), and `BrowserToolNormalizer` (`normalization.py`).
+`BrowserProvider`/`FakeBrowserProvider` remain only as test scaffolding.
 
 All tasks in one interactive session share a session identity derived from
 `SessionContext.session_id`, passed into each task config as
@@ -256,17 +254,20 @@ The system prompt emphasizes:
 
 The executor resolves the requested tool through `ToolRegistry` (via
 `ToolBroker`). Browser request and result normalization is delegated to
-registered `BrowserProvider` instances rather than embedded in executor logic.
+stateless `ToolCallNormalizer`s ([diagram](../diagrams/browser-provider-boundary.md)):
 
-For the Playwright MCP backend, `PlaywrightMCPBrowserProvider` adapts ref-based
-requests to the loaded tool schema:
+- `BrowserToolNormalizer` resolves canonical `browser.*` names to the tool the
+  browser server exposes;
+- `SchemaArgsNormalizer` removes arguments the tool schema disallows.
 
-- maps `ref` to `target` when the tool expects `target`;
-- maps ref-like `target` values back to `ref` when the tool expects `ref`;
-- fills an `element` argument from the latest snapshot line when required;
-- removes unsupported extra arguments when the tool schema disallows them;
-- normalizes invalid-ref failures to the shared `invalid_ref` browser error
-  code.
+No ref rewriting or snapshot lookup happens in the tool path; a stale ref comes
+back as the server's own error and the agent must re-snapshot. A tool that
+reports `isError` raises `MCPToolExecutionError`, and the broker propagates any
+`error_code` into the `ToolResult`. Every executed call is recorded in the
+server-neutral action journal
+([ADR](../decisions/2026-09-28-server-neutral-progress-journal.md)), which feeds
+repeat detection, the `Action History` context block, and policy blocking of
+identical repeats.
 
 Tool success and failure are normalized into `ToolResult` state.
 

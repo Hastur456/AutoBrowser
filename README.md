@@ -205,7 +205,7 @@ python -m pytest tests\test_context_assembler.py tests\test_goal_runner.py
 Focused checks for browser provider work:
 
 ```powershell
-python -m pytest tests\test_browser_contracts.py tests\test_fake_browser_provider.py tests\test_playwright_mcp_provider.py
+python -m pytest tests\test_browser_contracts.py tests\test_browser_normalization.py tests\test_mcp_manager.py tests\test_mcp_tools_bridge.py
 ```
 
 After changing prompts, run:
@@ -253,9 +253,10 @@ plan (model call #0) -> while turn <= cap:
 engine by `EngineResources.from_harness`. The engine owns reasoning, routing,
 execution, and observation; there is no compiled graph.
 
-Browser-specific request and result adaptation lives under `src/browser/`.
-Production runs use `PlaywrightMCPBrowserProvider`; tests can use
-`FakeBrowserProvider` to exercise browser behavior without external services.
+Tool servers (Playwright MCP by default) are entries in `mcp_servers`, run by the
+universal MCP Manager in `src/mcp/` and exposed to the engine through
+`MCPToolSource`; stateless `ToolCallNormalizer`s adapt names and arguments. Tests
+use `tests/mcp_fixtures/fake_server.py` without external services.
 
 `SessionRuntime` owns the long-lived process lifecycle through `SessionContext`.
 All tasks in one interactive session share a session identity derived from

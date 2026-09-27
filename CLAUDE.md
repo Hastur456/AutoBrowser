@@ -98,7 +98,9 @@ Each layer is hard-fenced; **respect the boundary the code is trying to keep**:
   `src/browser/`.
 
 Do not hardcode Playwright MCP behavior into the agent loop, and do not put browser schema
-adaptation in the engine or prompts — register it through `BrowserProvider`/`ToolRegistry`.
+adaptation in the engine or prompts — add servers through `mcp_servers` (`src/mcp/`,
+`src/harness/mcp_setup.py`) and adapt calls with `ToolCallNormalizer`s. See
+`docs/decisions/2026-09-28-universal-mcp-manager.md`.
 
 ## The Engine Loop
 
@@ -131,8 +133,8 @@ The agent is **snapshot-driven, not selector-driven** (see `docs/development/bro
 These rules are **duplicated across prompts, the policy functions, the observer, and provider
 tests**. Changing one layer can reintroduce stale-ref/loop bugs — keep them aligned, and
 don't remove an invariant from a prompt unless policy/observer/evals still enforce it.
-`FakeBrowserProvider` (`src/browser/fake.py`) exercises this behavior deterministically
-without Chrome/CDP/MCP.
+`tests/mcp_fixtures/fake_server.py` (a real MCP server) and the legacy `FakeBrowserProvider`
+exercise this behavior deterministically without Chrome/CDP.
 
 ## Session vs Task Boundary
 

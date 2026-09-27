@@ -1,32 +1,36 @@
-# Browser Provider Boundary
+# Tool Call Normalization
 
-This diagram shows how browser-specific adaptation is isolated behind
-`BrowserProvider` implementations while the engine and executor keep using
-the shared tool registry and state contracts.
+This diagram shows how `ToolBroker` folds every tool call through stateless
+`ToolCallNormalizer`s before and after invoking an MCP-backed tool. It replaces the former
+`BrowserProvider` boundary (see
+[ADR-2026-09-28: Universal MCP Manager](../decisions/2026-09-28-universal-mcp-manager.md)).
 
 ```mermaid
 sequenceDiagram
   participant Agent as AgentLoopEngine
   participant Policy as policy functions
-  participant Executor
+  participant Broker as ToolBroker
+  participant Norm as ToolCallNormalizers
   participant Registry as ToolRegistry
-  participant Provider as BrowserProvider
-  participant Tool as Browser tool
+  participant Tool as MCPTool
+  participant Manager as MCPManager
   participant Observer
 
   Agent->>Policy: Tool request
-  Policy-->>Executor: Approved browser action
-  Executor->>Provider: normalize_request(request, state)
-  Provider-->>Executor: Runtime tool name and args
-  Executor->>Registry: Resolve tool
-  Registry-->>Executor: Tool instance
-  Executor->>Tool: Invoke normalized request
-  Tool-->>Executor: Raw result
-  Executor->>Provider: normalize_result(result)
-  Provider-->>Executor: Shared ToolResult
-  Executor-->>Observer: tool_result
-  Observer-->>Agent: Observation, snapshot, and freshness state
+  Policy-->>Broker: Approved action
+  Broker->>Registry: Current {name: tool} map
+  Broker->>Norm: normalize_request(request, state, tools)
+  Note over Norm: BrowserToolNormalizer: browser.* -> exposed name<br/>SchemaArgsNormalizer: drop forbidden args
+  Norm-->>Broker: Tool name and args
+  Broker->>Tool: invoke(args)
+  Tool->>Manager: call_tool(server, tool, args)
+  Manager-->>Tool: CallToolResult
+  Tool-->>Broker: Text, or MCPToolExecutionError when isError
+  Broker->>Norm: normalize_result(result)
+  Broker-->>Observer: ToolResult (+ error_code)
+  Observer-->>Agent: Observation and action-journal entry
 ```
 
-Production browser tools are wrapped by `PlaywrightMCPBrowserProvider`.
-Deterministic tests can use `FakeBrowserProvider` without Chrome, CDP, or MCP.
+Normalizers hold no tools and do no ref rewriting or snapshot lookups. Deterministic tests use
+`tests/mcp_fixtures/fake_server.py` (a real MCP server) or `FakeBrowserProvider` without
+Chrome or CDP.
