@@ -82,22 +82,19 @@ provider-neutral `ChatModel` contract in `src/llm.py`, implemented by thin provi
 `src/contracts.py`; and conversation history is carried as provider-neutral `Message` lists
 (`src/messages.py`, on `LoopState.messages`) with no checkpoint saver.
 
-Do not hardcode Playwright MCP behavior into the agent loop. Browser-specific backends should be registered through `BrowserProvider` and `ToolRegistry` or injected through `BrowserHarness` so tools can be swapped or mocked in CI. Keep the engine-native contracts and the frozen `LoopState` stable unless a change explicitly requires touching them.
+Do not hardcode Playwright MCP behavior into the agent loop. Tool servers are entries in `mcp_servers`, run by the universal MCP Manager, and reach `ToolRegistry` through `MCPToolSource`, so they can be swapped or mocked in CI. Keep the engine-native contracts and the frozen `LoopState` stable unless a change explicitly requires touching them.
 
-## Browser Provider Architecture
+## MCP and Browser Architecture
 
-`src/browser/` is the provider-neutral browser boundary. Production browser access is still Playwright MCP, but Playwright-specific schema adaptation belongs in browser providers, not in the executor, policy, or agent prompts.
+See `docs/decisions/2026-09-28-universal-mcp-manager.md`.
 
-Browser boundary responsibilities:
+- `src/mcp/`: server-agnostic MCP Manager (`MCPManager`, `ServerRegistry`, stdio/streamable HTTP configs, catalog, typed errors, `server__tool` naming). Nothing here may special-case a server.
+- `src/harness/mcp_setup.py`: builds the session `MCPRuntime` from settings (default: Playwright MCP over CDP), fills `{cdp_port}`/`{cdp_endpoint}`, fails startup when the browser server is not ready.
+- `src/harness/mcp_tools.py`: `MCPToolSource`/`MCPTool` bridge; the browser server keeps unprefixed `browser_*` names.
+- `src/harness/normalization.py`: `ToolCallNormalizer` protocol and `SchemaArgsNormalizer`.
+- `src/browser/`: shared browser vocabulary only: `names.py` (canonical `browser.*` names), `errors.py`, `contracts.py`, and `normalization.py` (`BrowserToolNormalizer`). `provider.py`/`fake.py` remain as test scaffolding.
 
-- `provider.py`: `BrowserProvider` protocol for backends that expose tools and normalize tool requests/results.
-- `contracts.py`: provider-neutral `BrowserAction` and `BrowserResult` typed contracts.
-- `names.py`: canonical browser names such as `browser.snapshot` and mappings to Playwright MCP names such as `browser_snapshot`.
-- `errors.py`: shared browser error codes such as `invalid_ref`, `unknown_action`, and `action_failed`.
-- `adapters/playwright_mcp.py`: `PlaywrightMCPBrowserProvider`, the production adapter around loaded Playwright MCP tools.
-- `fake.py`: `FakeBrowserProvider` for deterministic tests without Chrome, CDP, or MCP.
-
-The executor should resolve tools through `ToolRegistry`, pass browser requests through registered provider normalizers before invocation, and pass raw results through provider result normalizers before returning loop state. Raw non-provider tools should remain unadapted.
+`ToolBroker` folds every call through the registered normalizers (request before, result after). There is no ref rewriting or snapshot lookup in the tool path.
 
 Use canonical `browser.*` names in provider-neutral tests when helpful. The Playwright adapter maps them to runtime MCP tool names.
 
@@ -153,7 +150,7 @@ Useful focused test commands:
 python -m pytest tests\test_harness_session.py tests\test_harness_runtime.py
 python -m pytest tests\test_main_cli.py
 python -m pytest tests\test_prompts.py
-python -m pytest tests\test_browser_contracts.py tests\test_fake_browser_provider.py tests\test_playwright_mcp_provider.py
+python -m pytest tests\test_browser_contracts.py tests\test_browser_normalization.py tests\test_mcp_manager.py tests\test_mcp_tools_bridge.py
 python -m pytest tests\test_agent_loop_events.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py tests\test_messages.py
 python -m pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
 python -m pytest tests\test_context_assembler.py tests\test_goal_runner.py
@@ -231,7 +228,7 @@ Keep engine, state, and prompt code in the `src/agent_loop/execution/` and `src/
 
 Use `pytest` and `pytest-asyncio` for asynchronous engine, harness, and MCP behavior. Name test files `test_*.py` and test functions `test_*`.
 
-Prefer focused unit tests for loop decisions, policy decisions, state transitions, tool registry behavior, browser provider normalization, observer normalization, Agent Loop event/action contracts, context assembly, goal lifecycle, metrics, replay, batch, and export behavior. Add integration tests for engine/harness wiring, harness injection, tool execution boundaries, provider-backed browser execution, and scenario eval coverage. Use `FakeBrowserProvider` when tests need browser behavior without external services. Do not require external services in default tests unless they are skipped or mocked.
+Prefer focused unit tests for loop decisions, policy decisions, state transitions, tool registry behavior, browser provider normalization, observer normalization, Agent Loop event/action contracts, context assembly, goal lifecycle, metrics, replay, batch, and export behavior. Add integration tests for engine/harness wiring, harness injection, tool execution boundaries, provider-backed browser execution, and scenario eval coverage. Use `tests/mcp_fixtures/fake_server.py` or `FakeBrowserProvider` when tests need tool/browser behavior without external services. Do not require external services in default tests unless they are skipped or mocked.
 
 ## Playwright MCP Development Rules
 
@@ -251,7 +248,7 @@ Preferred interaction:
 - `browser_type(ref)`
 - `browser_hover(ref)`
 
-Provider-neutral tests may use canonical names such as `browser.snapshot`, `browser.click`, `browser.type`, and `browser.hover`; production execution maps them to Playwright MCP names through `PlaywrightMCPBrowserProvider`.
+Provider-neutral tests may use canonical names such as `browser.snapshot`, `browser.click`, `browser.type`, and `browser.hover`; production execution maps them to the exposed tool names through `BrowserToolNormalizer`.
 
 Ref freshness:
 

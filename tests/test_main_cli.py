@@ -7,14 +7,12 @@ import pytest
 
 from src.agent_loop.execution.loop import AgentLoopResult
 from src.agent_loop.execution.state import LoopState
-from src.browser import PlaywrightMCPBrowserProvider
 from src.cli import bootstrap
 from src.cli.output import format_state, print_tools
 from src.cli.parser import build_parser
 from src.cli.tasks import resolve_task
 from src.harness import chrome
 from src.harness.chrome import start_chrome_cdp
-from src.mcp import playwright_runtime
 
 
 class FakeTool:
@@ -22,22 +20,26 @@ class FakeTool:
         self.name = name
 
 
-class FakeBrowserProvider:
+class FakeToolSource:
     def __init__(self, tools: list[FakeTool]) -> None:
         self.tools = list(tools)
 
     async def get_tools(self) -> list[FakeTool]:
         return list(self.tools)
 
-    def normalize_request(
-        self,
-        request: dict[str, Any],
-        _state: dict[str, Any],
-    ) -> dict[str, Any]:
-        return request
 
-    def normalize_result(self, result: dict[str, Any]) -> dict[str, Any]:
-        return result
+class FakeMCPRuntime:
+    """Stand-in for :class:`src.harness.mcp_setup.MCPRuntime`."""
+
+    def __init__(self, tools: list[FakeTool] | None = None) -> None:
+        self.tool_source = FakeToolSource(tools or [])
+        self.normalizers: list[Any] = []
+
+    async def start(self, *, require_browser: bool = True) -> None:
+        _ = require_browser
+
+    async def close(self) -> None:
+        return None
 
 
 def make_args(**overrides: Any) -> argparse.Namespace:
@@ -202,24 +204,6 @@ def test_start_chrome_launches_when_port_closed(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_load_browser_provider_wraps_raw_playwright_tools(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    tools = [FakeTool("browser_snapshot")]
-
-    async def fake_load_browser_tools(port: int) -> list[FakeTool]:
-        assert port == 9777
-        return tools
-
-    monkeypatch.setattr(playwright_runtime, "load_browser_tools", fake_load_browser_tools)
-
-    provider = await playwright_runtime.load_browser_provider(9777)
-
-    assert isinstance(provider, PlaywrightMCPBrowserProvider)
-    assert await provider.get_tools() == tools
-
-
-@pytest.mark.asyncio
 async def test_run_agent_prints_final_answer(
     monkeypatch: pytest.MonkeyPatch,
     capsys,
@@ -286,7 +270,7 @@ async def test_no_mcp_does_not_start_chrome_or_load_tools(
     def fail_start(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("Chrome should not start in --no-mcp mode")
 
-    async def fail_load(*args: Any, **kwargs: Any) -> list[Any]:
+    def fail_mcp_runtime_factory(*args: Any, **kwargs: Any) -> FakeMCPRuntime:
         raise AssertionError("MCP should not load in --no-mcp mode")
 
     async def task_runner(
@@ -301,7 +285,7 @@ async def test_no_mcp_does_not_start_chrome_or_load_tools(
     build_session_with(
         monkeypatch,
         start_chrome=fail_start,
-        browser_provider_loader=fail_load,
+        mcp_runtime_factory=fail_mcp_runtime_factory,
         input_fn=lambda _prompt="": "quit",
     )
 
@@ -325,9 +309,9 @@ async def test_mcp_mode_starts_chrome_and_passes_tools(
     async def fake_wait(port: int, timeout: float) -> None:
         events.append(("wait", port, timeout))
 
-    async def fake_load(port: int) -> FakeBrowserProvider:
+    def fake_mcp_runtime_factory(port: int) -> FakeMCPRuntime:
         events.append(("load", port))
-        return FakeBrowserProvider(tools)
+        return FakeMCPRuntime(tools)
 
     def fake_print_tools(loaded: list[Any]) -> None:
         events.append(("print_tools", loaded))
@@ -337,7 +321,7 @@ async def test_mcp_mode_starts_chrome_and_passes_tools(
         llm_factory=llm_factory,
         start_chrome=fake_start,
         wait_for_cdp_port=fake_wait,
-        browser_provider_loader=fake_load,
+        mcp_runtime_factory=fake_mcp_runtime_factory,
         tool_printer=fake_print_tools,
     )
     await session.start()
@@ -349,7 +333,6 @@ async def test_mcp_mode_starts_chrome_and_passes_tools(
     registry = session.context.tool_registry
     assert registry is not None
     assert await registry.get_all() == tools
-    assert len(registry.get_browser_providers()) == 1
     assert session.harness.compress_tools is False
 
 

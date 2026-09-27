@@ -1,16 +1,12 @@
-"""Engine-native guards, terminal checks, and repeat/ineffective tracking.
+"""Engine-native guards, terminal checks, and repeat tracking.
 
-Ported from the legacy agent-loop guard helpers. The control
-logic and every user-facing string are preserved verbatim; only the state access is
-rewritten from ``AgentState``-dict ``.get(...)`` reads to typed
-:class:`~src.agent_loop.execution.state.LoopState` attribute access. Each function
-still returns the same flat update dict the legacy node returned, so the loop applies
-it through :meth:`LoopState.apply` (which routes browser-scoped keys into
-``BrowserState``).
+Ported from the legacy agent-loop guard helpers. State access is typed
+:class:`~src.agent_loop.execution.state.LoopState` attribute access. Each function returns
+a flat update dict that the loop applies through :meth:`LoopState.apply` (which routes
+browser-scoped keys into ``BrowserState``).
 
-Stateless leaf helpers (``element_description_from_snapshot``, the ref utilities, the
-message builders) are reused directly from their existing modules — only the stateful
-control logic is re-homed here.
+Server-neutral: no element-ref handling, no canonical tool-name mapping and no
+ineffective-action tracking. Repeat tracking compares tool names and arguments as given.
 """
 
 from __future__ import annotations
@@ -19,13 +15,6 @@ from typing import TYPE_CHECKING, Any
 
 from src.config import get_settings
 from src.contracts import ToolRequest
-from src.browser.observation import (
-    REF_INTERACTION_TOOLS,
-    has_invalid_ref_text,
-    request_ref_value,
-    snapshot_contains_ref,
-)
-from src.browser.adapters import element_description_from_snapshot
 from src.harness.memory import (
     append_ai_tool_call,
     append_final_ai_response,
@@ -37,6 +26,8 @@ from src.harness.memory import (
 from src.agent_loop.execution.policy import (
     SNAPSHOT_REUSE_MARKER,
     SNAPSHOT_REUSE_MARKERS,
+    SNAPSHOT_TOOL,
+    TABS_TOOL,
     _snapshot_reuse_was_blocked,
 )
 from src.agent_loop.execution.state import LoopState
@@ -52,6 +43,10 @@ REPEATED_SNAPSHOT_OBSERVATION_FINAL_ANSWER = (
 REPEATED_SNAPSHOT_FINAL_ANSWER = (
     "Stopped because browser.snapshot was requested three consecutive times "
     "without a meaningful state change. Latest observation:\n\n{observation}"
+)
+
+FRESH_SNAPSHOT_REASON = (
+    "The browser state is unknown. Capture a fresh snapshot before the next browser action."
 )
 
 
@@ -70,6 +65,7 @@ def _blocked_response(state: LoopState, reason: str) -> dict[str, Any]:
     return {
         "decision": "done",
         "final_answer": reason,
+        "completion_status": "blocked",
         "observation": reason,
         "error": reason,
         "messages": append_final_ai_response(messages, reason),
@@ -81,12 +77,16 @@ def _done_response(
     final_answer: str,
     *,
     messages: list[Any] | None = None,
+    status: str = "done",
     **updates: Any,
 ) -> dict[str, Any]:
+    """Terminal update; ``status`` is the explicit completion status of the run."""
+
     history = messages if messages is not None else ensure_message_history(_message_state(state))
     response = {
         "decision": "done",
         "final_answer": final_answer,
+        "completion_status": status,
         "messages": append_final_ai_response(history, final_answer),
         **_complete_plan_update(state),
     }
@@ -109,7 +109,6 @@ def _replan_response(observation: str, **updates: Any) -> dict[str, Any]:
     response = {
         "decision": "replan",
         "observation": observation,
-        "stale_snapshot_retries": 0,
         "needs_fresh_snapshot": False,
     }
     response.update(updates)
@@ -120,7 +119,11 @@ def _terminal_guard(state: LoopState) -> dict[str, Any] | None:
     limits = get_settings().loop
 
     if state.decision == "done" and state.final_answer:
-        return _done_response(state, str(state.final_answer or ""))
+        return _done_response(
+            state,
+            str(state.final_answer or ""),
+            status=str(state.completion_status or "done"),
+        )
 
     replan_count = int(state.replan_count or 0)
     if replan_count >= limits.max_replans:
@@ -163,9 +166,8 @@ def _terminal_guard(state: LoopState) -> dict[str, Any] | None:
 class CompletionController:
     """Single owner of every terminal decision on the native loop.
 
-    Consolidates completion logic that previously lived in two places: the pre-turn
-    :func:`_terminal_guard` (replan / consecutive-failure / stalled-plan limits) and the
-    unchanged-snapshot terminal that used to be inlined inside ``compile_observation``.
+    Consolidates the pre-turn :func:`_terminal_guard` (replan / consecutive-failure /
+    stalled-plan limits) and the unchanged-snapshot terminal.
     :class:`~src.agent_loop.execution.observation.ObservationCompiler` delegates the
     observation terminal here so no completion policy is scattered through observation
     building, and the loop derives its terminal status through :meth:`status_from_state`.
@@ -186,9 +188,9 @@ class CompletionController:
     ) -> dict[str, Any] | None:
         """Terminate the run when ``browser_snapshot`` repeats an unchanged view.
 
-        Mirrors the legacy ``compile_observation`` block: only a successful snapshot whose
-        unchanged streak reached ``settings.loop.max_unchanged_snapshots`` ends the goal, and
-        the terminal observation is replaced by the final-answer text verbatim.
+        Only a successful snapshot whose unchanged streak reached
+        ``settings.loop.max_unchanged_snapshots`` ends the goal; the terminal observation is
+        replaced by the final-answer text.
         """
 
         if status != "success" or not is_snapshot:
@@ -198,16 +200,25 @@ class CompletionController:
         final_answer = REPEATED_SNAPSHOT_OBSERVATION_FINAL_ANSWER.format(
             observation=observation
         )
+        # A loop-protection stop is not task success.
         return {
             "decision": "done",
             "final_answer": final_answer,
+            "completion_status": "blocked",
             "observation": final_answer,
         }
 
     @staticmethod
     def status_from_state(state: LoopState) -> "CompletionStatus":
-        """Derive a terminal status from ``LoopState`` (ports ``_completion_status_from_agent_state``)."""
+        """Derive a terminal status from ``LoopState``.
 
+        The explicit ``completion_status`` set by the deciding code wins; the final-answer
+        prefix check is only a fallback for states that predate the field.
+        """
+
+        explicit = str(state.completion_status or "").strip().lower()
+        if explicit in {"done", "blocked", "cancelled"}:
+            return explicit  # type: ignore[return-value]
         final_answer = str(state.final_answer or "").strip()
         if not final_answer:
             return "continue"
@@ -219,10 +230,8 @@ class CompletionController:
 
 
 def _has_reusable_current_snapshot(state: LoopState) -> bool:
-    return (
-        bool(str(state.browser.snapshot or "").strip())
-        and not bool(state.browser.needs_fresh_snapshot)
-        and not has_invalid_ref_text(state.error)
+    return bool(str(state.browser.snapshot or "").strip()) and not bool(
+        state.browser.needs_fresh_snapshot
     )
 
 
@@ -230,7 +239,7 @@ def _snapshot_reuse_replan_update(state: LoopState) -> dict[str, Any]:
     return _replan_response(
         (
             "browser.snapshot was just blocked because the current snapshot is "
-            "already reusable. Continue from the existing snapshot and refs; use "
+            "already reusable. Continue from the existing snapshot; use "
             "browser_find or browser.evaluate only if the current snapshot cannot "
             "answer the next step. Do not request another browser.snapshot just "
             "to vary depth."
@@ -244,7 +253,7 @@ def _snapshot_reuse_replan_update(state: LoopState) -> dict[str, Any]:
 def _snapshot_tool_request(reason: str) -> ToolRequest:
     return with_tool_call_id(
         {
-            "name": "browser_snapshot",
+            "name": SNAPSHOT_TOOL,
             "args": {},
             "reason": reason,
         }
@@ -252,6 +261,12 @@ def _snapshot_tool_request(reason: str) -> ToolRequest:
 
 
 def _pending_tab_activation_request(state: LoopState) -> ToolRequest | None:
+    """Select a tab recorded in ``browser.pending_browser_tab_index`` (if any).
+
+    Nothing in the native loop sets the pending tab any more (server-specific tab-text
+    parsing was removed); a value carried over in session state is still honoured once.
+    """
+
     tab_index = int(state.browser.pending_browser_tab_index or 0)
     if tab_index <= 0:
         return None
@@ -260,34 +275,25 @@ def _pending_tab_activation_request(state: LoopState) -> ToolRequest | None:
     if not reason:
         reason = (
             f"Switch to browser tab {tab_index} that was opened by the last "
-            "browser action before taking a snapshot or using page refs."
+            "browser action before taking a snapshot."
         )
     return with_tool_call_id(
         {
-            "name": "browser_tabs",
+            "name": TABS_TOOL,
             "args": {"action": "select", "index": tab_index},
             "reason": reason,
         }
     )
 
 
-def _snapshot_tool_call_update(
-    state: LoopState,
-    reason: str,
-    *,
-    increment_invalid_ref_recovery: bool = False,
-) -> dict[str, Any]:
+def _snapshot_tool_call_update(state: LoopState, reason: str) -> dict[str, Any]:
     request = _snapshot_tool_request(reason)
-    recovery_count = int(state.invalid_ref_recovery_count or 0)
     return {
         "decision": "tool_call",
         "tool_request": request,
         "policy_decision": "",
         "error": str(state.error or ""),
         "needs_fresh_snapshot": False,
-        "invalid_ref_recovery_count": (
-            recovery_count + 1 if increment_invalid_ref_recovery else recovery_count
-        ),
         "last_tool": request["name"],
         "last_args": request["args"],
         "last_tool_request": request,
@@ -295,113 +301,20 @@ def _snapshot_tool_call_update(
     }
 
 
-def _ref_action_snapshot_guard(
-    state: LoopState,
-    request: ToolRequest,
-) -> dict[str, Any] | None:
-    tool_name = str(request.get("name", "") or "").lower()
-    if tool_name not in REF_INTERACTION_TOOLS:
-        return None
-
-    requested_ref = request_ref_value(request)
-    if not requested_ref:
-        return None
-
-    snapshot = str(state.browser.snapshot or "")
-    if not snapshot.strip():
-        return _snapshot_tool_call_update(
-            state,
-            (
-                "A ref-based browser action was requested without a current "
-                "browser.snapshot. Capture a fresh snapshot before using refs "
-                "from history or a prior page."
-            ),
-        )
-
-    if snapshot_contains_ref(snapshot, requested_ref):
-        return None
-
-    return {
-        **_replan_response(
-            (
-                f"Requested ref {requested_ref} is not present in the latest "
-                "browser.snapshot. Use only refs from the current snapshot "
-                "instead of reusing refs from history or a prior page."
-            )
-        ),
-        **_request_tracking_update(state, request),
-    }
-
-
-def _browser_action_key(
-    action: ToolRequest | dict[str, Any],
-    snapshot: str = "",
-) -> tuple[str, tuple[tuple[str, Any], ...]]:
-    name = str(action.get("name", "") or "").lower()
-    args = dict(action.get("args") or {})
-    target = args.pop("ref", None) or args.pop("target", None)
-    if target is not None:
-        target_description = str(action.get("target_description", "") or "")
-        if not target_description and snapshot:
-            target_description = element_description_from_snapshot(snapshot, str(target))
-        args["target"] = target_description or str(target)
-    return name, tuple(sorted(args.items()))
-
-
-def _ineffective_action_repeat_update(
-    state: LoopState,
-    request: ToolRequest,
-) -> dict[str, Any] | None:
-    ineffective_actions = list(state.browser.ineffective_browser_actions or [])
-    ineffective_action = state.browser.ineffective_browser_action or {}
-    if ineffective_action:
-        ineffective_actions.append(ineffective_action)
-    if not ineffective_actions:
-        return None
-
-    count = int(state.ineffective_action_count or 0)
-    if count <= 0:
-        return None
-
-    request_key = _browser_action_key(request, str(state.browser.snapshot or ""))
-    if not any(_browser_action_key(action) == request_key for action in ineffective_actions):
-        return None
-
-    return _replan_response(
-        (
-            f"{request.get('name', 'browser action')} with the same target did not "
-            "change the visible browser_snapshot. Replan before trying another "
-            "action: choose a different visible control/ref, request a deeper "
-            "snapshot, use evaluate only if the snapshot cannot expose the "
-            "control, or use a fallback route."
-        ),
-        ineffective_action_count=count,
-    )
-
-
 def _guard_tool_request(state: LoopState, request: ToolRequest) -> dict[str, Any] | None:
-    ineffective_repeat = _ineffective_action_repeat_update(state, request)
-    if ineffective_repeat is not None:
-        return ineffective_repeat
-
     if (
-        request.get("name") == "browser_snapshot"
+        request.get("name") == SNAPSHOT_TOOL
         and _has_reusable_current_snapshot(state)
         and _snapshot_reuse_was_blocked(state)
     ):
         return _snapshot_reuse_replan_update(state)
 
-    snapshot = str(state.browser.snapshot or "")
     if (
-        _repeat_tracking_key(
-            state.last_tool,
-            state.last_args,
-            snapshot,
-        )
-        == _repeat_tracking_key(request.get("name", ""), request.get("args", {}), snapshot)
+        _repeat_tracking_key(state.last_tool, state.last_args)
+        == _repeat_tracking_key(request.get("name", ""), request.get("args", {}))
         and int(state.repeat_count or 0) >= 2
     ):
-        if request.get("name") == "browser_snapshot":
+        if request.get("name") == SNAPSHOT_TOOL:
             if int(state.unchanged_snapshot_count or 0) < 2:
                 return None
             observation = str(state.observation or "No observation available.")
@@ -409,6 +322,7 @@ def _guard_tool_request(state: LoopState, request: ToolRequest) -> dict[str, Any
                 **_done_response(
                     state,
                     REPEATED_SNAPSHOT_FINAL_ANSWER.format(observation=observation),
+                    status="blocked",
                 ),
                 "last_tool": request.get("name", ""),
                 "last_args": request.get("args", {}),
@@ -425,37 +339,25 @@ def _guard_tool_request(state: LoopState, request: ToolRequest) -> dict[str, Any
             "repeat_count": 3,
         }
 
-    ref_snapshot_guard = _ref_action_snapshot_guard(state, request)
-    if ref_snapshot_guard is not None:
-        return ref_snapshot_guard
-
     return None
 
 
 def _repeat_tracking_key(
     tool_name: Any,
     args: dict[str, Any] | None,
-    snapshot: str = "",
 ) -> tuple[str, tuple[tuple[str, Any], ...]]:
     name = str(tool_name or "")
     normalized_args = dict(args or {})
-    if name == "browser_snapshot":
+    if name == SNAPSHOT_TOOL:
         normalized_args.pop("depth", None)
-    target = normalized_args.pop("ref", None) or normalized_args.pop("target", None)
-    if target is not None:
-        target_description = (
-            element_description_from_snapshot(snapshot, str(target)) if snapshot else ""
-        )
-        normalized_args["target"] = target_description or str(target)
     return name, tuple(sorted(normalized_args.items()))
 
 
 def _request_tracking_update(state: LoopState, request: ToolRequest) -> dict[str, Any]:
     tool_name = request.get("name", "")
     args = request.get("args", {})
-    snapshot = str(state.browser.snapshot or "")
-    if _repeat_tracking_key(state.last_tool, state.last_args, snapshot) == (
-        _repeat_tracking_key(tool_name, args, snapshot)
+    if _repeat_tracking_key(state.last_tool, state.last_args) == _repeat_tracking_key(
+        tool_name, args
     ):
         repeat_count = int(state.repeat_count or 0) + 1
     else:
@@ -506,15 +408,9 @@ def _tool_request_update(
 
 
 def _fresh_snapshot_request(state: LoopState, messages: list[Any]) -> dict[str, Any]:
-    update = _snapshot_tool_call_update(
-        state,
-        (
-            "Previous browser ref is no longer valid for the current "
-            "browser.snapshot. Capture a fresh snapshot before any "
-            "ref-based action."
-        ),
-        increment_invalid_ref_recovery=True,
-    )
+    """Force a ``browser_snapshot`` when ``browser.needs_fresh_snapshot`` is set."""
+
+    update = _snapshot_tool_call_update(state, FRESH_SNAPSHOT_REASON)
     request = update["tool_request"]
     return {
         **update,
@@ -523,31 +419,16 @@ def _fresh_snapshot_request(state: LoopState, messages: list[Any]) -> dict[str, 
 
 
 def _stale_snapshot_retry_update(state: LoopState) -> dict[str, Any]:
-    if not state.browser.needs_fresh_snapshot:
-        return {"stale_snapshot_retries": 0}
+    """Deprecated no-op kept for ``loop.py`` compatibility.
 
-    if not has_invalid_ref_text(state.error):
-        return {"stale_snapshot_retries": 0}
+    The invalid-ref retry/replan cycle was removed; the call in
+    ``TurnController._agent_step`` can be deleted together with this function.
+    """
 
-    if int(state.invalid_ref_recovery_count or 0) <= 0:
-        return {"stale_snapshot_retries": 0}
-
-    retries = int(state.stale_snapshot_retries or 0) + 1
-    if retries >= 2:
-        return _replan_response(
-            (
-                "A fresh browser_snapshot did not resolve the invalid ref twice. "
-                "Replan before attempting another ref-based browser action."
-            ),
-            stale_snapshot_retries=0,
-            invalid_ref_recovery_count=0,
-            snapshot="",
-        )
-
-    return {"stale_snapshot_retries": retries}
+    return {}
 
 
-# Public aliases for loop/tests; internal bodies keep the ported names verbatim.
+# Public aliases for loop/tests; internal bodies keep the ported names.
 blocked_response = _blocked_response
 done_response = _done_response
 complete_plan_update = _complete_plan_update
@@ -559,9 +440,6 @@ snapshot_reuse_replan_update = _snapshot_reuse_replan_update
 snapshot_tool_request = _snapshot_tool_request
 pending_tab_activation_request = _pending_tab_activation_request
 snapshot_tool_call_update = _snapshot_tool_call_update
-ref_action_snapshot_guard = _ref_action_snapshot_guard
-browser_action_key = _browser_action_key
-ineffective_action_repeat_update = _ineffective_action_repeat_update
 guard_tool_request = _guard_tool_request
 repeat_tracking_key = _repeat_tracking_key
 request_tracking_update = _request_tracking_update
@@ -571,21 +449,19 @@ stale_snapshot_retry_update = _stale_snapshot_retry_update
 
 
 __all__ = [
+    "FRESH_SNAPSHOT_REASON",
     "REPEATED_SNAPSHOT_FINAL_ANSWER",
     "REPEATED_SNAPSHOT_OBSERVATION_FINAL_ANSWER",
     "SNAPSHOT_REUSE_MARKER",
     "SNAPSHOT_REUSE_MARKERS",
     "CompletionController",
     "blocked_response",
-    "browser_action_key",
     "complete_plan_update",
     "done_response",
     "fresh_snapshot_request",
     "guard_tool_request",
     "has_reusable_current_snapshot",
-    "ineffective_action_repeat_update",
     "pending_tab_activation_request",
-    "ref_action_snapshot_guard",
     "repeat_tracking_key",
     "replan_response",
     "request_tracking_update",

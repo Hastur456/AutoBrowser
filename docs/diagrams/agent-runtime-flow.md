@@ -30,3 +30,13 @@ the `AgentLoopResult` (`status` is always `done`/`blocked`/`cancelled`).
 `GoalRunner` keeps the one-task lifecycle (timeouts, watchdog, goal events)
 outside the engine; `SessionRuntime` injects carried state and persists the
 result's `session_state` between tasks.
+
+Progress tracking is server-neutral. `observe` appends every executed call to the
+task-local action journal (`LoopState.action_history`, `execution/progress.py`),
+keyed by tool + arguments and by result, and adds a repeat note when a call
+reproduces an earlier identical outcome. The turn prompt renders the journal as
+the `Action History` block. `policy` returns `blocked` for a call that already
+returned the identical result `settings.loop.max_ineffective_actions` times. The
+terminal status is read from the explicit `LoopState.completion_status` set by
+whoever ended the run, so loop-protection stops and model `blocked`/`failed`
+stops end as `blocked`, never as `done`.

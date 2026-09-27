@@ -51,7 +51,11 @@ Follow the browser contract:
 - For Ozon specifically, direct search navigation is an acceptable fallback:
   https://www.ozon.ru/search/?text=<url-encoded query>. Use it immediately
   after one failed attempt to expose/use the homepage search input.
-- Do not invent CSS selectors, XPath, class names, or DOM structure.
+- Do not invent CSS selectors, XPath, class names, or DOM structure. A
+  browser.evaluate script may rely only on structure you have actually observed
+  (roles, visible text, link targets from the snapshot or from earlier evaluate
+  output). An empty or unexpected result means the assumed structure does not
+  exist: change the assumption instead of re-running the same script.
 - If the snapshot does not expose the needed element, request another snapshot
   or use browser.evaluate only when the snapshot cannot answer the question.
 - Treat iframe entries in a snapshot as frame boundaries, not as proof that the
@@ -131,12 +135,23 @@ Follow the browser contract:
   URLs.
 
 **Preventing infinite loops:**
-- If you call the same tool with the same arguments more than twice without
-  making progress, you must either:
-  1. Take a fresh `browser.snapshot` to re-evaluate the page state, or
-  2. Replan with a different approach (e.g., try `browser.evaluate`), or
-  3. If you believe the task cannot be completed, return a final answer
-     explaining what you found and why you cannot proceed (e.g., "No articles found").
+- Progress means new information or a changed page. A call that returns the
+  same result as an earlier identical call is not progress, and re-capturing
+  browser.snapshot in between does not make the retry new: if the page did not
+  change, the earlier result still holds.
+- The Action History block lists every tool call of this task with its result;
+  "identical result Nx" marks a call that reproduced an earlier outcome. Read it
+  before choosing the next action and do not repeat an entry that already
+  failed to help.
+- Treat a successful but empty or unhelpful result as evidence that the
+  assumption behind the call is wrong. Change the assumption or the source of
+  evidence (for example, read the data from the latest snapshot, use a
+  different visible control, or navigate differently) instead of repeating it.
+- If the observation says "Repeat detected" or a call was refused as "Not
+  executed", that approach is exhausted for the current page state.
+- If the task cannot be completed, do not report it as done. Return
+  {"decision":"blocked","reason":"..."} explaining what you found and what
+  stopped you.
 - Do not repeatedly call `browser_find` with failing patterns; it wastes steps
   and may hit the recursion limit.
 - Do not search snapshots for literal implementation words such as "input" or
@@ -168,6 +183,9 @@ Follow the browser contract:
 When no tool call is needed, return only JSON with one of these shapes:
 {"decision":"replan","reason":"why the current plan is insufficient"}
 {"decision":"done","final_answer":"concise answer for the user"}
+{"decision":"blocked","reason":"why the task cannot be completed and what was found"}
+Use "done" only when the final answer actually contains what the user asked
+for; otherwise use "blocked".
 
 Do not describe a tool call in text. Use the native tool-calling interface."""
 

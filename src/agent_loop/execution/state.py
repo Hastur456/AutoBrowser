@@ -20,6 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
+from src.agent_loop.execution.progress import ActionRecord
 from src.contracts import (
     PlanStep,
     PolicyDecision,
@@ -99,7 +100,14 @@ class LoopState:
     unchanged_snapshot_count: int = 0
     steps_without_plan_advance: int = 0
 
+    # Task-local journal of executed tool calls (see ``execution/progress.py``). Not part of
+    # ``to_session_state``, so every task starts with an empty journal.
+    action_history: list[ActionRecord] = field(default_factory=list)
+
     final_answer: str = ""
+    # Explicit terminal status ("done"/"blocked"/"cancelled") set by whoever ends the run;
+    # empty while the loop continues.
+    completion_status: str = ""
     error: str = ""
 
     def apply(self, updates: Mapping[str, Any]) -> LoopState:

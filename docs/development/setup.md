@@ -92,11 +92,11 @@ Run prompt tests after changing agent, planner, or observer prompts:
 python -m pytest tests\test_prompts.py
 ```
 
-Run browser provider boundary tests after changing `src/browser/`, executor
-normalization, or Playwright MCP integration:
+Run MCP and tool-normalization tests after changing `src/mcp/`, `src/browser/`,
+`src/harness/mcp_*.py`, broker normalization, or MCP server configuration:
 
 ```powershell
-python -m pytest tests\test_browser_contracts.py tests\test_fake_browser_provider.py tests\test_playwright_mcp_provider.py
+python -m pytest tests\test_browser_contracts.py tests\test_browser_normalization.py tests\test_mcp_manager.py tests\test_mcp_tools_bridge.py
 ```
 
 Run Agent Loop contract and observability tests after changing `src/agent_loop/`
@@ -215,12 +215,12 @@ python scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
   ownership; it may carry loop context between tasks, but it should still
   delegate task solving to `AgentLoopEngine` instead of solving tasks in the
   session layer.
-- Register browser-specific tools through `BrowserProvider` and `ToolRegistry`
-  or harness injection.
-- Keep Playwright MCP schema adaptation in browser providers, not in executor
-  or agent prompt code.
-- Use `FakeBrowserProvider` for deterministic browser behavior in tests that
-  should not require Chrome, CDP, or MCP.
+- Add MCP servers through `mcp_servers` configuration, not code; nothing in
+  `src/mcp/` may special-case a server.
+- Keep tool name/argument adaptation in stateless `ToolCallNormalizer`s, not
+  in executor or agent prompt code.
+- Use `tests/mcp_fixtures/fake_server.py` (or `FakeBrowserProvider`) for
+  deterministic tests that should not require Chrome, CDP, or network.
 - Preserve Playwright MCP snapshot/ref semantics in prompts, policies,
   observer changes, and browser providers.
 - Prefer focused tests for loop decisions, state transitions, prompt

@@ -1,19 +1,23 @@
 # AutoBrowser settings file -- template.
 #
-# Copy this to a name of your choosing -- config.yaml and config.local.yaml are
-# both git-ignored -- and point the process at it explicitly:
+# Copy this to config.yaml at the repo root and it is auto-loaded, no env var
+# needed -- config.yaml (and config.local.yaml, for a name of your choosing) are
+# both git-ignored, and config.yaml at that exact path is the one default file
+# source the process ever loads on its own. This is a fixed path, not a
+# working-directory scan: a config.yaml anywhere else is never picked up behind
+# your back.
 #
-#   AUTOBROWSER_CONFIG_FILE=config.yaml python main.py --task "inspect page"
+# To use a different file instead (or a second machine-specific profile), point
+# the process at it explicitly:
+#
+#   AUTOBROWSER_CONFIG_FILE=config.local.yaml python main.py --task "inspect page"
 #
 # That name must be a real environment variable. A line in .env will not work:
 # the path is resolved before settings are built, from the process environment
-# only. See config.yaml for the PowerShell/cmd spellings.
-#
-# Nothing is discovered implicitly. With AUTOBROWSER_CONFIG_FILE unset this file
-# is never read, and a config.yaml sitting in the working directory is not
-# picked up behind your back -- the active configuration is always exactly the
-# file the variable names. If the variable names a file that does not exist, the
-# process refuses to start rather than quietly using the defaults.
+# only. AUTOBROWSER_CONFIG_FILE outranks the config.yaml default when both are
+# present. If the variable names a file that does not exist, the process
+# refuses to start rather than quietly using the defaults; the default file
+# has no such requirement -- it is simply skipped when absent.
 #
 # Every value below is the default the code already has, so copying this file
 # verbatim changes nothing. Commented-out keys are the ones whose default is
@@ -54,10 +58,10 @@ llm:
   # Base URL of the Ollama-compatible endpoint. null = unset: the provider then
   # falls back to its own default (OLLAMA_HOST or localhost). Set this to point
   # at a remote host.
-  host: http://localhost:11434          # (default) e.g. http://localhost:11434
+  # host: http://localhost:11434                  # (unset by default) e.g. http://localhost:11434
   # Ollama cloud key. This file holds a live secret, so it must stay out of git.
   # A local daemon needs no key -- use null.
-  api_key: "YOUR_API_KEY"
+  # api_key: "YOUR_API_KEY"                        # (unset by default)
   # Reasoning budget. Accepted: minimal | low | medium | high. DECLARATIVE FOR
   # NOW -- see the note under max_reasoning_tokens.
   reasoning_effort: null                        # (default)
@@ -76,7 +80,7 @@ browser:
   # double-quoted .env values, so "C:\temp" becomes a tab there.
   chrome_path: "C:/Program Files/Google/Chrome/Application/chrome.exe"
   # Persistent Chrome profile (logins, cookies, extensions) reused across runs.
-  user_data_dir: "C:/WebApps/AutoBrowser/profile"
+  user_data_dir: "C:/temp/chrome_debug_profile"  # (default)
   # DevTools port Chrome is driven over.
   cdp_port: 9222                                # (default)
   # How long to wait for the CDP connection, in seconds.
@@ -98,7 +102,8 @@ loop:
   max_steps_without_plan_advance: 8             # (default)
   # Identical consecutive snapshots tolerated before a replan is forced.
   max_unchanged_snapshots: 3                    # (default)
-  # Actions that changed no observable state before a replan is forced.
+  # Identical results of the same tool call before a further identical call is
+  # blocked and a replan is forced.
   max_ineffective_actions: 3                    # (default)
   # Wall-clock budget for one task, in seconds.
   task_timeout_seconds: 300.0                   # (default)
@@ -117,12 +122,19 @@ observation:
   max_content_preview_chars: 1200               # (default)
   # Snapshot element refs listed per observation.
   max_refs_in_observation: 25                   # (default)
+  # Recent tool calls rendered in the Action History context block.
+  action_history_limit: 12                      # (default)
+  # Characters of arguments/result kept per Action History entry.
+  action_history_preview_chars: 200             # (default)
 
 # ---------------------------------------------------------------------------
 # Conversation history shaping (the durable list lives on LoopState.messages).
 memory:
   # Snapshot refs kept on a tool message before older ones are elided.
   max_tool_message_refs: 25                     # (default)
+  # Older tool outputs longer than this are compacted once a newer result of the
+  # same tool exists; shorter outputs are always kept.
+  compact_tool_output_min_chars: 1000           # (default)
 
 # ---------------------------------------------------------------------------
 # Persisted event/trace detail under .autobrowser/sessions/<session_id>/.

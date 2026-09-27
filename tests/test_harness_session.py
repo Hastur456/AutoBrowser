@@ -42,22 +42,29 @@ class FakeTool:
     name = "browser_snapshot"
 
 
-class FakeBrowserProvider:
+class FakeToolSource:
     def __init__(self, tools: list[Any] | None = None) -> None:
-        self.tools = list(tools or [FakeTool()])
+        self.tools = list(tools if tools is not None else [FakeTool()])
 
     async def get_tools(self) -> list[Any]:
         return list(self.tools)
 
-    def normalize_request(
-        self,
-        request: dict[str, Any],
-        _state: dict[str, Any],
-    ) -> dict[str, Any]:
-        return request
 
-    def normalize_result(self, result: dict[str, Any]) -> dict[str, Any]:
-        return result
+class FakeMCPRuntime:
+    """Stand-in for :class:`src.harness.mcp_setup.MCPRuntime`."""
+
+    def __init__(self, tools: list[Any] | None = None) -> None:
+        self.tool_source = FakeToolSource(tools)
+        self.normalizers: list[Any] = []
+        self.started = False
+        self.closed = False
+
+    async def start(self, *, require_browser: bool = True) -> None:
+        _ = require_browser
+        self.started = True
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 class FakeHarness:
@@ -140,12 +147,8 @@ async def noop_wait(_port: int, _timeout: float) -> None:
     return None
 
 
-async def no_browser_provider(_port: int) -> FakeBrowserProvider:
-    return FakeBrowserProvider([])
-
-
-async def noop_close() -> None:
-    return None
+def no_mcp_runtime(_port: int) -> FakeMCPRuntime:
+    return FakeMCPRuntime([])
 
 
 def no_start(_chrome_path: str, _user_data_dir: str, _port: int) -> None:
@@ -162,8 +165,7 @@ def make_runtime(**overrides: Any) -> SessionRuntime:
         llm_factory=llm_factory,
         start_chrome_cdp=no_start,
         wait_for_port=noop_wait,
-        load_browser_provider=no_browser_provider,
-        close_mcp_session=noop_close,
+        mcp_runtime_factory=no_mcp_runtime,
     )
 
 
@@ -229,10 +231,10 @@ async def test_session_context_lifecycle_initializes_tracks_tasks_and_closes(
     monkeypatch.chdir(tmp_path)
     context = SessionContext(make_config(no_mcp=False))
     events: list[str] = []
-    provider = FakeBrowserProvider()
+    runtime = FakeMCPRuntime()
 
-    async def load_browser_provider(_port: int) -> FakeBrowserProvider:
-        return provider
+    def mcp_runtime_factory(_port: int) -> FakeMCPRuntime:
+        return runtime
 
     context.events.subscribe("session.started", lambda name, _payload: events.append(name))
     context.events.subscribe("task.started", lambda name, _payload: events.append(name))
@@ -243,7 +245,7 @@ async def test_session_context_lifecycle_initializes_tracks_tasks_and_closes(
         llm_factory=llm_factory,
         start_chrome_cdp=no_start,
         wait_for_port=noop_wait,
-        load_browser_provider=load_browser_provider,
+        mcp_runtime_factory=mcp_runtime_factory,
         output_fn=lambda *_args, **_kwargs: None,
         print_tools=None,
         harness_factory=FakeHarness,
@@ -256,7 +258,8 @@ async def test_session_context_lifecycle_initializes_tracks_tasks_and_closes(
     assert context.workspace.artifacts.is_dir()
     assert context.metadata.started_at is not None
     assert context.tool_registry is not None
-    assert context.tool_registry.get_browser_providers() == [provider]
+    assert runtime.started is True
+    assert sorted(await context.tool_registry.get_by_name()) == ["browser_snapshot"]
 
     record = context.reset_task("inspect page")
     assert context.current_task == "inspect page"
@@ -320,7 +323,7 @@ async def test_session_context_closes_owned_chrome_process(
         llm_factory=llm_factory,
         start_chrome_cdp=start_chrome,
         wait_for_port=noop_wait,
-        load_browser_provider=no_browser_provider,
+        mcp_runtime_factory=no_mcp_runtime,
         output_fn=lambda *_args, **_kwargs: None,
         print_tools=None,
         harness_factory=FakeHarness,

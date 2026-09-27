@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from collections.abc import Awaitable, Callable, Iterator, Mapping, MutableMapping
 from dataclasses import asdict, dataclass, field
@@ -20,8 +21,8 @@ from src.agent_loop.events import (
 from src.agent_loop.execution.completion import native_latest_state_loader
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalRunRequest, GoalRunner
-from src.browser import BrowserProvider
 from src.config import get_settings
+from src.harness.mcp_setup import MCPRuntime, build_mcp_runtime
 from src.harness.runtime import (
     HARNESS_EVENT_METADATA_CONFIG_KEY,
     HARNESS_STATE_OVERRIDES_CONFIG_KEY,
@@ -33,6 +34,7 @@ from src.harness.tools import ToolRegistry
 
 LLMFactory = Callable[..., Any]
 HarnessFactory = Callable[..., BrowserHarness]
+MCPRuntimeFactory = Callable[[int], MCPRuntime]
 EventHandler = Callable[[str, object | None], None]
 
 EXIT_COMMANDS = {"quit", "exit"}
@@ -76,8 +78,6 @@ TASK_BOUNDARY_RESETS: dict[str, Any] = {
     "replan_count": 0,
     "consecutive_failures": 0,
     "snapshot_recovery_count": 0,
-    "invalid_ref_recovery_count": 0,
-    "stale_snapshot_retries": 0,
     "ineffective_action_count": 0,
     "unchanged_snapshot_count": 0,
     "counters": {},
@@ -279,6 +279,12 @@ class WorkspaceContext:
             path.mkdir(parents=True, exist_ok=True)
 
 
+def default_mcp_runtime_factory(cdp_port: int) -> MCPRuntime:
+    """Build the session's MCP runtime from settings (``mcp_servers``)."""
+
+    return build_mcp_runtime(cdp_port=cdp_port)
+
+
 def _json_safe(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
@@ -375,6 +381,7 @@ class SessionContext:
     harness: BrowserHarness | None = None
     llm: Any | None = None
     tool_registry: ToolRegistry | None = None
+    mcp: MCPRuntime | None = None
     telemetry: TelemetryObserver = field(default_factory=TelemetryObserver)
     event_emitter: EventEmitter = field(default_factory=EventEmitter)
     chrome_process: Any | None = None
@@ -386,7 +393,7 @@ class SessionContext:
         llm_factory: LLMFactory,
         start_chrome_cdp: Callable[[str, str, int], Any],
         wait_for_port: Callable[[int, float], Awaitable[None]],
-        load_browser_provider: Callable[[int], Awaitable[BrowserProvider]],
+        mcp_runtime_factory: MCPRuntimeFactory,
         output_fn: Callable[..., None],
         print_tools: Callable[[list[Any]], None] | None,
         harness_factory: HarnessFactory,
@@ -414,24 +421,36 @@ class SessionContext:
             model=self.config.model,
             temperature=self.config.temperature,
         )
-        browser_providers: list[BrowserProvider]
         if self.config.no_mcp:
-            browser_providers = []
+            self.tool_registry = ToolRegistry()
         else:
-            self.chrome_process = start_chrome_cdp(
-                self.config.chrome_path,
-                self.config.user_data_dir,
-                self.config.cdp_port,
+            mcp: MCPRuntime | None = None
+            try:
+                self.chrome_process = start_chrome_cdp(
+                    self.config.chrome_path,
+                    self.config.user_data_dir,
+                    self.config.cdp_port,
+                )
+                await wait_for_port(self.config.cdp_port, self.config.cdp_timeout)
+                output_fn(SERVER_CONNECTED_MESSAGE)
+                mcp = mcp_runtime_factory(self.config.cdp_port)
+                await mcp.start()  # raises if the browser server cannot start
+            except BaseException:
+                if mcp is not None:
+                    with contextlib.suppress(Exception):
+                        await mcp.close()
+                self._close_chrome_process()
+                raise
+            self.mcp = mcp
+            # The MCP tool source is live: rediscovery (list_changed) and servers going
+            # down / coming back are reflected on the next registry read.
+            self.tool_registry = ToolRegistry(
+                providers=[mcp.tool_source],
+                normalizers=mcp.normalizers,
             )
-            await wait_for_port(self.config.cdp_port, self.config.cdp_timeout)
-            output_fn(SERVER_CONNECTED_MESSAGE)
-            browser_provider = await load_browser_provider(self.config.cdp_port)
-            browser_providers = [browser_provider]
             if self.config.show_tools and print_tools is not None:
-                tools = list(await browser_provider.get_tools())
-                print_tools(tools)
+                print_tools(list(await self.tool_registry.get_all()))
 
-        self.tool_registry = ToolRegistry(providers=browser_providers)
         self.harness = harness_factory(
             llm=self.llm,
             tool_registry=self.tool_registry,
@@ -517,14 +536,16 @@ class SessionContext:
         _write_json(self.session_dir / "session.json", snapshot)
         _write_json(self.session_dir / "tasks.json", snapshot["tasks"])
 
-    async def close(
-        self,
-        close_external: Callable[[], Awaitable[None]] | None = None,
-    ) -> None:
-        """Release session-owned runtime resources."""
+    async def close(self) -> None:
+        """Release session-owned runtime resources.
 
-        if close_external is not None:
-            await close_external()
+        MCP servers are shut down first (Playwright detaches from CDP), then Chrome.
+        """
+
+        mcp = self.mcp
+        self.mcp = None
+        if mcp is not None:
+            await mcp.close()
         self._close_chrome_process()
         self.event_emitter.emit(
             "session.closed",
@@ -573,8 +594,7 @@ class SessionRuntime:
         llm_factory: LLMFactory,
         start_chrome_cdp: Callable[[str, str, int], Any],
         wait_for_port: Callable[[int, float], Awaitable[None]],
-        load_browser_provider: Callable[[int], Awaitable[BrowserProvider]],
-        close_mcp_session: Callable[[], Awaitable[None]],
+        mcp_runtime_factory: MCPRuntimeFactory = default_mcp_runtime_factory,
         print_tools: Callable[[list[Any]], None] | None = None,
         harness_factory: HarnessFactory = BrowserHarness,
         input_fn: Callable[[str], str] = input,
@@ -585,8 +605,7 @@ class SessionRuntime:
         self._llm_factory = llm_factory
         self._start_chrome_cdp = start_chrome_cdp
         self._wait_for_port = wait_for_port
-        self._load_browser_provider = load_browser_provider
-        self._close_mcp_session = close_mcp_session
+        self._mcp_runtime_factory = mcp_runtime_factory
         self._print_tools = print_tools
         self._harness_factory = harness_factory
         self._input = input_fn
@@ -607,7 +626,7 @@ class SessionRuntime:
             llm_factory=self._llm_factory,
             start_chrome_cdp=self._start_chrome_cdp,
             wait_for_port=self._wait_for_port,
-            load_browser_provider=self._load_browser_provider,
+            mcp_runtime_factory=self._mcp_runtime_factory,
             output_fn=self._output,
             print_tools=self._print_tools,
             harness_factory=self._harness_factory,
@@ -718,14 +737,14 @@ class SessionRuntime:
     async def close(self) -> None:
         """Release process-lifetime external resources."""
 
-        close_external = None if self.config.no_mcp else self._close_mcp_session
-        await self.context.close(close_external)
+        await self.context.close()
 
 
 __all__ = [
     "Artifact",
     "ArtifactRegistry",
     "EXIT_COMMANDS",
+    "MCPRuntimeFactory",
     "SessionConfig",
     "SessionContext",
     "SessionEventBus",
@@ -735,4 +754,5 @@ __all__ = [
     "SESSION_THREAD_PREFIX",
     "TaskRecord",
     "WorkspaceContext",
+    "default_mcp_runtime_factory",
 ]

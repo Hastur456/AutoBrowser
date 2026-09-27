@@ -19,9 +19,12 @@ flowchart LR
   SessionCtx --> Metadata[SessionMetadata]
   SessionCtx --> LLM[Chat model]
   SessionCtx --> Chrome[Chrome/CDP]
-  SessionCtx --> MCPRuntime[MCP session]
+  SessionCtx --> MCPRuntime[MCPRuntime]
   SessionCtx --> Harness[BrowserHarness]
-  MCPRuntime --> PlaywrightProvider[PlaywrightMCPBrowserProvider]
+  MCPRuntime --> Manager[MCPManager]
+  MCPRuntime --> ToolSource[MCPToolSource]
+  MCPRuntime --> Normalizers[ToolCallNormalizers]
+  Manager --> MCP[MCP servers]
   Session --> GoalRunner[GoalRunner]
   GoalRunner --> Engine[AgentLoopEngine]
   Harness --> ContextAssembler[ContextAssembler]
@@ -33,24 +36,26 @@ flowchart LR
   Resources --> LLM
   Tools --> StaticTools[Static tools]
   Tools --> Providers[Generic providers]
-  Tools --> BrowserProviders[BrowserProvider adapters]
-  BrowserProviders --> PlaywrightProvider
-  BrowserProviders --> FakeProvider[FakeBrowserProvider]
-  PlaywrightProvider --> MCP[MCP clients]
+  Tools --> ToolSource
+  Tools --> Normalizers
+  ToolSource --> Manager
   Engine --> TurnController[TurnController]
   TurnController --> Completion[CompletionController]
   TurnController --> ModelDriver[ModelDriver]
   TurnController --> ToolBroker[ToolBroker]
   TurnController --> ObsCompiler[ObservationCompiler]
   ToolBroker --> Tools
+  ToolBroker --> Normalizers
+  TurnController --> Journal[Action journal]
 ```
 
 The boundary is intentional: `SessionRuntime` coordinates interaction lifecycle,
 `SessionContext` owns session-scoped state and resources, `BrowserHarness` is a
 pure composition root (no graph), and `AgentLoopEngine` owns reasoning and state
-transitions over a frozen `LoopState`. Browser-specific schema adaptation is
-owned by `BrowserProvider` adapters registered in `ToolRegistry`, not by the
-engine. Conversation history is not a harness or `EngineResources` resource:
+transitions over a frozen `LoopState`. MCP servers are owned by the session-scoped
+`MCPRuntime` (see [MCP Runtime](mcp-runtime.md)); tools reach `ToolRegistry`
+through `MCPToolSource`, and name/argument adaptation is done by stateless
+`ToolCallNormalizer`s folded by `ToolBroker`, not by the engine. Conversation history is not a harness or `EngineResources` resource:
 `src/harness/memory.py` provides functional message-shaping helpers the engine
 calls, and the durable `list[Message]` is carried on `LoopState.messages` /
 `SessionContext.state`. `SessionRuntime` carries useful state between tasks

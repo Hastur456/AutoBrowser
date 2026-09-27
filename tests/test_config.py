@@ -22,7 +22,9 @@ from typing import Any
 
 import pytest
 import yaml
+from pydantic import BaseModel
 
+from src import config
 from src.config import (
     CONFIG_FILE_ENV_VAR,
     ENV_NESTED_DELIMITER,
@@ -45,14 +47,18 @@ def _clean_settings_cache() -> Iterator[None]:
 def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     """Return a factory building ``Settings`` from a controlled environment.
 
-    ``chdir`` into an empty directory hides the repository ``.env``, and any
-    ambient ``AUTOBROWSER_*`` variable is cleared, so each call starts from the
-    hard-coded defaults unless the test sets something.
+    ``chdir`` into an empty directory hides the repository ``.env``, any ambient
+    ``AUTOBROWSER_*`` variable is cleared, and :data:`src.config.DEFAULT_CONFIG_FILE_YAML`
+    is redirected to a path that does not exist -- it is a fixed repo-root path, not
+    something ``chdir`` hides, and the developer's own (git-ignored) ``config.yaml`` must
+    not make these tests machine-dependent. Each call then starts from the hard-coded
+    defaults unless the test sets something.
     """
 
     monkeypatch.chdir(tmp_path)
     for name in [key for key in os.environ if key.startswith("AUTOBROWSER_")]:
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(config, "DEFAULT_CONFIG_FILE_YAML", tmp_path / "unused" / "config.yaml")
 
     def build(**overrides: Any) -> Settings:
         return Settings(**overrides)
@@ -423,9 +429,11 @@ def test_without_the_env_var_no_config_file_is_discovered(
 ) -> None:
     """There is no working-directory scan, by design.
 
-    A file the user forgot about must not be able to change what the process
-    does, so ``config.yaml`` and ``config.local.yaml`` sitting right there are
-    ignored until named explicitly.
+    A file the user forgot about must not be able to change what the process does, so
+    ``config.yaml``/``config.local.yaml`` sitting in the *working directory* are ignored
+    until named explicitly. This is distinct from the repo-root default profile (see
+    ``test_the_default_config_file_is_auto_loaded_when_present``): the working directory
+    here (``tmp_path``, via the ``settings`` fixture) is deliberately not the repo root.
     """
 
     (tmp_path / "config.yaml").write_text("loop:\n  turn_cap: 7\n", encoding="utf-8")
@@ -435,6 +443,38 @@ def test_without_the_env_var_no_config_file_is_discovered(
     )
 
     assert settings().loop.turn_cap == 50
+
+
+def test_the_default_config_file_is_auto_loaded_when_present(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """``config.yaml`` at the repo root is an opt-in-by-presence local profile.
+
+    Unlike an explicit ``AUTOBROWSER_CONFIG_FILE``, this default is a fixed path, not a
+    scan: only the exact ``DEFAULT_CONFIG_FILE_YAML`` location is consulted, and only when
+    the caller has not named a different file.
+    """
+
+    default_path = tmp_path / "config.yaml"
+    default_path.write_text("loop:\n  turn_cap: 13\n", encoding="utf-8")
+    monkeypatch.setattr(config, "DEFAULT_CONFIG_FILE_YAML", default_path)
+
+    assert settings().loop.turn_cap == 13
+
+
+def test_an_explicit_config_file_outranks_the_default_one(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    default_path = tmp_path / "config.yaml"
+    default_path.write_text("loop:\n  turn_cap: 13\n", encoding="utf-8")
+    monkeypatch.setattr(config, "DEFAULT_CONFIG_FILE_YAML", default_path)
+    _point_at(monkeypatch, _write_config(tmp_path, "loop:\n  turn_cap: 21\n"))
+
+    assert settings().loop.turn_cap == 21
 
 
 def test_a_missing_config_file_fails_loudly(
@@ -593,7 +633,10 @@ def _canonical_env_names() -> set[str]:
 
     names: set[str] = set()
     for section, field in Settings.model_fields.items():
-        for name in field.annotation.model_fields:
+        annotation = field.annotation
+        if not (isinstance(annotation, type) and issubclass(annotation, BaseModel)):
+            continue  # not a section (e.g. mcp_servers, browser_mcp_server)
+        for name in annotation.model_fields:
             names.add(
                 f"{ENV_PREFIX}{section.upper()}{ENV_NESTED_DELIMITER}{name.upper()}"
             )

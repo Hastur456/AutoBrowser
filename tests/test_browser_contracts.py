@@ -12,6 +12,8 @@ from src.browser import (
     FakeBrowserProvider,
     BrowserProvider,
     BrowserResult,
+)
+from src.browser.names import (
     CANONICAL_TO_PLAYWRIGHT,
     PLAYWRIGHT_TO_CANONICAL,
     is_browser_snapshot_name,

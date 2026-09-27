@@ -56,20 +56,20 @@ from src.agent_loop.execution.guards import (
 )
 from src.agent_loop.execution.observation import ObservationCompiler
 from src.agent_loop.execution.policy import classify_tool_request, policy_updates
+from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import LoopState
 from src.agent_loop.execution.tools import ToolBroker
 from src.agent_loop.model import ModelDriver
 from src.config import get_settings
 from src.contracts import CompletionStatus
-from src.browser import is_browser_tool_name, to_canonical_browser_name
 from src.contracts import PlanStep, ToolRequest, ToolResult
 from src.harness.memory import ensure_message_history
 from src.harness.runtime import (
     HARNESS_EVENT_METADATA_CONFIG_KEY,
     HARNESS_STATE_OVERRIDES_CONFIG_KEY,
 )
-from src.harness.tools import tool_name
+from src.harness.tools import tool_is_read_only, tool_name
 from src.messages import Message, user_message
 
 HumanInputCallback = Callable[[ToolRequest, str], Awaitable[bool]]
@@ -162,10 +162,6 @@ def _normalize_steps(raw_steps: Any, task: str) -> list[PlanStep]:
     return steps or default
 
 
-def _is_browser_tabs_tool(name: str) -> bool:
-    return is_browser_tool_name(name) and to_canonical_browser_name(name) == "browser_tabs"
-
-
 def _build_history(resources: EngineResources, state: LoopState) -> list[Message]:
     """Seed durable message history with the real system prompt (as ``BrowserHarness`` does).
 
@@ -209,7 +205,6 @@ class TurnController:
         resources: EngineResources,
         *,
         tools: list[Any],
-        browser_tabs_available: bool,
         event_ctx: Mapping[str, Any],
         completion: CompletionController,
         compress_tools: bool = False,
@@ -218,21 +213,23 @@ class TurnController:
     ) -> None:
         self._resources = resources
         self._tools = tools
-        self._browser_tabs_available = browser_tabs_available
         self._event_ctx = dict(event_ctx)
         self._completion = completion
         self._compress_tools = compress_tools
         self._human_input = human_input or _deny_human_input
         self._source = source
-        self._broker = ToolBroker(
-            resources.tool_registry,
-            browser_providers=list(resources.browser_providers or []),
-        )
+        # normalizers are registered with the tool registry (ToolRegistry.get_normalizers)
+        self._broker = ToolBroker(resources.tool_registry)
         self._model_driver = ModelDriver(
             resources.llm,
             tool_registry=resources.tool_registry,
         )
-        self._observation = ObservationCompiler(completion=completion)
+        self._observation = ObservationCompiler(
+            completion=completion,
+            read_only_tools=frozenset(
+                tool_name(tool) for tool in tools if tool_is_read_only(tool)
+            ),
+        )
 
     async def run_turn(self, state: LoopState) -> TurnResult:
         """Run one turn and describe what the engine should do next."""
@@ -273,11 +270,6 @@ class TurnController:
             return replan_response("No plan is available.")
 
         messages = self._history(state)
-
-        if self._browser_tabs_available:
-            pending_tab = pending_tab_activation_request(state)
-            if pending_tab is not None:
-                return tool_request_update(state, messages, pending_tab)
 
         stale_snapshot_update = stale_snapshot_retry_update(state)
         if stale_snapshot_update.get("decision") == "replan":
@@ -370,17 +362,21 @@ class TurnController:
                     state,
                     f"Cancelled: {message}" if message else "Cancelled.",
                     messages=messages,
+                    status="cancelled",
                 )
+            # A failed or blocked stop is an honest "the task was not achieved".
             if status == "failed":
                 return done_response(
                     state,
                     f"Failed: {message}" if message else "Failed.",
                     messages=messages,
+                    status="blocked",
                 )
             return done_response(
                 state,
                 f"Blocked: {message}" if message else "Blocked.",
                 messages=messages,
+                status="blocked",
             )
 
         return replan_response("Unrecognized proposed action.")
@@ -458,6 +454,10 @@ class TurnController:
                 "decision": state.decision,
                 "tool_request": dict(state.tool_request),
                 "final_answer": state.final_answer,
+                "action_history": render_action_history(
+                    state.action_history,
+                    get_settings().observation.action_history_limit,
+                ),
             }
         )
         return mapping
@@ -520,13 +520,9 @@ class AgentLoopEngine:
         turn_cap = max(1, int(turn_cap or get_settings().loop.turn_cap))
 
         tools = list(await self._resources.tool_registry.get_all())
-        browser_tabs_available = any(
-            _is_browser_tabs_tool(tool_name(tool)) for tool in tools
-        )
         turn_controller = TurnController(
             self._resources,
             tools=tools,
-            browser_tabs_available=browser_tabs_available,
             event_ctx=self._event_ctx,
             completion=self._completion,
             compress_tools=self._compress_tools,

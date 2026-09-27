@@ -20,6 +20,7 @@ from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.replay import TraceSummary, print_action_sequence, summarize_trace
 from src.browser import FakeBrowserProvider
+from src.browser.normalization import BrowserToolNormalizer
 from src.harness.runtime import HARNESS_EVENT_METADATA_CONFIG_KEY, BrowserHarness
 from src.harness.tools import ToolRegistry
 
@@ -134,7 +135,11 @@ async def run_scenario(scenario: EvalScenario) -> EvalResult:
     llm = FakeChatModel(responses=scenario.model_responses)
     harness = BrowserHarness(
         llm=llm,
-        tool_registry=ToolRegistry(providers=[provider]),
+        # Same canonical-name normalizer the real session wires for the browser MCP
+        # server (see src/harness/mcp_setup.py), so browser.click etc. resolve here too.
+        tool_registry=ToolRegistry(
+            providers=[provider], normalizers=[BrowserToolNormalizer(), provider]
+        ),
         event_emitter=emitter,
     )
     resources = EngineResources.from_harness(harness, llm=llm, events=emitter)

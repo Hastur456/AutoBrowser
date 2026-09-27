@@ -11,9 +11,11 @@ development workflows.
 - [Harness Boundaries](harness-boundaries.md): session ownership through
   `SessionContext` and runtime infrastructure bundled by `BrowserHarness` into
   `EngineResources` for the engine.
-- [Browser Provider Boundary](browser-provider-boundary.md): request/result
-  normalization through `BrowserProvider` adapters before browser tool results
-  return to the observer.
+- [MCP Runtime](mcp-runtime.md): settings-driven `MCPManager` construction,
+  start/shutdown inside the session, and the catalog-to-`ToolRegistry` bridge.
+- [Tool Call Normalization](browser-provider-boundary.md): request/result
+  folding through stateless `ToolCallNormalizer`s in `ToolBroker` before MCP
+  tool results return to the observer (replaces the `BrowserProvider` boundary).
 - [Session Runtime Sequence](session-runtime-sequence.md): process-long session
   startup, repeated task execution with session-scoped context memory,
   persisted session records, and shutdown.

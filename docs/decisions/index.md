@@ -4,6 +4,18 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-09-28 Server-Neutral Progress Journal](2026-09-28-server-neutral-progress-journal.md):
+  tool-agnostic action journal (call + outcome fingerprints), `Action History` context block,
+  repeat blocking via `loop.max_ineffective_actions`, `readOnlyHint`-based freshness and
+  honest `blocked`/`cancelled` completion. Extends the native engine ADR.
+- [2026-09-28 Universal MCP Manager](2026-09-28-universal-mcp-manager.md):
+  server-agnostic `MCPManager` pool configured by `mcp_servers`, harness `MCPRuntime` and
+  catalog-to-tool bridge, stateless `ToolCallNormalizer`s. Supersedes the browser provider
+  boundary ADR.
+- [2026-09-26 Default YAML Settings File](2026-09-26-default-yaml-settings-file.md):
+  `config.yaml` at the repo root auto-loads when present; an explicit
+  `AUTOBROWSER_CONFIG_FILE` stays mandatory. Supersedes the opt-in YAML ADR's activation
+  clause.
 - [2026-09-16 Opt-In YAML Settings File](2026-09-16-opt-in-yaml-settings-file.md):
   adds a YAML file as a fourth, strictly opt-in settings source (`AUTOBROWSER_CONFIG_FILE`,
   no working-directory scan) that outranks `AUTOBROWSER_*`/`.env` as a partial profile;
@@ -23,7 +35,8 @@ This directory contains Architecture Decision Records (ADRs).
   the engine-native `AgentLoopEngine` is the sole runtime; `src/agent/` and all
   LangGraph control flow are removed (supersedes the LangGraph-thread decisions
   below).
-- [2026-07-26 Browser Provider Boundary](2026-07-26-browser-provider-boundary.md)
+- [2026-07-26 Browser Provider Boundary](2026-07-26-browser-provider-boundary.md):
+  superseded by the 2026-09-28 Universal MCP Manager ADR.
 - [2026-07-25 Session-Scoped Agent Context Memory](2026-07-25-session-scoped-agent-context-memory.md)
 - [2026-07-24 Task Memory Isolation and Session Persistence](2026-07-24-task-memory-isolation-and-session-persistence.md)
 - [2026-07-24 SessionContext Root Object](2026-07-24-session-context-root-object.md)

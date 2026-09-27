@@ -2,8 +2,8 @@
 
 :class:`MemoryManager` is the provider-neutral owner of the message-shaping policy — it
 seeds the durable history with the current user task, appends the assistant tool calls /
-tool results / final answers the loop produces, compacts superseded browser snapshots into
-stale-ref markers, and formats tool-message bodies. It is a **functional** service: every
+tool results / final answers the loop produces, compacts large tool outputs superseded by a
+newer result of the same tool, and formats tool-message bodies. It is a **functional** service: every
 operation takes a ``list`` of :class:`~src.messages.Message` (or the minimal state mapping
 ``ensure_history`` reads) and returns a *new* list; nothing is stored on the instance and
 no input list is mutated in place.
@@ -26,7 +26,6 @@ from typing import Any
 from uuid import uuid4
 
 from src.agent_loop.context import ContextAssembler
-from src.browser import is_browser_snapshot_name
 from src.config import get_settings
 from src.contracts import CompactToolObservation, ToolRequest, ToolResult
 from src.messages import (
@@ -40,6 +39,7 @@ from src.messages import (
 
 ORIGINAL_USER_REQUEST_PREFIX = "Original user request:\n"
 USER_REQUEST_PREFIX = "User request"
+COMPACTED_TOOL_OUTPUT_PREFIX = "[compacted]"
 
 
 class MemoryManager:
@@ -93,41 +93,49 @@ class MemoryManager:
     # -- compaction ---------------------------------------------------------
 
     def compact_snapshot_history(self, messages: Sequence[Message]) -> list[Message]:
-        """Replace every snapshot ``tool`` message but the latest with a stale-ref marker.
+        """Compact large tool outputs that a newer result of the same tool supersedes.
 
-        Snapshot accessibility trees are appended to the durable history in full (see
-        :meth:`append_tool_result`), so without compaction every page the agent ever
-        visited re-enters the model context on each turn and quickly overflows the window.
-        Only the most recent snapshot is usable anyway — refs are ephemeral and valid
-        solely for the snapshot that produced them — so older snapshot bodies collapse to
-        a short marker telling the model the refs are stale. The ``tool_call_id`` is
-        preserved, keeping the ``assistant(tool_calls)`` → ``tool`` pairing valid for the
-        chat API.
+        Tool outputs (snapshots above all) are appended to the durable history in full (see
+        :meth:`append_tool_result`), so without compaction every page the agent ever visited
+        re-enters the model context on each turn and quickly overflows the window.
+
+        The rule is server-neutral — no tool names are special-cased:
+
+        - an output is compacted only when a *later* ``tool`` message from the **same tool**
+          exists (a newer snapshot supersedes an older snapshot, never an unrelated result);
+        - outputs no longer than ``settings.memory.compact_tool_output_min_chars`` are never
+          compacted: short results (errors, empty lists, short text) are cheap and are exactly
+          the evidence the model needs to see which attempts already failed.
+
+        The ``tool_call_id`` is preserved, keeping the ``assistant(tool_calls)`` → ``tool``
+        pairing valid for the chat API.
         """
 
         history = list(messages)
-        snapshot_indices = [
-            index
-            for index, message in enumerate(history)
-            if message.role == "tool"
-            and is_browser_snapshot_name(str(message.name or ""))
-            and str(message.content or "").strip()
-        ]
-        if len(snapshot_indices) <= 1:
-            return history
-
-        for index in snapshot_indices[:-1]:
-            previous = history[index]
-            # snapshot_indices are collected from tool messages only, so ``previous``
-            # always carries a ``tool_call_id`` here.
+        min_chars = get_settings().memory.compact_tool_output_min_chars
+        newer_tools: set[str] = set()
+        for index in range(len(history) - 1, -1, -1):
+            message = history[index]
+            if message.role != "tool" or not message.name:
+                continue
+            name = str(message.name)
+            content = str(message.content or "")
+            superseded = name in newer_tools
+            newer_tools.add(name)
+            if (
+                not superseded
+                or len(content) <= min_chars
+                or content.startswith(COMPACTED_TOOL_OUTPUT_PREFIX)
+            ):
+                continue
             history[index] = tool_message(
-                tool_call_id=str(previous.tool_call_id or ""),
+                tool_call_id=str(message.tool_call_id or ""),
                 content=(
-                    f"{previous.name or 'browser_snapshot'} (historical)\n"
-                    "Snapshot superseded by a more recent one. "
-                    "Use only the latest snapshot and its refs."
+                    f"{COMPACTED_TOOL_OUTPUT_PREFIX} {name} output from an earlier step "
+                    f"({len(content)} chars). A newer {name} result appears later in "
+                    "this conversation."
                 ),
-                name=previous.name,
+                name=message.name,
             )
         return history
 
@@ -191,7 +199,6 @@ class MemoryManager:
         self,
         result: ToolResult,
         compact: CompactToolObservation,
-        refs: list[str],
         observation: str,
         *,
         compress: bool = False,
@@ -199,11 +206,11 @@ class MemoryManager:
         """Build a tool-message body, optionally compacting raw browser artifacts."""
 
         if not compress:
-            return _raw_tool_message(result, refs)
+            return _raw_tool_message(result)
 
         tool_name = str(result.get("name", "tool") or "tool").strip()
         if tool_name == "browser_snapshot":
-            return _snapshot_tool_message(result, compact, refs)
+            return _snapshot_tool_message(result, compact)
 
         status = str(result.get("status", "error") or "error")
         if status == "error":
@@ -252,7 +259,6 @@ def _raw_value(value: Any) -> str:
 def _snapshot_tool_message(
     result: ToolResult,
     compact: CompactToolObservation,
-    refs: list[str],
 ) -> str:
     tool_name = str(result.get("name", "browser_snapshot") or "browser_snapshot")
     status = str(result.get("status", "error") or "error")
@@ -261,17 +267,13 @@ def _snapshot_tool_message(
         return "\n\n".join(part for part in [tool_name, "Tool failed.", error] if part)
 
     summary = _safe_compact_value(compact.get("summary"), 300)
-    if not summary or summary.startswith("browser_snapshot returned success:"):
-        summary = f"Snapshot captured with {len(refs)} refs."
 
     parts = [tool_name, summary]
-    if refs:
-        limit = get_settings().memory.max_tool_message_refs
-        parts.extend(["Refs:", "\n".join(refs[:limit])])
+
     return "\n\n".join(part for part in parts if part)
 
 
-def _raw_tool_message(result: ToolResult, refs: list[str]) -> str:
+def _raw_tool_message(result: ToolResult) -> str:
     tool_name = str(result.get("name", "tool") or "tool").strip()
     status = str(result.get("status", "error") or "error")
     content = _raw_value(result.get("content", ""))
@@ -282,9 +284,6 @@ def _raw_tool_message(result: ToolResult, refs: list[str]) -> str:
         parts.extend(["Content:", content])
     if error:
         parts.extend(["Error:", error])
-    if refs:
-        limit = get_settings().memory.max_tool_message_refs
-        parts.extend(["Refs:", "\n".join(refs[:limit])])
     return "\n\n".join(part for part in parts if part)
 
 
@@ -340,7 +339,6 @@ def append_tool_message(
 def tool_result_message_content(
     result: ToolResult,
     compact: CompactToolObservation,
-    refs: list[str],
     observation: str,
     *,
     compress: bool = False,
@@ -350,7 +348,6 @@ def tool_result_message_content(
     return _DEFAULT_MEMORY.tool_result_content(
         result,
         compact,
-        refs,
         observation,
         compress=compress,
     )

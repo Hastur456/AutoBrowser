@@ -177,6 +177,15 @@ class ContextAssembler:
                 priority=30,
                 source="state.observation",
             ),
+            # Pre-rendered journal of this task's tool calls and their outcomes (see
+            # ``execution/progress.py``); survives history compaction, empty on turn one.
+            ContextBlock(
+                name="Action History",
+                role="user",
+                content=str(state.get("action_history", "") or ""),
+                priority=25,
+                source="state.action_history",
+            ),
         ]
         if tools:
             blocks.append(
