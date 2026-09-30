@@ -22,6 +22,7 @@ from src.browser import FakeBrowserProvider
 from src.browser.normalization import BrowserToolNormalizer
 from src.config import HooksSettings
 from src.contracts import HookEvent, HookResult, Tool, ToolRequest
+from src.harness.builtin_hooks import approve_tools
 from src.harness.hooks import HookEngine, NullHookEngine, RegisteredHook
 from src.harness.mcp_tools import MCPToolSource
 from src.harness.runtime import BrowserHarness
@@ -613,3 +614,189 @@ async def test_a_server_matcher_sees_mcp_tools() -> None:
     finished = [r.payload["tool_result"]["name"] for r in records if r.type == "tool.finished"]
     assert finished == ["fake__echo"]
     assert "fake server is read-only" in tool_messages(result)[0]
+
+
+# --------------------------------------------------------------------------
+# permission_request
+# --------------------------------------------------------------------------
+
+
+class PurchaseTool:
+    """``purchase_item`` trips the built-in ``needs_human`` policy."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.asked: list[str] = []
+
+    def tools(self) -> list[Tool]:
+        async def purchase(**kwargs: Any) -> str:
+            self.calls.append(kwargs)
+            return "bought"
+
+        return [Tool(name="purchase_item", func=purchase)]
+
+    async def human(self, request: ToolRequest, reason: str) -> bool:
+        self.asked.append(reason)
+        return False
+
+
+PURCHASE = [PLAN, tool_call("purchase_item", sku="1"), DONE]
+
+
+@pytest.mark.asyncio
+async def test_permission_request_allow_runs_the_tool_without_the_human() -> None:
+    shop = PurchaseTool()
+    seen: list[HookEvent] = []
+    engine = HookEngine(
+        [hook("profile", "permission_request", returning(HookResult(decision="allow"), seen))]
+    )
+
+    result, records, _ = await run_engine(
+        PURCHASE, hooks=engine, tools=shop.tools(), human_input=shop.human
+    )
+
+    assert shop.asked == []
+    assert shop.calls == [{"sku": "1"}]
+    assert result.status == "done"
+    (event,) = seen
+    assert event.tool == "purchase_item" and event.args == {"sku": "1"}
+    assert "requires human approval" in event.reason
+    turn = [r.type for r in records if r.type not in {"model.requested", "model.responded"}]
+    assert turn[:5] == [
+        "action.proposed",
+        "policy.decided",
+        "approval.requested",
+        "hook.decided",
+        "tool.started",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_permission_request_deny_is_terminal_like_a_human_refusal() -> None:
+    shop = PurchaseTool()
+    engine = HookEngine(
+        [hook("profile", "permission_request", returning(HookResult(decision="deny", reason="Budget.")))]
+    )
+
+    result, _, llm = await run_engine(PURCHASE, hooks=engine, tools=shop.tools(), human_input=shop.human)
+
+    assert shop.asked == [] and shop.calls == []
+    assert result.status == "blocked"
+    assert result.final_answer == "Blocked: approval hook denied purchase_item: Budget."
+    assert llm.calls == 2  # plan + the purchase turn; nothing after the terminal
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "handler",
+    [
+        pytest.param(returning(None), id="no-opinion"),
+        pytest.param(returning(HookResult(decision="ask")), id="ask"),
+        pytest.param(returning(HookResult(additional_context="note")), id="context-only"),
+    ],
+)
+async def test_permission_request_without_a_decision_asks_the_human(handler: Any) -> None:
+    shop = PurchaseTool()
+    engine = HookEngine([hook("profile", "permission_request", handler)])
+
+    result, _, _ = await run_engine(PURCHASE, hooks=engine, tools=shop.tools(), human_input=shop.human)
+
+    assert len(shop.asked) == 1
+    assert result.status == "blocked"
+    assert "human approval was denied" in result.final_answer
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_permission_hook_falls_back_to_the_human() -> None:
+    import asyncio
+
+    shop = PurchaseTool()
+
+    async def slow(event: HookEvent) -> HookResult:
+        await asyncio.sleep(1)
+        return HookResult(decision="allow")
+
+    engine = HookEngine([hook("slow", "permission_request", slow, timeout_seconds=0.05)])
+
+    result, records, _ = await run_engine(
+        PURCHASE, hooks=engine, tools=shop.tools(), human_input=shop.human
+    )
+
+    assert len(shop.asked) == 1 and shop.calls == []
+    assert result.status == "blocked"
+    assert hook_payloads(records)[0]["error"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_a_pre_tool_use_ask_can_be_approved_by_a_permission_hook() -> None:
+    echo = EchoTool()
+    engine = HookEngine(
+        [
+            hook("confirm", "pre_tool_use", returning(HookResult(decision="ask", reason="Confirm."))),
+            hook("profile", "permission_request", approve_tools(tools=["echo"])),
+        ]
+    )
+
+    result, _, _ = await run_engine(
+        [PLAN, tool_call("echo", text="hi"), DONE], hooks=engine, tools=echo.tools()
+    )
+
+    assert echo.calls == [{"text": "hi"}]
+    assert result.status == "done"
+
+
+@pytest.mark.asyncio
+async def test_approve_tools_is_loadable_from_settings_and_approves_only_its_tools() -> None:
+    engine = HookEngine.from_settings(
+        HooksSettings(
+            enabled=True,
+            registry=[
+                {
+                    "id": "profile",
+                    "event": "permission_request",
+                    "handler": "src.harness.builtin_hooks:approve_tools",
+                    "options": {"tools": ["purchase_item"]},
+                }
+            ],
+        ),
+        progress_timeout_seconds=120.0,
+    )
+    shop = PurchaseTool()
+
+    approved, _, _ = await run_engine(PURCHASE, hooks=engine, tools=shop.tools(), human_input=shop.human)
+
+    async def other_purchase(**kwargs: Any) -> str:
+        return "bought"
+
+    other, _, _ = await run_engine(
+        [PLAN, tool_call("purchase_other", sku="2"), DONE],
+        hooks=engine,
+        tools=[Tool(name="purchase_other", func=other_purchase)],
+        human_input=shop.human,
+    )
+
+    assert approved.status == "done" and shop.calls == [{"sku": "1"}]
+    assert other.status == "blocked" and len(shop.asked) == 1
+
+
+@pytest.mark.asyncio
+async def test_approve_tools_matches_tools_and_servers() -> None:
+    handler = approve_tools(tools=["a"], servers=["fake"])
+
+    def event(tool: str, server: str = "") -> HookEvent:
+        return HookEvent(
+            name="permission_request",
+            session_id=None,
+            goal_id="g",
+            task_id="t",
+            task="x",
+            tool=tool,
+            server=server,
+        )
+
+    assert (await handler(event("a"))).decision == "allow"  # type: ignore[union-attr]
+    assert (await handler(event("fake__x", "fake"))).decision == "allow"  # type: ignore[union-attr]
+    assert await handler(event("b")) is None
+    assert await handler(event("b", "other")) is None
+    with pytest.raises(ValueError):
+        approve_tools()

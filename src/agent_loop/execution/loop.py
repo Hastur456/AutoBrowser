@@ -484,7 +484,20 @@ class TurnController:
 
         if decision == "needs_human":
             self._emit("approval.requested", {"tool_request": started_request, "reason": reason})
-            approved = await self._human_input(started_request, reason)
+            verdict = await self._permission_request(state, prepared, reason)
+            if verdict.decision == "deny":
+                denied = request.get("name") or "the requested tool"
+                state = state.apply(
+                    blocked_response(
+                        state,
+                        f"Blocked: approval hook denied {denied}: "
+                        f"{verdict.reason or 'no reason given'}",
+                    )
+                )
+                return state, "blocked"
+            approved = verdict.decision == "allow" or await self._human_input(
+                started_request, reason
+            )
             if not approved:
                 denied = request.get("name") or "the requested tool"
                 state = state.apply(
@@ -558,6 +571,32 @@ class TurnController:
             )
             return denied, prepared
         return outcome, reprepared
+
+    async def _permission_request(
+        self,
+        state: LoopState,
+        prepared: PreparedToolCall,
+        reason: str,
+    ) -> HookOutcome:
+        """Let ``permission_request`` hooks stand in for the human on a ``needs_human`` call.
+
+        ``allow`` approves, ``deny`` refuses exactly like a human would; anything else (no
+        hooks, no opinion, ``ask``, a failed hook) leaves the decision to the human callback.
+        """
+
+        if prepared.tool is None or not self._hooks.has("permission_request"):
+            return HookOutcome()
+        return await self._run_hooks(
+            _hook_event(
+                "permission_request",
+                state,
+                self._event_ctx,
+                tool=str(prepared.request.get("name", "") or ""),
+                server=prepared.server,
+                args=prepared.request.get("args") or {},
+                reason=reason,
+            )
+        )
 
     async def _post_tool_use(
         self,
