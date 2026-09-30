@@ -7,10 +7,12 @@ development workflows.
 
 - [Agent Runtime Flow](agent-runtime-flow.md): engine-native `AgentLoopEngine`
   flow from task input through planning, policy, execution, observation, and
-  completion.
+  completion, including the lifecycle hook points (`goal_start`, `pre_tool_use`,
+  `permission_request`, `post_tool_use`, `stop`, `goal_end`) and the `continue`
+  branch of a rejected completion.
 - [Harness Boundaries](harness-boundaries.md): session ownership through
   `SessionContext` and runtime infrastructure bundled by `BrowserHarness` into
-  `EngineResources` for the engine.
+  `EngineResources` for the engine, plus the session-scoped `HookEngine` path.
 - [MCP Runtime](mcp-runtime.md): settings-driven `MCPManager` construction,
   start/shutdown inside the session, and the catalog-to-`ToolRegistry` bridge.
 - [Tool Call Normalization](browser-provider-boundary.md): request/result
@@ -25,5 +27,5 @@ development workflows.
 ## Update Guidance
 
 Update diagrams when engine phases, loop boundaries, session lifecycle,
-harness injection, tool execution, policy routing, or MCP integration behavior
-changes.
+harness injection, tool execution, policy routing, lifecycle hooks, or MCP
+integration behavior changes.

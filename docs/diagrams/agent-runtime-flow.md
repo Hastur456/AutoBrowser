@@ -7,20 +7,34 @@ goal run. There is no compiled graph.
 ```mermaid
 flowchart TD
   GoalRunner[GoalRunner] --> Engine[AgentLoopEngine.run]
-  Engine --> Plan[plan: model call #0]
+  Engine --> GoalStart{{"hook: goal_start"}}
+  GoalStart -->|deny| Result
+  GoalStart --> Plan[plan: model call #0]
   Plan --> Turn[TurnController turn]
-  Turn -->|decision: tool_call| Policy[policy]
+  Turn -->|decision: tool_call| Policy[built-in policy]
   Turn -->|decision: replan| Plan
-  Turn -->|decision: done| Result[AgentLoopResult]
+  Turn -->|model done| Stop{{"hook: stop"}}
+  Stop -->|deny: decision continue| Turn
+  Stop -->|no deny / budget spent| Result[AgentLoopResult]
+  Turn -->|guard terminal| Result
   Policy -->|blocked| Turn
-  Policy -->|needs_human| Human[human_input]
-  Human -->|denied| Turn
-  Human -->|approved| Exec[execute: ToolBroker]
-  Policy -->|approved| Exec
-  Exec --> Obs[observe]
+  Policy -->|approved / needs_human| Prepare[ToolBroker.prepare]
+  Prepare --> Pre{{"hook: pre_tool_use"}}
+  Pre -->|deny| Turn
+  Pre -->|ask| Human
+  Pre -->|approved| Exec
+  Pre -->|needs_human| Perm{{"hook: permission_request"}}
+  Perm -->|allow| Exec
+  Perm -->|deny| Result
+  Perm -->|no decision| Human[human_input]
+  Human -->|denied| Result
+  Human -->|approved| Exec[ToolBroker.invoke]
+  Exec --> Post{{"hook: post_tool_use / _failure"}}
+  Post --> Obs[observe]
   Obs --> Turn
   Obs -->|done| Result
-  Result -->|status / final_answer / session_state| Session[SessionRuntime]
+  Result --> GoalEnd{{"hook: goal_end"}}
+  GoalEnd -->|status / final_answer / session_state| Session[SessionRuntime]
 ```
 
 `AgentLoopEngine` builds the initial plan, then runs a bounded `while` loop of
@@ -40,3 +54,13 @@ returned the identical result `settings.loop.max_ineffective_actions` times. The
 terminal status is read from the explicit `LoopState.completion_status` set by
 whoever ended the run, so loop-protection stops and model `blocked`/`failed`
 stops end as `blocked`, never as `done`.
+
+Lifecycle hooks (`src/harness/hooks.py`, see the
+[ADR](../decisions/2026-09-30-lifecycle-hooks-engine.md)) sit at the hexagon points and
+are skipped entirely when hooks are disabled. `pre_tool_use` runs after built-in policy
+and never after a built-in `blocked`; its `allow` does not lift `needs_human` — only
+`permission_request` can approve instead of the human. `post_tool_use` may rewrite the
+output before `observe`; hook context becomes a separate `[harness]` message after it.
+`stop` runs only for a model `done` with status `done` (never for guard terminals); a
+deny turns the turn into `decision: "continue"`, bounded by `hooks.max_stop_blocks` and
+the turn cap. Every handler run emits one `hook.decided` event.

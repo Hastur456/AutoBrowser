@@ -154,6 +154,7 @@ python -m pytest tests\test_browser_contracts.py tests\test_browser_normalizatio
 python -m pytest tests\test_agent_loop_events.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py tests\test_messages.py
 python -m pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
 python -m pytest tests\test_context_assembler.py tests\test_goal_runner.py
+python -m pytest tests\test_harness_hooks.py tests\test_agent_loop_hooks.py tests\test_browser_hooks.py tests\test_builtin_hooks.py
 ```
 
 Check docs-only diffs with:

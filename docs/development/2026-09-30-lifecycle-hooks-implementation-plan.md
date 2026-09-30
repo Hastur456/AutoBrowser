@@ -1,7 +1,7 @@
 # Lifecycle hooks — план реализации
 
 Дата: 2026-09-30, **ред. 2** (сверка с кодом, список правок — §9) · Ветка:
-`feat/lifecycle-hooks` · Статус: **Planned**
+`feat/hooks` · Статус: **Implemented** (коммиты 0–10; отклонения от плана — §10)
 
 Основа: [Lifecycle Hooks Research](../research/2026-09-30-lifecycle-hooks-research.md)
 (далее — «research»). Продолжает «Phase 6: Hooks» из
@@ -581,18 +581,20 @@ timeout → вызывается `human_input`.
 
 ## 6. Критерии готовности
 
-- [ ] Без hook-ов (`enabled=false` или `NullHookEngine`) полный `pytest` и eval
+- [x] Без hook-ов (`enabled=false` или `NullHookEngine`) полный `pytest` и eval
       baseline без изменений; payload-ы существующих событий не меняются.
-- [ ] `pre_tool_use` deny не доходит до tool-а; причина видна модели.
-- [ ] Hook не может снять built-in `blocked` и не может одобрить `needs_human`
+- [x] `pre_tool_use` deny не доходит до tool-а; причина видна модели.
+- [x] Hook не может снять built-in `blocked` и не может одобрить `needs_human`
       иначе как через `permission_request`.
-- [ ] Stop-hook не зацикливает run (`max_stop_blocks`, `turn_cap`) и не срабатывает на
+- [x] Stop-hook не зацикливает run (`max_stop_blocks`, `turn_cap`) и не срабатывает на
       guard-терминалах.
-- [ ] Упавший/зависший hook не роняет задачу; поведение по §4.2.
-- [ ] Каждое решение hook-а есть в `events.jsonl` и `agent_trace.jsonl` как
+- [x] Упавший/зависший hook не роняет задачу; поведение по §4.2.
+- [x] Каждое решение hook-а есть в `events.jsonl` и `agent_trace.jsonl` как
       `hook.decided`, без аргументов; `replay_trace.py` его показывает.
-- [ ] Ошибки конфигурации hook-ов видны при старте сессии.
-- [ ] Диаграммы, ADR, `CLAUDE.md`/`AGENTS.md` обновлены.
+- [x] Ошибки конфигурации hook-ов видны при старте сессии.
+- [x] Диаграммы, ADR, `CLAUDE.md`/`AGENTS.md` обновлены.
+- [ ] Ручной прогон `python main.py --show-state` с `url_policy` +
+      `grounded_final_answer` на реальном браузере (нужны Chrome и модель).
 
 ## 7. Риски
 
@@ -647,3 +649,20 @@ timeout → вызывается `human_input`.
 | 20 | `ruff check .` | ruff есть в `.venv`, но не в `requirements.txt` | `.\.venv\Scripts\ruff check .` |
 | 21 | — | timeout handler-а может превысить `progress_timeout_seconds` (120 с) | валидация при сборке `HookEngine` |
 | 22 | — | переписанный snapshot становится `browser.snapshot`; `url_policy` не видит навигацию через `browser_evaluate` | правило про `ref=`; ограничение в ADR и рисках |
+
+## 10. Отклонения при реализации
+
+| # | План | Реализация | Почему |
+|---|---|---|---|
+| 1 | `stop_blocks >= settings.hooks.max_stop_blocks` в loop | лимит хранится в `HookEngine.max_stop_blocks` (из `HooksSettings` в `from_settings`) | loop не читает hook-настройки из `get_settings()`, личный `config.yaml` не влияет на тесты |
+| 2 | `SessionContext.start` | `SessionContext.initialize`, самым первым шагом — до запуска Chrome/MCP | такого метода `start` нет; сломанный registry не должен запускать браузер |
+| 3 | `goal_end` «после выхода из цикла» | также после `goal_start` deny | это тоже нормальный терминальный результат; каждому `goal_start` соответствует `goal_end` |
+| 4 | deny `pre_tool_use` — «тот же путь, что built-in блок» | тот же `policy_updates("blocked")`, причина с префиксом `Blocked by hook:`; второй `policy.decided` не эмитится | иначе блок посчитался бы в `policy_block_count` дважды (он уже считается по `hook.decided`) |
+| 5 | — | `HookEngine.skip()` строит записи `skipped` для бюджета stop; `RegisteredHook` позволяет собрать движок без импорта по строке | единая форма `hook.decided`; тестам нужны замыкания |
+| 6 | unknown tool пропускает `pre`/`post` hook-и | пропускает и `permission_request` | у неизвестного tool-а нет ни имени в каталоге, ни сервера |
+| 7 | `[harness]`-контекст «после compile» | контекст `pre_tool_use` добавляется и при deny; при терминальном observation (unchanged snapshots) сообщение не добавляется | модель должна видеть причину/контекст блока; после терминала сообщение бесполезно |
+| 8 | `url_policy` для tool-ов «принимающих URL» | только `browser_navigate` | в Playwright MCP 0.0.55 URL принимает только он; `browser_tabs new` открывает пустую вкладку |
+| 9 | `grounded_final_answer`: числа из ответа | маркеры списка (`1.`/`2)` в начале строки) и числа, приклеенные к буквам (`e10`), не проверяются | иначе нумерованный ответ и ref-ы отклонялись бы всегда |
+| 10 | `invoke` «только нормализует» `error_result` | нормализуется и результат пустого имени (раньше возвращался как есть) | все normalizer-ы — no-op для пустого имени; одна ветка кода |
+| 11 | `ruff check .` чистый | в репозитории до начала работы 74 ошибки; критерий — ни одной новой | существующий долг вне границ плана |
+| 12 | — | `replay.iter_action_sequence` по-прежнему сопоставляет статусы `tool.finished` с действиями по порядку: заблокированное действие «забирает» статус следующего | существовавшее поведение (так же для built-in блоков); не исправлялось в этом плане |
