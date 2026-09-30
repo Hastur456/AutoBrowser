@@ -25,6 +25,7 @@
 | Canonical browser action | Provider-neutral browser action name such as `browser.snapshot`, mapped to backend-specific tool names by adapters. |
 | ChatModel | Provider-neutral chat protocol in `src/llm.py`: `async complete(messages, *, tools, **params) -> ModelResponse`. Provider adapters implement it; the engine drives it and never sees provider objects. |
 | Checkpointer | Removed. There is no checkpoint saver; durable history is carried on `LoopState.messages` and `SessionContext.state`, shaped by the functional `MemoryManager`. |
+| Command hook | Hook with `type: command` (`src/harness/command_hooks.py`): an external process that gets the `HookEvent` as JSON on stdin and answers with its exit code (`2` blocks, stderr is the reason) and optional JSON on stdout, following the Claude Code/Codex protocol. |
 | Compact observation | Short observer output derived from a tool result and used by the next agent step. |
 | CompletionStatus | Loop completion status (`continue`/`done`/`blocked`/`cancelled`) carried on `AgentLoopResult`; `GoalRunner` maps it to a terminal `GoalStatus` via `goal_status_from_completion()` in `src/contracts.py`. |
 | Config section | One of the eight frozen pydantic sub-models on `Settings` (`llm`, `browser`, `loop`, `observation`, `memory`, `events`, `storage`, `flags`). Each owns an `AUTOBROWSER_<SECTION>__<FIELD>` environment namespace and rejects unknown keys. |
@@ -43,7 +44,7 @@
 | Harness | Runtime layer around the engine; owns infrastructure that should not be hardcoded into loop code. |
 | Hook | Deterministic check registered in `hooks.registry` (`src/harness/hooks.py`) that can deny/ask/rewrite a tool call, rewrite its output, add model context, or reject a premature completion at a fixed lifecycle point. Disabled by default. |
 | Hook event | One lifecycle point a hook runs on (`goal_start`, `pre_tool_use`, `permission_request`, `post_tool_use`, `post_tool_use_failure`, `stop`, `goal_end`), and the neutral `HookEvent` object handed to it. |
-| Hook handler | Async callable `HookEvent -> HookResult \| None` named by `package.module:attr` (a factory when `options` are set); `None` means no opinion. |
+| Hook handler | Async callable `HookEvent -> HookResult \| None`: for `type: python` named by `package.module:attr` (a factory when `options` are set), for `type: command` a `CommandHook` wrapping an external process; `None` means no opinion. |
 | HookEngine | Session-scoped runner of the hook registry: sequential handlers, `deny > ask > allow` aggregation, per-hook timeouts, one `hook.decided` event per handler via the loop. `NullHookEngine` is the disabled no-op. |
 | Ineffective browser action | A successful browser action whose follow-up snapshot has the same visible fingerprint as the previous snapshot. |
 | LatestStateLoader | Callable port injected into `GoalRunner` to load latest loop state from the current harness/config, with fallback to the task result's session state. |

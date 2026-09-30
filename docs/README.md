@@ -11,6 +11,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   usage, and prompt-change workflow.
 - [Browser Agent Rules](development/browser-agent-rules.md): Playwright MCP
   interaction rules and search-flow debugging guidance.
+- [Lifecycle Hooks Guide](development/lifecycle-hooks.md): how hooks work, their
+  architecture, configuration, Python and command hooks, and how to create, change,
+  disable and test them.
 - [Diagrams](diagrams/index.md): Mermaid diagrams for the agent loop, session
   runtime, and harness boundaries.
 - [Session Runtime Change](development/2026-07-23-session-runtime-change.md):
