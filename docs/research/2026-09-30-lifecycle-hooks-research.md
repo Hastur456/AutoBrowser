@@ -241,7 +241,8 @@ TurnController._run_tool_turn
   hooks.run(PreToolUse)            ← видит ровно то, что будет выполнено
     deny  → policy_updates("blocked", reason) → return      (тот же путь, что built-in)
     ask   → needs_human
-    allow → (если built-in был needs_human — авто-одобрение)
+    allow → «нет возражений» (needs_human НЕ обходит — только через PermissionRequest,
+            см. план реализации §4.2)
     updated_input → повторная schema-валидация, hook-и НЕ перезапускаются
   needs_human → hooks.run(PermissionRequest) → иначе self._human_input
   ToolBroker.invoke(prepared)
@@ -422,6 +423,8 @@ matcher-ы, дешёвые проверки раньше дорогих, Stop ho
   упрощённый?
 
 ## 7. Следующие шаги
+
+Детальный план: [Lifecycle hooks — план реализации](../development/2026-09-30-lifecycle-hooks-implementation-plan.md).
 
 1. ADR «Lifecycle hooks engine» (MVP: Python callables, 6 событий, sequential,
    disabled by default).

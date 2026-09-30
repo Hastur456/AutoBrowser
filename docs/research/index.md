@@ -31,7 +31,8 @@ Survey of hook/middleware designs (Claude Code, Codex, Gemini CLI, Cursor,
 LangChain, OpenAI Agents SDK, ADK) and a proposed deterministic `HookEngine`
 around `TurnController` tool turns and completion.
 
-See [Lifecycle Hooks Research](2026-09-30-lifecycle-hooks-research.md).
+See [Lifecycle Hooks Research](2026-09-30-lifecycle-hooks-research.md) and the
+[implementation plan](../development/2026-09-30-lifecycle-hooks-implementation-plan.md).
 
 ### Search Flow Robustness
 
