@@ -1005,3 +1005,137 @@ async def test_guard_terminals_skip_stop_hooks() -> None:
     assert failures.status == "blocked" and "consecutive times" in failures.final_answer
     assert replans.status == "blocked" and "replanning reached the limit" in replans.final_answer
 
+
+
+# --------------------------------------------------------------------------
+# goal_start / goal_end
+# --------------------------------------------------------------------------
+
+
+class RecordingModel(CountingModel):
+    """``CountingModel`` that also keeps the messages of every call."""
+
+    def __init__(self, responses: list[dict[str, Any]]) -> None:
+        super().__init__(responses)
+        self.seen: list[list[Any]] = []
+
+    async def complete(self, messages: Any, **kwargs: Any) -> ModelResponse:
+        self.seen.append(list(messages))
+        return await super().complete(messages, **kwargs)
+
+
+async def run_goal(
+    responses: list[dict[str, Any]],
+    hooks: Any,
+) -> tuple[AgentLoopResult, list[EventRecord], RecordingModel]:
+    sink = InMemoryEventSink()
+    emitter = EventEmitter(sink, session_id="session-1")
+    llm = RecordingModel(responses)
+    harness = BrowserHarness(llm=llm, tool_registry=ToolRegistry(tools=[]), event_emitter=emitter)
+    resources = EngineResources.from_harness(harness, llm=llm, events=emitter, hooks=hooks)
+    result = await AgentLoopEngine(resources).run(
+        "Buy milk.", task_id="task-1", goal_id="task-1", session_id="session-1"
+    )
+    return result, list(sink.records), llm
+
+
+@pytest.mark.asyncio
+async def test_a_goal_start_deny_blocks_the_task_without_any_model_call() -> None:
+    seen: list[HookEvent] = []
+    engine = HookEngine(
+        [hook("scope", "goal_start", returning(HookResult(decision="deny", reason="Out of scope."), seen))]
+    )
+
+    result, records, llm = await run_goal([PLAN, DONE], engine)
+
+    assert llm.calls == 0
+    assert result.status == "blocked"
+    assert result.final_answer == "Blocked: Out of scope."
+    assert result.turns == 0
+    assert [(e.task, e.task_id, e.session_id, e.goal_id) for e in seen] == [
+        ("Buy milk.", "task-1", "session-1", "task-1")
+    ]
+    assert types_of(records) == ["hook.decided"]
+    assert result.state.messages[0].role == "system"
+
+
+@pytest.mark.asyncio
+async def test_a_failing_goal_start_hook_fails_closed() -> None:
+    async def broken(event: HookEvent) -> HookResult:
+        raise RuntimeError("policy service down")
+
+    engine = HookEngine([hook("scope", "goal_start", broken)])
+
+    result, _, llm = await run_goal([PLAN, DONE], engine)
+
+    assert llm.calls == 0
+    assert result.status == "blocked"
+    assert "policy service down" in result.final_answer
+
+
+@pytest.mark.asyncio
+async def test_goal_start_context_follows_the_user_request_and_precedes_the_plan() -> None:
+    engine = HookEngine(
+        [hook("ctx", "goal_start", returning(HookResult(additional_context="Budget: 100 RUB.")))]
+    )
+
+    result, _, llm = await run_goal([PLAN, DONE], engine)
+
+    assert result.status == "done"
+    plan_call = llm.seen[0]
+    contents = [str(message.content) for message in plan_call]
+    request = contents.index("User request (task-1):\nBuy milk.")
+    note = contents.index("[harness] Budget: 100 RUB.")
+    assert plan_call[0].role == "system"
+    assert request < note == len(contents) - 2  # the plan prompt comes last
+    assert sum(content.startswith("User request") for content in contents) == 1
+
+
+@pytest.mark.asyncio
+async def test_goal_end_observes_the_terminal_status() -> None:
+    seen: list[HookEvent] = []
+    engine = HookEngine([hook("audit", "goal_end", returning(None, seen))])
+
+    done, records, _ = await run_goal([PLAN, DONE], engine)
+    blocked, _, _ = await run_goal([PLAN, {"decision": "blocked", "message": "No stock."}], engine)
+
+    assert [event.status for event in seen] == ["done", "blocked"]
+    assert done.status == "done" and blocked.status == "blocked"
+    assert types_of(records)[-1] == "hook.decided"
+
+
+@pytest.mark.asyncio
+async def test_goal_end_runs_after_a_goal_start_deny() -> None:
+    seen: list[HookEvent] = []
+    engine = HookEngine(
+        [
+            hook("scope", "goal_start", returning(HookResult(decision="deny"))),
+            hook("audit", "goal_end", returning(None, seen)),
+        ]
+    )
+
+    result, _, _ = await run_goal([PLAN, DONE], engine)
+
+    assert result.status == "blocked"
+    assert [event.status for event in seen] == ["blocked"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_goal_end_hook_does_not_change_the_result() -> None:
+    async def broken(event: HookEvent) -> HookResult:
+        raise RuntimeError("audit sink down")
+
+    async def denies(event: HookEvent) -> HookResult:
+        return HookResult(decision="deny", reason="ignored", additional_context="ignored")
+
+    engine = HookEngine(
+        [hook("broken", "goal_end", broken), hook("denies", "goal_end", denies)]
+    )
+
+    result, records, _ = await run_goal([PLAN, DONE], engine)
+
+    assert result.status == "done"
+    assert result.final_answer == "All done."
+    payloads = hook_payloads(records)
+    assert payloads[0]["error"] == "RuntimeError: audit sink down"
+    assert [p["hook_id"] for p in payloads] == ["broken", "denies"]

@@ -787,6 +787,10 @@ class AgentLoopEngine:
         if task_id and not state.task_id:
             state = state.apply({"task_id": task_id})
 
+        state, denied = await self._goal_start(state)
+        if denied:
+            return await self._finish(state, "blocked", turns=0)
+
         # Model call #0: build the initial plan (consumes the planner response).
         state = await self._run_plan(state)
 
@@ -816,12 +820,60 @@ class AgentLoopEngine:
                 state = await self._run_plan(state)
                 continue
 
+        return await self._finish(state, final_status or "blocked", turns=turn)
+
+    async def _goal_start(self, state: LoopState) -> tuple[LoopState, bool]:
+        """Run ``goal_start`` hooks before the first model call; ``True`` means denied.
+
+        A deny blocks the task without calling the model. ``additional_context`` lands after
+        the ``User request`` message (so the planner sees it) as a ``[harness]`` message.
+        """
+
+        if not self._resources.hooks.has("goal_start"):
+            return state, False
+        outcome = await self._run_hooks(_hook_event("goal_start", state, self._event_ctx))
+        if outcome.decision == "deny":
+            reason = outcome.reason or "a goal_start hook denied the task."
+            # Seed the real system prompt first, as the planner would have.
+            state = state.apply({"messages": self._history(state)})
+            return state.apply(blocked_response(state, f"Blocked: {reason}")), True
+        note = _harness_note([outcome.additional_context])
+        if note is not None:
+            state = state.apply({"messages": [*self._history(state), note]})
+        return state, False
+
+    async def _finish(
+        self,
+        state: LoopState,
+        status: CompletionStatus,
+        *,
+        turns: int,
+    ) -> AgentLoopResult:
+        """Build the terminal result, after the observational ``goal_end`` hooks.
+
+        Only a normal terminal result reaches here: engine exceptions, cancellation and
+        ``GoalRunner`` timeouts never run ``goal_end`` (``goal.failed``/``goal.cancelled``
+        cover them). A failing ``goal_end`` hook cannot change the result.
+        """
+
+        if self._resources.hooks.has("goal_end"):
+            await self._run_hooks(_hook_event("goal_end", state, self._event_ctx, status=status))
         return AgentLoopResult(
-            status=final_status or "blocked",
+            status=status,
             final_answer=str(state.final_answer or ""),
             session_state=state.to_session_state(),
             state=state,
-            turns=turn,
+            turns=turns,
+        )
+
+    async def _run_hooks(self, event: HookEvent) -> HookOutcome:
+        """Run hooks for ``event``, emitting one ``hook.decided`` per handler as it finishes."""
+
+        return await self._resources.hooks.run(
+            event,
+            on_record=lambda record: self._emit(
+                "hook.decided", _hook_record_payload(record, event)
+            ),
         )
 
     async def _run_plan(self, state: LoopState) -> LoopState:
