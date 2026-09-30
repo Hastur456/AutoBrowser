@@ -103,6 +103,9 @@ class LoopState:
     # Task-local journal of executed tool calls (see ``execution/progress.py``). Not part of
     # ``to_session_state``, so every task starts with an empty journal.
     action_history: list[ActionRecord] = field(default_factory=list)
+    # Task-local count of model completions a stop hook rejected (bounded by
+    # ``hooks.max_stop_blocks``). Not part of ``to_session_state`` either.
+    stop_blocks: int = 0
 
     final_answer: str = ""
     # Explicit terminal status ("done"/"blocked"/"cancelled") set by whoever ends the run;

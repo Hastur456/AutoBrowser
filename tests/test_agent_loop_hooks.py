@@ -16,8 +16,14 @@ import pytest
 
 from src.agent_loop.evals import FakeChatModel
 from src.agent_loop.events import EventEmitter, EventRecord, InMemoryEventSink
-from src.agent_loop.execution.loop import AgentLoopEngine, AgentLoopResult
+from src.agent_loop.execution.guards import CompletionController
+from src.agent_loop.execution.loop import (
+    AgentLoopEngine,
+    AgentLoopResult,
+    TurnController,
+)
 from src.agent_loop.execution.resources import EngineResources
+from src.agent_loop.execution.state import LoopState
 from src.browser import FakeBrowserProvider
 from src.browser.normalization import BrowserToolNormalizer
 from src.config import HooksSettings
@@ -800,3 +806,202 @@ async def test_approve_tools_matches_tools_and_servers() -> None:
     assert await handler(event("b", "other")) is None
     with pytest.raises(ValueError):
         approve_tools()
+
+
+# --------------------------------------------------------------------------
+# stop
+# --------------------------------------------------------------------------
+
+REJECTION = "[harness] Completion rejected: The price is not on the page.\nTake a snapshot first."
+
+
+def answer(text: str) -> dict[str, Any]:
+    return {"decision": "done", "final_answer": text}
+
+
+def scripted_stop(*decisions: str | None, seen: list[HookEvent] | None = None) -> Any:
+    """Stop handler denying/allowing per call in order; later calls repeat the last entry."""
+
+    calls = 0
+
+    async def handler(event: HookEvent) -> HookResult | None:
+        nonlocal calls
+        if seen is not None:
+            seen.append(event)
+        decision = decisions[min(calls, len(decisions) - 1)]
+        calls += 1
+        if decision is None:
+            return None
+        return HookResult(
+            decision=decision,  # type: ignore[arg-type]
+            reason="The price is not on the page.",
+            additional_context="Take a snapshot first.",
+        )
+
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_a_stop_deny_keeps_the_turn_non_terminal_and_nothing_completes() -> None:
+    sink = InMemoryEventSink()
+    emitter = EventEmitter(sink, session_id="session-1")
+    llm = CountingModel([answer("It costs 999.")])
+    harness = BrowserHarness(llm=llm, tool_registry=ToolRegistry(tools=[]), event_emitter=emitter)
+    engine = HookEngine([hook("grounded", "stop", scripted_stop("deny"))])
+    resources = EngineResources.from_harness(harness, llm=llm, events=emitter, hooks=engine)
+    controller = TurnController(
+        resources,
+        tools=[],
+        event_ctx={"session_id": "session-1", "task_id": "task-1", "goal_id": "task-1"},
+        completion=CompletionController(),
+    )
+    plan = [{"id": 1, "description": "Find the price", "status": "pending"}]
+    state = LoopState(task="Find the price.", task_id="task-1", plan=plan)  # type: ignore[arg-type]
+
+    turn = await controller.run_turn(state)
+
+    assert turn.status is None and turn.replan is False
+    after = turn.state
+    assert after.decision == "continue"
+    assert after.final_answer == "" and after.completion_status == ""
+    assert after.plan == plan and after.current_step == 0
+    assert after.stop_blocks == 1
+    assert after.messages[-2].role == "assistant"
+    assert after.messages[-2].content == "It costs 999."
+    assert after.messages[-1].role == "user"
+    assert after.messages[-1].content == REJECTION
+
+
+@pytest.mark.asyncio
+async def test_the_next_done_after_a_rejection_is_accepted() -> None:
+    seen: list[HookEvent] = []
+    engine = HookEngine([hook("grounded", "stop", scripted_stop("deny", None, seen=seen))])
+
+    result, records, llm = await run_engine(
+        [PLAN, answer("First try."), answer("Second try.")],
+        hooks=engine,
+        tools=[],
+    )
+
+    assert result.status == "done"
+    assert result.final_answer == "Second try."
+    assert result.state.stop_blocks == 1
+    assert [(e.final_answer, e.stop_hook_active) for e in seen] == [
+        ("First try.", False),
+        ("Second try.", True),
+    ]
+    assert llm.calls == 3
+    assert result.turns == 2
+    contents = [str(m.content) for m in result.state.messages]
+    assert contents.index("First try.") < contents.index(REJECTION) < contents.index("Second try.")
+    assert all(r.payload["event"] == "stop" for r in records if r.type == "hook.decided")
+
+
+@pytest.mark.asyncio
+async def test_the_stop_budget_ends_the_rejections() -> None:
+    seen: list[HookEvent] = []
+    engine = HookEngine(
+        [hook("grounded", "stop", scripted_stop("deny", seen=seen))], max_stop_blocks=2
+    )
+
+    result, records, _ = await run_engine([PLAN, answer("Same answer.")], hooks=engine, tools=[])
+
+    assert result.status == "done"
+    assert result.final_answer == "Same answer."
+    assert len(seen) == 2
+    assert result.state.stop_blocks == 2
+    payloads = hook_payloads(records)
+    assert [p["decision"] for p in payloads] == ["deny", "deny", None]
+    assert payloads[-1]["skipped"] == "stop_budget_exhausted"
+    assert payloads[-1]["hook_id"] == "grounded"
+
+
+@pytest.mark.asyncio
+async def test_turn_cap_bounds_a_stop_hook_that_always_denies() -> None:
+    engine = HookEngine([hook("grounded", "stop", scripted_stop("deny"))], max_stop_blocks=100)
+
+    result, _, _ = await run_engine([PLAN, answer("Nope.")], hooks=engine, tools=[], turn_cap=4)
+
+    assert result.status == "blocked"
+    assert "maximum of 4 agent turns" in result.final_answer
+    assert result.state.stop_blocks == 4
+
+
+@pytest.mark.asyncio
+async def test_stop_hooks_see_the_latest_observation_and_snapshot_as_evidence() -> None:
+    seen: list[HookEvent] = []
+    engine = HookEngine([hook("grounded", "stop", scripted_stop(None, seen=seen))])
+
+    await run_engine(
+        [PLAN, tool_call("browser_snapshot"), answer("Found the search box.")],
+        hooks=engine,
+        snapshots=['- textbox "Search" ref=e8'],
+    )
+
+    (event,) = seen
+    assert event.task == "Do the task."
+    assert len(event.evidence) == 2
+    assert all('textbox "Search" ref=e8' in text for text in event.evidence)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "status"),
+    [
+        pytest.param({"decision": "blocked", "message": "Cannot log in."}, "blocked", id="blocked"),
+        pytest.param({"decision": "cancelled", "message": "User left."}, "cancelled", id="cancelled"),
+        pytest.param({"decision": "stop", "status": "failed", "message": "No."}, "blocked", id="failed"),
+    ],
+)
+async def test_a_non_done_stop_from_the_model_skips_stop_hooks(
+    response: dict[str, Any],
+    status: str,
+) -> None:
+    seen: list[HookEvent] = []
+    engine = HookEngine([hook("grounded", "stop", scripted_stop("deny", seen=seen))])
+
+    result, _, _ = await run_engine([PLAN, response], hooks=engine, tools=[])
+
+    assert seen == []
+    assert result.status == status
+
+
+@pytest.mark.asyncio
+async def test_a_done_stop_from_the_model_runs_stop_hooks() -> None:
+    seen: list[HookEvent] = []
+    engine = HookEngine([hook("grounded", "stop", scripted_stop(None, seen=seen))])
+
+    result, _, _ = await run_engine(
+        [PLAN, {"decision": "stop", "status": "done", "message": "Finished."}],
+        hooks=engine,
+        tools=[],
+    )
+
+    assert [event.final_answer for event in seen] == ["Finished."]
+    assert result.status == "done"
+
+
+@pytest.mark.asyncio
+async def test_guard_terminals_skip_stop_hooks() -> None:
+    seen: list[HookEvent] = []
+    engine = HookEngine([hook("grounded", "stop", scripted_stop("deny", seen=seen))])
+
+    async def broken(**kwargs: Any) -> str:
+        raise RuntimeError("down")
+
+    failures, _, _ = await run_engine(
+        [PLAN, tool_call("broken", n=1), tool_call("broken", n=2), tool_call("broken", n=3)],
+        hooks=engine,
+        tools=[Tool(name="broken", func=broken)],
+    )
+    replan = {"decision": "replan", "reason": "Try another way."}
+    replans, _, _ = await run_engine(
+        [PLAN, replan, PLAN, replan, PLAN, replan, PLAN, replan],
+        hooks=engine,
+        tools=[],
+    )
+
+    assert seen == []
+    assert failures.status == "blocked" and "consecutive times" in failures.final_answer
+    assert replans.status == "blocked" and "replanning reached the limit" in replans.final_answer
+

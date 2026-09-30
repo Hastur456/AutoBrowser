@@ -119,6 +119,8 @@ OnRecord = Callable[[HookDecisionRecord], None]
 class NullHookEngine:
     """Hook engine with no hooks: the loop's fast path when hooks are disabled."""
 
+    max_stop_blocks = 0
+
     def has(self, name: HookEventName) -> bool:
         return False
 
@@ -137,7 +139,10 @@ class HookEngine:
         hooks: Sequence[RegisteredHook],
         *,
         progress_timeout_seconds: float | None = None,
+        max_stop_blocks: int = 2,
     ) -> None:
+        #: Completions a ``stop`` hook may reject per task before ``done`` is accepted.
+        self.max_stop_blocks = max_stop_blocks
         seen: set[str] = set()
         by_event: dict[str, list[RegisteredHook]] = {}
         for hook in hooks:
@@ -186,7 +191,11 @@ class HookEngine:
             _load_hook(spec, default_timeout=hooks.default_timeout_seconds)
             for spec in hooks.registry
         ]
-        return cls(loaded, progress_timeout_seconds=progress_timeout_seconds)
+        return cls(
+            loaded,
+            progress_timeout_seconds=progress_timeout_seconds,
+            max_stop_blocks=hooks.max_stop_blocks,
+        )
 
     def has(self, name: HookEventName) -> bool:
         """Whether any hook is registered for ``name`` (lets the loop skip building events)."""

@@ -727,3 +727,61 @@ async def test_a_broken_hook_registry_fails_session_start_before_chrome(
 
     assert launched == []
     assert runtime.context.initialized is False
+
+
+class PlanAndDoneModel:
+    """Chat model whose single response works as a plan and as a ``done`` answer."""
+
+    RESPONSE = json.dumps(
+        {
+            "steps": [{"id": 1, "description": "Answer", "status": "pending"}],
+            "decision": "done",
+            "final_answer": "Done.",
+        }
+    )
+
+    async def complete(self, messages: Any, **_kwargs: Any) -> Any:
+        from src.llm import ModelResponse
+
+        return ModelResponse(content=self.RESPONSE, finish_reason="stop")
+
+
+@pytest.mark.asyncio
+async def test_stop_blocks_start_from_zero_in_every_task_of_a_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from tests.hook_fixtures import CALLS
+
+    monkeypatch.chdir(tmp_path)
+    use_hooks(
+        monkeypatch,
+        HooksSettings(
+            enabled=True,
+            max_stop_blocks=1,
+            registry=[{"id": "deny", "event": "stop", "handler": "tests.hook_fixtures:deny_all"}],
+        ),
+    )
+    CALLS.clear()
+    runtime = SessionRuntime(
+        make_config(),
+        llm_factory=lambda **_kwargs: PlanAndDoneModel(),
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        mcp_runtime_factory=no_mcp_runtime,
+    )
+
+    first = await runtime.run_task("first task")
+    second = await runtime.run_task("second task")
+
+    # Each task: the first done is rejected (stop_blocks 0 -> 1), the second is accepted
+    # because the budget of 1 is spent. A carried-over stop_blocks would skip the hook in
+    # the second task entirely.
+    assert first.status == second.status == "done"
+    assert first.state.stop_blocks == second.state.stop_blocks == 1
+    assert [(event.task, event.stop_hook_active) for _, event in CALLS] == [
+        ("first task", False),
+        ("second task", False),
+    ]
+    assert "stop_blocks" not in runtime.context.state
+    CALLS.clear()

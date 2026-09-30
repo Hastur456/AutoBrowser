@@ -293,6 +293,9 @@ class TurnController:
             return TurnResult(state=state, status="done" if status == "continue" else status)
         if decision == "replan":
             return TurnResult(state=state, replan=True)
+        if decision == "continue":
+            # A stop hook rejected the model's completion; the feedback is in ``messages``.
+            return TurnResult(state=state)
         if decision == "tool_call":
             state, terminal_status = await self._run_tool_turn(state)
             return TurnResult(state=state, status=terminal_status)
@@ -347,7 +350,52 @@ class TurnController:
         if not actions:
             # ActionParser always returns >=1 action; this is a defensive terminal only.
             return blocked_response(state, "Blocked: the model returned no actionable step.")
-        return self._classify_action(state, actions[0], messages)
+        update = self._classify_action(state, actions[0], messages)
+        # Only a successful completion *from the model* is checked; guard terminals (limits,
+        # unchanged snapshots) and blocked/cancelled stops are never second-guessed.
+        if update.get("decision") == "done" and update.get("completion_status") == "done":
+            update = await self._stop_check(state, update)
+        return update
+
+    async def _stop_check(self, state: LoopState, update: dict[str, Any]) -> dict[str, Any]:
+        """Run ``stop`` hooks on a model ``done`` before it is applied to state.
+
+        A ``deny`` replaces the terminal update with ``decision: "continue"``: the final answer,
+        completion status and plan completion are dropped, the model's answer stays in the
+        history followed by the ``[harness]`` rejection feedback, and ``stop_blocks`` grows.
+        Once ``stop_blocks`` reaches the engine's ``max_stop_blocks`` the hooks are skipped and
+        ``done`` is accepted.
+        """
+
+        if not self._hooks.has("stop"):
+            return update
+        event = _hook_event(
+            "stop",
+            state,
+            self._event_ctx,
+            final_answer=str(update.get("final_answer", "") or ""),
+            evidence=tuple(
+                text for text in (state.observation, state.browser.snapshot) if str(text or "")
+            ),
+            stop_hook_active=state.stop_blocks > 0,
+        )
+        if state.stop_blocks >= self._hooks.max_stop_blocks:
+            for record in self._hooks.skip("stop", "stop_budget_exhausted"):
+                self._emit("hook.decided", _hook_record_payload(record, event))
+            return update
+
+        outcome = await self._run_hooks(event)
+        if outcome.decision != "deny":
+            return update
+        feedback = f"[harness] Completion rejected: {outcome.reason or 'no reason given'}"
+        if outcome.additional_context:
+            feedback = f"{feedback}\n{outcome.additional_context}"
+        return {
+            "decision": "continue",
+            "stop_blocks": state.stop_blocks + 1,
+            # The done update's history already ends with the model's final answer.
+            "messages": [*update["messages"], user_message(feedback)],
+        }
 
     def _classify_action(
         self,
