@@ -531,16 +531,36 @@ class HookSpec(_Section):
         Field(description="Lifecycle event the hook runs on."),
     ]
 
+    type: Annotated[
+        Literal["python", "command"],
+        Field(
+            description=(
+                "``python`` runs the in-process ``handler``; ``command`` runs ``command`` "
+                "as an external process (see ``src/harness/command_hooks.py``)."
+            ),
+        ),
+    ] = "python"
+
     handler: Annotated[
         str,
         Field(
-            pattern=r"^[A-Za-z_][\w.]*:[A-Za-z_][\w.]*$",
+            pattern=r"^([A-Za-z_][\w.]*:[A-Za-z_][\w.]*)?$",
             description=(
                 "Import path ``package.module:attr`` of an async handler, or of a "
-                "factory returning one when ``options`` is not empty."
+                "factory returning one when ``options`` is not empty (``python`` only)."
             ),
         ),
-    ]
+    ] = ""
+
+    command: Annotated[
+        str,
+        Field(
+            description=(
+                "Shell command run in the repository root (``command`` only); it reads "
+                "the event as JSON on stdin and answers with its exit code and stdout."
+            ),
+        ),
+    ] = ""
 
     match: Annotated[
         HookMatch,
@@ -569,6 +589,22 @@ class HookSpec(_Section):
             ),
         ),
     ] = None
+
+    @model_validator(mode="after")
+    def _fields_fit_the_type(self) -> HookSpec:
+        if self.type == "python":
+            if not self.handler:
+                raise ValueError(f"hook {self.id!r}: a python hook needs 'handler'.")
+            if self.command:
+                raise ValueError(f"hook {self.id!r}: 'command' needs type: command.")
+        else:
+            if not self.command.strip():
+                raise ValueError(f"hook {self.id!r}: a command hook needs 'command'.")
+            if self.handler or self.options:
+                raise ValueError(
+                    f"hook {self.id!r}: 'handler'/'options' are only valid for python hooks."
+                )
+        return self
 
     @model_validator(mode="after")
     def _match_only_for_tool_events(self) -> HookSpec:

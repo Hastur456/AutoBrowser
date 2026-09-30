@@ -23,6 +23,7 @@ flowchart LR
   SessionCtx --> Harness[BrowserHarness]
   SessionCtx --> Hooks[HookEngine]
   Hooks --> HookHandlers[Hook handlers: builtin_hooks, browser.hooks]
+  Hooks --> CommandHooks[CommandHook: external process]
   MCPRuntime --> Manager[MCPManager]
   MCPRuntime --> ToolSource[MCPToolSource]
   MCPRuntime --> Normalizers[ToolCallNormalizers]

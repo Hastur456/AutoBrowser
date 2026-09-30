@@ -1,7 +1,9 @@
 """Deterministic lifecycle hooks around the engine-native agent loop.
 
 A hook is an ``async`` Python callable registered in ``settings.hooks.registry`` for one
-:data:`~src.contracts.HookEventName`. At fixed lifecycle points the loop builds a
+:data:`~src.contracts.HookEventName` — either imported from ``handler`` (``type: python``)
+or a :class:`~src.harness.command_hooks.CommandHook` that runs an external process
+(``type: command``, the Claude Code/Codex protocol). At fixed lifecycle points the loop builds a
 :class:`~src.contracts.HookEvent` and calls :meth:`HookEngine.run`; the engine runs the
 matching handlers **sequentially in registry order** and folds their
 :class:`~src.contracts.HookResult`\\ s into one :class:`HookOutcome`:
@@ -44,6 +46,7 @@ from src.contracts import (
     HookHandler,
     HookResult,
 )
+from src.harness.command_hooks import CommandHook
 
 #: Events whose handler failure (timeout/exception) denies by default.
 FAIL_CLOSED_EVENTS: frozenset[str] = frozenset({"goal_start", "pre_tool_use"})
@@ -342,6 +345,24 @@ def _import_target(path: str, hook_id: str) -> Any:
 
 
 def _load_hook(spec: HookSpec, *, default_timeout: float) -> RegisteredHook:
+    if spec.type == "command":
+        handler: Any = CommandHook(spec.command)
+    else:
+        handler = _load_python_handler(spec)
+    return RegisteredHook(
+        id=spec.id,
+        event=spec.event,
+        handler=handler,
+        server=spec.match.server,
+        tool=re.compile(spec.match.tool) if spec.match.tool else None,
+        timeout_seconds=(
+            spec.timeout_seconds if spec.timeout_seconds is not None else default_timeout
+        ),
+        fail_closed=spec.fail_closed,
+    )
+
+
+def _load_python_handler(spec: HookSpec) -> Any:
     target = _import_target(spec.handler, spec.id)
     if spec.options:
         try:
@@ -357,17 +378,7 @@ def _load_hook(spec: HookSpec, *, default_timeout: float) -> RegisteredHook:
         raise HookConfigError(
             f"Hook {spec.id!r}: {spec.handler!r} is not an async handler{hint}."
         )
-    return RegisteredHook(
-        id=spec.id,
-        event=spec.event,
-        handler=handler,
-        server=spec.match.server,
-        tool=re.compile(spec.match.tool) if spec.match.tool else None,
-        timeout_seconds=(
-            spec.timeout_seconds if spec.timeout_seconds is not None else default_timeout
-        ),
-        fail_closed=spec.fail_closed,
-    )
+    return handler
 
 
 __all__ = [

@@ -184,6 +184,10 @@ Deterministic, config-driven checks at fixed loop points — `goal_start`, `pre_
 (`docs/decisions/2026-09-30-lifecycle-hooks-engine.md`). **Disabled by default**
 (`hooks.enabled`); handlers are async Python callables named in `hooks.registry`.
 
+- A hook is `type: python` (an async `handler` imported by path) or `type: command` (an
+  external process, Claude Code/Codex protocol: event JSON on stdin, exit `2` blocks with
+  stderr as reason, JSON stdout → `HookResult`; `src/harness/command_hooks.py`,
+  `docs/decisions/2026-09-30-command-hooks.md`).
 - Where things live: contracts (`HookEvent`, `HookResult`) in `src/contracts.py`; settings in
   `src/config.py`; `HookEngine`/`NullHookEngine` in `src/harness/hooks.py`; generic handlers
   (`approve_tools`, `grounded_final_answer`) in `src/harness/builtin_hooks.py`; browser

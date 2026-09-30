@@ -4,6 +4,9 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-09-30 Command Hooks](2026-09-30-command-hooks.md): `type: command` hooks run an
+  external process in the Claude Code/Codex style — event JSON on stdin, exit `2` blocks
+  with stderr as the reason, JSON stdout maps onto `HookResult`; engine semantics unchanged.
 - [2026-09-30 Lifecycle Hooks Engine](2026-09-30-lifecycle-hooks-engine.md):
   deterministic, config-driven `HookEngine` (`goal_start`, `pre_tool_use`,
   `permission_request`, `post_tool_use*`, `stop`, `goal_end`) called by the loop after

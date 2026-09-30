@@ -195,3 +195,11 @@ hooks:
   #     options: {min_chars: 1}
   #     timeout_seconds: 5.0                    # (default: default_timeout_seconds)
   #     fail_closed: null                       # (default: per-event behavior)
+  #   - id: audit                               # external command, Claude Code/Codex style
+  #     event: pre_tool_use
+  #     type: command                           # (default: python)
+  #     # Runs in the repo root; the event arrives as JSON on stdin. Exit 2 blocks with
+  #     # stderr as the reason; exit 0 with a JSON object on stdout returns decision /
+  #     # reason / updated_input / updated_output / additional_context.
+  #     command: python scripts/hooks/audit.py
+  #     match: {server: playwright}
