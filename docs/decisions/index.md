@@ -4,6 +4,11 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-09-30 Lifecycle Hooks Engine](2026-09-30-lifecycle-hooks-engine.md):
+  deterministic, config-driven `HookEngine` (`goal_start`, `pre_tool_use`,
+  `permission_request`, `post_tool_use*`, `stop`, `goal_end`) called by the loop after
+  built-in policy; sequential handlers, `deny > ask > allow`, `hook.decided` telemetry,
+  session-scoped and disabled by default.
 - [2026-09-28 Server-Neutral Progress Journal](2026-09-28-server-neutral-progress-journal.md):
   tool-agnostic action journal (call + outcome fingerprints), `Action History` context block,
   repeat blocking via `loop.max_ineffective_actions`, `readOnlyHint`-based freshness and
