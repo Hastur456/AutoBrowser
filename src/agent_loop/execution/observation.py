@@ -2,17 +2,15 @@
 
 - :class:`ToolResultNormalizer` — classify the latest raw ``ToolResult`` into neutral facts
   (name, status, whether it is a browser tool / a snapshot) with no state mutation.
-- :class:`BrowserStateReducer` — keep the latest ``snapshot`` and the unchanged-snapshot
-  streak; drop the snapshot after any other successful browser tool (the page may have
-  changed) unless the server annotated that tool ``readOnlyHint``.
+- :class:`BrowserStateReducer` — keep the latest ``snapshot``; drop it after any other
+  successful browser tool (the page may have changed) unless the server annotated that tool
+  ``readOnlyHint``.
 - :class:`ProgressDetector` — success/failure accounting: ``consecutive_failures`` and
   ``error``.
 - :class:`ObservationCompiler` — orchestrate the above into the flat update dict, append the
   call to the task's action journal (:mod:`~src.agent_loop.execution.progress`), and build the
   model-facing observation text + tool message (with a repeat note when the call reproduced an
-  earlier identical outcome). Terminal decisions are delegated to
-  :class:`~src.agent_loop.execution.guards.CompletionController` (the unchanged-snapshot
-  terminal), so no completion policy lives inside observation building.
+  earlier identical outcome). No completion policy lives inside observation building.
 
 Server-neutral: tool output is rendered as text without parsing any server-specific schema
 (no element refs, no error-text or error-code heuristics, no tab-list parsing, no action
@@ -26,7 +24,6 @@ reused directly. This module imports nothing from ``src/agent/``.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -34,7 +31,6 @@ from src.config import get_settings
 from src.contracts import CompactToolObservation, ToolResult
 from src.harness.memory import append_tool_message, tool_result_message_content
 
-from src.agent_loop.execution.guards import CompletionController
 from src.agent_loop.execution.policy import SNAPSHOT_TOOL, TABS_TOOL, is_browser_tool
 from src.agent_loop.execution.progress import record_action, repeat_note
 from src.agent_loop.execution.state import LoopState
@@ -124,17 +120,6 @@ def _observation_lines(
     return [line for line in lines if line]
 
 
-def _snapshot_fingerprint(snapshot: str) -> str:
-    """Whitespace/focus-insensitive fingerprint used to detect an unchanged view."""
-
-    lines = []
-    for line in snapshot.splitlines():
-        normalized = re.sub(r"\s+\[(?:active|focused)\]", "", line.strip())
-        if normalized:
-            lines.append(normalized)
-    return "\n".join(lines)
-
-
 # --------------------------------------------------------------------------- components
 
 
@@ -191,7 +176,7 @@ class ToolResultNormalizer:
 
 
 class BrowserStateReducer:
-    """Keep the latest snapshot and the unchanged-snapshot streak.
+    """Keep the latest snapshot.
 
     ``read_only_tools`` are the exposed names of tools whose server declared the MCP
     ``readOnlyHint`` annotation; they cannot change the page, so they keep the current
@@ -205,15 +190,7 @@ class BrowserStateReducer:
         updates: dict[str, Any] = {}
 
         if norm.is_snapshot:
-            previous_fingerprint = _snapshot_fingerprint(str(state.browser.snapshot or ""))
-            current_fingerprint = _snapshot_fingerprint(norm.content)
-            if previous_fingerprint and current_fingerprint == previous_fingerprint:
-                unchanged_snapshot_count = int(state.unchanged_snapshot_count or 0) + 1
-            else:
-                unchanged_snapshot_count = 1
             updates["snapshot"] = norm.content
-            updates["needs_fresh_snapshot"] = False
-            updates["unchanged_snapshot_count"] = unchanged_snapshot_count
         elif (
             norm.is_browser_tool
             and norm.status == "success"
@@ -223,7 +200,6 @@ class BrowserStateReducer:
                 updates["pending_browser_tab_index"] = 0
                 updates["pending_browser_tab_reason"] = ""
             updates["snapshot"] = ""
-            updates["unchanged_snapshot_count"] = 0
 
         return BrowserReduction(updates=updates)
 
@@ -245,9 +221,7 @@ class ProgressDetector:
 class ObservationCompiler:
     """Compose normalize -> reduce -> detect into the observation update dict.
 
-    Builds the model-facing observation text and the tool message, then delegates the
-    unchanged-snapshot terminal to :class:`CompletionController` so completion policy is not
-    scattered through observation building.
+    Builds the model-facing observation text and the tool message.
     """
 
     def __init__(
@@ -256,13 +230,11 @@ class ObservationCompiler:
         normalizer: ToolResultNormalizer | None = None,
         reducer: BrowserStateReducer | None = None,
         detector: ProgressDetector | None = None,
-        completion: CompletionController | None = None,
         read_only_tools: frozenset[str] = frozenset(),
     ) -> None:
         self._normalizer = normalizer or ToolResultNormalizer()
         self._reducer = reducer or BrowserStateReducer(read_only_tools)
         self._detector = detector or ProgressDetector()
-        self._completion = completion or CompletionController()
 
     def compile(
         self,
@@ -308,16 +280,6 @@ class ObservationCompiler:
         if note:
             tool_message = f"{tool_message}\n\n{note}"
         updates["messages"] = append_tool_message(list(state.messages or []), norm.request, tool_message)
-
-        terminal = self._completion.observation_terminal_update(
-            is_snapshot=norm.is_snapshot,
-            status=norm.status,
-            unchanged_snapshot_count=int(updates.get("unchanged_snapshot_count", 0) or 0),
-            observation=observation,
-        )
-        if terminal:
-            updates.update(terminal)
-
         return updates
 
 

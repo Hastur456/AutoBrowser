@@ -578,15 +578,20 @@ async def test_pre_tool_use_sees_the_normalized_request() -> None:
 async def test_a_built_in_block_never_reaches_pre_tool_use() -> None:
     seen: list[HookEvent] = []
     engine = HookEngine([hook("audit", "pre_tool_use", returning(None, seen))])
+    echo = EchoTool()
+    # Interleave ``other`` so the consecutive-repeat guard never fires; the fourth identical
+    # ``echo`` is blocked by the identical-outcome policy (max_ineffective_actions = 3).
+    calls = [tool_call("echo", text="a"), tool_call("other")] * 3 + [tool_call("echo", text="a")]
 
     result, records, _ = await run_engine(
-        [PLAN, tool_call("browser_snapshot"), tool_call("browser_snapshot"), DONE],
+        [PLAN, *calls, DONE],
         hooks=engine,
+        tools=echo.tools(),
     )
 
     decisions = [r.payload["decision"] for r in records if r.type == "policy.decided"]
-    assert decisions == ["approved", "blocked"]
-    assert len(seen) == 1
+    assert decisions == ["approved"] * 6 + ["blocked"]
+    assert len(seen) == 6
     assert result.status == "done"
 
 
@@ -673,7 +678,7 @@ async def test_additional_context_is_a_separate_message_and_leaves_progress_dete
         PLAN,
         tool_call("browser_snapshot"),
         tool_call("browser.type", ref="e8", text="jackets"),
-        tool_call("browser_snapshot"),  # same page text -> unchanged snapshot streak
+        tool_call("browser_snapshot"),
         DONE,
     ]
     engine = HookEngine(
@@ -690,7 +695,6 @@ async def test_additional_context_is_a_separate_message_and_leaves_progress_dete
     plain, _, _ = await run_engine(responses, hooks=NullHookEngine())
     hooked, _, _ = await run_engine(responses, hooks=engine)
 
-    assert hooked.state.unchanged_snapshot_count == plain.state.unchanged_snapshot_count == 1
     assert [r.outcome_key for r in hooked.state.action_history] == [
         r.outcome_key for r in plain.state.action_history
     ]

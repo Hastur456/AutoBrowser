@@ -105,7 +105,7 @@ Details worth knowing:
 - **Only `permission_request` can stand in for the human.** A `pre_tool_use` `allow` never
   approves a `needs_human` tool, and no hook can lift a built-in `blocked`.
 - **`stop`** runs only for a model `done`, never for guard terminals (turn cap,
-  replan/failure limits, unchanged snapshots, blocked/cancelled stops). The event carries
+  replan/failure limits, blocked/cancelled stops). The event carries
   `final_answer`, `evidence` (latest observation and snapshot) and `stop_hook_active`
   (`true` once a stop hook already rejected a completion in this task). After
   `hooks.max_stop_blocks` rejections (default `2`) the stop hooks are skipped — recorded as

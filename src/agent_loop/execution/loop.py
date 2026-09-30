@@ -10,9 +10,8 @@ Ownership is split so the engine is a control-flow owner, not a wrapper:
 - :class:`AgentLoopEngine` owns the explicit ``while`` turn loop, the turn cap, plan
   (re)building, and the terminal :class:`AgentLoopResult`.
 - :class:`TurnController` owns exactly one turn — the ``agent`` step (terminal guard,
-  pending-tab activation, stale-snapshot retry, forced fresh snapshot, then a model turn whose
-  action is classified) and, for a tool-call decision, the ``policy -> execute -> observe``
-  sub-turn — returning a structured :class:`TurnResult` the engine acts on.
+  pending-tab activation, then a model turn whose action is classified) and, for a tool-call
+  decision, the ``policy -> execute -> observe`` sub-turn — returning a structured :class:`TurnResult` the engine acts on.
 - Completion decisions live in :class:`~src.agent_loop.execution.guards.CompletionController`
   and observation building in :class:`~src.agent_loop.execution.observation.ObservationCompiler`.
 
@@ -50,10 +49,8 @@ from src.agent_loop.execution.guards import (
     CompletionController,
     blocked_response,
     done_response,
-    fresh_snapshot_request,
     pending_tab_activation_request,
     replan_response,
-    stale_snapshot_retry_update,
     tool_request_update,
 )
 from src.agent_loop.execution.observation import ObservationCompiler
@@ -274,7 +271,6 @@ class TurnController:
             tool_registry=resources.tool_registry,
         )
         self._observation = ObservationCompiler(
-            completion=completion,
             read_only_tools=frozenset(
                 tool_name(tool) for tool in tools if tool_is_read_only(tool)
             ),
@@ -323,15 +319,6 @@ class TurnController:
 
         messages = self._history(state)
 
-        stale_snapshot_update = stale_snapshot_retry_update(state)
-        if stale_snapshot_update.get("decision") == "replan":
-            return stale_snapshot_update
-
-        if state.browser.needs_fresh_snapshot:
-            snapshot_request = fresh_snapshot_request(state, messages)
-            snapshot_request.update(stale_snapshot_update)
-            return snapshot_request
-
         turn_prompt = self._resources.context.user_turn_prompt(
             self._prompt_mapping(state),
             tools=self._tools,
@@ -351,8 +338,8 @@ class TurnController:
             # ActionParser always returns >=1 action; this is a defensive terminal only.
             return blocked_response(state, "Blocked: the model returned no actionable step.")
         update = self._classify_action(state, actions[0], messages)
-        # Only a successful completion *from the model* is checked; guard terminals (limits,
-        # unchanged snapshots) and blocked/cancelled stops are never second-guessed.
+        # Only a successful completion *from the model* is checked; guard terminals (limits)
+        # and blocked/cancelled stops are never second-guessed.
         if update.get("decision") == "done" and update.get("completion_status") == "done":
             update = await self._stop_check(state, update)
         return update
@@ -484,8 +471,8 @@ class TurnController:
     ) -> tuple[LoopState, CompletionStatus | None]:
         """Run policy -> (execute -> observe) for a tool-call decision.
 
-        Returns the new state and a terminal status if the turn ended the run (human denial
-        or the unchanged-snapshot observation terminal); ``None`` means continue looping. A
+        Returns the new state and a terminal status if the turn ended the run (e.g. human
+        denial); ``None`` means continue looping. A
         blocked policy decision short-circuits before execute/observe so
         ``consecutive_failures`` is incremented exactly once (matching v1's policy->agent edge).
 
@@ -897,9 +884,6 @@ class AgentLoopEngine:
                 "decision": "replan",
                 "replan_count": replan_count,
                 "error": "",
-                "stale_snapshot_retries": 0,
-                "invalid_ref_recovery_count": 0,
-                "needs_fresh_snapshot": False,
                 "messages": messages,
             }
         )

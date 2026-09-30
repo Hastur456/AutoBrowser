@@ -125,9 +125,6 @@ class RecoveryCounters(TypedDict, total=False):
     replan_count: int
     consecutive_failures: int
     repeat_count: int
-    snapshot_recovery_count: int
-    invalid_ref_recovery_count: int
-    stale_snapshot_retries: int
     steps_without_plan_advance: int
 
 

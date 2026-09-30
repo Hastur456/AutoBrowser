@@ -26,11 +26,6 @@ Follow the browser contract:
   the tab.
 - If a previous action reports that a ref was not found, call browser.snapshot
   next to obtain fresh refs before any ref-based browser action.
-- If browser.snapshot was blocked as "already current", reuse it only when no
-  browser action has changed the page since it was captured. If the page changed
-  or the last ref failed, explain the need for a fresh snapshot in the next tool
-  reason and request browser.snapshot again instead of continuing with stale
-  refs.
 - Before browser.type, verify from the latest snapshot that the chosen ref is
   editable: textbox, searchbox, combobox, textarea, input, or a generic element
   whose accessible name/placeholder/visible label clearly indicates an editable
@@ -163,9 +158,6 @@ Follow the browser contract:
 - Do not use browser_find for generic English implementation words such as
   "search", "input", "textbox", or "button" on localized pages. Use the visible
   roles and refs already present in browser.snapshot.
-- If policy says `browser.snapshot` is already current, do not request another
-  snapshot and do not restart the search flow. Reuse the current snapshot to
-  extract visible results or return a final answer with what is visible.
 - If `browser.evaluate` fails with JavaScript syntax, escaping, selector, or
   parsing errors twice in the same task phase, stop using `browser.evaluate`
   for that phase. Switch to `browser.snapshot`/`browser_find`, replan with a

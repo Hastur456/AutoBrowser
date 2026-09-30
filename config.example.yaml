@@ -96,12 +96,8 @@ loop:
   max_replans: 3                                # (default)
   # Consecutive failed tool calls tolerated before the task is blocked.
   max_consecutive_failures: 3                   # (default)
-  # Attempts to recover a missing/stale snapshot ref before giving up.
-  max_snapshot_recoveries: 1                    # (default)
   # Turns without plan progress before a replan is forced.
   max_steps_without_plan_advance: 8             # (default)
-  # Identical consecutive snapshots tolerated before a replan is forced.
-  max_unchanged_snapshots: 3                    # (default)
   # Identical results of the same tool call before a further identical call is
   # blocked and a replan is forced.
   max_ineffective_actions: 3                    # (default)

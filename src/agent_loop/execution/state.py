@@ -9,9 +9,6 @@ browser-scoped keys into the nested :class:`BrowserState`.
 Thresholds and typed contracts live in the neutral ``src.contracts`` /
 ``src.config`` modules (never redefined here) so every layer cannot drift and the
 engine-native path carries no dependency on the removed ``src/agent/`` runtime.
-
-The dormant ``snapshot_recovery_count`` (``settings.loop.max_snapshot_recoveries``)
-is intentionally excluded — it is not exercised by the scenarios this slice targets.
 """
 
 from __future__ import annotations
@@ -33,8 +30,6 @@ from src.messages import Message
 BROWSER_STATE_FIELDS = frozenset(
     {
         "snapshot",
-        "needs_fresh_snapshot",
-        "snapshot_before_last_browser_action",
         "last_browser_action",
         "ineffective_browser_action",
         "ineffective_browser_actions",
@@ -53,8 +48,6 @@ class BrowserState:
     """
 
     snapshot: str = ""
-    needs_fresh_snapshot: bool = False
-    snapshot_before_last_browser_action: str = ""
     last_browser_action: ToolRequest = field(default_factory=dict)
     ineffective_browser_action: ToolRequest = field(default_factory=dict)
     ineffective_browser_actions: list[ToolRequest] = field(default_factory=list)
@@ -94,10 +87,7 @@ class LoopState:
     repeat_count: int = 0
     replan_count: int = 0
     consecutive_failures: int = 0
-    invalid_ref_recovery_count: int = 0
-    stale_snapshot_retries: int = 0
     ineffective_action_count: int = 0
-    unchanged_snapshot_count: int = 0
     steps_without_plan_advance: int = 0
 
     # Task-local journal of executed tool calls (see ``execution/progress.py``). Not part of
@@ -148,13 +138,9 @@ class LoopState:
 
         return {
             "snapshot": self.browser.snapshot,
-            "needs_fresh_snapshot": self.browser.needs_fresh_snapshot,
             "error": self.error,
             "last_tool": self.last_tool,
             "last_args": dict(self.last_args),
-            "snapshot_before_last_browser_action": (
-                self.browser.snapshot_before_last_browser_action
-            ),
             "last_browser_action": dict(self.browser.last_browser_action),
             "ineffective_browser_action": dict(self.browser.ineffective_browser_action),
             "ineffective_browser_actions": [
@@ -175,17 +161,10 @@ class LoopState:
             "messages": list(self.messages),
             "observation": self.observation,
             "snapshot": self.browser.snapshot,
-            "needs_fresh_snapshot": self.browser.needs_fresh_snapshot,
-            "browser": {
-                "snapshot": self.browser.snapshot,
-                "needs_fresh_snapshot": self.browser.needs_fresh_snapshot,
-            },
+            "browser": {"snapshot": self.browser.snapshot},
             "last_tool": self.last_tool,
             "last_args": dict(self.last_args),
             "last_tool_request": dict(self.last_tool_request),
-            "snapshot_before_last_browser_action": (
-                self.browser.snapshot_before_last_browser_action
-            ),
             "last_browser_action": dict(self.browser.last_browser_action),
             "ineffective_browser_action": dict(self.browser.ineffective_browser_action),
             "ineffective_browser_actions": [
@@ -215,10 +194,8 @@ class LoopState:
 
         data = dict(overrides)
         browser = data.pop("browser", None)
-        if isinstance(browser, Mapping):
-            for key in ("snapshot", "needs_fresh_snapshot"):
-                if key not in data and key in browser:
-                    data[key] = browser[key]
+        if isinstance(browser, Mapping) and "snapshot" not in data and "snapshot" in browser:
+            data["snapshot"] = browser["snapshot"]
 
         known = {
             key: value

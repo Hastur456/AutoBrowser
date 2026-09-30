@@ -271,14 +271,6 @@ class LoopSettings(_Section):
         ),
     ] = 3
 
-    max_snapshot_recoveries: Annotated[
-        int,
-        Field(
-            ge=0,
-            description="Recovery attempts after a lost/invalid element ref.",
-        ),
-    ] = 1
-
     max_steps_without_plan_advance: Annotated[
         int,
         Field(
@@ -286,14 +278,6 @@ class LoopSettings(_Section):
             description="Steps allowed without advancing the plan before replanning.",
         ),
     ] = 8
-
-    max_unchanged_snapshots: Annotated[
-        int,
-        Field(
-            ge=1,
-            description="Identical consecutive snapshots before the loop stops.",
-        ),
-    ] = 3
 
     max_ineffective_actions: Annotated[
         int,

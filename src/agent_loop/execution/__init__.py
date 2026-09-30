@@ -15,16 +15,12 @@ Only the stateful control logic lives here; those stateless leaves are reused as
 from __future__ import annotations
 
 from src.agent_loop.execution.guards import (
-    REPEATED_SNAPSHOT_FINAL_ANSWER,
-    SNAPSHOT_REUSE_MARKERS,
     blocked_response,
     done_response,
-    fresh_snapshot_request,
     guard_tool_request,
     pending_tab_activation_request,
     replan_response,
     request_tracking_update,
-    stale_snapshot_retry_update,
     terminal_guard,
     tool_request_update,
 )
@@ -55,8 +51,6 @@ from src.agent_loop.execution.tools import ToolBroker
 
 __all__ = [
     "BLOCKED_TOOL_MARKERS",
-    "REPEATED_SNAPSHOT_FINAL_ANSWER",
-    "SNAPSHOT_REUSE_MARKERS",
     "AgentLoopEngine",
     "AgentLoopResult",
     "BrowserState",
@@ -71,7 +65,6 @@ __all__ = [
     "classify_tool_request",
     "compile_observation",
     "done_response",
-    "fresh_snapshot_request",
     "guard_tool_request",
     "native_latest_state_loader",
     "native_task_runner",
@@ -79,7 +72,6 @@ __all__ = [
     "policy_updates",
     "replan_response",
     "request_tracking_update",
-    "stale_snapshot_retry_update",
     "terminal_guard",
     "tool_request_update",
 ]

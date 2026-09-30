@@ -89,9 +89,7 @@ def test_defaults_match_the_constants_they_replaced(settings: Any) -> None:
     # was: src/contracts.py control-loop thresholds
     assert config.loop.max_replans == 3
     assert config.loop.max_consecutive_failures == 3
-    assert config.loop.max_snapshot_recoveries == 1
     assert config.loop.max_steps_without_plan_advance == 8
-    assert config.loop.max_unchanged_snapshots == 3
     assert config.loop.max_ineffective_actions == 3
 
     # was: src/agent_loop/goals.py phase timeouts

@@ -271,7 +271,7 @@ If the snapshot does not expose the needed element:
 2. Increase snapshot depth if appropriate.
 3. Use `browser_evaluate` only if the snapshot cannot answer the question.
 
-Reuse the current snapshot and refs when they are still valid. The policy layer blocks redundant `browser_snapshot` calls when a current snapshot is already available and no fresh snapshot is required.
+Reuse the current snapshot and refs when they are still valid. Snapshot usage is guided by the prompts only; the engine has no snapshot-specific policy, forced-snapshot, or unchanged-snapshot rules. Generic guards (identical repeated calls, identical repeated outcomes) apply to `browser_snapshot` like any other tool.
 
 The agent is snapshot-driven, not selector-driven.
 
