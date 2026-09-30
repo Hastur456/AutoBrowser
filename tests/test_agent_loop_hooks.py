@@ -1,13 +1,14 @@
 """Lifecycle hooks inside the engine-native loop (``AgentLoopEngine`` end to end).
 
 Drives the real engine with the scripted :class:`FakeChatModel`, and either counting
-``Tool`` objects or the deterministic :class:`FakeBrowserProvider`. Every ``HookEngine`` is
+``Tool`` objects or the deterministic :class:`_FakeBrowserTools`. Every ``HookEngine`` is
 built explicitly — nothing here reads hooks from ``get_settings()``.
 """
 
 from __future__ import annotations
 
 import json
+import re as _re
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,10 +25,11 @@ from src.agent_loop.execution.loop import (
 )
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import LoopState
-from src.browser import FakeBrowserProvider
+from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
+from src.browser.names import is_browser_tool_name, to_playwright_browser_name
 from src.browser.normalization import BrowserToolNormalizer
 from src.config import HooksSettings
-from src.contracts import HookEvent, HookResult, Tool, ToolRequest
+from src.contracts import HookEvent, HookResult, Tool, ToolRequest, ToolResult
 from src.harness.builtin_hooks import approve_tools
 from src.harness.hooks import HookEngine, NullHookEngine, RegisteredHook
 from src.harness.mcp_tools import MCPToolSource
@@ -35,6 +37,221 @@ from src.harness.runtime import BrowserHarness
 from src.harness.tools import ToolRegistry
 from src.llm import ModelResponse
 from src.mcp import MCPManager
+
+_INVALID_REF_PATTERN = _re.compile(
+    r"\bRef\s+[A-Za-z][A-Za-z0-9_-]*\s+not\s+found\b",
+    _re.IGNORECASE,
+)
+_REF_PATTERN = _re.compile(r"\bref=([A-Za-z][A-Za-z0-9_-]*)\b")
+_REF_VALUE_PATTERN = _re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+
+
+class _FakeBrowserTools:
+    """Replay browser tools from a deterministic sequence of snapshots.
+
+    Doubles as a tool provider (``get_tools``) and a tool-call normalizer
+    (``normalize_request``/``normalize_result``) for :class:`ToolRegistry`.
+    """
+
+    def __init__(self, snapshots: list[str]) -> None:
+        if not snapshots:
+            raise ValueError("_FakeBrowserTools requires at least one snapshot.")
+
+        self._snapshots = list(snapshots)
+        self._snapshot_index = 0
+        self._tools = self._build_tools()
+
+    async def get_tools(self) -> list[Any]:
+        return list(self._tools)
+
+    def normalize_request(
+        self, request: ToolRequest, state: Any, tools: Any = None
+    ) -> ToolRequest:
+        _ = tools
+        normalized_request = dict(request)
+        args = dict(request.get("args") or {})
+        requested_name = str(request.get("name", "") or "").strip()
+        if not is_browser_tool_name(requested_name):
+            normalized_request["args"] = args
+            return normalized_request
+
+        tool_name = to_playwright_browser_name(requested_name)
+        normalized_request["name"] = tool_name
+
+        if tool_name in {"browser_click", "browser_hover", "browser_type"}:
+            ref = self._ref_from_args(args)
+            if ref:
+                args.setdefault("ref", ref)
+                args.setdefault("target", ref)
+
+        normalized_request["args"] = args
+        return normalized_request
+
+    def normalize_result(self, result: ToolResult) -> ToolResult:
+        normalized_result = dict(result)
+        tool_name = str(normalized_result.get("name", "") or "")
+        if (
+            normalized_result.get("status") != "error"
+            or not is_browser_tool_name(tool_name)
+            or normalized_result.get("error_code")
+        ):
+            return normalized_result
+
+        if self._has_invalid_ref_error(normalized_result):
+            normalized_result["error_code"] = BROWSER_ERROR_INVALID_REF
+        else:
+            normalized_result["error_code"] = BROWSER_ERROR_ACTION_FAILED
+        return normalized_result
+
+    @staticmethod
+    def _has_invalid_ref_error(result: ToolResult) -> bool:
+        payload = str(result.get("error", "") or result.get("content", "") or "")
+        return bool(_INVALID_REF_PATTERN.search(payload))
+
+    def _build_tools(self) -> list[Tool]:
+        async def browser_navigate(url: str) -> str:
+            """Navigate to a URL in the fake browser."""
+
+            self._advance_snapshot()
+            return f"Navigated to {url}."
+
+        async def browser_snapshot(depth: int | None = None) -> str:
+            """Return the current fake browser snapshot."""
+
+            _ = depth
+            return self._current_snapshot()
+
+        async def browser_click(
+            ref: str | None = None,
+            target: str | None = None,
+        ) -> str:
+            """Click an element in the fake browser."""
+
+            resolved_ref = self._require_ref(ref=ref, target=target)
+            self._assert_ref_exists(resolved_ref)
+            self._advance_snapshot()
+            return f"Clicked ref {resolved_ref}."
+
+        async def browser_type(
+            text: str,
+            ref: str | None = None,
+            target: str | None = None,
+        ) -> str:
+            """Type text into an element in the fake browser."""
+
+            resolved_ref = self._require_ref(ref=ref, target=target)
+            self._assert_ref_exists(resolved_ref)
+            self._advance_snapshot()
+            return f"Typed into ref {resolved_ref}: {text}"
+
+        async def browser_hover(
+            ref: str | None = None,
+            target: str | None = None,
+        ) -> str:
+            """Hover an element in the fake browser."""
+
+            resolved_ref = self._require_ref(ref=ref, target=target)
+            self._assert_ref_exists(resolved_ref)
+            self._advance_snapshot()
+            return f"Hovered ref {resolved_ref}."
+
+        async def browser_evaluate(
+            expression: str | None = None,
+            script: str | None = None,
+        ) -> dict[str, str]:
+            """Evaluate a script in the fake browser without mutating page state."""
+
+            payload = str(expression or script or "").strip()
+            if not payload:
+                raise ValueError(
+                    "Fake browser evaluate requires an expression or script."
+                )
+
+            return {
+                "source": "expression" if expression else "script",
+                "expression": payload,
+                "snapshot": self._current_snapshot(),
+            }
+
+        return [
+            self._tool(browser_navigate, {"url": {"type": "string"}}, required=("url",)),
+            self._tool(browser_snapshot, {"depth": {"type": "integer"}}),
+            self._tool(
+                browser_click,
+                {"ref": {"type": "string"}, "target": {"type": "string"}},
+            ),
+            self._tool(
+                browser_type,
+                {
+                    "text": {"type": "string"},
+                    "ref": {"type": "string"},
+                    "target": {"type": "string"},
+                },
+                required=("text",),
+            ),
+            self._tool(
+                browser_hover,
+                {"ref": {"type": "string"}, "target": {"type": "string"}},
+            ),
+            self._tool(
+                browser_evaluate,
+                {"expression": {"type": "string"}, "script": {"type": "string"}},
+            ),
+        ]
+
+    def _tool(
+        self,
+        func: Any,
+        properties: dict[str, Any],
+        *,
+        required: tuple[str, ...] = (),
+    ) -> Tool:
+        return Tool(
+            name=func.__name__,
+            description=str(func.__doc__ or "").strip(),
+            input_schema={
+                "type": "object",
+                "properties": dict(properties),
+                **({"required": list(required)} if required else {}),
+            },
+            func=func,
+        )
+
+    def _current_snapshot(self) -> str:
+        return self._snapshots[self._snapshot_index]
+
+    def _advance_snapshot(self) -> None:
+        if self._snapshot_index < len(self._snapshots) - 1:
+            self._snapshot_index += 1
+
+    def _assert_ref_exists(self, ref: str) -> None:
+        if ref not in self._snapshot_refs(self._current_snapshot()):
+            raise ValueError(f"Ref {ref} not found")
+
+    def _require_ref(self, *, ref: str | None, target: str | None) -> str:
+        resolved_ref = str(ref or "").strip()
+        if resolved_ref:
+            return resolved_ref
+
+        resolved_target = str(target or "").strip()
+        if self._looks_like_ref(resolved_target):
+            return resolved_target
+
+        raise ValueError("Fake browser action requires a ref or ref-like target.")
+
+    def _ref_from_args(self, args: dict[str, Any]) -> str:
+        ref = str(args.get("ref", "") or "").strip()
+        if ref:
+            return ref
+
+        target = str(args.get("target", "") or "").strip()
+        return target if self._looks_like_ref(target) else ""
+
+    def _snapshot_refs(self, snapshot: str) -> set[str]:
+        return {match.group(1) for match in _REF_PATTERN.finditer(snapshot)}
+
+    def _looks_like_ref(self, value: str) -> bool:
+        return bool(_REF_VALUE_PATTERN.fullmatch(value))
 
 FAKE_SERVER = str(Path(__file__).parent / "mcp_fixtures" / "fake_server.py")
 PLAN = {"steps": [{"id": 1, "description": "Do the task", "status": "pending"}]}
@@ -124,7 +341,7 @@ async def run_engine(
         if tools is not None:
             registry = ToolRegistry(tools=tools)
         else:
-            provider = FakeBrowserProvider(snapshots or ['- textbox "Search" ref=e8'])
+            provider = _FakeBrowserTools(snapshots or ['- textbox "Search" ref=e8'])
             registry = ToolRegistry(
                 providers=[provider], normalizers=[BrowserToolNormalizer(), provider]
             )

@@ -133,8 +133,10 @@ The agent is **snapshot-driven, not selector-driven** (see `docs/development/bro
 These rules are **duplicated across prompts, the policy functions, the observer, and provider
 tests**. Changing one layer can reintroduce stale-ref/loop bugs — keep them aligned, and
 don't remove an invariant from a prompt unless policy/observer/evals still enforce it.
-`tests/mcp_fixtures/fake_server.py` (a real MCP server) and the legacy `FakeBrowserProvider`
-exercise this behavior deterministically without Chrome/CDP.
+`tests/mcp_fixtures/fake_server.py` (a real MCP server) and the local `_FakeBrowserTools`
+helper (`src/agent_loop/evals.py`, duplicated where individual tests need it — there is no
+shared `BrowserProvider` protocol or production fake anymore) exercise this behavior
+deterministically without Chrome/CDP.
 
 ## Session vs Task Boundary
 

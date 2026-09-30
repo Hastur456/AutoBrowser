@@ -10,9 +10,9 @@ from typing import Any
 import pytest
 
 from src.agent_loop.execution.tools import PreparedToolCall, ToolBroker
-from src.browser import FakeBrowserProvider
+from src.browser.names import is_browser_tool_name, to_playwright_browser_name
 from src.browser.normalization import BrowserToolNormalizer
-from src.contracts import Tool
+from src.contracts import Tool, ToolRequest, ToolResult
 from src.harness.mcp_tools import MCPToolSource
 from src.harness.tools import ToolRegistry
 from src.mcp import MCPManager
@@ -38,8 +38,42 @@ def _counting_tool(calls: list[dict[str, Any]]) -> Tool:
     return Tool(name="echo", func=_echo)
 
 
+class _FakeBrowserType:
+    """Minimal fake ``browser_type`` tool provider + normalizer, for the ref/target checks below."""
+
+    async def get_tools(self) -> list[Tool]:
+        async def browser_type(text: str, ref: str | None = None, target: str | None = None) -> str:
+            return f"Typed into ref {ref or target}: {text}"
+
+        return [Tool(name="browser_type", func=browser_type)]
+
+    def normalize_request(
+        self, request: ToolRequest, state: Any, tools: Any = None
+    ) -> ToolRequest:
+        _ = tools
+        normalized_request = dict(request)
+        args = dict(request.get("args") or {})
+        requested_name = str(request.get("name", "") or "").strip()
+        if not is_browser_tool_name(requested_name):
+            normalized_request["args"] = args
+            return normalized_request
+
+        tool_name = to_playwright_browser_name(requested_name)
+        normalized_request["name"] = tool_name
+        if tool_name == "browser_type":
+            ref = str(args.get("ref", "") or "").strip()
+            if ref:
+                args.setdefault("target", ref)
+
+        normalized_request["args"] = args
+        return normalized_request
+
+    def normalize_result(self, result: ToolResult) -> ToolResult:
+        return dict(result)
+
+
 def _fake_browser_broker() -> ToolBroker:
-    provider = FakeBrowserProvider(['- textbox "Search" ref=e8'])
+    provider = _FakeBrowserType()
     registry = ToolRegistry(providers=[provider], normalizers=[BrowserToolNormalizer(), provider])
     return ToolBroker(registry)
 
@@ -87,7 +121,7 @@ async def test_prepare_normalizes_the_request_through_the_registry_normalizers()
     assert prepared.request["name"] == "browser_type"
     assert prepared.request["args"]["target"] == "e8"
     assert prepared.tool is not None
-    assert prepared.server == ""  # FakeBrowserProvider tools are not MCP-backed
+    assert prepared.server == ""  # fake browser tools are not MCP-backed
 
 
 @pytest.mark.asyncio

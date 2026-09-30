@@ -140,9 +140,9 @@ class LoopState:
         return replace(self, **loop_updates)
 
     def snapshot_mapping(self) -> dict[str, Any]:
-        """Minimal mapping fed to ``BrowserProvider.normalize_request``.
+        """Minimal mapping fed to a tool-call normalizer's ``normalize_request``.
 
-        Browser providers read state via ``.get(...)`` (only ``snapshot`` today), so a
+        Normalizers read state via ``.get(...)`` (only ``snapshot`` today), so a
         plain dict keeps them unchanged while the loop uses the typed dataclass.
         """
 
