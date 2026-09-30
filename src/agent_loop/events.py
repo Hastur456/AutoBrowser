@@ -23,6 +23,7 @@ EventType = Literal[
     "tool.started",
     "tool.finished",
     "observation.compiled",
+    "hook.decided",
     "goal.completed",
     "goal.blocked",
     "goal.failed",
@@ -47,6 +48,7 @@ AGENT_TRACE_EVENT_TYPES = {
     "tool.started",
     "tool.finished",
     "observation.compiled",
+    "hook.decided",
     "goal.completed",
     "goal.blocked",
     "goal.failed",
@@ -289,6 +291,11 @@ def _project_agent_trace_record(record: EventRecord) -> dict[str, Any] | None:
         )
         if bool(record.payload.get("has_snapshot")):
             projected["has_snapshot"] = True
+        return projected
+    if record.type == "hook.decided":
+        # Deliberately no arguments/results: hook payloads never carry them.
+        for key in ("hook_id", "event", "decision", "reason", "tool", "error", "skipped"):
+            _set_if_present(projected, key, _compact_text(record.payload.get(key)))
         return projected
     if record.type == "goal.completed":
         _set_if_present(projected, "task", _compact_text(record.payload.get("task")))

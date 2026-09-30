@@ -29,7 +29,8 @@ reached through :meth:`ContextAssembler.plan_prompt` — the sanctioned prompt b
 
 Event contract: only existing ``EventType`` literals are emitted (``model.requested`` /
 ``model.responded``, ``action.proposed``, ``policy.decided``, ``approval.requested``,
-``tool.started`` / ``tool.finished``, ``observation.compiled``); ``goal.*`` stays owned by
+``tool.started`` / ``tool.finished``, ``observation.compiled``, and one ``hook.decided`` per
+lifecycle-hook handler run); ``goal.*`` stays owned by
 :class:`~src.agent_loop.goals.GoalRunner`. **At least one event is emitted per continuing
 turn** so ``GoalRunner._watch_progress`` (which polls ``EventEmitter.sequence``) never
 false-times-out. ``tool.finished`` carries ``{"tool_result": dict(result)}`` — the exact

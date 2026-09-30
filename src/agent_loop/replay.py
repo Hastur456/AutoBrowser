@@ -52,14 +52,10 @@ def iter_action_sequence(events: list[EventRecord]) -> Iterator[TraceAction]:
     statuses = _tool_statuses(events)
     index = 0
     for event in events:
-        if event.type != "action.proposed":
-            continue
-        request = event.payload.get("tool_request") or {}
-        if not isinstance(request, dict):
+        request = _proposed_request(event)
+        if request is None:
             continue
         name = str(request.get("name", "") or "")
-        if not name:
-            continue
         index += 1
         args = request.get("args") if isinstance(request.get("args"), dict) else {}
         yield TraceAction(
@@ -96,7 +92,14 @@ def print_action_sequence(events: list[EventRecord]) -> str:
     task = _first_task(events)
     if task:
         lines.append(f"goal.started: {task}")
-    for action in iter_action_sequence(events):
+    actions = iter_action_sequence(events)
+    for event in events:
+        if event.type == "hook.decided":
+            lines.append(_hook_line(event))
+            continue
+        if _proposed_request(event) is None:
+            continue
+        action = next(actions)
         suffix = f" -> {action.status}" if action.status else ""
         lines.append(f"{action.index}. {action.name} {json.dumps(action.args, ensure_ascii=False)}{suffix}")
     terminal = _terminal_event(events)
@@ -108,6 +111,34 @@ def print_action_sequence(events: list[EventRecord]) -> str:
             line = f"{line}: {final_answer}"
         lines.append(line)
     return "\n".join(lines)
+
+
+def _proposed_request(event: EventRecord) -> dict[str, Any] | None:
+    """The tool request of an ``action.proposed`` event with a tool name, else ``None``."""
+
+    if event.type != "action.proposed":
+        return None
+    request = event.payload.get("tool_request") or {}
+    if not isinstance(request, dict) or not request.get("name"):
+        return None
+    return request
+
+
+def _hook_line(event: EventRecord) -> str:
+    payload = event.payload
+    target = str(payload.get("event", "") or "")
+    tool = str(payload.get("tool", "") or "")
+    if tool:
+        target = f"{target} {tool}"
+    line = f"   hook {payload.get('hook_id', '')} [{target}]: {payload.get('decision') or 'no decision'}"
+    reason = str(payload.get("reason", "") or "")
+    if reason:
+        line = f"{line} - {reason}"
+    for key in ("error", "skipped"):
+        value = str(payload.get(key, "") or "")
+        if value:
+            line = f"{line} ({key}: {value})"
+    return line
 
 
 def _tool_statuses(events: list[EventRecord]) -> list[str]:
@@ -163,13 +194,18 @@ def _final_answer(event: EventRecord | None) -> str:
 
 
 def _policy_block_count(events: list[EventRecord]) -> int:
-    count = 0
-    for event in events:
-        if event.type != "policy.decided":
-            continue
-        if event.payload.get("decision") == "blocked":
-            count += 1
-    return count
+    return sum(1 for event in events if _is_policy_block(event))
+
+
+def _is_policy_block(event: EventRecord) -> bool:
+    if event.type == "policy.decided":
+        return event.payload.get("decision") == "blocked"
+    # A pre_tool_use hook deny is a policy block from the task's point of view.
+    return (
+        event.type == "hook.decided"
+        and event.payload.get("event") == "pre_tool_use"
+        and event.payload.get("decision") == "deny"
+    )
 
 
 def _repeated_action_count(actions: list[TraceAction]) -> int:

@@ -149,3 +149,71 @@ def test_summarize_trace_counts_repeats_and_policy_blocks() -> None:
 
 def load_events_from_dict(event: dict[str, object]):
     return EventRecord.from_json_dict(json.loads(json.dumps(event)))
+
+
+def test_hook_decisions_count_as_policy_blocks_and_show_in_the_sequence() -> None:
+    raw_events = [
+        {"type": "goal.started", "source": "test", "payload": {"task": "open"}},
+        {
+            "type": "action.proposed",
+            "source": "test",
+            "payload": {"tool_request": {"name": "browser_snapshot", "args": {}}},
+        },
+        {
+            "type": "hook.decided",
+            "source": "test",
+            "payload": {
+                "hook_id": "audit",
+                "event": "pre_tool_use",
+                "tool": "browser_snapshot",
+                "decision": "allow",
+            },
+        },
+        {
+            "type": "tool.finished",
+            "source": "test",
+            "payload": {"tool_result": {"name": "browser_snapshot", "status": "success"}},
+        },
+        {
+            "type": "action.proposed",
+            "source": "test",
+            "payload": {"tool_request": {"name": "browser_navigate", "args": {"url": "x"}}},
+        },
+        {"type": "policy.decided", "source": "test", "payload": {"decision": "approved"}},
+        {
+            "type": "hook.decided",
+            "source": "test",
+            "payload": {
+                "hook_id": "urls",
+                "event": "pre_tool_use",
+                "tool": "browser_navigate",
+                "decision": "deny",
+                "reason": "Domain is not allowed.",
+            },
+        },
+        {
+            "type": "hook.decided",
+            "source": "test",
+            "payload": {
+                "hook_id": "grounded",
+                "event": "stop",
+                "decision": None,
+                "error": "timeout",
+            },
+        },
+        {"type": "goal.completed", "source": "test", "payload": {"result": {"final_answer": "ok"}}},
+    ]
+    events = [load_events_from_dict(event) for event in raw_events]
+
+    summary = summarize_trace(events)
+
+    assert summary.policy_block_count == 1
+    assert print_action_sequence(events) == (
+        "goal.started: open\n"
+        "1. browser_snapshot {} -> success\n"
+        "   hook audit [pre_tool_use browser_snapshot]: allow\n"
+        '2. browser_navigate {"url": "x"}\n'
+        "   hook urls [pre_tool_use browser_navigate]: deny - Domain is not allowed.\n"
+        "   hook grounded [stop]: no decision (error: timeout)\n"
+        "goal.completed: ok"
+    )
