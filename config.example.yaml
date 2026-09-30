@@ -41,7 +41,7 @@
 # environment.
 #
 # Section and field names mirror src/config.py exactly (llm, browser, loop,
-# observation, memory, events, storage, flags). A name matching no section, or
+# observation, memory, events, storage, flags, hooks). A name matching no section, or
 # no field of a matching section, is rejected at startup instead of being
 # ignored. .env.example lists every field with its default.
 #
@@ -163,3 +163,35 @@ flags:
   # INERT. The engine-native AgentLoopEngine is the only runtime; this parses
   # for CLI compatibility (--agent-loop) and changes no routing.
   agent_loop: false                             # (default)
+
+# ---------------------------------------------------------------------------
+# Deterministic lifecycle hooks around the agent loop (src/harness/hooks.py).
+# Handlers are "package.module:attr" import paths of async callables, resolved
+# at session start -- an import error, a duplicate id or a sync handler fails
+# startup. With `options`, the handler is a factory called once as
+# handler(**options). A hook never lifts a built-in `blocked` policy decision,
+# and `permission_request` is the only way to approve a `needs_human` tool.
+hooks:
+  # Master switch; off means no hook runs and nothing is emitted.
+  enabled: false                                # (default)
+  # Completions a stop hook may reject per task before done is accepted anyway.
+  max_stop_blocks: 2                            # (default)
+  # Timeout of a hook without its own timeout_seconds. Must stay below
+  # loop.progress_timeout_seconds.
+  default_timeout_seconds: 10.0                 # (default)
+  # Hooks, run sequentially in this order per event. Example:
+  registry: []                                  # (default)
+  # registry:
+  #   - id: urls
+  #     event: pre_tool_use                     # goal_start | pre_tool_use |
+  #                                             # permission_request | post_tool_use |
+  #                                             # post_tool_use_failure | stop | goal_end
+  #     handler: src.browser.hooks:url_policy
+  #     match: {tool: browser_navigate}         # tool events only; tool is a fullmatch regex
+  #     options: {deny_domains: [example.com]}
+  #   - id: grounded
+  #     event: stop
+  #     handler: src.harness.builtin_hooks:grounded_final_answer
+  #     options: {min_chars: 1}
+  #     timeout_seconds: 5.0                    # (default: default_timeout_seconds)
+  #     fail_closed: null                       # (default: per-event behavior)
