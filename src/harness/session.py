@@ -22,6 +22,7 @@ from src.agent_loop.execution.completion import native_latest_state_loader
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalRunRequest, GoalRunner
 from src.config import get_settings
+from src.harness.hooks import HookEngine, NullHookEngine, registry_digest
 from src.harness.mcp_setup import MCPRuntime, build_mcp_runtime
 from src.harness.runtime import (
     HARNESS_EVENT_METADATA_CONFIG_KEY,
@@ -384,6 +385,9 @@ class SessionContext:
     mcp: MCPRuntime | None = None
     telemetry: TelemetryObserver = field(default_factory=TelemetryObserver)
     event_emitter: EventEmitter = field(default_factory=EventEmitter)
+    #: Session-scoped lifecycle hooks, loaded from ``settings.hooks`` in :meth:`initialize`.
+    hooks: HookEngine | NullHookEngine = field(default_factory=NullHookEngine)
+    hooks_registry_sha256: str = ""
     chrome_process: Any | None = None
     initialized: bool = False
 
@@ -402,6 +406,14 @@ class SessionContext:
 
         if self.initialized:
             return
+
+        # Load hooks first: a broken registry must fail startup before Chrome/MCP launch.
+        settings = get_settings()
+        self.hooks = HookEngine.from_settings(
+            settings.hooks,
+            progress_timeout_seconds=settings.loop.progress_timeout_seconds,
+        )
+        self.hooks_registry_sha256 = registry_digest(settings.hooks)
 
         now = datetime.now(UTC)
         self.metadata.started_at = now
@@ -522,6 +534,10 @@ class SessionContext:
             },
             "artifacts": [asdict(artifact) for artifact in self.artifacts.all()],
             "tasks": [asdict(task) for task in self.tasks],
+            "hooks": {
+                "enabled": isinstance(self.hooks, HookEngine),
+                "registry_sha256": self.hooks_registry_sha256,
+            },
         }
 
     def persist(self) -> None:
@@ -677,6 +693,7 @@ class SessionRuntime:
             self.harness,
             llm=self.context.llm,
             events=self.context.event_emitter,
+            hooks=self.context.hooks,
         )
         runner = GoalRunner(
             harness=self.harness,

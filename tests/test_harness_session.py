@@ -9,7 +9,7 @@ import pytest
 
 from src.agent_loop.execution.loop import AgentLoopResult
 from src.agent_loop.execution.state import BrowserState, LoopState
-from src.config import get_settings
+from src.config import HooksSettings, Settings, get_settings
 from src.harness.runtime import (
     HARNESS_EVENT_METADATA_CONFIG_KEY,
     HARNESS_STATE_OVERRIDES_CONFIG_KEY,
@@ -24,6 +24,7 @@ from src.harness.session import (
     SessionState,
     WorkspaceContext,
 )
+from src.harness.hooks import HookConfigError, HookEngine, NullHookEngine, registry_digest
 from src.harness.tools import ToolRegistry
 
 
@@ -613,3 +614,116 @@ async def test_session_runtime_emits_goal_failed_and_preserves_exception_behavio
     ]
     assert typed_events[1]["goal_id"] == runtime.context.tasks[0].task_id
     assert typed_events[2]["goal_id"] == runtime.context.tasks[0].task_id
+
+
+# --------------------------------------------------------------------------
+# Lifecycle hooks are session-scoped
+# --------------------------------------------------------------------------
+
+
+def use_hooks(monkeypatch: pytest.MonkeyPatch, hooks: HooksSettings) -> None:
+    """Point the session at explicit hook settings (never the developer's config.yaml)."""
+
+    settings = Settings(hooks=hooks)
+    monkeypatch.setattr("src.harness.session.get_settings", lambda: settings)
+
+
+DENY_ALL_HOOKS = HooksSettings(
+    enabled=True,
+    registry=[{"id": "deny", "event": "pre_tool_use", "handler": "tests.hook_fixtures:deny_all"}],
+)
+
+
+@pytest.mark.asyncio
+async def test_session_loads_hooks_once_and_hands_them_to_the_engine(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    use_hooks(monkeypatch, DENY_ALL_HOOKS)
+    captured: list[Any] = []
+
+    async def task_runner(*_args: Any) -> AgentLoopResult:
+        return native_result(final_answer="done")
+
+    def runner_factory(resources: Any) -> Any:
+        captured.append(resources)
+        return task_runner
+
+    monkeypatch.setattr("src.harness.session.native_task_runner", runner_factory)
+    runtime = make_runtime()
+
+    await runtime.run_task("first")
+    await runtime.run_task("second")
+
+    hooks = runtime.context.hooks
+    assert isinstance(hooks, HookEngine)
+    assert hooks.has("pre_tool_use")
+    assert [resources.hooks for resources in captured] == [hooks, hooks]
+    assert runtime.context.session_dir is not None
+    session_payload = json.loads((runtime.context.session_dir / "session.json").read_text())
+    assert session_payload["hooks"] == {
+        "enabled": True,
+        "registry_sha256": registry_digest(DENY_ALL_HOOKS),
+    }
+
+
+@pytest.mark.asyncio
+async def test_disabled_hooks_give_the_engine_a_null_hook_engine(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    use_hooks(monkeypatch, HooksSettings(enabled=False, registry=DENY_ALL_HOOKS.registry))
+    captured: list[Any] = []
+
+    async def task_runner(*_args: Any) -> AgentLoopResult:
+        return native_result(final_answer="done")
+
+    def runner_factory(resources: Any) -> Any:
+        captured.append(resources)
+        return task_runner
+
+    monkeypatch.setattr("src.harness.session.native_task_runner", runner_factory)
+    runtime = make_runtime()
+
+    await runtime.run_task("inspect page")
+
+    assert isinstance(runtime.context.hooks, NullHookEngine)
+    assert isinstance(captured[0].hooks, NullHookEngine)
+    assert runtime.context.session_dir is not None
+    session_payload = json.loads((runtime.context.session_dir / "session.json").read_text())
+    assert session_payload["hooks"]["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_broken_hook_registry_fails_session_start_before_chrome(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    use_hooks(
+        monkeypatch,
+        HooksSettings(
+            enabled=True,
+            registry=[{"id": "x", "event": "stop", "handler": "tests.no_such_module:f"}],
+        ),
+    )
+    launched: list[int] = []
+
+    def start_chrome(_path: str, _profile: str, port: int) -> None:
+        launched.append(port)
+
+    runtime = SessionRuntime(
+        make_config(no_mcp=False),
+        llm_factory=llm_factory,
+        start_chrome_cdp=start_chrome,
+        wait_for_port=noop_wait,
+        mcp_runtime_factory=no_mcp_runtime,
+    )
+
+    with pytest.raises(HookConfigError, match="cannot import"):
+        await runtime.start()
+
+    assert launched == []
+    assert runtime.context.initialized is False

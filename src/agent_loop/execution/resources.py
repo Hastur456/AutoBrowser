@@ -14,9 +14,10 @@ layers, matching the decoupling rule for the whole ``src/agent_loop/execution/``
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
+from src.harness.hooks import NullHookEngine
 from src.harness.normalization import ToolCallNormalizer
 from src.harness.tools import ToolRegistry
 
@@ -30,7 +31,9 @@ class EngineResources:
     ``plan_prompt`` and knows about the agent/planner prompts); ``events`` is the session ``EventEmitter`` whose sink
     chain applies redaction and whose ``sequence`` the goal watchdog polls. Tool-request
     classification is not a resource: the loop calls the pure functions in
-    :mod:`src.agent_loop.execution.policy` directly.
+    :mod:`src.agent_loop.execution.policy` directly. ``hooks`` is the session's
+    :class:`~src.harness.hooks.HookEngine`; the default :class:`~src.harness.hooks.NullHookEngine`
+    runs nothing, so evals and tests that do not pass one never see hooks.
     """
 
     llm: Any
@@ -38,6 +41,7 @@ class EngineResources:
     tool_normalizers: Sequence[ToolCallNormalizer]
     context: Any
     events: Any
+    hooks: Any = field(default_factory=NullHookEngine)
 
     @classmethod
     def from_harness(
@@ -46,12 +50,15 @@ class EngineResources:
         *,
         llm: Any,
         events: Any | None = None,
+        hooks: Any | None = None,
     ) -> EngineResources:
         """Compose resources from an initialized ``BrowserHarness`` plus the ``llm``.
 
         ``events`` defaults to ``harness.events`` but can be overridden so the loop emits
         through the exact same ``EventEmitter`` the enclosing ``GoalRunner`` watchdog polls
-        (``SessionContext.event_emitter``), guaranteeing progress is observed.
+        (``SessionContext.event_emitter``), guaranteeing progress is observed. ``hooks`` is
+        not a harness concern: the session passes its own ``HookEngine``; without it the
+        loop gets a :class:`~src.harness.hooks.NullHookEngine`.
         """
 
         tool_registry = harness.tools
@@ -62,6 +69,7 @@ class EngineResources:
             tool_normalizers=list(getattr(tool_registry, "get_normalizers", list)()),
             context=harness.context,
             events=events if events is not None else harness.events,
+            hooks=hooks if hooks is not None else NullHookEngine(),
         )
 
 
