@@ -275,12 +275,12 @@ capability/execution, hook engine — lifecycle/control.
 
 | Событие | Точка | Может | Зачем |
 |---|---|---|---|
-| `GoalStart` | `GoalRunner.run` до `native_task_runner` | deny задачи, `additional_context` | доменные подсказки, запрет задач |
+| `GoalStart` | `AgentLoopEngine.run` до `_run_plan` (не `GoalRunner` — он не трогает state и решения) | deny задачи, `additional_context` | доменные подсказки, запрет задач |
 | `PreToolUse` | см. §3.2 | allow/deny/ask, `updated_input`, context | URL-политика, rate-limit, аргументы |
-| `PermissionRequest` | вместо/до `_human_input` | allow/deny | авто-одобрение в batch/eval по allowlist |
+| `PermissionRequest` | до `_human_input` | allow / deny (terminal, как отказ человека) | авто-одобрение в batch/eval по allowlist |
 | `PostToolUse` / `PostToolUseFailure` | после `normalize_result` | `updated_output`, context | redaction, prompt-injection, артефакты |
-| `Stop` | ветка `done` в `run_turn`, до `CompletionController` | block + reason (с бюджетом) | проверка финального ответа |
-| `GoalEnd` | `GoalRunner` после terminal status | только наблюдение | trace summary, уведомления |
+| `Stop` | `_agent_step` сразу после `_classify_action`, до применения `done` | block + reason (с бюджетом) | проверка финального ответа |
+| `GoalEnd` | `AgentLoopEngine.run` после цикла (только нормальное завершение) | только наблюдение | trace summary, уведомления |
 
 Позже, по мере необходимости: `SessionStart`/`SessionEnd` (`SessionRuntime`),
 `PreCompact` (`src/harness/memory.py` — архив перед обрезкой истории),
@@ -292,17 +292,23 @@ capability/execution, hook engine — lifecycle/control.
 `CompletionController` остаётся **единственным** владельцем terminal-решения.
 `Stop`-hook не завершает run сам, а может только **отклонить `done`**:
 
+- hook вызывается только для `done` от модели (не для guard-терминалов) и **до**
+  применения done-update: `_done_response` помечает план выполненным, откатывать это
+  хрупко;
 - причина добавляется в `messages` как фидбек (как continuation prompt в Codex),
-  решение возвращается в `tool_call`/`replan`;
-- бюджет — новый счётчик `stop_blocks` в `LoopState` (task-local, сбрасывается между
-  задачами) и настройка `hooks.max_stop_blocks` (≈3, как `loop_limit` у Cursor);
+  решение — новый `decision: "continue"` с веткой в `run_turn` (неизвестный
+  `decision` там сейчас терминален);
+- бюджет — новый счётчик `stop_blocks` в `LoopState` (task-local по построению: не
+  входит в `to_session_state`) и настройка `hooks.max_stop_blocks` (≈2–3, как
+  `loop_limit` у Cursor);
   во входе hook-а — `stop_hook_active: bool` (как у Claude/Codex);
 - после исчерпания бюджета — `done` принимается, а факт отказа попадает в события;
 - каждый продолжающий ход расходует общий `turn_cap`.
 
 Дешёвые детерминированные Stop-проверки для браузерного агента: непустой
-`final_answer`; числа/цены/названия из ответа присутствуют в последнем observation
-(grounding-проверка без LLM); в eval-режиме — assertions сценария.
+`final_answer`; числа/цены/названия из ответа присутствуют в последнем observation или
+текущем snapshot (grounding-проверка без LLM; tool-сообщения истории не годятся —
+`compact_snapshot_history` их сжимает); в eval-режиме — assertions сценария.
 
 ### 3.5 Агрегация, ошибки, таймауты
 
@@ -310,8 +316,13 @@ capability/execution, hook engine — lifecycle/control.
 - `updated_input` нескольких hook-ов применяется цепочкой (как wrap-stack у LangChain),
   каждый следующий видит уже переписанный запрос.
 - Timeout/исключение: per-hook `fail_closed` (Cursor). По умолчанию `PreToolUse`,
-  `PermissionRequest` — fail-closed (tool не выполняется, причина модели);
-  `PostToolUse`, `GoalEnd` — fail-open; `Stop` — «нет решения» (как Claude).
+  `GoalStart` — fail-closed (действие не выполняется, причина модели);
+  `PermissionRequest` — «нет решения» → решает `human_input`; `PostToolUse`,
+  `GoalEnd` — fail-open; `Stop` — «нет решения» (как Claude).
+- Handler-ы только async: `asyncio.wait_for` не прерывает блокирующий sync-код.
+- `HookEngine` не владеет `EventEmitter`: решения отдаются callback-ом, события эмитит
+  loop — `from_harness(events=...)` подменяет emitter, а watchdog `GoalRunner` следит
+  за `EventEmitter.sequence`.
 - Отказ hook-а идёт через тот же `policy_updates`, что и built-in `blocked`, значит
   учитывается в `consecutive_failures` и `max_ineffective_actions` — hook не может
   зациклить loop сильнее, чем built-in policy.
@@ -319,8 +330,10 @@ capability/execution, hook engine — lifecycle/control.
 ### 3.6 Аудит
 
 - Новый `EventType` `hook.decided` с `{event, hook_id, decision, reason, duration_ms,
-  modified: bool}`; аргументы — через существующий `redact_json_safe`
-  (`browser_type` может нести пароль).
+  modified: bool}` **без аргументов**: `redact_json_safe` (встроен в
+  `EventRecord.to_dict`) скрывает значения только по имени ключа и не сканирует
+  строки, а `browser_type` может нести пароль. Deny засчитывается в существующий
+  `policy_block_count`.
 - `replay_trace.py` должен показывать решения hook-ов; eval baseline не должен
   меняться при выключенных hook-ах.
 
@@ -347,8 +360,8 @@ capability/execution, hook engine — lifecycle/control.
 |---|---|---|
 | Контракты: `HookEvent`, `HookResult`, `HookDecision`, имена событий | `src/contracts.py` (или нейтральный `src/hooks/contracts.py`) | нейтральный лист, не импортирует engine/harness/browser |
 | `HookEngine`: registry, matcher, runner, timeouts, агрегация | `src/harness/hooks.py` | инфраструктура — в harness, по правилам слоёв |
-| Проброс в движок | `EngineResources.from_harness` → `TurnController` | как `tool_registry`, `events` |
-| Точки вызова | `TurnController._run_tool_turn`, ветка `done`, `GoalRunner` | движок владеет только reasoning/routing/execution/observation |
+| Время жизни и проброс | `SessionContext.start` строит `HookEngine`; `EngineResources.from_harness(..., hooks=)` по образцу `events=` | не `BrowserHarness`: его строят evals и тесты, а корневой `config.yaml` читается любым `get_settings()` |
+| Точки вызова | `TurnController._run_tool_turn`, `_agent_step` (stop), `AgentLoopEngine.run` (goal start/end) | движок владеет только reasoning/routing/execution/observation |
 | Браузерные hook-и (URL-политика, injection-скан снапшота) | `src/browser/hooks.py` | браузерная специфика не попадает в engine |
 | Настройки | новая секция `hooks` в `src/config.py` (`enabled`, `max_stop_blocks`, `default_timeout_seconds`, `registry`) + `.env.example` + `tests/test_config.py` | no scattered constants |
 
@@ -357,7 +370,7 @@ capability/execution, hook engine — lifecycle/control.
 ```yaml
 hooks:
   enabled: true
-  max_stop_blocks: 3
+  max_stop_blocks: 2
   registry:
     - event: pre_tool_use
       match: { server: playwright, tool: browser_navigate }
