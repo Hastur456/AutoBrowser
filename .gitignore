@@ -50,3 +50,6 @@ extra/
 exports/
 .claude/
 plans/
+
+# Cache uv
+.uv/

@@ -52,7 +52,7 @@
 
 llm:
   # Chat model id, as the provider expects it.
-  model: gpt-oss:20b-cloud                      # (default)
+  model: gemma4:31b-cloud                      # (default)
   # Sampling temperature. 0.0 keeps planning deterministic.
   temperature: 0.0                              # (default)
   # Base URL of the Ollama-compatible endpoint. null = unset: the provider then

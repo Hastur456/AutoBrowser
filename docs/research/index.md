@@ -34,6 +34,16 @@ around `TurnController` tool turns and completion.
 See [Lifecycle Hooks Research](2026-09-30-lifecycle-hooks-research.md) and the
 [implementation plan](../development/2026-09-30-lifecycle-hooks-implementation-plan.md).
 
+### Permission Engine
+
+Survey of permission/approval models (Claude Code rules and modes, Codex sandbox +
+approval policy + execpolicy, Gemini CLI policy engine, OpenAI Agents SDK approvals,
+MCP annotations, Playwright MCP origins), an audit of the current policy/hook/HITL path,
+and a proposed deny-first `PermissionEngine` placed after `pre_tool_use` hooks.
+
+See [Permission Engine Research](2026-10-01-permission-engine-research.md) and the
+[implementation plan](../development/2026-10-01-permission-engine-implementation-plan.md).
+
 ### Search Flow Robustness
 
 Recent execution traces showed a failure mode on dynamic commerce pages:
