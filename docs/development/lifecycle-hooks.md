@@ -41,6 +41,7 @@ A hook is one of two types:
 | Command hooks | `src/harness/command_hooks.py` | `CommandHook`: runs a process, parses exit code and stdout |
 | Generic handlers | `src/harness/builtin_hooks.py` | `approve_tools`, `grounded_final_answer` |
 | Browser handlers | `src/browser/hooks.py` | `url_policy`, `prompt_injection_scan` |
+| Basic command hooks | `scripts/hooks/*.py` | Ready `type: command` scripts: `sensitive_action_guard`, `secret_input_guard`, `pii_redaction`, `page_obstacle_detector`, `grounded_urls` (see [Basic Command Hooks](#basic-command-hooks)) |
 | Call sites | `src/agent_loop/execution/loop.py` | Builds events, applies outcomes to `LoopState`, emits `hook.decided` |
 
 ### Ownership and Lifetime
@@ -346,6 +347,96 @@ Differences from Claude Code:
 - The command inherits the environment, including `AUTOBROWSER_LLM__API_KEY`, and runs with
   your rights. Treat the registry like code.
 
+## Basic Command Hooks
+
+`scripts/hooks/` holds a ready starter set of command hooks written by the protocol
+above. It follows Claude Code/Codex hooks: one self-contained script per hook, standard
+library only, configured with command-line flags. Copy a script and edit it freely; nothing
+in `src/` imports these files. None of them runs until it is registered.
+
+### Enabling Them
+
+1. Copy `config.example.yaml` to `config.yaml` (or open your existing `config.yaml`).
+2. Set `hooks.enabled: true`.
+3. Replace `registry: []` with the commented "Basic command hooks" block from
+   `config.example.yaml`. Keep only the entries you need:
+
+```yaml
+hooks:
+  enabled: true
+  registry:
+    - id: sensitive-actions
+      event: pre_tool_use
+      type: command
+      command: python scripts/hooks/sensitive_action_guard.py
+      match: {tool: browser_click|browser_type|browser_select_option}
+    - id: secret-input
+      event: pre_tool_use
+      type: command
+      command: python scripts/hooks/secret_input_guard.py
+      match: {tool: browser_type|browser_fill_form}
+    - id: pii
+      event: post_tool_use
+      type: command
+      command: python scripts/hooks/pii_redaction.py
+      match: {tool: browser_.*}
+    - id: obstacles
+      event: post_tool_use
+      type: command
+      command: python scripts/hooks/page_obstacle_detector.py
+      match: {tool: browser_snapshot|browser_navigate}
+    - id: grounded-urls
+      event: stop
+      type: command
+      command: python scripts/hooks/grounded_urls.py
+```
+
+4. Check that it starts: `python main.py --no-mcp --task "inspect page"`. A broken
+   registry fails startup. A broken script fails on its first event, and
+   `hook.decided` records the error.
+
+Options are flags appended to `command`, e.g.
+`command: python scripts/hooks/sensitive_action_guard.py --decision deny --keyword "Отправить заявку"`.
+A bad flag makes the script exit `1` (a hook failure: fail-closed on `pre_tool_use`), never
+`2`, so a typo is reported as an error rather than as a silent block.
+
+### What Each Script Does
+
+| Script | Event / `match` | Flags | Answer |
+|---|---|---|---|
+| `sensitive_action_guard.py` | `pre_tool_use`, `browser_click\|browser_type\|browser_select_option` | `--decision ask\|deny` (default `ask`), `--keyword TEXT` (repeatable, replaces the Russian/English defaults: «оплатить», «оформить заказ», «удалить», `pay`, `place order`, `buy now`, `delete`…) | The `element` description matches a keyword (whole words, case/whitespace-insensitive) → JSON `{"decision": "ask"}`, or exit `2` with `--decision deny` |
+| `secret_input_guard.py` | `pre_tool_use`, `browser_type\|browser_fill_form` | `--decision deny\|ask` (default `deny`), `--pattern REGEX` (repeatable) | A Luhn-valid card number (13–19 digits, contiguous or in 4-digit groups) or a pattern in any string argument except `element`/`ref` → exit `2` (or `ask`). The reason never quotes the text |
+| `pii_redaction.py` | `post_tool_use` / `post_tool_use_failure`, `browser_.*` | `--kinds email,phone,card` (default all) | JSON `{"updated_output": ...}` with `[redacted <kind>]` in `content` (or `error`). Values that occur verbatim in the task are kept |
+| `page_obstacle_detector.py` | `post_tool_use`, `browser_snapshot\|browser_navigate` | `--pattern REGEX` (repeatable, extends the defaults) | Captcha, «не робот», `Access denied`, `403 Forbidden`, Cloudflare `Just a moment...` → exit `2`: stderr reaches the model as a `[harness]` note, the snapshot is untouched |
+| `grounded_urls.py` | `stop` | — | An `http(s)://` link in the final answer that appears neither in `evidence` nor in the task → exit `2`, the model keeps working. A link counts as seen by its full URL, its path (snapshots carry relative `/url:` values) or, for a bare site, its host |
+
+### Things to Know
+
+- **`ask` ends the task in the current CLI.** No human callback is wired, so a
+  `needs_human` call is denied and the task finishes `blocked` ("human approval was
+  denied"). Let specific tools through with a `permission_request` hook (`approve_tools`), or
+  use `--decision deny` to block only the one call and let the model choose another action.
+- **`python` is whatever is on `PATH`.** The scripts need only the standard library
+  (Python 3.10+), so the venv and the system interpreter both work. Each event starts a
+  process (tens of milliseconds), which is why every entry has a narrow `match`.
+- **Output encoding.** The engine decodes stdout/stderr as UTF-8, so every script
+  switches its streams to UTF-8 (`sys.stdout.reconfigure(encoding="utf-8")`); on Windows
+  the default code page would garble Russian text. Keep that line in your own scripts.
+- **The guards read Playwright MCP argument names** (`element`, `text`, `fields`). With
+  another browser server, adjust `match` or the script.
+- **`pii_redaction.py` changes what the model sees.** Masking is deterministic, so
+  snapshot fingerprints and progress detection stay stable, and refs (`e123`) never match.
+  A task that must *read* an e-mail or phone number off a page needs `--kinds` without that
+  kind. Phones are Russian-style (`+7`/`8`, then 3-3-2-2 digits).
+- **`grounded_urls.py` shares `hooks.max_stop_blocks`** with the other stop hooks. A link
+  seen several pages ago but not on the latest page is rejected too; once the budget is
+  spent, `done` is accepted.
+- `sensitive_action_guard.py` is a guardrail, not a security boundary: `browser_press_key`
+  (`Enter` in a form) and `browser_evaluate` carry no `element` description.
+
+Tests: `tests/test_hook_scripts.py` runs every script as a real process and loads the
+registry block from `config.example.yaml`. If you change a script or that block, run it.
+
 ## Managing Hooks: Common Operations
 
 Two facts shape every operation below:
@@ -501,7 +592,7 @@ async def test_checkout_asks() -> None:
 Existing suites to run after changing hook code:
 
 ```powershell
-python -m pytest tests\test_harness_hooks.py tests\test_agent_loop_hooks.py tests\test_browser_hooks.py tests\test_builtin_hooks.py tests\test_command_hooks.py
+python -m pytest tests\test_harness_hooks.py tests\test_agent_loop_hooks.py tests\test_browser_hooks.py tests\test_builtin_hooks.py tests\test_command_hooks.py tests\test_hook_scripts.py
 ```
 
 ## Related

@@ -199,3 +199,44 @@ hooks:
   #     # reason / updated_input / updated_output / additional_context.
   #     command: python scripts/hooks/audit.py
   #     match: {server: playwright}
+  #
+  # Basic command hooks (scripts/hooks/*.py) -- a ready starter set in the Claude
+  # Code/Codex style: one self-contained, stdlib-only script per hook, the event as JSON on
+  # stdin, exit 2 to block, JSON on stdout for ask / rewrites. To switch them on, copy this
+  # file to config.yaml, set `enabled: true` above and replace `registry: []` with the
+  # block below (uncommented). Keep only the entries you want; the order is the run order
+  # per event. Options are command-line flags. Guide:
+  # docs/development/lifecycle-hooks.md#basic-command-hooks
+  #
+  # registry:
+  #   # Clicking "Оплатить" / "Оформить заказ" / "Удалить" / "Place order" needs approval.
+  #   # The CLI wires no human callback, so `ask` ends the task `blocked`; add
+  #   # --decision deny to block only that call. --keyword TEXT replaces the defaults.
+  #   - id: sensitive-actions
+  #     event: pre_tool_use
+  #     type: command
+  #     command: python scripts/hooks/sensitive_action_guard.py
+  #     match: {tool: browser_click|browser_type|browser_select_option}
+  #   # Never type a Luhn-valid card number into a page (--pattern REGEX adds secrets).
+  #   - id: secret-input
+  #     event: pre_tool_use
+  #     type: command
+  #     command: python scripts/hooks/secret_input_guard.py
+  #     match: {tool: browser_type|browser_fill_form}
+  #   # Mask e-mails, phone numbers and card numbers in tool output (--kinds email,phone,card).
+  #   - id: pii
+  #     event: post_tool_use
+  #     type: command
+  #     command: python scripts/hooks/pii_redaction.py
+  #     match: {tool: browser_.*}
+  #   # Tell the model a captcha / access block is in the way (--pattern REGEX extends).
+  #   - id: obstacles
+  #     event: post_tool_use
+  #     type: command
+  #     command: python scripts/hooks/page_obstacle_detector.py
+  #     match: {tool: browser_snapshot|browser_navigate}
+  #   # Reject a final answer whose links are not in the latest observation.
+  #   - id: grounded-urls
+  #     event: stop
+  #     type: command
+  #     command: python scripts/hooks/grounded_urls.py

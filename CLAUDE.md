@@ -195,8 +195,11 @@ Deterministic, config-driven checks at fixed loop points — `goal_start`, `pre_
 - Where things live: contracts (`HookEvent`, `HookResult`) in `src/contracts.py`; settings in
   `src/config.py`; `HookEngine`/`NullHookEngine` in `src/harness/hooks.py`; generic handlers
   (`approve_tools`, `grounded_final_answer`) in `src/harness/builtin_hooks.py`; browser
-  handlers (`url_policy`, `prompt_injection_scan`) in `src/browser/hooks.py`; the call sites
-  and `hook.decided` emission in `src/agent_loop/execution/loop.py`.
+  handlers (`url_policy`, `prompt_injection_scan`) in `src/browser/hooks.py`; ready
+  stdlib-only command hooks (one script per hook, flags as options) in `scripts/hooks/`,
+  registered by the commented block in `config.example.yaml` and tested by
+  `tests/test_hook_scripts.py`; the call sites and `hook.decided` emission in
+  `src/agent_loop/execution/loop.py`.
 - `HookEngine` is session-scoped (`SessionContext.initialize`, reaching the loop through
   `EngineResources.hooks`), not a `BrowserHarness` resource. A hook never sees `LoopState`.
 - A hook cannot lift a built-in `blocked`; `pre_tool_use` `allow` does not approve a
