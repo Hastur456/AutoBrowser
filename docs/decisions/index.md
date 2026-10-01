@@ -4,6 +4,11 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-10-01 PermissionEngine](2026-10-01-permission-engine.md) (Proposed): deterministic,
+  session-scoped `allow | ask | deny` authorization after `pre_tool_use` hooks — config rules
+  (`deny > ask > allow`), modes (`default`/`read_only`/`dont_ask`/`bypass`), fail-closed,
+  session grants; progress guard split out of `policy.py`; `destructiveHint` ignored per the
+  Playwright MCP annotation inventory.
 - [2026-09-30 Command Hooks](2026-09-30-command-hooks.md): `type: command` hooks run an
   external process in the Claude Code/Codex style — event JSON on stdin, exit `2` blocks
   with stderr as the reason, JSON stdout maps onto `HookResult`; engine semantics unchanged.
