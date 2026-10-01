@@ -36,6 +36,7 @@ ruff.toml
 .agents/
 .specstory/
 .cursorignore
+.rtk/
 
 # Individual
 profile/
