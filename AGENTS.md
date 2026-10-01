@@ -217,7 +217,7 @@ REPL commands include:
 - `help [command]`: show command help.
 - `exit` or `quit`: exit the CLI.
 
-Useful CLI flags include `--loop`, `--show-state`, `--hide-snapshot`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, and `--turn-cap`.
+Useful CLI flags include `--loop`, `--show-state`, `--hide-snapshot`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap`, and `--permission-mode`.
 
 ## Coding Style & Naming Conventions
 

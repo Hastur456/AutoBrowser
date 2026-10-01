@@ -19,6 +19,7 @@ from src.messages import Message
 from src.agent_loop.engine import native_task_runner
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.agent_loop.execution.resources import EngineResources
+from src.harness.permissions import PermissionEngine
 from src.agent_loop.replay import TraceSummary, print_action_sequence, summarize_trace
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
 from src.browser.names import is_browser_tool_name, to_playwright_browser_name
@@ -372,7 +373,13 @@ async def run_scenario(scenario: EvalScenario) -> EvalResult:
         ),
         event_emitter=emitter,
     )
-    resources = EngineResources.from_harness(harness, llm=llm, events=emitter)
+    # Evals are headless: approvals become non-terminal denies, never a terminal block.
+    resources = EngineResources.from_harness(
+        harness,
+        llm=llm,
+        events=emitter,
+        permissions=PermissionEngine(mode="dont_ask"),
+    )
     emitter.emit(
         "goal.started",
         source="agent_loop.evals",

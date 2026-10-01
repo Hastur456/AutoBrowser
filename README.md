@@ -170,8 +170,14 @@ python main.py --show-state --hide-snapshot --task "inspect page"
 
 Useful flags include `--show-state`, `--show-tools`, `--json`,
 `--hide-snapshot`, `--compress-tools`, `--model`, `--temperature`,
-`--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, and
-`--turn-cap`. `--loop` is still accepted for compatibility.
+`--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap` and
+`--permission-mode`. `--loop` is still accepted for compatibility.
+
+`--permission-mode default|read_only|dont_ask|bypass` overrides `permissions.mode` for the
+session. In a terminal the CLI asks before a call the permission rules flag
+(`[y] once`, `[s] for the session` on that tool and domain, `[n] deny`; a refusal ends the
+task `blocked`); without a terminal (piped `--task`, `run_batch.py`) a configured `default`
+mode becomes `dont_ask`, so such calls are denied and the model continues.
 
 ## Test
 

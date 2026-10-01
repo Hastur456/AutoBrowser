@@ -114,7 +114,7 @@ def install_runner(
     """Inject a fake task runner in place of ``native_task_runner``."""
     monkeypatch.setattr(
         "src.harness.session.native_task_runner",
-        lambda _resources: runner,
+        lambda _resources, **_kwargs: runner,
     )
 
 
@@ -648,7 +648,7 @@ async def test_session_loads_hooks_once_and_hands_them_to_the_engine(
     async def task_runner(*_args: Any) -> AgentLoopResult:
         return native_result(final_answer="done")
 
-    def runner_factory(resources: Any) -> Any:
+    def runner_factory(resources: Any, **_kwargs: Any) -> Any:
         captured.append(resources)
         return task_runner
 
@@ -682,7 +682,7 @@ async def test_disabled_hooks_give_the_engine_a_null_hook_engine(
     async def task_runner(*_args: Any) -> AgentLoopResult:
         return native_result(final_answer="done")
 
-    def runner_factory(resources: Any) -> Any:
+    def runner_factory(resources: Any, **_kwargs: Any) -> Any:
         captured.append(resources)
         return task_runner
 
@@ -812,7 +812,7 @@ async def test_session_builds_one_permission_engine_for_every_task(
     async def task_runner(*_args: Any) -> AgentLoopResult:
         return native_result(final_answer="done")
 
-    def runner_factory(resources: Any) -> Any:
+    def runner_factory(resources: Any, **_kwargs: Any) -> Any:
         captured.append(resources)
         return task_runner
 

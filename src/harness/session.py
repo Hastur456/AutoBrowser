@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from src.agent_loop.engine import native_task_runner
+from src.agent_loop.engine import HumanInputCallback, native_task_runner
 from src.agent_loop.events import (
     AgentTraceSink,
     CompositeEventSink,
@@ -22,6 +22,7 @@ from src.agent_loop.execution.completion import native_latest_state_loader
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalRunRequest, GoalRunner
 from src.config import get_settings
+from src.contracts import PermissionMode
 from src.harness.hooks import HookEngine, NullHookEngine, registry_digest
 from src.browser.permissions import BROWSER_BUILTIN_RULES, BrowserResourceResolver
 from src.harness.permissions import PermissionEngine
@@ -102,6 +103,8 @@ class SessionConfig:
     cdp_port: int
     cdp_timeout: float
     turn_cap: int
+    #: Overrides ``settings.permissions.mode`` for this session; ``None`` keeps it.
+    permission_mode: PermissionMode | None = None
 
     @classmethod
     def from_args(cls, args: Any) -> "SessionConfig":
@@ -122,6 +125,7 @@ class SessionConfig:
             cdp_port=args.cdp_port,
             cdp_timeout=args.cdp_timeout,
             turn_cap=args.turn_cap,
+            permission_mode=getattr(args, "permission_mode", None),
         )
 
     def task_config(self) -> dict[str, Any]:
@@ -420,6 +424,7 @@ class SessionContext:
             settings.permissions,
             extra_builtin=BROWSER_BUILTIN_RULES,
             resolver=BrowserResourceResolver(),
+            mode=self.config.permission_mode,
         )
 
         now = datetime.now(UTC)
@@ -623,6 +628,7 @@ class SessionRuntime:
         harness_factory: HarnessFactory = BrowserHarness,
         input_fn: Callable[[str], str] = input,
         output_fn: Callable[..., None] = print,
+        human_input: HumanInputCallback | None = None,
     ) -> None:
         self.config = config
         self.context = SessionContext(config)
@@ -634,6 +640,8 @@ class SessionRuntime:
         self._harness_factory = harness_factory
         self._input = input_fn
         self._output = output_fn
+        #: Answers permission ``ask`` verdicts; ``None`` denies them (headless runs).
+        self._human_input = human_input
 
     @property
     def harness(self) -> BrowserHarness:
@@ -646,6 +654,8 @@ class SessionRuntime:
     async def start(self) -> None:
         """Initialize long-lived resources once for this process session."""
 
+        if self.context.initialized:
+            return
         await self.context.initialize(
             llm_factory=self._llm_factory,
             start_chrome_cdp=self._start_chrome_cdp,
@@ -655,6 +665,11 @@ class SessionRuntime:
             print_tools=self._print_tools,
             harness_factory=self._harness_factory,
         )
+        if self.context.permissions.mode == "bypass":
+            self._output(
+                "WARNING: permission mode 'bypass' grants every approval; only deny rules "
+                "and always-ask rules still hold."
+            )
 
     async def run_task(self, task: str) -> Any:
         """Run one user task through the existing agent implementation."""
@@ -707,7 +722,7 @@ class SessionRuntime:
         runner = GoalRunner(
             harness=self.harness,
             session_config=self.config,
-            task_runner=native_task_runner(resources),
+            task_runner=native_task_runner(resources, human_input=self._human_input),
             event_emitter=self.context.event_emitter,
             latest_state_loader=load_latest_state,
         )

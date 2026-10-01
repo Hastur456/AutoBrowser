@@ -163,9 +163,15 @@ python main.py --show-state --task "inspect page"
 
 Useful flags include `--show-state`, `--show-tools`, `--json`,
 `--hide-snapshot`, `--compress-tools`, `--model`, `--temperature`,
-`--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, and
-`--turn-cap`. `--loop` remains accepted as a compatibility flag, but the
+`--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap` and
+`--permission-mode`. `--loop` remains accepted as a compatibility flag, but the
 CLI now uses the long-lived session loop by default.
+
+`--permission-mode default|read_only|dont_ask|bypass` overrides `permissions.mode` for the
+session. In a terminal the CLI asks before a call the permission rules flag
+(`[y] once`, `[s] for the session` on that tool and domain, `[n] deny`; a refusal ends the
+task `blocked`); without a terminal (piped `--task`, `run_batch.py`) a configured `default`
+mode becomes `dont_ask`, so such calls are denied and the model continues.
 
 Per-turn prompt construction runs through `ContextAssembler` in
 `src/agent_loop/context.py` — the single prompt-construction path. The former

@@ -413,10 +413,12 @@ A bad flag makes the script exit `1` (a hook failure: fail-closed on `pre_tool_u
 
 ### Things to Know
 
-- **`ask` ends the task in the current CLI.** No human callback is wired, so a call that
-  needs approval is denied and the task finishes `blocked` ("human approval was
-  denied"). Let specific tools through with a `permission_request` hook (`approve_tools`), or
-  use `--decision deny` to block only the one call and let the model choose another action.
+- **`ask` asks the human in a terminal.** The CLI prompts `[y] once / [n] deny` (a hook
+  `ask` cannot be granted for the session); a refusal ends the task `blocked`. Without a
+  terminal (piped `--task`, `run_batch.py`) the session runs in `dont_ask` mode and the call
+  is denied instead, the model continues. Let specific tools through with a
+  `permission_request` hook (`approve_tools`), or use `--decision deny` to block only the one
+  call.
 - **`python` is whatever is on `PATH`.** The scripts need only the standard library
   (Python 3.10+), so the venv and the system interpreter both work. Each event starts a
   process (tens of milliseconds), which is why every entry has a narrow `match`.

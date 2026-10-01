@@ -110,6 +110,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--permission-mode",
+        choices=("default", "read_only", "dont_ask", "bypass"),
+        default=None,
+        help=(
+            "Tool permission mode for this session (overrides permissions.mode). "
+            "Without a terminal a configured 'default' becomes 'dont_ask'. "
+            f"Default: {settings.permissions.mode}"
+        ),
+    )
+    parser.add_argument(
         "--turn-cap",
         type=int,
         default=settings.loop.turn_cap,

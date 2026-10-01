@@ -245,7 +245,7 @@ hooks:
   #
   # registry:
   #   # Clicking "Оплатить" / "Оформить заказ" / "Удалить" / "Place order" needs approval.
-  #   # The CLI wires no human callback, so `ask` ends the task `blocked`; add
+  #   # The CLI asks in a terminal (headless: denied, the model continues); add
   #   # --decision deny to block only that call. --keyword TEXT replaces the defaults.
   #   - id: sensitive-actions
   #     event: pre_tool_use
