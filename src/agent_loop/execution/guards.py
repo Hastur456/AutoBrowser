@@ -5,14 +5,17 @@ Ported from the legacy agent-loop guard helpers. State access is typed
 a flat update dict that the loop applies through :meth:`LoopState.apply` (which routes
 browser-scoped keys into ``BrowserState``).
 
-Server-neutral: no element-ref handling, no canonical tool-name mapping and no
-ineffective-action tracking. Repeat tracking compares tool names and arguments as given.
+Server-neutral: no element-ref handling and no canonical tool-name mapping. Repeat tracking
+compares tool names and arguments as given; the progress guard reads the action journal
+(:mod:`~src.agent_loop.execution.progress`).
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from src.browser.names import TABS_TOOL
 from src.config import get_settings
 from src.contracts import ToolRequest
 from src.harness.memory import (
@@ -23,7 +26,7 @@ from src.harness.memory import (
     with_tool_call_id,
 )
 
-from src.agent_loop.execution.policy import TABS_TOOL
+from src.agent_loop.execution.progress import ineffective_repeat_reason
 from src.agent_loop.execution.state import LoopState
 
 if TYPE_CHECKING:
@@ -176,6 +179,56 @@ class CompletionController:
         return "done"
 
 
+def _progress_block_reason(state: LoopState, request: ToolRequest | None) -> str | None:
+    """Progress guard on the raw request: a reason to skip the call, else ``None``.
+
+    Validation and quality, not authorization: an empty request, or a call whose identical
+    outcome already repeated ``loop.max_ineffective_actions`` times.
+    """
+
+    if not request or not request.get("name"):
+        return "No tool request was provided."
+    return ineffective_repeat_reason(
+        state.action_history,
+        str(request["name"]).strip(),
+        request.get("args") or {},
+        get_settings().loop.max_ineffective_actions,
+    )
+
+
+def _tool_block_updates(
+    state: LoopState,
+    reason: str,
+    *,
+    event: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Non-terminal block of the current tool call: the model sees ``reason`` as the tool output.
+
+    The shared path for a progress-guard block, a hook deny and a permission deny:
+    ``consecutive_failures`` grows by one, the reason is appended as the tool message, and
+    ``policy_event`` records the block (``event`` adds fields such as ``source``/``rule_id``).
+    """
+
+    request = state.tool_request or {}
+    return {
+        "policy_decision": "blocked",
+        "observation": reason,
+        "error": reason,
+        "consecutive_failures": int(state.consecutive_failures or 0) + 1,
+        "policy_event": {
+            "decision": "blocked",
+            "reason": reason,
+            "tool_request": request,
+            **dict(event or {}),
+        },
+        "messages": append_tool_message(
+            list(state.messages or []),
+            request,
+            f"{request.get('name', '')}\n\n{reason}",
+        ),
+    }
+
+
 def _pending_tab_activation_request(state: LoopState) -> ToolRequest | None:
     """Select a tab recorded in ``browser.pending_browser_tab_index`` (if any).
 
@@ -281,6 +334,8 @@ complete_plan_update = _complete_plan_update
 replan_response = _replan_response
 terminal_guard = _terminal_guard
 pending_tab_activation_request = _pending_tab_activation_request
+progress_block_reason = _progress_block_reason
+tool_block_updates = _tool_block_updates
 guard_tool_request = _guard_tool_request
 repeat_tracking_key = _repeat_tracking_key
 request_tracking_update = _request_tracking_update
@@ -294,9 +349,11 @@ __all__ = [
     "done_response",
     "guard_tool_request",
     "pending_tab_activation_request",
+    "progress_block_reason",
     "repeat_tracking_key",
     "replan_response",
     "request_tracking_update",
     "terminal_guard",
+    "tool_block_updates",
     "tool_request_update",
 ]

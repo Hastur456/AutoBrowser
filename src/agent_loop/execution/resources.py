@@ -31,7 +31,8 @@ class EngineResources:
     ``plan_prompt`` and knows about the agent/planner prompts); ``events`` is the session ``EventEmitter`` whose sink
     chain applies redaction and whose ``sequence`` the goal watchdog polls. Tool-request
     classification is not a resource: the loop calls the pure functions in
-    :mod:`src.agent_loop.execution.policy` directly. ``hooks`` is the session's
+    :mod:`src.agent_loop.execution.policy` and the progress guard in
+    :mod:`src.agent_loop.execution.guards` directly. ``hooks`` is the session's
     :class:`~src.harness.hooks.HookEngine`; the default :class:`~src.harness.hooks.NullHookEngine`
     runs nothing, so evals and tests that do not pass one never see hooks.
     """

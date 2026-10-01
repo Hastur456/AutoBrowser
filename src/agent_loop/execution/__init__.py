@@ -19,9 +19,11 @@ from src.agent_loop.execution.guards import (
     done_response,
     guard_tool_request,
     pending_tab_activation_request,
+    progress_block_reason,
     replan_response,
     request_tracking_update,
     terminal_guard,
+    tool_block_updates,
     tool_request_update,
 )
 from src.agent_loop.execution.completion import native_latest_state_loader
@@ -70,8 +72,10 @@ __all__ = [
     "native_task_runner",
     "pending_tab_activation_request",
     "policy_updates",
+    "progress_block_reason",
     "replan_response",
     "request_tracking_update",
     "terminal_guard",
+    "tool_block_updates",
     "tool_request_update",
 ]

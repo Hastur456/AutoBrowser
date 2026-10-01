@@ -1,6 +1,15 @@
-"""Shared browser tool-name helpers and mappings."""
+"""Shared browser tool-name helpers and mappings.
+
+The loop compares tool names exactly as the MCP bridge exposes them; the browser server is
+exposed unprefixed (``MCPToolSource(unprefixed_servers=[browser server])``), so its tools keep
+their own ``browser_*`` names.
+"""
 
 from __future__ import annotations
+
+BROWSER_TOOL_PREFIX = "browser_"
+SNAPSHOT_TOOL = "browser_snapshot"
+TABS_TOOL = "browser_tabs"
 
 CANONICAL_TO_PLAYWRIGHT = {
     "browser.navigate": "browser_navigate",
@@ -39,7 +48,7 @@ def is_browser_tool_name(name: str) -> bool:
     return (
         normalized in CANONICAL_TO_PLAYWRIGHT
         or normalized.startswith("browser.")
-        or normalized.startswith("browser_")
+        or normalized.startswith(BROWSER_TOOL_PREFIX)
     )
 
 
@@ -47,12 +56,15 @@ def is_browser_snapshot_name(name: str) -> bool:
     """Return whether a name addresses the browser snapshot tool."""
 
     normalized = str(name or "").strip()
-    return normalized in {"browser.snapshot", "browser_snapshot"}
+    return normalized in {"browser.snapshot", SNAPSHOT_TOOL}
 
 
 __all__ = [
+    "BROWSER_TOOL_PREFIX",
     "CANONICAL_TO_PLAYWRIGHT",
     "PLAYWRIGHT_TO_CANONICAL",
+    "SNAPSHOT_TOOL",
+    "TABS_TOOL",
     "is_browser_snapshot_name",
     "is_browser_tool_name",
     "to_canonical_browser_name",

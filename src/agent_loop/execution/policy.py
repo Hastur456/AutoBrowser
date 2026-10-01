@@ -1,42 +1,21 @@
-"""Engine-native policy classification for tool execution.
+"""Engine-native built-in tool authorization (transitional).
 
-Ported from ``src/harness/policy.py``. Classification rules (blocked-tool markers →
-``needs_human``; a call that already returned the identical result
-``settings.loop.max_ineffective_actions`` times (action journal, any tool) → ``blocked``;
-otherwise ``approved``), plus the block-side effect (``consecutive_failures += 1``, a tool
-message, and the ``policy_event``). State access is typed
-:class:`~src.agent_loop.execution.state.LoopState` attribute reads; the returned flat update
-dict is applied through :meth:`LoopState.apply`.
-
-Server-neutral: no element-ref or server-specific error-text parsing and no canonical
-tool-name mapping — tool names are compared exactly as the MCP bridge exposes them. The few
-browser tool names the loop recognizes (``browser_snapshot``, ``browser_tabs``) are defined
-here once. Snapshot usage is left entirely to the model.
+Only the name-marker check is left here (blocked-tool markers → ``needs_human``; otherwise
+``approved``). The progress check (an identical outcome repeated
+``settings.loop.max_ineffective_actions`` times) lives in
+:func:`~src.agent_loop.execution.guards.progress_block_reason`, and every block goes through
+:func:`~src.agent_loop.execution.guards.tool_block_updates`. Browser tool names live in
+:mod:`src.browser.names`.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from src.config import get_settings
 from src.contracts import PolicyDecision, ToolRequest
-from src.harness.memory import append_tool_message
 
-from src.agent_loop.execution.progress import identical_outcome_count
+from src.agent_loop.execution.guards import tool_block_updates
 from src.agent_loop.execution.state import LoopState
-
-# Tool names the native loop relies on: the browser server's own names, exposed unprefixed
-# by the MCP bridge (``MCPToolSource(unprefixed_servers=[browser server])``).
-BROWSER_TOOL_PREFIX = "browser_"
-SNAPSHOT_TOOL = "browser_snapshot"
-TABS_TOOL = "browser_tabs"
-
-
-def is_browser_tool(name: Any) -> bool:
-    """True for tools of the browser server (``browser_*``)."""
-
-    return str(name or "").startswith(BROWSER_TOOL_PREFIX)
-
 
 BLOCKED_TOOL_MARKERS = (
     "payment",
@@ -52,28 +31,10 @@ def classify_tool_request(
 ) -> tuple[PolicyDecision, str]:
     """Classify whether a tool call may execute automatically."""
 
-    if not request or not request.get("name"):
-        return "blocked", "No tool request was provided."
-
-    requested_name = str(request["name"]).strip()
+    requested_name = str((request or {}).get("name") or "").strip()
     name = requested_name.lower()
     if any(marker in name for marker in BLOCKED_TOOL_MARKERS):
         return "needs_human", f"Tool requires human approval before use: {requested_name}"
-
-    identical = identical_outcome_count(
-        state.action_history,
-        requested_name,
-        request.get("args") or {},
-    )
-    if identical >= get_settings().loop.max_ineffective_actions:
-        return (
-            "blocked",
-            f"Not executed: {requested_name} with these exact arguments already returned "
-            f"the identical result {identical} times in this task (see Action History). "
-            "Running it again cannot produce new information. Change the approach or the "
-            "evidence you rely on, or finish with what is known.",
-        )
-
     return "approved", f"Tool approved: {requested_name}"
 
 
@@ -84,6 +45,8 @@ def policy_updates(
 ) -> dict[str, Any]:
     """Build state updates for a policy decision."""
 
+    if decision == "blocked":
+        return tool_block_updates(state, reason)
     updates: dict[str, Any] = {
         "policy_decision": decision,
         "observation": reason,
@@ -93,28 +56,13 @@ def policy_updates(
             "tool_request": state.tool_request or {},
         },
     }
-    if decision == "blocked":
-        updates["error"] = reason
-        updates["consecutive_failures"] = (
-            int(state.consecutive_failures or 0) + 1
-        )
-        request = state.tool_request or {}
-        updates["messages"] = append_tool_message(
-            list(state.messages or []),
-            request,
-            f"{request.get('name', '')}\n\n{reason}",
-        )
-    elif decision == "needs_human":
+    if decision == "needs_human":
         updates["error"] = ""
     return updates
 
 
 __all__ = [
     "BLOCKED_TOOL_MARKERS",
-    "BROWSER_TOOL_PREFIX",
-    "SNAPSHOT_TOOL",
-    "TABS_TOOL",
-    "is_browser_tool",
     "classify_tool_request",
     "policy_updates",
 ]

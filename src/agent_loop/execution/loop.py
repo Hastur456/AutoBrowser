@@ -50,7 +50,9 @@ from src.agent_loop.execution.guards import (
     blocked_response,
     done_response,
     pending_tab_activation_request,
+    progress_block_reason,
     replan_response,
+    tool_block_updates,
     tool_request_update,
 )
 from src.agent_loop.execution.observation import ObservationCompiler
@@ -486,12 +488,15 @@ class TurnController:
         request = dict(state.tool_request or {})
         self._emit("action.proposed", {"tool_request": request})
 
+        progress_reason = progress_block_reason(state, request)
+        if progress_reason is not None:
+            state = state.apply(tool_block_updates(state, progress_reason))
+            self._emit("policy.decided", dict(state.policy_event or {}))
+            return state, None
+
         decision, reason = classify_tool_request(state, request)
         state = state.apply(policy_updates(state, decision, reason))
         self._emit("policy.decided", dict(state.policy_event or {}))
-
-        if decision == "blocked":
-            return state, None
 
         prepared = await self._broker.prepare(request, state.snapshot_mapping())
         # What tool.started/approval.requested report: the model's request, unless a hook
@@ -504,7 +509,7 @@ class TurnController:
             notes.append(outcome.additional_context)
             if outcome.decision == "deny":
                 blocked_reason = f"Blocked by hook: {outcome.reason or 'no reason given'}"
-                state = state.apply(policy_updates(state, "blocked", blocked_reason))
+                state = state.apply(tool_block_updates(state, blocked_reason))
                 note = _harness_note(notes)
                 if note is not None:
                     state = state.apply({"messages": [*state.messages, note]})
