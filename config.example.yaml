@@ -189,6 +189,13 @@ permissions:
   #   - id: no-upload
   #     decision: deny
   #     tool: browser_file_upload
+  #   # Click-target guardrail: matches the model's `element` text and the snapshot line
+  #   # of the clicked ref (role + accessible name). A heuristic, not a boundary --
+  #   # expect false positives; unresolvable targets ask (fail closed).
+  #   - id: purchases
+  #     decision: ask
+  #     tool: browser_click
+  #     target: '(?i)купить|оформить|оплатить|удалить|отправить|buy|pay|delete|submit'
   #   - id: no-card-numbers
   #     decision: deny
   #     tool: browser_type

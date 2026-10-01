@@ -1,0 +1,45 @@
+# Click target guardrail: a click on «Купить» needs approval; the human refuses, so the
+# task ends blocked without the click running.
+name: purchase_click_denied_by_human
+task: Buy the first jacket on the page.
+permissions:
+  mode: default
+  rules:
+    - id: purchases
+      decision: ask
+      tool: browser_click
+      target: "(?i)купить|оформить|оплатить|buy|pay"
+human:
+  answers: [deny]
+model:
+  responses:
+    - steps:
+        - id: 1
+          description: Buy the jacket
+          status: pending
+    - decision: tool_call
+      tool_request:
+        name: browser.snapshot
+        args: {}
+        reason: Inspect the page.
+    - decision: tool_call
+      tool_request:
+        name: browser.click
+        args:
+          element: Buy button
+          ref: e5
+        reason: Buy the jacket.
+    - decision: done
+      final_answer: Bought.
+browser:
+  snapshots:
+    - |-
+      - Page URL: https://shop.example/jacket
+      - heading "Jacket A" [ref=e4]
+      - button "Купить" [ref=e5]
+assertions:
+  expected_terminal_status: blocked
+  final_answer_contains:
+    - "Blocked: human approval was denied"
+  max_tool_calls: 1
+  max_policy_blocks: 0

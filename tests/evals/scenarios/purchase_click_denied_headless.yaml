@@ -1,0 +1,42 @@
+# Headless (dont_ask): the same guarded click is denied without a human, non-terminally;
+# the model reads the reason and reports honestly instead of buying.
+name: purchase_click_denied_headless
+task: Buy the first jacket on the page.
+permissions:
+  mode: dont_ask
+  rules:
+    - id: purchases
+      decision: ask
+      tool: browser_click
+      target: "(?i)купить|оформить|оплатить|buy|pay"
+model:
+  responses:
+    - steps:
+        - id: 1
+          description: Buy the jacket
+          status: pending
+    - decision: tool_call
+      tool_request:
+        name: browser.snapshot
+        args: {}
+        reason: Inspect the page.
+    - decision: tool_call
+      tool_request:
+        name: browser.click
+        args:
+          ref: e5
+        reason: Buy the jacket.
+    - decision: done
+      final_answer: "Not bought: the purchase click needs human approval."
+browser:
+  snapshots:
+    - |-
+      - Page URL: https://shop.example/jacket
+      - heading "Jacket A" [ref=e4]
+      - button "Купить" [ref=e5]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+    - needs human approval
+  max_tool_calls: 1
+  max_policy_blocks: 1
