@@ -9,8 +9,6 @@ from src.browser.errors import (
     BROWSER_ERROR_UNKNOWN_ACTION,
     BrowserErrorCode,
 )
-from src.browser.fake import FakeBrowserProvider
-from src.browser.provider import BrowserProvider
 
 __all__ = [
     "BROWSER_ERROR_ACTION_FAILED",
@@ -19,7 +17,5 @@ __all__ = [
     "BrowserAction",
     "BrowserActionName",
     "BrowserErrorCode",
-    "BrowserProvider",
     "BrowserResult",
-    "FakeBrowserProvider",
 ]

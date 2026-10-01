@@ -25,7 +25,6 @@ PROMPT_CONSTRAINTS = {
         "follow observer correction hints",
         "if the observation or policy says the last browser action did not change",
         "latest browser.snapshot",
-        "do not request another snapshot",
     ),
     "completion": (
         "the task is not complete until you have extracted the list of results",

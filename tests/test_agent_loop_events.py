@@ -282,3 +282,67 @@ def test_redact_json_safe_truncates_long_strings() -> None:
     value = redact_json_safe({"content": "x" * 20_010})
 
     assert value["content"].endswith("... [truncated]")
+
+
+def test_agent_trace_projects_hook_decisions_without_arguments(tmp_path: Path) -> None:
+    trace_path = tmp_path / "agent_trace.jsonl"
+    emitter = EventEmitter(AgentTraceSink(trace_path), session_id="session-1")
+
+    emitter.emit(
+        "hook.decided",
+        source="test",
+        payload={
+            "hook_id": "urls",
+            "event": "pre_tool_use",
+            "tool": "browser_navigate",
+            "server": "playwright",
+            "decision": "deny",
+            "reason": "Domain is not allowed.",
+            "modified": False,
+            "duration_ms": 3,
+            "error": "",
+            "skipped": "",
+            # Never emitted by the loop; the projection must not pass it through anyway.
+            "args": {"url": "https://secret.example"},
+        },
+        task_id="task-1",
+        goal_id="task-1",
+    )
+    emitter.emit(
+        "hook.decided",
+        source="test",
+        payload={
+            "hook_id": "grounded",
+            "event": "stop",
+            "tool": "",
+            "decision": None,
+            "reason": "",
+            "skipped": "stop_budget_exhausted",
+        },
+        task_id="task-1",
+        goal_id="task-1",
+    )
+
+    trace_events = [
+        json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert trace_events == [
+        {
+            "timestamp": trace_events[0]["timestamp"],
+            "type": "hook.decided",
+            "hook_id": "urls",
+            "event": "pre_tool_use",
+            "decision": "deny",
+            "reason": "Domain is not allowed.",
+            "tool": "browser_navigate",
+        },
+        {
+            "timestamp": trace_events[1]["timestamp"],
+            "type": "hook.decided",
+            "hook_id": "grounded",
+            "event": "stop",
+            "skipped": "stop_budget_exhausted",
+        },
+    ]
+    assert "secret.example" not in trace_path.read_text(encoding="utf-8")

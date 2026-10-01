@@ -21,6 +21,9 @@ flowchart LR
   SessionCtx --> Chrome[Chrome/CDP]
   SessionCtx --> MCPRuntime[MCPRuntime]
   SessionCtx --> Harness[BrowserHarness]
+  SessionCtx --> Hooks[HookEngine]
+  Hooks --> HookHandlers[Hook handlers: builtin_hooks, browser.hooks]
+  Hooks --> CommandHooks[CommandHook: external process]
   MCPRuntime --> Manager[MCPManager]
   MCPRuntime --> ToolSource[MCPToolSource]
   MCPRuntime --> Normalizers[ToolCallNormalizers]
@@ -34,6 +37,7 @@ flowchart LR
   Resources --> ContextAssembler
   Resources --> Tools
   Resources --> LLM
+  Resources --> Hooks
   Tools --> StaticTools[Static tools]
   Tools --> Providers[Generic providers]
   Tools --> ToolSource
@@ -61,3 +65,11 @@ calls, and the durable `list[Message]` is carried on `LoopState.messages` /
 `SessionContext.state`. `SessionRuntime` carries useful state between tasks
 through `SessionContext.state` and resets task-local fields before the next run,
 while session metadata remains available in `.autobrowser`.
+
+Lifecycle hooks are session-scoped, not a harness resource: `SessionContext.initialize`
+loads `HookEngine.from_settings(settings.hooks)` before Chrome/MCP start (a broken registry
+fails startup) and `SessionRuntime.run_task` passes it through
+`EngineResources.from_harness(..., hooks=...)`. Anything that builds `EngineResources`
+without `hooks=` — evals, tests — gets a `NullHookEngine`, so a personal `config.yaml` never
+changes them. The engine never hands `LoopState` to a hook; hook decisions are emitted as
+`hook.decided` through the same `EventEmitter` the `GoalRunner` watchdog polls.

@@ -60,7 +60,8 @@ def extract_event_metrics(events: Iterable[EventRecord | Mapping[str, Any]]) -> 
         policy_block_count=sum(
             1
             for event in normalized_events
-            if event.type == "policy.decided" and _is_policy_block(event.payload)
+            if (event.type == "policy.decided" and _is_policy_block(event.payload))
+            or (event.type == "hook.decided" and _is_hook_block(event.payload))
         ),
         approval_request_count=_count_type(normalized_events, "approval.requested"),
         observation_count=_count_type(normalized_events, "observation.compiled"),
@@ -137,6 +138,12 @@ def _is_policy_block(payload: Mapping[str, Any]) -> bool:
     if isinstance(decision, Mapping):
         return decision.get("status") == "blocked" or decision.get("decision") == "blocked"
     return False
+
+
+def _is_hook_block(payload: Mapping[str, Any]) -> bool:
+    """A ``pre_tool_use`` hook deny is a policy block from the task's point of view."""
+
+    return payload.get("event") == "pre_tool_use" and payload.get("decision") == "deny"
 
 
 def _is_error_event(event: _EventView) -> bool:

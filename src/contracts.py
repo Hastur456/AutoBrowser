@@ -22,6 +22,16 @@ PolicyDecision = Literal["approved", "needs_human", "blocked"]
 ToolStatus = Literal["success", "error"]
 GoalStatus = Literal["completed", "failed", "cancelled", "blocked"]
 CompletionStatus = Literal["continue", "done", "blocked", "cancelled"]
+HookEventName = Literal[
+    "goal_start",
+    "pre_tool_use",
+    "permission_request",
+    "post_tool_use",
+    "post_tool_use_failure",
+    "stop",
+    "goal_end",
+]
+HookDecision = Literal["allow", "deny", "ask"]
 
 
 class PlanStep(TypedDict, total=False):
@@ -115,9 +125,6 @@ class RecoveryCounters(TypedDict, total=False):
     replan_count: int
     consecutive_failures: int
     repeat_count: int
-    snapshot_recovery_count: int
-    invalid_ref_recovery_count: int
-    stale_snapshot_retries: int
     steps_without_plan_advance: int
 
 
@@ -128,6 +135,60 @@ class PolicyEvent(TypedDict, total=False):
     reason: str
     tool_request: ToolRequest
     human_response: Any
+
+
+@dataclass(frozen=True)
+class HookEvent:
+    """One lifecycle point handed to hook handlers.
+
+    Holds only dicts, tuples and scalars so ``json.dumps(dataclasses.asdict(event))``
+    works — an out-of-process hook would receive the same object. ``args``/``result`` are
+    copies, never references into loop state. Fields that do not apply to ``name`` keep
+    their empty defaults.
+    """
+
+    name: HookEventName
+    session_id: str | None
+    goal_id: str
+    task_id: str
+    task: str
+    #: Exposed tool name after request normalization.
+    tool: str = ""
+    #: ``MCPTool.server``; ``""`` for tools that are not MCP-backed.
+    server: str = ""
+    args: dict[str, Any] = field(default_factory=dict)
+    #: The ``ToolResult`` (``post_tool_use*`` only).
+    result: dict[str, Any] = field(default_factory=dict)
+    #: Reason of the built-in ``needs_human`` decision (``permission_request`` only).
+    reason: str = ""
+    #: The model's final answer (``stop`` only).
+    final_answer: str = ""
+    #: Evidence texts the final answer can be checked against (``stop`` only).
+    evidence: tuple[str, ...] = ()
+    #: ``True`` once a stop hook already rejected a completion in this task.
+    stop_hook_active: bool = False
+    #: Terminal status (``goal_end`` only).
+    status: str = ""
+
+
+@dataclass(frozen=True)
+class HookResult:
+    """What one handler says about a :class:`HookEvent`; ``None`` fields mean "no change"."""
+
+    decision: HookDecision | None = None
+    #: Shown to the model (a deny/ask reason or a completion rejection).
+    reason: str = ""
+    #: Replacement tool arguments (``pre_tool_use``).
+    updated_input: dict[str, Any] | None = None
+    #: Replacement tool output (``post_tool_use*``).
+    updated_output: str | None = None
+    #: Extra context delivered to the model as a separate message.
+    additional_context: str = ""
+    #: Shown only in events / the CLI, never to the model.
+    user_message: str = ""
+
+
+HookHandler = Callable[[HookEvent], Awaitable[HookResult | None]]
 
 
 def goal_status_from_completion(status: CompletionStatus) -> GoalStatus | None:
@@ -151,6 +212,11 @@ __all__ = [
     "CompletionStatus",
     "GoalStatus",
     "goal_status_from_completion",
+    "HookDecision",
+    "HookEvent",
+    "HookEventName",
+    "HookHandler",
+    "HookResult",
     "PlanStep",
     "PolicyDecision",
     "PolicyEvent",

@@ -133,8 +133,10 @@ The agent is **snapshot-driven, not selector-driven** (see `docs/development/bro
 These rules are **duplicated across prompts, the policy functions, the observer, and provider
 tests**. Changing one layer can reintroduce stale-ref/loop bugs — keep them aligned, and
 don't remove an invariant from a prompt unless policy/observer/evals still enforce it.
-`tests/mcp_fixtures/fake_server.py` (a real MCP server) and the legacy `FakeBrowserProvider`
-exercise this behavior deterministically without Chrome/CDP.
+`tests/mcp_fixtures/fake_server.py` (a real MCP server) and the local `_FakeBrowserTools`
+helper (`src/agent_loop/evals.py`, duplicated where individual tests need it — there is no
+shared `BrowserProvider` protocol or production fake anymore) exercise this behavior
+deterministically without Chrome/CDP.
 
 ## Session vs Task Boundary
 
@@ -153,11 +155,12 @@ engine sees it.
 Every tunable lives in `src/config.py` — a pydantic-settings root read at call time through
 `get_settings()`. There are **no scattered module constants**; adding one is a regression.
 `src/config.py` is a neutral leaf like `src/contracts.py` and imports nothing from
-`src/agent_loop/`, `src/harness/`, or `src/browser/`. See
+`src/agent_loop/`, `src/harness/`, or `src/browser/` (it may import `src.contracts`, which
+never imports it back). See
 `docs/decisions/2026-09-16-typed-settings-module.md` and the `.env.example` template.
 
-Names are `AUTOBROWSER_<SECTION>__<FIELD>` over eight sections (`llm`, `browser`, `loop`,
-`observation`, `memory`, `events`, `storage`, `flags`). Env outranks `.env` outranks the code
+Names are `AUTOBROWSER_<SECTION>__<FIELD>` over nine sections (`llm`, `browser`, `loop`,
+`observation`, `memory`, `events`, `storage`, `flags`, `hooks`). Env outranks `.env` outranks the code
 defaults; an empty value means "not set"; sections are `frozen` with `extra="forbid"`.
 `AUTOBROWSER_LLM__API_KEY` is passed to the provider as an explicit `Authorization: Bearer`
 header — the vendor `OLLAMA_API_KEY` is no longer read. Adding a setting means updating
@@ -175,6 +178,36 @@ names itself (the root is `extra="ignore"`). `config.example.yaml` is the templa
 `docs/decisions/2026-09-16-opt-in-yaml-settings-file.md` records the original opt-in design,
 superseded on the activation question by
 `docs/decisions/2026-09-26-default-yaml-settings-file.md`.
+
+## Lifecycle Hooks
+
+Deterministic, config-driven checks at fixed loop points — `goal_start`, `pre_tool_use`,
+`permission_request`, `post_tool_use`/`post_tool_use_failure`, `stop`, `goal_end`
+(`docs/decisions/2026-09-30-lifecycle-hooks-engine.md`). **Disabled by default**
+(`hooks.enabled`); handlers are async Python callables named in `hooks.registry`.
+
+- Usage and operations guide (create/change/disable/test hooks):
+  `docs/development/lifecycle-hooks.md`.
+- A hook is `type: python` (an async `handler` imported by path) or `type: command` (an
+  external process, Claude Code/Codex protocol: event JSON on stdin, exit `2` blocks with
+  stderr as reason, JSON stdout → `HookResult`; `src/harness/command_hooks.py`,
+  `docs/decisions/2026-09-30-command-hooks.md`).
+- Where things live: contracts (`HookEvent`, `HookResult`) in `src/contracts.py`; settings in
+  `src/config.py`; `HookEngine`/`NullHookEngine` in `src/harness/hooks.py`; generic handlers
+  (`approve_tools`, `grounded_final_answer`) in `src/harness/builtin_hooks.py`; browser
+  handlers (`url_policy`, `prompt_injection_scan`) in `src/browser/hooks.py`; ready
+  stdlib-only command hooks (one script per hook, flags as options) in `scripts/hooks/`,
+  registered by the commented block in `config.example.yaml` and tested by
+  `tests/test_hook_scripts.py`; the call sites and `hook.decided` emission in
+  `src/agent_loop/execution/loop.py`.
+- `HookEngine` is session-scoped (`SessionContext.initialize`, reaching the loop through
+  `EngineResources.hooks`), not a `BrowserHarness` resource. A hook never sees `LoopState`.
+- A hook cannot lift a built-in `blocked`; `pre_tool_use` `allow` does not approve a
+  `needs_human` tool — only `permission_request` can stand in for the human. `stop` only
+  checks a model `done`, never guard terminals. Hook context is a separate `[harness]`
+  message, never appended to tool output (progress detection compares tool content).
+- Tests and evals never read hooks from `get_settings()` (the personal `config.yaml` would
+  leak in): build `HookEngine` from an explicit `HooksSettings(...)` or `RegisteredHook`s.
 
 ## Feature Flags (env vars)
 

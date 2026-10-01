@@ -154,6 +154,7 @@ python -m pytest tests\test_browser_contracts.py tests\test_browser_normalizatio
 python -m pytest tests\test_agent_loop_events.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py tests\test_messages.py
 python -m pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
 python -m pytest tests\test_context_assembler.py tests\test_goal_runner.py
+python -m pytest tests\test_harness_hooks.py tests\test_agent_loop_hooks.py tests\test_browser_hooks.py tests\test_builtin_hooks.py tests\test_command_hooks.py tests\test_hook_scripts.py
 ```
 
 Check docs-only diffs with:
@@ -270,7 +271,7 @@ If the snapshot does not expose the needed element:
 2. Increase snapshot depth if appropriate.
 3. Use `browser_evaluate` only if the snapshot cannot answer the question.
 
-Reuse the current snapshot and refs when they are still valid. The policy layer blocks redundant `browser_snapshot` calls when a current snapshot is already available and no fresh snapshot is required.
+Reuse the current snapshot and refs when they are still valid. Snapshot usage is guided by the prompts only; the engine has no snapshot-specific policy, forced-snapshot, or unchanged-snapshot rules. Generic guards (identical repeated calls, identical repeated outcomes) apply to `browser_snapshot` like any other tool.
 
 The agent is snapshot-driven, not selector-driven.
 

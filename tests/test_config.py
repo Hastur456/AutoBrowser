@@ -89,9 +89,7 @@ def test_defaults_match_the_constants_they_replaced(settings: Any) -> None:
     # was: src/contracts.py control-loop thresholds
     assert config.loop.max_replans == 3
     assert config.loop.max_consecutive_failures == 3
-    assert config.loop.max_snapshot_recoveries == 1
     assert config.loop.max_steps_without_plan_advance == 8
-    assert config.loop.max_unchanged_snapshots == 3
     assert config.loop.max_ineffective_actions == 3
 
     # was: src/agent_loop/goals.py phase timeouts
@@ -709,3 +707,128 @@ def test_the_example_config_file_reproduces_the_defaults(
         assert getattr(loaded, section) == getattr(defaults, section), (
             f"{section} in config.example.yaml no longer matches the code defaults"
         )
+
+
+# --------------------------------------------------------------------------
+# The hooks section
+# --------------------------------------------------------------------------
+
+
+def test_hooks_are_disabled_by_default(settings: Any) -> None:
+    hooks = settings().hooks
+
+    assert hooks.enabled is False
+    assert hooks.max_stop_blocks == 2
+    assert hooks.default_timeout_seconds == 10.0
+    assert hooks.registry == []
+
+
+def test_hooks_scalars_resolve_from_the_environment(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_HOOKS__ENABLED", "true")
+    monkeypatch.setenv("AUTOBROWSER_HOOKS__MAX_STOP_BLOCKS", "5")
+    monkeypatch.setenv("AUTOBROWSER_HOOKS__DEFAULT_TIMEOUT_SECONDS", "3.5")
+
+    hooks = settings().hooks
+
+    assert hooks.enabled is True
+    assert hooks.max_stop_blocks == 5
+    assert hooks.default_timeout_seconds == 3.5
+
+
+def test_a_hook_registry_is_read_from_the_config_file(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _point_at(
+        monkeypatch,
+        _write_config(
+            tmp_path,
+            """
+            hooks:
+              enabled: true
+              registry:
+                - id: urls
+                  event: pre_tool_use
+                  handler: src.browser.hooks:url_policy
+                  match: {server: playwright, tool: "browser_navigate|browser_tabs"}
+                  options: {deny_domains: [example.com]}
+                  timeout_seconds: 2
+                - id: grounded
+                  event: stop
+                  handler: src.harness.builtin_hooks:grounded_final_answer
+                  fail_closed: false
+            """,
+        ),
+    )
+
+    hooks = settings().hooks
+
+    assert hooks.enabled is True
+    assert [spec.id for spec in hooks.registry] == ["urls", "grounded"]
+    urls, grounded = hooks.registry
+    assert urls.event == "pre_tool_use"
+    assert urls.match.server == "playwright"
+    assert urls.match.tool == "browser_navigate|browser_tabs"
+    assert urls.options == {"deny_domains": ["example.com"]}
+    assert urls.timeout_seconds == 2.0
+    assert urls.fail_closed is None
+    assert grounded.match.tool == ""
+    assert grounded.fail_closed is False
+
+
+def test_a_typo_in_a_hook_spec_is_rejected(settings: Any) -> None:
+    with pytest.raises(ValueError):
+        settings(
+            hooks={
+                "registry": [
+                    {"id": "a", "event": "stop", "handler": "m:f", "timeout": 1},
+                ]
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"id": "a", "event": "before_model", "handler": "m:f"},
+        {"id": "a", "event": "stop", "handler": "no_colon"},
+        {"id": "", "event": "stop", "handler": "m:f"},
+        {"id": "a", "event": "stop", "handler": "m:f", "timeout_seconds": 0},
+        {"id": "a", "event": "pre_tool_use", "handler": "m:f", "match": {"tool": "("}},
+    ],
+)
+def test_invalid_hook_specs_are_rejected(settings: Any, spec: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        settings(hooks={"registry": [spec]})
+
+
+@pytest.mark.parametrize("event", ["goal_start", "stop", "goal_end"])
+def test_match_is_only_valid_for_tool_events(settings: Any, event: str) -> None:
+    with pytest.raises(ValueError, match="only valid for tool events"):
+        settings(
+            hooks={
+                "registry": [
+                    {"id": "a", "event": event, "handler": "m:f", "match": {"tool": "x"}},
+                ]
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "event",
+    ["pre_tool_use", "permission_request", "post_tool_use", "post_tool_use_failure"],
+)
+def test_match_is_accepted_for_tool_events(settings: Any, event: str) -> None:
+    hooks = settings(
+        hooks={
+            "registry": [
+                {"id": "a", "event": event, "handler": "m:f", "match": {"tool": "x"}},
+            ]
+        }
+    ).hooks
+
+    assert hooks.registry[0].match.tool == "x"

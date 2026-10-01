@@ -125,3 +125,23 @@ def _event(
         task_id="task-1",
         goal_id="task-1",
     )
+
+
+def test_a_pre_tool_use_hook_deny_counts_as_a_policy_block() -> None:
+    start = datetime(2026, 9, 30, tzinfo=UTC)
+    events = [
+        _event("goal.started", start, {"task": "open page"}),
+        _event("policy.decided", start, {"decision": "approved"}),
+        _event("hook.decided", start, {"event": "pre_tool_use", "decision": "deny"}),
+        _event("hook.decided", start, {"event": "pre_tool_use", "decision": "allow"}),
+        _event("hook.decided", start, {"event": "pre_tool_use", "decision": "ask"}),
+        _event("hook.decided", start, {"event": "stop", "decision": "deny"}),
+        _event("hook.decided", start, {"event": "permission_request", "decision": "deny"}),
+        _event("policy.decided", start, {"decision": "blocked"}),
+        _event("goal.blocked", start, {"reason": "blocked"}),
+    ]
+
+    metrics = extract_event_metrics(events)
+
+    assert metrics.policy_block_count == 2
+    assert metrics.error_count == 0

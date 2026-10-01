@@ -14,6 +14,7 @@ import pytest
 from src.agent_loop.context import ContextAssembler
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.agent_loop.execution.resources import EngineResources
+from src.harness.hooks import HookEngine, NullHookEngine
 from src.harness.normalization import SchemaArgsNormalizer
 from src.harness.runtime import BrowserHarness
 from src.harness.telemetry import TelemetryObserver
@@ -100,3 +101,18 @@ def test_engine_resources_from_harness_overrides_events() -> None:
     resources = EngineResources.from_harness(harness, llm=object(), events=session_events)
 
     assert resources.events is session_events
+
+
+def test_engine_resources_default_to_no_hooks() -> None:
+    resources = EngineResources.from_harness(BrowserHarness(), llm=object())
+
+    assert isinstance(resources.hooks, NullHookEngine)
+    assert resources.hooks.has("pre_tool_use") is False
+
+
+def test_engine_resources_from_harness_takes_the_session_hooks() -> None:
+    hooks = HookEngine([])
+
+    resources = EngineResources.from_harness(BrowserHarness(), llm=object(), hooks=hooks)
+
+    assert resources.hooks is hooks

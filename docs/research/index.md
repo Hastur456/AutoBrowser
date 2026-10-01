@@ -25,6 +25,15 @@ the `ModelDriver` boundary; both are now live and drive the engine-native loop.
 
 See [Phase 4 ProposedAction Contract Research](2026-08-05-phase-4-proposed-action-contract-research.md).
 
+### Lifecycle Hooks
+
+Survey of hook/middleware designs (Claude Code, Codex, Gemini CLI, Cursor,
+LangChain, OpenAI Agents SDK, ADK) and a proposed deterministic `HookEngine`
+around `TurnController` tool turns and completion.
+
+See [Lifecycle Hooks Research](2026-09-30-lifecycle-hooks-research.md) and the
+[implementation plan](../development/2026-09-30-lifecycle-hooks-implementation-plan.md).
+
 ### Search Flow Robustness
 
 Recent execution traces showed a failure mode on dynamic commerce pages:

@@ -9,8 +9,6 @@ from src.browser import (
     BrowserAction,
     BrowserActionName,
     BrowserErrorCode,
-    FakeBrowserProvider,
-    BrowserProvider,
     BrowserResult,
 )
 from src.browser.names import (
@@ -88,9 +86,3 @@ def test_browser_error_codes_export_shared_vocabulary() -> None:
         "unknown_action",
         "action_failed",
     }
-
-
-def test_browser_provider_protocol_matches_expected_shape() -> None:
-    provider = FakeBrowserProvider(['- button "Catalog" ref=e14'])
-
-    assert isinstance(provider, BrowserProvider)

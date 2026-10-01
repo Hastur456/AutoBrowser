@@ -75,6 +75,7 @@ Usage::
 from __future__ import annotations
 
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -95,6 +96,7 @@ from pydantic_settings import (
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
+from src.contracts import HookEventName
 from src.mcp.config import MCPServerConfig
 
 #: Env var namespace for every setting.
@@ -269,14 +271,6 @@ class LoopSettings(_Section):
         ),
     ] = 3
 
-    max_snapshot_recoveries: Annotated[
-        int,
-        Field(
-            ge=0,
-            description="Recovery attempts after a lost/invalid element ref.",
-        ),
-    ] = 1
-
     max_steps_without_plan_advance: Annotated[
         int,
         Field(
@@ -284,14 +278,6 @@ class LoopSettings(_Section):
             description="Steps allowed without advancing the plan before replanning.",
         ),
     ] = 8
-
-    max_unchanged_snapshots: Annotated[
-        int,
-        Field(
-            ge=1,
-            description="Identical consecutive snapshots before the loop stops.",
-        ),
-    ] = 3
 
     max_ineffective_actions: Annotated[
         int,
@@ -478,6 +464,172 @@ class FlagsSettings(_Section):
     ] = False
 
 
+#: Hook events that concern one tool call; only these accept a ``match`` filter.
+TOOL_HOOK_EVENTS: frozenset[str] = frozenset(
+    {"pre_tool_use", "permission_request", "post_tool_use", "post_tool_use_failure"}
+)
+
+
+class HookMatch(_Section):
+    """Tool filter of one hook; an empty filter matches every tool call."""
+
+    server: Annotated[
+        str,
+        Field(description="Exact MCP server name; empty matches any server."),
+    ] = ""
+
+    tool: Annotated[
+        str,
+        Field(
+            description=(
+                "Regular expression matched with ``re.fullmatch`` against the exposed "
+                "tool name; ``a|b`` works as a list (escape a literal dot). Empty "
+                "matches any tool."
+            ),
+        ),
+    ] = ""
+
+    @field_validator("tool", mode="after")
+    @classmethod
+    def _compile_tool_pattern(cls, value: str) -> str:
+        """Reject a pattern that does not compile at startup, not on the first call."""
+
+        if value:
+            try:
+                re.compile(value)
+            except re.error as exc:
+                raise ValueError(f"invalid tool pattern {value!r}: {exc}") from exc
+        return value
+
+
+class HookSpec(_Section):
+    """One registered lifecycle hook (see ``src/harness/hooks.py``)."""
+
+    id: Annotated[
+        str,
+        Field(min_length=1, description="Unique hook id, shown in hook.decided events."),
+    ]
+
+    event: Annotated[
+        HookEventName,
+        Field(description="Lifecycle event the hook runs on."),
+    ]
+
+    type: Annotated[
+        Literal["python", "command"],
+        Field(
+            description=(
+                "``python`` runs the in-process ``handler``; ``command`` runs ``command`` "
+                "as an external process (see ``src/harness/command_hooks.py``)."
+            ),
+        ),
+    ] = "python"
+
+    handler: Annotated[
+        str,
+        Field(
+            pattern=r"^([A-Za-z_][\w.]*:[A-Za-z_][\w.]*)?$",
+            description=(
+                "Import path ``package.module:attr`` of an async handler, or of a "
+                "factory returning one when ``options`` is not empty (``python`` only)."
+            ),
+        ),
+    ] = ""
+
+    command: Annotated[
+        str,
+        Field(
+            description=(
+                "Shell command run in the repository root (``command`` only); it reads "
+                "the event as JSON on stdin and answers with its exit code and stdout."
+            ),
+        ),
+    ] = ""
+
+    match: Annotated[
+        HookMatch,
+        Field(description="Tool filter; only valid for tool events."),
+    ] = Field(default_factory=HookMatch)
+
+    options: Annotated[
+        dict[str, Any],
+        Field(description="Keyword arguments for the handler factory."),
+    ] = Field(default_factory=dict)
+
+    timeout_seconds: Annotated[
+        float | None,
+        Field(
+            gt=0.0,
+            description="Per-hook timeout; ``None`` uses hooks.default_timeout_seconds.",
+        ),
+    ] = None
+
+    fail_closed: Annotated[
+        bool | None,
+        Field(
+            description=(
+                "Deny on timeout/exception. ``None`` keeps the per-event default "
+                "(deny for goal_start and pre_tool_use, no decision otherwise)."
+            ),
+        ),
+    ] = None
+
+    @model_validator(mode="after")
+    def _fields_fit_the_type(self) -> HookSpec:
+        if self.type == "python":
+            if not self.handler:
+                raise ValueError(f"hook {self.id!r}: a python hook needs 'handler'.")
+            if self.command:
+                raise ValueError(f"hook {self.id!r}: 'command' needs type: command.")
+        else:
+            if not self.command.strip():
+                raise ValueError(f"hook {self.id!r}: a command hook needs 'command'.")
+            if self.handler or self.options:
+                raise ValueError(
+                    f"hook {self.id!r}: 'handler'/'options' are only valid for python hooks."
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _match_only_for_tool_events(self) -> HookSpec:
+        if self.event not in TOOL_HOOK_EVENTS and self.match != HookMatch():
+            raise ValueError(
+                f"hook {self.id!r}: 'match' is only valid for tool events "
+                f"({', '.join(sorted(TOOL_HOOK_EVENTS))}), not {self.event!r}."
+            )
+        return self
+
+
+class HooksSettings(_Section):
+    """Deterministic lifecycle hooks around the agent loop. Disabled by default."""
+
+    enabled: Annotated[
+        bool,
+        Field(description="Run the hooks in ``registry``; off means no hook runs."),
+    ] = False
+
+    max_stop_blocks: Annotated[
+        int,
+        Field(
+            ge=0,
+            description="Completions a stop hook may reject per task before done is accepted.",
+        ),
+    ] = 2
+
+    default_timeout_seconds: Annotated[
+        float,
+        Field(
+            gt=0.0,
+            description="Timeout of a hook without its own timeout_seconds.",
+        ),
+    ] = 10.0
+
+    registry: Annotated[
+        list[HookSpec],
+        Field(description="Hooks, run sequentially in this order per event."),
+    ] = Field(default_factory=list)
+
+
 def _resolve_config_path() -> Path | None:
     """Return the YAML file to load, if any.
 
@@ -569,6 +721,7 @@ class Settings(BaseSettings):
     events: EventSettings = Field(default_factory=EventSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     flags: FlagsSettings = Field(default_factory=FlagsSettings)
+    hooks: HooksSettings = Field(default_factory=HooksSettings)
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
     #: Name of the ``mcp_servers`` entry that provides browser tools (exposed unprefixed).
     #: ``None`` falls back to ``"playwright"`` when such an entry exists.
@@ -636,12 +789,16 @@ __all__ = [
     "ENV_PREFIX",
     "EventSettings",
     "FlagsSettings",
+    "HookMatch",
+    "HookSpec",
+    "HooksSettings",
     "LLMSettings",
     "LoopSettings",
     "MemorySettings",
     "ObservationSettings",
     "Settings",
     "StorageSettings",
+    "TOOL_HOOK_EVENTS",
     "get_settings",
     "reload_settings",
 ]

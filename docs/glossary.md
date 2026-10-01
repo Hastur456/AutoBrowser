@@ -25,21 +25,27 @@
 | Canonical browser action | Provider-neutral browser action name such as `browser.snapshot`, mapped to backend-specific tool names by adapters. |
 | ChatModel | Provider-neutral chat protocol in `src/llm.py`: `async complete(messages, *, tools, **params) -> ModelResponse`. Provider adapters implement it; the engine drives it and never sees provider objects. |
 | Checkpointer | Removed. There is no checkpoint saver; durable history is carried on `LoopState.messages` and `SessionContext.state`, shaped by the functional `MemoryManager`. |
+| Command hook | Hook with `type: command` (`src/harness/command_hooks.py`): an external process that gets the `HookEvent` as JSON on stdin and answers with its exit code (`2` blocks, stderr is the reason) and optional JSON on stdout, following the Claude Code/Codex protocol. |
 | Compact observation | Short observer output derived from a tool result and used by the next agent step. |
 | CompletionStatus | Loop completion status (`continue`/`done`/`blocked`/`cancelled`) carried on `AgentLoopResult`; `GoalRunner` maps it to a terminal `GoalStatus` via `goal_status_from_completion()` in `src/contracts.py`. |
 | Config section | One of the eight frozen pydantic sub-models on `Settings` (`llm`, `browser`, `loop`, `observation`, `memory`, `events`, `storage`, `flags`). Each owns an `AUTOBROWSER_<SECTION>__<FIELD>` environment namespace and rejects unknown keys. |
 | ContextAssembler | The sole prompt-construction boundary in `src/agent_loop/context.py`: builds the durable system prompt, the per-turn user prompt, and the planner prompt from ordered `ContextBlock`s. |
 | Direct search URL fallback | Navigating directly to a site's search results URL when UI search controls do not make progress. |
-| EngineResources | Bundled runtime collaborators (`llm`, `tool_registry`, `tool_normalizers`, `policy`, `context`, `events`) built from `BrowserHarness` and passed to `AgentLoopEngine`. |
+| EngineResources | Bundled runtime collaborators (`llm`, `tool_registry`, `tool_normalizers`, `context`, `events`, `hooks`) built from `BrowserHarness` (plus the session's `HookEngine`) and passed to `AgentLoopEngine`. |
 | EventRecord | Durable JSON-safe event envelope for session, goal, engine, model, action, policy, tool, observation, and terminal lifecycle events. |
 | Executor | Engine phase that resolves and invokes approved tool requests through `ToolBroker`/`ToolRegistry`. |
 | Export row | JSONL task-level analytics row produced by `scripts/export_sessions.py` from persisted session, task, event, feedback, and batch metadata. |
+| Fail-closed | Hook failure mode where a timeout or exception counts as `deny`. The default for `goal_start` and `pre_tool_use`; other events fail open (no decision). `HookSpec.fail_closed` overrides it. |
 | FakeBrowserProvider | Legacy deterministic browser provider used by tests to replay snapshots without Chrome, CDP, or MCP. |
 | GoalRunner | One-task lifecycle boundary between `SessionRuntime` and the engine; emits goal lifecycle events, delegates execution through `native_task_runner`, captures latest state through `LatestStateLoader`, and does not own the model/action loop. |
 | GoalRunRequest | Immutable input object for one `GoalRunner` execution, including task text, task id, goal id, session thread id, task config, and state overrides. |
 | GoalRunResult | Immutable terminal object returned or internally constructed by `GoalRunner`, including raw task result or exception, latest state, and explicit terminal status. |
 | GoalStatus | Terminal goal lifecycle status (`completed`/`failed`/`cancelled`/`blocked`) returned by `GoalRunner` in `GoalRunResult`, derived from the engine's `CompletionStatus`. |
 | Harness | Runtime layer around the engine; owns infrastructure that should not be hardcoded into loop code. |
+| Hook | Deterministic check registered in `hooks.registry` (`src/harness/hooks.py`) that can deny/ask/rewrite a tool call, rewrite its output, add model context, or reject a premature completion at a fixed lifecycle point. Disabled by default. |
+| Hook event | One lifecycle point a hook runs on (`goal_start`, `pre_tool_use`, `permission_request`, `post_tool_use`, `post_tool_use_failure`, `stop`, `goal_end`), and the neutral `HookEvent` object handed to it. |
+| Hook handler | Async callable `HookEvent -> HookResult \| None`: for `type: python` named by `package.module:attr` (a factory when `options` are set), for `type: command` a `CommandHook` wrapping an external process; `None` means no opinion. |
+| HookEngine | Session-scoped runner of the hook registry: sequential handlers, `deny > ask > allow` aggregation, per-hook timeouts, one `hook.decided` event per handler via the loop. `NullHookEngine` is the disabled no-op. |
 | Ineffective browser action | A successful browser action whose follow-up snapshot has the same visible fingerprint as the previous snapshot. |
 | LatestStateLoader | Callable port injected into `GoalRunner` to load latest loop state from the current harness/config, with fallback to the task result's session state. |
 | LoopState | The frozen dataclass (in `src/agent_loop/execution/state.py`) that carries all loop state; `apply()` is strict and rejects unknown keys. |

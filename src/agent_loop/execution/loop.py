@@ -10,9 +10,8 @@ Ownership is split so the engine is a control-flow owner, not a wrapper:
 - :class:`AgentLoopEngine` owns the explicit ``while`` turn loop, the turn cap, plan
   (re)building, and the terminal :class:`AgentLoopResult`.
 - :class:`TurnController` owns exactly one turn — the ``agent`` step (terminal guard,
-  pending-tab activation, stale-snapshot retry, forced fresh snapshot, then a model turn whose
-  action is classified) and, for a tool-call decision, the ``policy -> execute -> observe``
-  sub-turn — returning a structured :class:`TurnResult` the engine acts on.
+  pending-tab activation, then a model turn whose action is classified) and, for a tool-call
+  decision, the ``policy -> execute -> observe`` sub-turn — returning a structured :class:`TurnResult` the engine acts on.
 - Completion decisions live in :class:`~src.agent_loop.execution.guards.CompletionController`
   and observation building in :class:`~src.agent_loop.execution.observation.ObservationCompiler`.
 
@@ -29,7 +28,8 @@ reached through :meth:`ContextAssembler.plan_prompt` — the sanctioned prompt b
 
 Event contract: only existing ``EventType`` literals are emitted (``model.requested`` /
 ``model.responded``, ``action.proposed``, ``policy.decided``, ``approval.requested``,
-``tool.started`` / ``tool.finished``, ``observation.compiled``); ``goal.*`` stays owned by
+``tool.started`` / ``tool.finished``, ``observation.compiled``, and one ``hook.decided`` per
+lifecycle-hook handler run); ``goal.*`` stays owned by
 :class:`~src.agent_loop.goals.GoalRunner`. **At least one event is emitted per continuing
 turn** so ``GoalRunner._watch_progress`` (which polls ``EventEmitter.sequence``) never
 false-times-out. ``tool.finished`` carries ``{"tool_result": dict(result)}`` — the exact
@@ -38,6 +38,7 @@ shape v1 emits — so the parity test can read the tool-name sequence identicall
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -48,10 +49,8 @@ from src.agent_loop.execution.guards import (
     CompletionController,
     blocked_response,
     done_response,
-    fresh_snapshot_request,
     pending_tab_activation_request,
     replan_response,
-    stale_snapshot_retry_update,
     tool_request_update,
 )
 from src.agent_loop.execution.observation import ObservationCompiler
@@ -59,11 +58,12 @@ from src.agent_loop.execution.policy import classify_tool_request, policy_update
 from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import LoopState
-from src.agent_loop.execution.tools import ToolBroker
+from src.agent_loop.execution.tools import PreparedToolCall, ToolBroker
 from src.agent_loop.model import ModelDriver
 from src.config import get_settings
 from src.contracts import CompletionStatus
-from src.contracts import PlanStep, ToolRequest, ToolResult
+from src.contracts import HookEvent, HookEventName, PlanStep, ToolRequest, ToolResult
+from src.harness.hooks import HookDecisionRecord, HookOutcome
 from src.harness.memory import ensure_message_history
 from src.harness.runtime import (
     HARNESS_EVENT_METADATA_CONFIG_KEY,
@@ -197,6 +197,51 @@ def _emit_event(
     )
 
 
+def _hook_event(
+    name: HookEventName,
+    state: LoopState,
+    event_ctx: Mapping[str, Any],
+    **fields: Any,
+) -> HookEvent:
+    """Build the neutral :class:`HookEvent` for ``name``; ``args``/``result`` are deep copies."""
+
+    for key in ("args", "result"):
+        if key in fields:
+            fields[key] = copy.deepcopy(dict(fields[key] or {}))
+    return HookEvent(
+        name=name,
+        session_id=event_ctx.get("session_id"),
+        goal_id=str(event_ctx.get("goal_id") or ""),
+        task_id=str(state.task_id or event_ctx.get("task_id") or ""),
+        task=state.task,
+        **fields,
+    )
+
+
+def _hook_record_payload(record: HookDecisionRecord, event: HookEvent) -> dict[str, Any]:
+    """``hook.decided`` payload: the decision only — never the tool arguments or result."""
+
+    return {
+        "hook_id": record.hook_id,
+        "event": record.event,
+        "tool": event.tool,
+        "server": event.server,
+        "decision": record.decision,
+        "reason": record.reason,
+        "modified": record.modified,
+        "duration_ms": record.duration_ms,
+        "error": record.error,
+        "skipped": record.skipped,
+    }
+
+
+def _harness_note(texts: list[str]) -> Message | None:
+    """One ``[harness]`` user message carrying hook context, kept apart from tool output."""
+
+    body = "\n\n".join(text for text in texts if text)
+    return user_message(f"[harness] {body}") if body else None
+
+
 class TurnController:
     """Drive exactly one agent turn (and its policy -> execute -> observe sub-turn)."""
 
@@ -218,6 +263,7 @@ class TurnController:
         self._compress_tools = compress_tools
         self._human_input = human_input or _deny_human_input
         self._source = source
+        self._hooks = resources.hooks
         # normalizers are registered with the tool registry (ToolRegistry.get_normalizers)
         self._broker = ToolBroker(resources.tool_registry)
         self._model_driver = ModelDriver(
@@ -225,7 +271,6 @@ class TurnController:
             tool_registry=resources.tool_registry,
         )
         self._observation = ObservationCompiler(
-            completion=completion,
             read_only_tools=frozenset(
                 tool_name(tool) for tool in tools if tool_is_read_only(tool)
             ),
@@ -244,6 +289,9 @@ class TurnController:
             return TurnResult(state=state, status="done" if status == "continue" else status)
         if decision == "replan":
             return TurnResult(state=state, replan=True)
+        if decision == "continue":
+            # A stop hook rejected the model's completion; the feedback is in ``messages``.
+            return TurnResult(state=state)
         if decision == "tool_call":
             state, terminal_status = await self._run_tool_turn(state)
             return TurnResult(state=state, status=terminal_status)
@@ -271,15 +319,6 @@ class TurnController:
 
         messages = self._history(state)
 
-        stale_snapshot_update = stale_snapshot_retry_update(state)
-        if stale_snapshot_update.get("decision") == "replan":
-            return stale_snapshot_update
-
-        if state.browser.needs_fresh_snapshot:
-            snapshot_request = fresh_snapshot_request(state, messages)
-            snapshot_request.update(stale_snapshot_update)
-            return snapshot_request
-
         turn_prompt = self._resources.context.user_turn_prompt(
             self._prompt_mapping(state),
             tools=self._tools,
@@ -298,7 +337,52 @@ class TurnController:
         if not actions:
             # ActionParser always returns >=1 action; this is a defensive terminal only.
             return blocked_response(state, "Blocked: the model returned no actionable step.")
-        return self._classify_action(state, actions[0], messages)
+        update = self._classify_action(state, actions[0], messages)
+        # Only a successful completion *from the model* is checked; guard terminals (limits)
+        # and blocked/cancelled stops are never second-guessed.
+        if update.get("decision") == "done" and update.get("completion_status") == "done":
+            update = await self._stop_check(state, update)
+        return update
+
+    async def _stop_check(self, state: LoopState, update: dict[str, Any]) -> dict[str, Any]:
+        """Run ``stop`` hooks on a model ``done`` before it is applied to state.
+
+        A ``deny`` replaces the terminal update with ``decision: "continue"``: the final answer,
+        completion status and plan completion are dropped, the model's answer stays in the
+        history followed by the ``[harness]`` rejection feedback, and ``stop_blocks`` grows.
+        Once ``stop_blocks`` reaches the engine's ``max_stop_blocks`` the hooks are skipped and
+        ``done`` is accepted.
+        """
+
+        if not self._hooks.has("stop"):
+            return update
+        event = _hook_event(
+            "stop",
+            state,
+            self._event_ctx,
+            final_answer=str(update.get("final_answer", "") or ""),
+            evidence=tuple(
+                text for text in (state.observation, state.browser.snapshot) if str(text or "")
+            ),
+            stop_hook_active=state.stop_blocks > 0,
+        )
+        if state.stop_blocks >= self._hooks.max_stop_blocks:
+            for record in self._hooks.skip("stop", "stop_budget_exhausted"):
+                self._emit("hook.decided", _hook_record_payload(record, event))
+            return update
+
+        outcome = await self._run_hooks(event)
+        if outcome.decision != "deny":
+            return update
+        feedback = f"[harness] Completion rejected: {outcome.reason or 'no reason given'}"
+        if outcome.additional_context:
+            feedback = f"{feedback}\n{outcome.additional_context}"
+        return {
+            "decision": "continue",
+            "stop_blocks": state.stop_blocks + 1,
+            # The done update's history already ends with the model's final answer.
+            "messages": [*update["messages"], user_message(feedback)],
+        }
 
     def _classify_action(
         self,
@@ -387,10 +471,16 @@ class TurnController:
     ) -> tuple[LoopState, CompletionStatus | None]:
         """Run policy -> (execute -> observe) for a tool-call decision.
 
-        Returns the new state and a terminal status if the turn ended the run (human denial
-        or the unchanged-snapshot observation terminal); ``None`` means continue looping. A
+        Returns the new state and a terminal status if the turn ended the run (e.g. human
+        denial); ``None`` means continue looping. A
         blocked policy decision short-circuits before execute/observe so
         ``consecutive_failures`` is incremented exactly once (matching v1's policy->agent edge).
+
+        Lifecycle hooks run after built-in policy (never after a built-in ``blocked``):
+        ``pre_tool_use`` on the normalized request may deny (the built-in block path), ask
+        (-> ``needs_human``) or rewrite the arguments; ``post_tool_use(_failure)`` may rewrite
+        the output before it reaches state. Hook context becomes one separate ``[harness]``
+        message after the observation, never part of the tool output.
         """
 
         request = dict(state.tool_request or {})
@@ -403,9 +493,46 @@ class TurnController:
         if decision == "blocked":
             return state, None
 
+        prepared = await self._broker.prepare(request, state.snapshot_mapping())
+        # What tool.started/approval.requested report: the model's request, unless a hook
+        # rewrote its arguments.
+        started_request = request
+        notes: list[str] = []
+
+        if prepared.tool is not None and self._hooks.has("pre_tool_use"):
+            outcome, prepared = await self._pre_tool_use(state, prepared)
+            notes.append(outcome.additional_context)
+            if outcome.decision == "deny":
+                blocked_reason = f"Blocked by hook: {outcome.reason or 'no reason given'}"
+                state = state.apply(policy_updates(state, "blocked", blocked_reason))
+                note = _harness_note(notes)
+                if note is not None:
+                    state = state.apply({"messages": [*state.messages, note]})
+                return state, None
+            if outcome.updated_input is not None:
+                started_request = {**request, "args": dict(outcome.updated_input)}
+                state = state.apply({"tool_request": started_request})
+            if outcome.decision == "ask" and decision == "approved":
+                decision = "needs_human"
+                reason = outcome.reason or f"A hook requested approval for {prepared.request.get('name')}"
+                state = state.apply(policy_updates(state, "needs_human", reason))
+
         if decision == "needs_human":
-            self._emit("approval.requested", {"tool_request": request, "reason": reason})
-            approved = await self._human_input(request, reason)
+            self._emit("approval.requested", {"tool_request": started_request, "reason": reason})
+            verdict = await self._permission_request(state, prepared, reason)
+            if verdict.decision == "deny":
+                denied = request.get("name") or "the requested tool"
+                state = state.apply(
+                    blocked_response(
+                        state,
+                        f"Blocked: approval hook denied {denied}: "
+                        f"{verdict.reason or 'no reason given'}",
+                    )
+                )
+                return state, "blocked"
+            approved = verdict.decision == "allow" or await self._human_input(
+                started_request, reason
+            )
             if not approved:
                 denied = request.get("name") or "the requested tool"
                 state = state.apply(
@@ -416,9 +543,12 @@ class TurnController:
                 )
                 return state, "blocked"
 
-        self._emit("tool.started", {"tool_request": request})
-        result: ToolResult = await self._broker.execute(request, state.snapshot_mapping())
+        self._emit("tool.started", {"tool_request": started_request})
+        result: ToolResult = await self._broker.invoke(prepared)
         self._emit("tool.finished", {"tool_result": dict(result)})
+
+        if prepared.tool is not None:
+            result = await self._post_tool_use(state, prepared, result, notes)
 
         state = state.apply({"tool_result": result})
         observation_update = self._observation.compile(
@@ -433,7 +563,116 @@ class TurnController:
 
         if str(state.decision or "") == "done":
             return state, self._completion.status_from_state(state)
+        note = _harness_note(notes)
+        if note is not None:
+            state = state.apply({"messages": [*state.messages, note]})
         return state, None
+
+    async def _pre_tool_use(
+        self,
+        state: LoopState,
+        prepared: PreparedToolCall,
+    ) -> tuple[HookOutcome, PreparedToolCall]:
+        """Run ``pre_tool_use``; re-prepare rewritten arguments, which may not change the tool."""
+
+        outcome = await self._run_hooks(
+            _hook_event(
+                "pre_tool_use",
+                state,
+                self._event_ctx,
+                tool=str(prepared.request.get("name", "") or ""),
+                server=prepared.server,
+                args=prepared.request.get("args") or {},
+                reason=str(state.policy_event.get("reason", "") or ""),
+            )
+        )
+        if outcome.decision == "deny" or outcome.updated_input is None:
+            return outcome, prepared
+
+        reprepared = await self._broker.prepare(
+            {**prepared.request, "args": dict(outcome.updated_input)},
+            state.snapshot_mapping(),
+        )
+        if reprepared.tool is None or reprepared.request.get("name") != prepared.request.get("name"):
+            modifier = next(
+                (record.hook_id for record in reversed(outcome.records) if record.modified),
+                "unknown",
+            )
+            denied = HookOutcome(
+                decision="deny",
+                reason=f"Hook {modifier} cannot change the tool name.",
+                additional_context=outcome.additional_context,
+                records=outcome.records,
+            )
+            return denied, prepared
+        return outcome, reprepared
+
+    async def _permission_request(
+        self,
+        state: LoopState,
+        prepared: PreparedToolCall,
+        reason: str,
+    ) -> HookOutcome:
+        """Let ``permission_request`` hooks stand in for the human on a ``needs_human`` call.
+
+        ``allow`` approves, ``deny`` refuses exactly like a human would; anything else (no
+        hooks, no opinion, ``ask``, a failed hook) leaves the decision to the human callback.
+        """
+
+        if prepared.tool is None or not self._hooks.has("permission_request"):
+            return HookOutcome()
+        return await self._run_hooks(
+            _hook_event(
+                "permission_request",
+                state,
+                self._event_ctx,
+                tool=str(prepared.request.get("name", "") or ""),
+                server=prepared.server,
+                args=prepared.request.get("args") or {},
+                reason=reason,
+            )
+        )
+
+    async def _post_tool_use(
+        self,
+        state: LoopState,
+        prepared: PreparedToolCall,
+        result: ToolResult,
+        notes: list[str],
+    ) -> ToolResult:
+        """Run ``post_tool_use`` (success) or ``post_tool_use_failure``; apply ``updated_output``."""
+
+        name: HookEventName = (
+            "post_tool_use" if result.get("status") == "success" else "post_tool_use_failure"
+        )
+        if not self._hooks.has(name):
+            return result
+        outcome = await self._run_hooks(
+            _hook_event(
+                name,
+                state,
+                self._event_ctx,
+                tool=str(prepared.request.get("name", "") or ""),
+                server=prepared.server,
+                args=prepared.request.get("args") or {},
+                result=result,
+            )
+        )
+        notes.append(outcome.additional_context)
+        if outcome.updated_output is None:
+            return result
+        field_name = "content" if name == "post_tool_use" else "error"
+        return {**result, field_name: outcome.updated_output}  # type: ignore[return-value]
+
+    async def _run_hooks(self, event: HookEvent) -> HookOutcome:
+        """Run hooks for ``event``, emitting one ``hook.decided`` per handler as it finishes."""
+
+        return await self._hooks.run(
+            event,
+            on_record=lambda record: self._emit(
+                "hook.decided", _hook_record_payload(record, event)
+            ),
+        )
 
     def _history(self, state: LoopState) -> list[Message]:
         return _build_history(self._resources, state)
@@ -535,6 +774,10 @@ class AgentLoopEngine:
         if task_id and not state.task_id:
             state = state.apply({"task_id": task_id})
 
+        state, denied = await self._goal_start(state)
+        if denied:
+            return await self._finish(state, "blocked", turns=0)
+
         # Model call #0: build the initial plan (consumes the planner response).
         state = await self._run_plan(state)
 
@@ -564,12 +807,60 @@ class AgentLoopEngine:
                 state = await self._run_plan(state)
                 continue
 
+        return await self._finish(state, final_status or "blocked", turns=turn)
+
+    async def _goal_start(self, state: LoopState) -> tuple[LoopState, bool]:
+        """Run ``goal_start`` hooks before the first model call; ``True`` means denied.
+
+        A deny blocks the task without calling the model. ``additional_context`` lands after
+        the ``User request`` message (so the planner sees it) as a ``[harness]`` message.
+        """
+
+        if not self._resources.hooks.has("goal_start"):
+            return state, False
+        outcome = await self._run_hooks(_hook_event("goal_start", state, self._event_ctx))
+        if outcome.decision == "deny":
+            reason = outcome.reason or "a goal_start hook denied the task."
+            # Seed the real system prompt first, as the planner would have.
+            state = state.apply({"messages": self._history(state)})
+            return state.apply(blocked_response(state, f"Blocked: {reason}")), True
+        note = _harness_note([outcome.additional_context])
+        if note is not None:
+            state = state.apply({"messages": [*self._history(state), note]})
+        return state, False
+
+    async def _finish(
+        self,
+        state: LoopState,
+        status: CompletionStatus,
+        *,
+        turns: int,
+    ) -> AgentLoopResult:
+        """Build the terminal result, after the observational ``goal_end`` hooks.
+
+        Only a normal terminal result reaches here: engine exceptions, cancellation and
+        ``GoalRunner`` timeouts never run ``goal_end`` (``goal.failed``/``goal.cancelled``
+        cover them). A failing ``goal_end`` hook cannot change the result.
+        """
+
+        if self._resources.hooks.has("goal_end"):
+            await self._run_hooks(_hook_event("goal_end", state, self._event_ctx, status=status))
         return AgentLoopResult(
-            status=final_status or "blocked",
+            status=status,
             final_answer=str(state.final_answer or ""),
             session_state=state.to_session_state(),
             state=state,
-            turns=turn,
+            turns=turns,
+        )
+
+    async def _run_hooks(self, event: HookEvent) -> HookOutcome:
+        """Run hooks for ``event``, emitting one ``hook.decided`` per handler as it finishes."""
+
+        return await self._resources.hooks.run(
+            event,
+            on_record=lambda record: self._emit(
+                "hook.decided", _hook_record_payload(record, event)
+            ),
         )
 
     async def _run_plan(self, state: LoopState) -> LoopState:
@@ -593,9 +884,6 @@ class AgentLoopEngine:
                 "decision": "replan",
                 "replan_count": replan_count,
                 "error": "",
-                "stale_snapshot_retries": 0,
-                "invalid_ref_recovery_count": 0,
-                "needs_fresh_snapshot": False,
                 "messages": messages,
             }
         )

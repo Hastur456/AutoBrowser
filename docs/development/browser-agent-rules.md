@@ -71,8 +71,10 @@ snapshot when:
 - the visible structure is insufficient and a deeper snapshot may expose the
   needed controls or result details.
 
-If policy says the current snapshot is already current, reuse it for extraction
-or choose a different strategy instead of asking for the same snapshot again.
+If the current snapshot still reflects the page, reuse it for extraction or
+choose a different strategy instead of asking for the same snapshot again. The
+engine does not enforce this with a snapshot-specific policy; only the generic
+repeat guards apply.
 
 ## Non-Progress Signals
 
