@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.browser.names import TABS_TOOL
 from src.config import get_settings
-from src.contracts import ToolRequest
+from src.contracts import PolicyDecision, ToolRequest
 from src.harness.memory import (
     append_ai_tool_call,
     append_final_ai_response,
@@ -229,6 +229,30 @@ def _tool_block_updates(
     }
 
 
+def _tool_gate_updates(
+    state: LoopState,
+    decision: PolicyDecision,
+    reason: str,
+    *,
+    event: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Record a passed gate (``approved``) or a pending approval (``needs_human``)."""
+
+    updates: dict[str, Any] = {
+        "policy_decision": decision,
+        "observation": reason,
+        "policy_event": {
+            "decision": decision,
+            "reason": reason,
+            "tool_request": state.tool_request or {},
+            **dict(event or {}),
+        },
+    }
+    if decision == "needs_human":
+        updates["error"] = ""
+    return updates
+
+
 def _pending_tab_activation_request(state: LoopState) -> ToolRequest | None:
     """Select a tab recorded in ``browser.pending_browser_tab_index`` (if any).
 
@@ -336,6 +360,7 @@ terminal_guard = _terminal_guard
 pending_tab_activation_request = _pending_tab_activation_request
 progress_block_reason = _progress_block_reason
 tool_block_updates = _tool_block_updates
+tool_gate_updates = _tool_gate_updates
 guard_tool_request = _guard_tool_request
 repeat_tracking_key = _repeat_tracking_key
 request_tracking_update = _request_tracking_update
@@ -355,5 +380,6 @@ __all__ = [
     "request_tracking_update",
     "terminal_guard",
     "tool_block_updates",
+    "tool_gate_updates",
     "tool_request_update",
 ]

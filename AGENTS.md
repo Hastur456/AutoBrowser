@@ -60,7 +60,7 @@ Harness responsibilities:
 - `context.py` no longer exists in `src/harness/`: prompt construction lives in `ContextAssembler` (`src/agent_loop/context.py`), the sole boundary injected as `harness.context`.
 - `memory.py`: functional conversation-history shaping over `Message` lists (no checkpoint saver; the durable history lives on `LoopState.messages`, not on a memory service).
 - `tools.py`: pluggable tool registry for static tools, generic providers, browser providers, and MCP clients.
-- `policy.py`: policy checks and policy engine boundary.
+- `permissions.py`: session-scoped `PermissionEngine` — tool authorization rules, modes and approval grants.
 - `telemetry.py`: local trace-metadata and error logging boundary.
 
 `ContextAssembler` in `src/agent_loop/context.py` is the only prompt-construction

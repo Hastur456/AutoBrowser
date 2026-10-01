@@ -22,6 +22,7 @@ flowchart LR
   SessionCtx --> MCPRuntime[MCPRuntime]
   SessionCtx --> Harness[BrowserHarness]
   SessionCtx --> Hooks[HookEngine]
+  SessionCtx --> Permissions[PermissionEngine: rules, mode, grants]
   Hooks --> HookHandlers[Hook handlers: builtin_hooks, browser.hooks]
   Hooks --> CommandHooks[CommandHook: external process]
   MCPRuntime --> Manager[MCPManager]
@@ -38,6 +39,7 @@ flowchart LR
   Resources --> Tools
   Resources --> LLM
   Resources --> Hooks
+  Resources --> Permissions
   Tools --> StaticTools[Static tools]
   Tools --> Providers[Generic providers]
   Tools --> ToolSource
@@ -73,3 +75,9 @@ fails startup) and `SessionRuntime.run_task` passes it through
 without `hooks=` — evals, tests — gets a `NullHookEngine`, so a personal `config.yaml` never
 changes them. The engine never hands `LoopState` to a hook; hook decisions are emitted as
 `hook.decided` through the same `EventEmitter` the `GoalRunner` watchdog polls.
+
+The `PermissionEngine` follows the same pattern: `SessionContext.initialize` builds it from
+`settings.permissions` before Chrome/MCP start (a clashing rule id fails startup), it holds the
+session's approval grants across tasks, and `run_task` passes it through
+`EngineResources.from_harness(..., permissions=...)`. Without it, `EngineResources` gets a
+default engine with only the code-defined (builtin) rules in `default` mode.

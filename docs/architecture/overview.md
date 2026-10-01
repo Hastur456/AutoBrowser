@@ -159,8 +159,6 @@ infrastructure consumed by one task execution. It holds:
 - `ToolRegistry`: lazily loads static tools, generic providers, and live tool
   sources such as `MCPToolSource`, and exposes provider-neutral `Tool` objects
   plus the registered `ToolCallNormalizer`s.
-- Policy functions (`src/agent_loop/execution/policy.py`): classify tool
-  requests before execution.
 - `TelemetryObserver`: logs local trace metadata and errors.
 - `EventEmitter`: durable goal/model/action/policy/tool/observation events.
 
@@ -283,13 +281,18 @@ must use only the latest `ToolResult` JSON.
 
 ## Policy
 
-The engine's policy functions (`src/agent_loop/execution/policy.py`) block
-missing tool requests, route sensitive tool
-names containing markers such as `payment`, `purchase`, `delete_account`, or
-`credential` to human approval, blocks accumulated ineffective browser actions,
-and blocks redundant identical snapshot requests when the current snapshot is
-still usable. Policy understands both canonical browser names such as
-`browser.snapshot` and Playwright MCP names such as `browser_snapshot`.
+Two separate checks run before a tool call executes:
+
+- The **progress guard** (`src/agent_loop/execution/guards.py`, event `policy.decided`)
+  blocks a missing tool request and a call whose identical outcome already repeated
+  `loop.max_ineffective_actions` times. It is quality control, not authorization.
+- The session-scoped **`PermissionEngine`** (`src/harness/permissions.py`, event
+  `permission.decided`) authorizes the final normalized call after `pre_tool_use` hooks:
+  config rules (`permissions.rules`, `deny > ask > allow`), code-defined builtin rules
+  (tool names containing `payment`, `purchase`, `delete_account` or `credential` → ask), the
+  mode (`default`, `read_only`, `dont_ask`, `bypass`) and session grants. A deny is returned
+  to the model as the tool output; an ask goes to `permission_request` hooks and the human.
+  See [ADR](../decisions/2026-10-01-permission-engine.md).
 
 ## Browser Semantics
 

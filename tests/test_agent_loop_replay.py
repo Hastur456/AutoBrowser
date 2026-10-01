@@ -217,3 +217,52 @@ def test_hook_decisions_count_as_policy_blocks_and_show_in_the_sequence() -> Non
         "   hook grounded [stop]: no decision (error: timeout)\n"
         "goal.completed: ok"
     )
+
+
+def test_permission_decisions_appear_in_the_action_sequence() -> None:
+    raw_events = [
+        {"type": "goal.started", "source": "test", "payload": {"task": "shop"}},
+        {
+            "type": "action.proposed",
+            "source": "test",
+            "payload": {"tool_request": {"name": "browser_navigate", "args": {"url": "x"}}},
+        },
+        {
+            "type": "permission.decided",
+            "source": "test",
+            "payload": {
+                "tool": "browser_navigate",
+                "decision": "deny",
+                "source": "rule",
+                "rule_id": "shop-only",
+                "reason": "Denied by rule shop-only.",
+            },
+        },
+        {
+            "type": "action.proposed",
+            "source": "test",
+            "payload": {"tool_request": {"name": "browser_click", "args": {"ref": "e1"}}},
+        },
+        {
+            "type": "permission.decided",
+            "source": "test",
+            "payload": {"tool": "browser_click", "decision": "allow", "source": "mode"},
+        },
+        {
+            "type": "approval.resolved",
+            "source": "test",
+            "payload": {"decision": "allow", "by": "grant", "scope": "session"},
+        },
+        {"type": "goal.completed", "source": "test", "payload": {"result": {"final_answer": "ok"}}},
+    ]
+    events = [load_events_from_dict(event) for event in raw_events]
+
+    assert summarize_trace(events).policy_block_count == 1
+    assert print_action_sequence(events) == (
+        "goal.started: shop\n"
+        '1. browser_navigate {"url": "x"}\n'
+        "   permission [browser_navigate]: deny (shop-only) - Denied by rule shop-only.\n"
+        '2. browser_click {"ref": "e1"}\n'
+        "   approval: allow by grant (session)\n"
+        "goal.completed: ok"
+    )

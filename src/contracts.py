@@ -168,7 +168,7 @@ class HookEvent:
     args: dict[str, Any] = field(default_factory=dict)
     #: The ``ToolResult`` (``post_tool_use*`` only).
     result: dict[str, Any] = field(default_factory=dict)
-    #: Reason of the built-in ``needs_human`` decision (``permission_request`` only).
+    #: Reason of the permission ``ask`` verdict (``permission_request`` only).
     reason: str = ""
     #: The model's final answer (``stop`` only).
     final_answer: str = ""

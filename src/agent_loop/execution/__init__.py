@@ -24,6 +24,7 @@ from src.agent_loop.execution.guards import (
     request_tracking_update,
     terminal_guard,
     tool_block_updates,
+    tool_gate_updates,
     tool_request_update,
 )
 from src.agent_loop.execution.completion import native_latest_state_loader
@@ -39,11 +40,6 @@ from src.agent_loop.execution.observation import (
     ObservationCompiler,
     compile_observation,
 )
-from src.agent_loop.execution.policy import (
-    BLOCKED_TOOL_MARKERS,
-    classify_tool_request,
-    policy_updates,
-)
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import (
     BrowserState,
@@ -52,7 +48,6 @@ from src.agent_loop.execution.state import (
 from src.agent_loop.execution.tools import ToolBroker
 
 __all__ = [
-    "BLOCKED_TOOL_MARKERS",
     "AgentLoopEngine",
     "AgentLoopResult",
     "BrowserState",
@@ -64,18 +59,17 @@ __all__ = [
     "TurnController",
     "TurnResult",
     "blocked_response",
-    "classify_tool_request",
     "compile_observation",
     "done_response",
     "guard_tool_request",
     "native_latest_state_loader",
     "native_task_runner",
     "pending_tab_activation_request",
-    "policy_updates",
     "progress_block_reason",
     "replan_response",
     "request_tracking_update",
     "terminal_guard",
     "tool_block_updates",
+    "tool_gate_updates",
     "tool_request_update",
 ]

@@ -61,7 +61,10 @@
 | Planner | Engine phase that creates or revises compact task plans. |
 | Playwright MCP | Browser automation tool provider whose snapshot refs drive interactions. |
 | PlaywrightMCPBrowserProvider | Removed. Former Playwright adapter; replaced by `MCPManager` + `MCPToolSource` + `BrowserToolNormalizer`. |
-| Policy | Engine-owned classification in `src/agent_loop/execution/policy.py` that labels a tool request `approved`, `needs_human`, or `blocked` before execution. |
+| Policy | The gate result of a tool turn stored on `LoopState.policy_decision` (`approved`, `needs_human`, `blocked`). `blocked` comes from the progress guard, a hook deny or a permission deny; `policy.decided` is emitted only by the progress guard. |
+| PermissionEngine | Session-scoped, deterministic tool authorization in `src/harness/permissions.py`: `PermissionCheck` → `allow`/`ask`/`deny` from rules (`deny > ask > allow`), the mode and session grants; fails closed; emits `permission.decided`. |
+| Permission mode | `permissions.mode`: `default` (no rule → allow), `read_only` (only `readOnlyHint` tools), `dont_ask` (every ask → deny), `bypass` (asks granted; deny rules and `always_ask` hold). |
+| Grant | A session-only approval of `(server, tool, domain)` stored by the `PermissionEngine` after a human answers "session"; never covers `always_ask` rules or hook asks. |
 | ProposedAction | Provider-neutral model action contract (`answer`/`tool_call`/`update_plan`/`ask_user`/`delegate`/`compact_memory`/`stop`) parsed from a model turn and mapped to `LoopState` updates by the engine. |
 | Provider adapter | Thin adapter that implements `ChatModel` by serializing neutral `Message`/`ToolDef` objects to a backend wire format and parsing the reply back into a `ModelResponse`. |
 | Qualified tool name | `server__tool` name produced by `src/mcp/naming.py` (sanitized, max 64 chars) for tools of non-browser servers. |

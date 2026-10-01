@@ -145,3 +145,21 @@ def test_a_pre_tool_use_hook_deny_counts_as_a_policy_block() -> None:
 
     assert metrics.policy_block_count == 2
     assert metrics.error_count == 0
+
+
+def test_a_permission_deny_counts_as_a_policy_block() -> None:
+    start = datetime(2026, 10, 1, tzinfo=UTC)
+    events = [
+        _event("goal.started", start, {"task": "open page"}),
+        _event("permission.decided", start, {"decision": "allow"}),
+        _event("permission.decided", start, {"decision": "ask"}),
+        _event("approval.requested", start, {"reason": "r"}),
+        _event("approval.resolved", start, {"decision": "deny", "by": "human"}),
+        _event("permission.decided", start, {"decision": "deny", "rule_id": "shop-only"}),
+        _event("goal.completed", start, {"result": {"final_answer": "ok"}}),
+    ]
+
+    metrics = extract_event_metrics(events)
+
+    assert metrics.policy_block_count == 1
+    assert metrics.approval_request_count == 1

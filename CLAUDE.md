@@ -49,8 +49,8 @@ Control flow lives in `src/agent_loop/execution/`, not in a compiled graph:
   across tasks.
 - `completion.py` — `native_latest_state_loader` (unwraps the
   `AgentLoopResult.session_state` carry-forward for the next task).
-- `guards.py`, `policy.py`, `observation.py`, `tools.py`, `resources.py` — the
-  loop guards (including `CompletionController`), policy fns, observation
+- `guards.py`, `observation.py`, `tools.py`, `resources.py` — the
+  loop guards (including `CompletionController` and the progress guard), observation
   compiler, tool broker, and `EngineResources` bundling.
 
 `AgentLoopResult(status, final_answer, session_state, state, turns=0)` is a frozen
@@ -112,11 +112,15 @@ build initial plan (model call #0) -> while turn <= cap:
     agent step -> decision
       done    -> terminal status via CompletionController
       replan  -> rebuild plan
-      tool_call -> policy -> (human_input?) -> ToolBroker.execute -> observe
+      tool_call -> progress guard -> prepare -> pre_tool_use hooks
+                -> PermissionEngine (deny | ask -> permission_request/human | allow)
+                -> ToolBroker.invoke -> post_tool_use -> observe
 ```
 
-`policy` routes to `human_input` for sensitive tools; a blocked or denied tool
-short-circuits back to the loop. `settings.loop.turn_cap` (default 50) bounds the loop.
+A progress block, hook deny or permission deny short-circuits back to the loop (the model
+reads the reason); a refused approval is terminal `blocked`. `settings.loop.turn_cap`
+(default 50) bounds the loop. Authorization lives in `src/harness/permissions.py`
+(`docs/decisions/2026-10-01-permission-engine.md`); there is no `execution/policy.py`.
 
 ## Browser Semantics (Hard Invariant)
 
@@ -130,7 +134,7 @@ The agent is **snapshot-driven, not selector-driven** (see `docs/development/bro
   snapshot; prefer typing into an editable control, then fall back to a direct search URL
   (e.g. Ozon `https://www.ozon.ru/search/?text=<query>`).
 
-These rules are **duplicated across prompts, the policy functions, the observer, and provider
+These rules are **duplicated across prompts, the guards, the observer, and provider
 tests**. Changing one layer can reintroduce stale-ref/loop bugs — keep them aligned, and
 don't remove an invariant from a prompt unless policy/observer/evals still enforce it.
 `tests/mcp_fixtures/fake_server.py` (a real MCP server) and the local `_FakeBrowserTools`
@@ -202,8 +206,8 @@ Deterministic, config-driven checks at fixed loop points — `goal_start`, `pre_
   `src/agent_loop/execution/loop.py`.
 - `HookEngine` is session-scoped (`SessionContext.initialize`, reaching the loop through
   `EngineResources.hooks`), not a `BrowserHarness` resource. A hook never sees `LoopState`.
-- A hook cannot lift a built-in `blocked`; `pre_tool_use` `allow` does not approve a
-  `needs_human` tool — only `permission_request` can stand in for the human. `stop` only
+- A hook cannot lift a permission deny/ask (rules run after `pre_tool_use`, on the final
+  arguments); only `permission_request` can stand in for the human. `stop` only
   checks a model `done`, never guard terminals. Hook context is a separate `[harness]`
   message, never appended to tool output (progress detection compares tool content).
 - Tests and evals never read hooks from `get_settings()` (the personal `config.yaml` would

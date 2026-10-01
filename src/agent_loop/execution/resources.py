@@ -19,6 +19,7 @@ from typing import Any
 
 from src.harness.hooks import NullHookEngine
 from src.harness.normalization import ToolCallNormalizer
+from src.harness.permissions import PermissionEngine
 from src.harness.tools import ToolRegistry
 
 
@@ -29,12 +30,14 @@ class EngineResources:
     ``context`` is the :class:`~src.agent_loop.context.ContextAssembler` (the sanctioned
     prompt-assembly boundary that owns ``get_system_prompt``/``user_turn_prompt``/
     ``plan_prompt`` and knows about the agent/planner prompts); ``events`` is the session ``EventEmitter`` whose sink
-    chain applies redaction and whose ``sequence`` the goal watchdog polls. Tool-request
-    classification is not a resource: the loop calls the pure functions in
-    :mod:`src.agent_loop.execution.policy` and the progress guard in
+    chain applies redaction and whose ``sequence`` the goal watchdog polls. The progress
+    guard is not a resource: the loop calls the pure functions in
     :mod:`src.agent_loop.execution.guards` directly. ``hooks`` is the session's
     :class:`~src.harness.hooks.HookEngine`; the default :class:`~src.harness.hooks.NullHookEngine`
-    runs nothing, so evals and tests that do not pass one never see hooks.
+    runs nothing, so evals and tests that do not pass one never see hooks. ``permissions`` is
+    the session's :class:`~src.harness.permissions.PermissionEngine`; the default one has only
+    the builtin rules in ``default`` mode (no config is read), so a sensitive tool name still
+    asks the injected ``human_input`` callback.
     """
 
     llm: Any
@@ -43,6 +46,7 @@ class EngineResources:
     context: Any
     events: Any
     hooks: Any = field(default_factory=NullHookEngine)
+    permissions: PermissionEngine = field(default_factory=PermissionEngine)
 
     @classmethod
     def from_harness(
@@ -52,6 +56,7 @@ class EngineResources:
         llm: Any,
         events: Any | None = None,
         hooks: Any | None = None,
+        permissions: PermissionEngine | None = None,
     ) -> EngineResources:
         """Compose resources from an initialized ``BrowserHarness`` plus the ``llm``.
 
@@ -59,7 +64,8 @@ class EngineResources:
         through the exact same ``EventEmitter`` the enclosing ``GoalRunner`` watchdog polls
         (``SessionContext.event_emitter``), guaranteeing progress is observed. ``hooks`` is
         not a harness concern: the session passes its own ``HookEngine``; without it the
-        loop gets a :class:`~src.harness.hooks.NullHookEngine`.
+        loop gets a :class:`~src.harness.hooks.NullHookEngine`. ``permissions`` is session-scoped
+        too (``SessionContext.permissions``); without it the default engine applies.
         """
 
         tool_registry = harness.tools
@@ -71,6 +77,7 @@ class EngineResources:
             context=harness.context,
             events=events if events is not None else harness.events,
             hooks=hooks if hooks is not None else NullHookEngine(),
+            permissions=permissions if permissions is not None else PermissionEngine(),
         )
 
 

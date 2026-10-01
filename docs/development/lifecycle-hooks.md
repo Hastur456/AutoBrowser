@@ -16,7 +16,7 @@ lifecycle point. It receives a read-only `HookEvent` and answers with a `HookRes
 - rewrite tool arguments before the call or tool output after it;
 - add context for the model as a separate `[harness]` message;
 - reject a premature `done` so the model keeps working;
-- approve a `needs_human` call instead of the human.
+- approve a call the permissions ask about, instead of the human.
 
 Hooks are **not** prompts: an instruction in `AGENTS.md` or a system prompt can be ignored
 by the model, a hook cannot. Hooks are **disabled by default** (`hooks.enabled: false`);
@@ -94,8 +94,8 @@ For one event, `HookEngine.run` takes the hooks registered for that event and:
 | Event | When | `deny` | `ask` | `allow` | Rewrites | Context |
 |---|---|---|---|---|---|---|
 | `goal_start` | Before the first model call of a task | Task ends `blocked`, no model call | — | — | — | After the user request |
-| `pre_tool_use` | After built-in policy (`approved`/`needs_human`, never after `blocked`) and request normalization | Built-in block path, counts toward `policy_block_count` | Routes to `needs_human` | No effect (does **not** bypass `needs_human`) | `updated_input` (tool name may not change) | After the observation |
-| `permission_request` | A call is `needs_human`, before asking the human | Terminal `blocked`, like a human refusal | Falls back to the human | Runs without asking the human | — | — |
+| `pre_tool_use` | After the progress guard (never after its `blocked`) and request normalization, **before** the permission rules | Non-terminal block, counts toward `policy_block_count` | Escalates to approval (`hook_ask_reason`; `dont_ask` turns it into a deny, `bypass` and grants cannot skip it) | No effect (does **not** lift a permission deny/ask) | `updated_input` (tool name may not change; the rules see the new arguments) | After the observation |
+| `permission_request` | The `PermissionEngine` said `ask`, before asking the human | Terminal `blocked`, like a human refusal | Falls back to the human | Runs without asking the human | — | — |
 | `post_tool_use` | After a successful tool call | — | — | — | `updated_output` replaces `content` | After the observation |
 | `post_tool_use_failure` | After a failed tool call | — | — | — | `updated_output` replaces `error` | After the observation |
 | `stop` | The model said `done` with status `done` | Turn becomes `continue`; the reason goes back to the model | — | — | — | Appended to the rejection |
@@ -104,7 +104,8 @@ For one event, `HookEngine.run` takes the hooks registered for that event and:
 Details worth knowing:
 
 - **Only `permission_request` can stand in for the human.** A `pre_tool_use` `allow` never
-  approves a `needs_human` tool, and no hook can lift a built-in `blocked`.
+  lifts a permission rule (`docs/decisions/2026-10-01-permission-engine.md`): the rules are
+  evaluated after the hooks, on the final arguments, and emit `permission.decided`.
 - **`stop`** runs only for a model `done`, never for guard terminals (turn cap,
   replan/failure limits, blocked/cancelled stops). The event carries
   `final_answer`, `evidence` (latest observation and snapshot) and `stop_hook_active`
@@ -120,19 +121,19 @@ Tool-call path with hooks:
 
 ```mermaid
 flowchart TD
-  Req[Model tool request] --> Policy{Built-in policy}
-  Policy -->|blocked| Blocked[Blocked, back to the loop]
-  Policy -->|approved / needs_human| Pre{pre_tool_use hooks}
+  Req[Model tool request] --> Progress{Progress guard}
+  Progress -->|blocked| Blocked[Blocked, back to the loop]
+  Progress --> Pre{pre_tool_use hooks}
   Pre -->|deny| Blocked
-  Pre -->|ask| Human
-  Pre -->|allow / none| NeedsHuman{needs_human?}
-  NeedsHuman -->|no| Invoke[ToolBroker.invoke]
-  NeedsHuman -->|yes| Perm{permission_request hooks}
+  Pre -->|allow / ask / none| Rules{PermissionEngine}
+  Rules -->|deny| Blocked
+  Rules -->|allow| Invoke[ToolBroker.invoke]
+  Rules -->|ask| Perm{permission_request hooks}
   Perm -->|allow| Invoke
   Perm -->|deny| Terminal[Terminal blocked]
   Perm -->|none / ask / failure| Human{Human callback}
-  Human -->|approved| Invoke
-  Human -->|denied| Terminal
+  Human -->|once / session| Invoke
+  Human -->|deny| Terminal
   Invoke --> Post[post_tool_use / post_tool_use_failure hooks]
   Post --> Observe[Observation compile + harness note]
 ```
@@ -148,7 +149,7 @@ flowchart TD
 | `tool`, `server` | tool events | Exposed tool name after normalization; MCP server (`""` if not MCP) |
 | `args` | tool events | A copy of the tool arguments |
 | `result` | `post_tool_use*` | The `ToolResult` (`status`, `content` / `error`, …) |
-| `reason` | `pre_tool_use`, `permission_request` | Reason of the built-in policy decision |
+| `reason` | `permission_request` | Reason of the permission `ask` verdict (`pre_tool_use` gets `""`: the rules run after it) |
 | `final_answer`, `evidence`, `stop_hook_active` | `stop` | The answer to check and what it can be checked against |
 | `status` | `goal_end` | Terminal status |
 
@@ -227,7 +228,7 @@ mistakes are rejected when settings load.
 
 | Handler | Event | Options | What it does |
 |---|---|---|---|
-| `src.harness.builtin_hooks:approve_tools` | `permission_request` | `tools`, `servers` (at least one) | Pre-approves `needs_human` calls to the listed tools or servers — for batch/eval profiles without a human |
+| `src.harness.builtin_hooks:approve_tools` | `permission_request` | `tools`, `servers` (at least one) | Pre-approves `ask` calls to the listed tools or servers — for batch/eval profiles without a human |
 | `src.harness.builtin_hooks:grounded_final_answer` | `stop` | `min_chars` | Rejects an empty answer or one stating numbers absent from the latest observation/snapshot (`1 299 ₽` equals `1299`; numbers from the task and list markers are ignored) |
 | `src.browser.hooks:url_policy` | `pre_tool_use` + `match: {tool: browser_navigate}` | `allow_domains`, `deny_domains`, `deny_schemes` (default `file`, `chrome`, `javascript`, `data`) | Denies navigation outside the allowed domains; subdomains match. A guardrail, not a security boundary: `browser_evaluate` or a link click bypasses it |
 | `src.browser.hooks:prompt_injection_scan` | `post_tool_use` + `match: {tool: browser_snapshot}` | `patterns` (English and Russian defaults) | Adds a warning that page text is untrusted data; never rewrites the snapshot |
@@ -412,8 +413,8 @@ A bad flag makes the script exit `1` (a hook failure: fail-closed on `pre_tool_u
 
 ### Things to Know
 
-- **`ask` ends the task in the current CLI.** No human callback is wired, so a
-  `needs_human` call is denied and the task finishes `blocked` ("human approval was
+- **`ask` ends the task in the current CLI.** No human callback is wired, so a call that
+  needs approval is denied and the task finishes `blocked` ("human approval was
   denied"). Let specific tools through with a `permission_request` hook (`approve_tools`), or
   use `--decision deny` to block only the one call and let the model choose another action.
 - **`python` is whatever is on `PATH`.** The scripts need only the standard library

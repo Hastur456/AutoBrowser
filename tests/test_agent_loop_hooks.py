@@ -29,7 +29,14 @@ from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALI
 from src.browser.names import is_browser_tool_name, to_playwright_browser_name
 from src.browser.normalization import BrowserToolNormalizer
 from src.config import HooksSettings
-from src.contracts import HookEvent, HookResult, Tool, ToolRequest, ToolResult
+from src.contracts import (
+    HookEvent,
+    HookResult,
+    PermissionVerdict,
+    Tool,
+    ToolRequest,
+    ToolResult,
+)
 from src.harness.builtin_hooks import approve_tools
 from src.harness.hooks import HookEngine, NullHookEngine, RegisteredHook
 from src.harness.mcp_tools import MCPToolSource
@@ -332,6 +339,7 @@ async def run_engine(
     snapshots: list[str] | None = None,
     registry: ToolRegistry | None = None,
     human_input: Any = None,
+    permissions: Any = None,
     turn_cap: int = 10,
     task: str = "Do the task.",
 ) -> tuple[AgentLoopResult, list[EventRecord], CountingModel]:
@@ -347,7 +355,9 @@ async def run_engine(
             )
     llm = CountingModel(responses)
     harness = BrowserHarness(llm=llm, tool_registry=registry, event_emitter=emitter)
-    resources = EngineResources.from_harness(harness, llm=llm, events=emitter, hooks=hooks)
+    resources = EngineResources.from_harness(
+        harness, llm=llm, events=emitter, hooks=hooks, permissions=permissions
+    )
     engine = AgentLoopEngine(resources, human_input=human_input)
     result = await engine.run(
         task,
@@ -402,7 +412,10 @@ async def test_a_pre_tool_use_deny_blocks_the_call_and_tells_the_model() -> None
     assert result.state.consecutive_failures == 1
     assert "Blocked by hook: Not today." in tool_messages(result)[-1]
     assert "tool.started" not in types_of(records)
-    assert types_of(records).count("policy.decided") == 1
+    # Permissions run after the hooks, so a hook deny ends the call before any decision.
+    assert "policy.decided" not in types_of(records)
+    assert "permission.decided" not in types_of(records)
+    assert result.state.policy_event["source"] == "hook"
     (payload,) = hook_payloads(records)
     assert payload["decision"] == "deny" and payload["event"] == "pre_tool_use"
 
@@ -430,9 +443,10 @@ async def test_ask_routes_an_approved_tool_to_human_input() -> None:
     echo = EchoTool()
     asked: list[tuple[ToolRequest, str]] = []
 
-    async def deny_human(request: ToolRequest, reason: str) -> bool:
+    async def deny_human(request: ToolRequest, reason: str, verdict: PermissionVerdict) -> str:
         asked.append((request, reason))
-        return False
+        assert verdict.source == "hook" and verdict.always_ask
+        return "deny"
 
     engine = HookEngine(
         [hook("confirm", "pre_tool_use", returning(HookResult(decision="ask", reason="Confirm echo.")))]
@@ -456,7 +470,7 @@ async def test_ask_routes_an_approved_tool_to_human_input() -> None:
 async def test_ask_then_human_approval_runs_the_tool() -> None:
     echo = EchoTool()
 
-    async def approve(request: ToolRequest, reason: str) -> bool:
+    async def approve(request: ToolRequest, reason: str, verdict: PermissionVerdict) -> bool:
         return True
 
     engine = HookEngine([hook("confirm", "pre_tool_use", returning(HookResult(decision="ask")))])
@@ -482,9 +496,9 @@ async def test_allow_does_not_lift_a_built_in_needs_human() -> None:
 
     asked: list[str] = []
 
-    async def deny_human(request: ToolRequest, reason: str) -> bool:
+    async def deny_human(request: ToolRequest, reason: str, verdict: PermissionVerdict) -> str:
         asked.append(reason)
-        return False
+        return "deny"
 
     engine = HookEngine([hook("ok", "pre_tool_use", returning(HookResult(decision="allow")))])
 
@@ -580,7 +594,7 @@ async def test_a_built_in_block_never_reaches_pre_tool_use() -> None:
     engine = HookEngine([hook("audit", "pre_tool_use", returning(None, seen))])
     echo = EchoTool()
     # Interleave ``other`` so the consecutive-repeat guard never fires; the fourth identical
-    # ``echo`` is blocked by the identical-outcome policy (max_ineffective_actions = 3).
+    # ``echo`` is blocked by the progress guard (max_ineffective_actions = 3).
     calls = [tool_call("echo", text="a"), tool_call("other")] * 3 + [tool_call("echo", text="a")]
 
     result, records, _ = await run_engine(
@@ -589,8 +603,11 @@ async def test_a_built_in_block_never_reaches_pre_tool_use() -> None:
         tools=echo.tools(),
     )
 
+    # policy.decided is the progress guard's event only; permissions decided the six calls.
     decisions = [r.payload["decision"] for r in records if r.type == "policy.decided"]
-    assert decisions == ["approved"] * 6 + ["blocked"]
+    assert decisions == ["blocked"]
+    permissions = [r.payload["decision"] for r in records if r.type == "permission.decided"]
+    assert permissions == ["allow"] * 6
     assert len(seen) == 6
     assert result.status == "done"
 
@@ -734,9 +751,9 @@ async def test_hook_decided_is_emitted_once_per_handler_in_the_loop_stream() -> 
     turn = [r.type for r in records if r.type not in {"model.requested", "model.responded"}]
     assert turn == [
         "action.proposed",
-        "policy.decided",
         "hook.decided",
         "hook.decided",
+        "permission.decided",
         "tool.started",
         "tool.finished",
         "hook.decided",
@@ -849,7 +866,7 @@ async def test_a_server_matcher_sees_mcp_tools() -> None:
 
 
 class PurchaseTool:
-    """``purchase_item`` trips the built-in ``needs_human`` policy."""
+    """``purchase_item`` trips the builtin ``sensitive-tool-name`` ask rule."""
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -862,9 +879,9 @@ class PurchaseTool:
 
         return [Tool(name="purchase_item", func=purchase)]
 
-    async def human(self, request: ToolRequest, reason: str) -> bool:
+    async def human(self, request: ToolRequest, reason: str, verdict: PermissionVerdict) -> str:
         self.asked.append(reason)
-        return False
+        return "deny"
 
 
 PURCHASE = [PLAN, tool_call("purchase_item", sku="1"), DONE]
@@ -889,13 +906,16 @@ async def test_permission_request_allow_runs_the_tool_without_the_human() -> Non
     assert event.tool == "purchase_item" and event.args == {"sku": "1"}
     assert "requires human approval" in event.reason
     turn = [r.type for r in records if r.type not in {"model.requested", "model.responded"}]
-    assert turn[:5] == [
+    assert turn[:6] == [
         "action.proposed",
-        "policy.decided",
+        "permission.decided",
         "approval.requested",
         "hook.decided",
+        "approval.resolved",
         "tool.started",
     ]
+    resolved = next(r.payload for r in records if r.type == "approval.resolved")
+    assert resolved == {"decision": "allow", "by": "hook", "scope": "once"}
 
 
 @pytest.mark.asyncio

@@ -19,7 +19,9 @@ EventType = Literal[
     "model.responded",
     "action.proposed",
     "policy.decided",
+    "permission.decided",
     "approval.requested",
+    "approval.resolved",
     "tool.started",
     "tool.finished",
     "observation.compiled",
@@ -44,7 +46,9 @@ AGENT_TRACE_EVENT_TYPES = {
     "model.responded",
     "action.proposed",
     "policy.decided",
+    "permission.decided",
     "approval.requested",
+    "approval.resolved",
     "tool.started",
     "tool.finished",
     "observation.compiled",
@@ -280,7 +284,13 @@ def _project_agent_trace_record(record: EventRecord) -> dict[str, Any] | None:
     if record.type in {"policy.decided", "approval.requested"}:
         _set_if_present(projected, "decision", _compact_text(record.payload.get("decision")))
         _set_if_present(projected, "reason", _compact_text(record.payload.get("reason")))
+        _set_if_present(projected, "rule_id", _compact_text(record.payload.get("rule_id")))
         return _project_tool_request_event(projected, record.payload.get("tool_request"))
+    if record.type in {"permission.decided", "approval.resolved"}:
+        # Deliberately no arguments: permission payloads never carry them.
+        for key in ("tool", "server", "decision", "source", "rule_id", "mode", "reason", "by", "scope"):
+            _set_if_present(projected, key, _compact_text(record.payload.get(key)))
+        return projected
     if record.type in {"tool.started", "tool.finished"}:
         return _project_tool_result_event(projected, record.payload.get("tool_result"))
     if record.type == "observation.compiled":

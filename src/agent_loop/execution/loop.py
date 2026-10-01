@@ -27,9 +27,10 @@ harness leaves (message history, tool registry, event metadata keys). The planne
 reached through :meth:`ContextAssembler.plan_prompt` — the sanctioned prompt boundary.
 
 Event contract: only existing ``EventType`` literals are emitted (``model.requested`` /
-``model.responded``, ``action.proposed``, ``policy.decided``, ``approval.requested``,
-``tool.started`` / ``tool.finished``, ``observation.compiled``, and one ``hook.decided`` per
-lifecycle-hook handler run); ``goal.*`` stays owned by
+``model.responded``, ``action.proposed``, ``policy.decided`` (progress guard only),
+``permission.decided``, ``approval.requested`` / ``approval.resolved``, ``tool.started`` /
+``tool.finished``, ``observation.compiled``, and one ``hook.decided`` per lifecycle-hook
+handler run); ``goal.*`` stays owned by
 :class:`~src.agent_loop.goals.GoalRunner`. **At least one event is emitted per continuing
 turn** so ``GoalRunner._watch_progress`` (which polls ``EventEmitter.sequence``) never
 false-times-out. ``tool.finished`` carries ``{"tool_result": dict(result)}`` — the exact
@@ -53,18 +54,27 @@ from src.agent_loop.execution.guards import (
     progress_block_reason,
     replan_response,
     tool_block_updates,
+    tool_gate_updates,
     tool_request_update,
 )
 from src.agent_loop.execution.observation import ObservationCompiler
-from src.agent_loop.execution.policy import classify_tool_request, policy_updates
 from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import LoopState
 from src.agent_loop.execution.tools import PreparedToolCall, ToolBroker
 from src.agent_loop.model import ModelDriver
 from src.config import get_settings
-from src.contracts import CompletionStatus
-from src.contracts import HookEvent, HookEventName, PlanStep, ToolRequest, ToolResult
+from src.contracts import (
+    ApprovalAnswer,
+    CompletionStatus,
+    HookEvent,
+    HookEventName,
+    PermissionCheck,
+    PermissionVerdict,
+    PlanStep,
+    ToolRequest,
+    ToolResult,
+)
 from src.harness.hooks import HookDecisionRecord, HookOutcome
 from src.harness.memory import ensure_message_history
 from src.harness.runtime import (
@@ -74,7 +84,11 @@ from src.harness.runtime import (
 from src.harness.tools import tool_is_read_only, tool_name
 from src.messages import Message, user_message
 
-HumanInputCallback = Callable[[ToolRequest, str], Awaitable[bool]]
+#: Asked when a call needs approval: ``(request, reason, verdict) -> once | session | deny``.
+#: ``True``/``False`` are accepted as ``once``/``deny``.
+HumanInputCallback = Callable[
+    [ToolRequest, str, PermissionVerdict], Awaitable["ApprovalAnswer | bool"]
+]
 
 EVENT_SOURCE = "agent_loop.execution"
 
@@ -110,14 +124,28 @@ class TurnResult:
     replan: bool = False
 
 
-async def _deny_human_input(request: ToolRequest, reason: str) -> bool:
+async def _deny_human_input(
+    request: ToolRequest,
+    reason: str,
+    verdict: PermissionVerdict,
+) -> ApprovalAnswer:
     """Default human-in-the-loop callback for the native path: always deny.
 
-    Mirrors ``human_input_node`` denial semantics for tests/headless runs until interactive
-    HITL is wired for the native CLI. Tests inject an approving callback where needed.
+    Used by headless runs and tests that inject no callback; tests inject an approving one
+    where needed.
     """
 
-    return False
+    return "deny"
+
+
+def _approval_answer(value: Any) -> ApprovalAnswer:
+    """Normalize a callback answer: ``True`` -> ``once``; anything unknown -> ``deny``."""
+
+    if value is True:
+        return "once"
+    if value in ("once", "session", "deny"):
+        return value
+    return "deny"
 
 
 def _json_object(text: str) -> dict[str, Any]:
@@ -237,6 +265,24 @@ def _hook_record_payload(record: HookDecisionRecord, event: HookEvent) -> dict[s
     }
 
 
+def _permission_payload(
+    verdict: PermissionVerdict,
+    prepared: PreparedToolCall,
+    mode: str,
+) -> dict[str, Any]:
+    """``permission.decided`` payload: the decision only -- never the tool arguments."""
+
+    return {
+        "tool": str(prepared.request.get("name", "") or ""),
+        "server": prepared.server,
+        "decision": verdict.decision,
+        "source": verdict.source,
+        "rule_id": verdict.rule_id,
+        "mode": mode,
+        "reason": verdict.reason,
+    }
+
+
 def _harness_note(texts: list[str]) -> Message | None:
     """One ``[harness]`` user message carrying hook context, kept apart from tool output."""
 
@@ -266,6 +312,7 @@ class TurnController:
         self._human_input = human_input or _deny_human_input
         self._source = source
         self._hooks = resources.hooks
+        self._permissions = resources.permissions
         # normalizers are registered with the tool registry (ToolRegistry.get_normalizers)
         self._broker = ToolBroker(resources.tool_registry)
         self._model_driver = ModelDriver(
@@ -471,18 +518,23 @@ class TurnController:
         self,
         state: LoopState,
     ) -> tuple[LoopState, CompletionStatus | None]:
-        """Run policy -> (execute -> observe) for a tool-call decision.
+        """Run progress guard -> hooks -> permissions -> (execute -> observe) for a tool call.
 
-        Returns the new state and a terminal status if the turn ended the run (e.g. human
-        denial); ``None`` means continue looping. A
-        blocked policy decision short-circuits before execute/observe so
-        ``consecutive_failures`` is incremented exactly once (matching v1's policy->agent edge).
+        Returns the new state and a terminal status if the turn ended the run (a refused
+        approval); ``None`` means continue looping. Every non-terminal block (progress guard,
+        hook deny, permission deny) short-circuits before execute/observe so
+        ``consecutive_failures`` grows exactly once and the model reads the reason as the
+        tool output.
 
-        Lifecycle hooks run after built-in policy (never after a built-in ``blocked``):
-        ``pre_tool_use`` on the normalized request may deny (the built-in block path), ask
-        (-> ``needs_human``) or rewrite the arguments; ``post_tool_use(_failure)`` may rewrite
-        the output before it reaches state. Hook context becomes one separate ``[harness]``
-        message after the observation, never part of the tool output.
+        Order: the progress guard checks the raw request (``policy.decided``); the broker
+        normalizes and resolves it; ``pre_tool_use`` hooks may deny, ask or rewrite the
+        arguments; the :class:`~src.harness.permissions.PermissionEngine` then decides on the
+        **final** request (``permission.decided``) -- a hook ``allow`` cannot lift a rule, a
+        hook ``ask`` escalates through the same mode logic. ``ask`` goes to
+        ``permission_request`` hooks, then the human callback. An unknown tool skips hooks
+        and permissions and observes its error result. ``post_tool_use(_failure)`` may
+        rewrite the output; hook context becomes one separate ``[harness]`` message after the
+        observation, never part of the tool output.
         """
 
         request = dict(state.tool_request or {})
@@ -494,59 +546,38 @@ class TurnController:
             self._emit("policy.decided", dict(state.policy_event or {}))
             return state, None
 
-        decision, reason = classify_tool_request(state, request)
-        state = state.apply(policy_updates(state, decision, reason))
-        self._emit("policy.decided", dict(state.policy_event or {}))
-
         prepared = await self._broker.prepare(request, state.snapshot_mapping())
         # What tool.started/approval.requested report: the model's request, unless a hook
         # rewrote its arguments.
         started_request = request
         notes: list[str] = []
+        hook_ask_reason = ""
 
         if prepared.tool is not None and self._hooks.has("pre_tool_use"):
             outcome, prepared = await self._pre_tool_use(state, prepared)
             notes.append(outcome.additional_context)
             if outcome.decision == "deny":
                 blocked_reason = f"Blocked by hook: {outcome.reason or 'no reason given'}"
-                state = state.apply(tool_block_updates(state, blocked_reason))
-                note = _harness_note(notes)
-                if note is not None:
-                    state = state.apply({"messages": [*state.messages, note]})
-                return state, None
+                state = state.apply(
+                    tool_block_updates(state, blocked_reason, event={"source": "hook"})
+                )
+                return self._with_note(state, notes), None
             if outcome.updated_input is not None:
                 started_request = {**request, "args": dict(outcome.updated_input)}
                 state = state.apply({"tool_request": started_request})
-            if outcome.decision == "ask" and decision == "approved":
-                decision = "needs_human"
-                reason = outcome.reason or f"A hook requested approval for {prepared.request.get('name')}"
-                state = state.apply(policy_updates(state, "needs_human", reason))
+            if outcome.decision == "ask":
+                hook_ask_reason = outcome.reason or (
+                    f"A hook requested approval for {prepared.request.get('name')}"
+                )
 
-        if decision == "needs_human":
-            self._emit("approval.requested", {"tool_request": started_request, "reason": reason})
-            verdict = await self._permission_request(state, prepared, reason)
-            if verdict.decision == "deny":
-                denied = request.get("name") or "the requested tool"
-                state = state.apply(
-                    blocked_response(
-                        state,
-                        f"Blocked: approval hook denied {denied}: "
-                        f"{verdict.reason or 'no reason given'}",
-                    )
-                )
-                return state, "blocked"
-            approved = verdict.decision == "allow" or await self._human_input(
-                started_request, reason
+        if prepared.tool is not None:
+            state, terminal, blocked = await self._authorize(
+                state, prepared, started_request, hook_ask_reason
             )
-            if not approved:
-                denied = request.get("name") or "the requested tool"
-                state = state.apply(
-                    blocked_response(
-                        state,
-                        f"Blocked: human approval was denied for {denied}.",
-                    )
-                )
-                return state, "blocked"
+            if terminal is not None:
+                return state, terminal
+            if blocked:
+                return self._with_note(state, notes), None
 
         self._emit("tool.started", {"tool_request": started_request})
         result: ToolResult = await self._broker.invoke(prepared)
@@ -568,10 +599,91 @@ class TurnController:
 
         if str(state.decision or "") == "done":
             return state, self._completion.status_from_state(state)
+        return self._with_note(state, notes), None
+
+    async def _authorize(
+        self,
+        state: LoopState,
+        prepared: PreparedToolCall,
+        started_request: ToolRequest,
+        hook_ask_reason: str,
+    ) -> tuple[LoopState, CompletionStatus | None, bool]:
+        """Evaluate permissions on the final prepared call and resolve an ``ask``.
+
+        Returns ``(state, terminal_status, blocked)``: ``terminal_status`` is ``"blocked"``
+        when the approval was refused (by a ``permission_request`` hook or the human);
+        ``blocked`` is a non-terminal permission deny whose reason the model reads.
+        """
+
+        verdict = self._permissions.evaluate(
+            PermissionCheck(
+                tool=str(prepared.request.get("name", "") or ""),
+                server=prepared.server,
+                args=copy.deepcopy(dict(prepared.request.get("args") or {})),
+                read_only=tool_is_read_only(prepared.tool),
+                hook_ask_reason=hook_ask_reason,
+            ),
+            state.snapshot_mapping(),
+        )
+        self._emit(
+            "permission.decided",
+            _permission_payload(verdict, prepared, self._permissions.mode),
+        )
+        event = {"source": verdict.source, "rule_id": verdict.rule_id}
+
+        if verdict.decision == "deny":
+            state = state.apply(tool_block_updates(state, verdict.reason, event=event))
+            return state, None, True
+
+        if verdict.decision == "allow":
+            if verdict.source == "grant":
+                self._emit_approval_resolved("allow", by="grant", scope="session")
+            state = state.apply(tool_gate_updates(state, "approved", verdict.reason, event=event))
+            return state, None, False
+
+        state = state.apply(tool_gate_updates(state, "needs_human", verdict.reason, event=event))
+        self._emit(
+            "approval.requested",
+            {
+                "tool_request": started_request,
+                "reason": verdict.reason,
+                "rule_id": verdict.rule_id,
+            },
+        )
+        denied = str(started_request.get("name") or "the requested tool")
+        hook_outcome = await self._permission_request(state, prepared, verdict.reason)
+        if hook_outcome.decision == "deny":
+            self._emit_approval_resolved("deny", by="hook", scope="once")
+            reason = (
+                f"Blocked: approval hook denied {denied}: "
+                f"{hook_outcome.reason or 'no reason given'}"
+            )
+            return state.apply(blocked_response(state, reason)), "blocked", False
+        if hook_outcome.decision == "allow":
+            self._emit_approval_resolved("allow", by="hook", scope="once")
+            return state, None, False
+
+        answer = _approval_answer(
+            await self._human_input(started_request, verdict.reason, verdict)
+        )
+        if answer == "deny":
+            self._emit_approval_resolved("deny", by="human", scope="once")
+            reason = f"Blocked: human approval was denied for {denied}."
+            return state.apply(blocked_response(state, reason)), "blocked", False
+        scope = "once"
+        if answer == "session" and verdict.grant_key is not None and not verdict.always_ask:
+            self._permissions.grant(verdict.grant_key)
+            scope = "session"
+        self._emit_approval_resolved("allow", by="human", scope=scope)
+        return state, None, False
+
+    def _emit_approval_resolved(self, decision: str, *, by: str, scope: str) -> None:
+        self._emit("approval.resolved", {"decision": decision, "by": by, "scope": scope})
+
+    @staticmethod
+    def _with_note(state: LoopState, notes: list[str]) -> LoopState:
         note = _harness_note(notes)
-        if note is not None:
-            state = state.apply({"messages": [*state.messages, note]})
-        return state, None
+        return state if note is None else state.apply({"messages": [*state.messages, note]})
 
     async def _pre_tool_use(
         self,
@@ -588,7 +700,6 @@ class TurnController:
                 tool=str(prepared.request.get("name", "") or ""),
                 server=prepared.server,
                 args=prepared.request.get("args") or {},
-                reason=str(state.policy_event.get("reason", "") or ""),
             )
         )
         if outcome.decision == "deny" or outcome.updated_input is None:
@@ -618,7 +729,7 @@ class TurnController:
         prepared: PreparedToolCall,
         reason: str,
     ) -> HookOutcome:
-        """Let ``permission_request`` hooks stand in for the human on a ``needs_human`` call.
+        """Let ``permission_request`` hooks stand in for the human on an ``ask`` verdict.
 
         ``allow`` approves, ``deny`` refuses exactly like a human would; anything else (no
         hooks, no opinion, ``ask``, a failed hook) leaves the decision to the human callback.

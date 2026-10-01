@@ -197,8 +197,9 @@ permissions:
 # Handlers are "package.module:attr" import paths of async callables, resolved
 # at session start -- an import error, a duplicate id or a sync handler fails
 # startup. With `options`, the handler is a factory called once as
-# handler(**options). A hook never lifts a built-in `blocked` policy decision,
-# and `permission_request` is the only way to approve a `needs_human` tool.
+# handler(**options). Hooks run before the permission rules: a hook `allow`
+# never lifts a rule, and `permission_request` is the only hook that can approve
+# a call the permissions ask about.
 hooks:
   # Master switch; off means no hook runs and nothing is emitted.
   enabled: false                                # (default)
