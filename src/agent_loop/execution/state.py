@@ -130,14 +130,16 @@ class LoopState:
         return replace(self, **loop_updates)
 
     def snapshot_mapping(self) -> dict[str, Any]:
-        """Minimal mapping fed to a tool-call normalizer's ``normalize_request``.
+        """Minimal mapping fed to normalizers and permission resource resolvers.
 
-        Normalizers read state via ``.get(...)`` (only ``snapshot`` today), so a
-        plain dict keeps them unchanged while the loop uses the typed dataclass.
+        Both read state via ``.get(...)`` (``snapshot``, and ``tool_result`` — the latest
+        tool output — for the permission resolver), so a plain dict keeps them unchanged
+        while the loop uses the typed dataclass.
         """
 
         return {
             "snapshot": self.browser.snapshot,
+            "tool_result": dict(self.tool_result or {}),
             "error": self.error,
             "last_tool": self.last_tool,
             "last_args": dict(self.last_args),

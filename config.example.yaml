@@ -164,8 +164,10 @@ flags:
 # Deterministic tool authorization (src/harness/permissions.py), evaluated after
 # pre_tool_use hooks on the final arguments. Matching rules resolve
 # deny > ask > allow, whatever their order. A rule deny is not terminal: the
-# model reads the reason and may take another path. Rules shipped in code (e.g.
-# tool names with payment/purchase/credential -> ask) cannot be removed here.
+# model reads the reason and may take another path. Rules shipped in code cannot
+# be removed here: tool names with payment/purchase/delete_account/credential,
+# browser_file_upload|browser_drop -> ask; browser_evaluate|browser_run_code* ->
+# ask with always_ask (no session grant, no bypass).
 permissions:
   # default:   a call without a matching rule runs.
   # read_only: only readOnlyHint tools and allow rules run; the rest is denied.
@@ -174,11 +176,11 @@ permissions:
   mode: default                                 # (default)
   rules: []                                     # (default)
   # rules:
-  #   - id: no-evaluate
+  #   - id: confirm-forms
   #     decision: ask                           # allow | ask | deny
-  #     tool: "browser_evaluate|browser_run_code_unsafe"   # re.fullmatch on the name
-  #     always_ask: true                        # no session grant, no bypass
-  #     reason: "Arbitrary page JavaScript needs approval."
+  #     tool: "browser_fill_form|browser_select_option"  # re.fullmatch on the name
+  #     always_ask: false                       # true: no session grant, no bypass
+  #     reason: "Filling forms needs approval ({tool})."
   #   - id: shop-only
   #     decision: deny
   #     server: playwright                      # exact; empty = any server

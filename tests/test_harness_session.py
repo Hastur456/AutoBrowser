@@ -25,6 +25,7 @@ from src.harness.session import (
     WorkspaceContext,
 )
 from src.harness.hooks import HookConfigError, HookEngine, NullHookEngine, registry_digest
+from src.contracts import PermissionCheck
 from src.harness.permissions import PermissionEngine
 from src.harness.tools import ToolRegistry
 
@@ -825,6 +826,14 @@ async def test_session_builds_one_permission_engine_for_every_task(
     permissions = runtime.context.permissions
     assert isinstance(permissions, PermissionEngine)
     assert permissions.mode == "dont_ask"
+    # The browser builtin rules and resource resolver are wired in.
+    evaluate = permissions.evaluate(PermissionCheck(tool="browser_evaluate", server="playwright"))
+    assert (evaluate.decision, evaluate.rule_id) == ("deny", "browser-evaluate")
+    # A config deny beats the builtin ask on the same tool.
+    upload = permissions.evaluate(PermissionCheck(tool="browser_file_upload", server="playwright"))
+    assert (upload.decision, upload.rule_id) == ("deny", "no-upload")
+    drop = permissions.evaluate(PermissionCheck(tool="browser_drop", server="playwright"))
+    assert drop.reason.startswith("Not executed: Handing local files")
     assert [resources.permissions for resources in captured] == [permissions, permissions]
     # A grant from one task is still there for the next one.
     assert captured[1].permissions.grants == {("playwright", "browser_click", "ozon.ru")}
