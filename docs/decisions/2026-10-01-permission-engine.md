@@ -1,6 +1,6 @@
 # ADR-2026-10-01: PermissionEngine
 
-Status: Proposed
+Status: Accepted
 Date: 2026-10-01
 
 ## Context
@@ -103,6 +103,7 @@ a non-destructive mutation; `echo` stays unannotated to cover servers without an
 
 ## Related
 
+- [Permissions Guide](../development/permissions.md)
 - [PermissionEngine research](../research/2026-10-01-permission-engine-research.md)
 - [Implementation plan](../development/2026-10-01-permission-engine-implementation-plan.md)
 - [Lifecycle Hooks Engine](2026-09-30-lifecycle-hooks-engine.md)

@@ -42,7 +42,8 @@ MCP annotations, Playwright MCP origins), an audit of the current policy/hook/HI
 and a proposed deny-first `PermissionEngine` placed after `pre_tool_use` hooks.
 
 See [Permission Engine Research](2026-10-01-permission-engine-research.md) and the
-[implementation plan](../development/2026-10-01-permission-engine-implementation-plan.md).
+[implementation plan](../development/2026-10-01-permission-engine-implementation-plan.md). Implemented: [ADR](../decisions/2026-10-01-permission-engine.md),
+[Permissions Guide](../development/permissions.md).
 
 ### Search Flow Robustness
 

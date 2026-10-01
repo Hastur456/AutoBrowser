@@ -14,6 +14,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Lifecycle Hooks Guide](development/lifecycle-hooks.md): how hooks work, their
   architecture, configuration, Python and command hooks, and how to create, change,
   disable and test them.
+- [Permissions Guide](development/permissions.md): tool authorization — rules
+  (`deny > ask > allow`), modes, browser domain/target resources, interactive approvals and
+  session grants, debugging `permission.decided`, and the sandbox layer underneath.
 - [Diagrams](diagrams/index.md): Mermaid diagrams for the agent loop, session
   runtime, and harness boundaries.
 - [Session Runtime Change](development/2026-07-23-session-runtime-change.md):

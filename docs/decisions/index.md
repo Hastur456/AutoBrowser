@@ -4,7 +4,7 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
-- [2026-10-01 PermissionEngine](2026-10-01-permission-engine.md) (Proposed): deterministic,
+- [2026-10-01 PermissionEngine](2026-10-01-permission-engine.md): deterministic,
   session-scoped `allow | ask | deny` authorization after `pre_tool_use` hooks — config rules
   (`deny > ask > allow`), modes (`default`/`read_only`/`dont_ask`/`bypass`), fail-closed,
   session grants; progress guard split out of `policy.py`; `destructiveHint` ignored per the

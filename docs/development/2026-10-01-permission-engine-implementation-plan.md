@@ -1,6 +1,14 @@
 # PermissionEngine — план реализации
 
-Дата: 2026-10-01 · Ветка: `feat/permission-engine` · Статус: **Proposed**
+Дата: 2026-10-01 · Ветка: `feat/permission-engine` · Статус: **Implemented**
+
+> Реализовано коммитами 0–7 на `feat/permission-engine`. Отличия от плана: по инвентаризации
+> аннотаций (ADR) `destructiveHint` не учитывается и `tool_is_destructive` не добавлен;
+> `PermissionCheck` без поля `destructive`; JS-раннер Playwright называется
+> `browser_run_code_unsafe`; ref у Playwright MCP 1.64 передаётся в `args.target`;
+> резолвер берёт `Page URL:` сначала из последнего ответа инструмента, затем из снапшота;
+> ожидание ответа человека ограничено 80 % `loop.progress_timeout_seconds`.
+> Актуальное описание — [Permissions Guide](permissions.md).
 
 Основа: [PermissionEngine Research](../research/2026-10-01-permission-engine-research.md)
 (далее — «research»). Продолжает «Phase 5: ToolBroker And PermissionEngine» из
