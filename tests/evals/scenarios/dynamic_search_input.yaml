@@ -8,30 +8,30 @@ model:
           status: pending
     - decision: tool_call
       tool_request:
-        name: browser.snapshot
+        name: browser_snapshot
         args: {}
         reason: Inspect current refs.
     - decision: tool_call
       tool_request:
-        name: browser.click
+        name: browser_click
         args:
           ref: e7
         reason: Reveal the input.
     - decision: tool_call
       tool_request:
-        name: browser.snapshot
+        name: browser_snapshot
         args: {}
         reason: Inspect the revealed input.
     - decision: tool_call
       tool_request:
-        name: browser.type
+        name: browser_type
         args:
           ref: e8
           text: boots
         reason: Type query into revealed input.
     - decision: tool_call
       tool_request:
-        name: browser.snapshot
+        name: browser_snapshot
         args: {}
         reason: Inspect results.
     - decision: done

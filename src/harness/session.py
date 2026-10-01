@@ -24,7 +24,7 @@ from src.agent_loop.goals import GoalRunRequest, GoalRunner
 from src.config import get_settings
 from src.contracts import PermissionMode
 from src.harness.hooks import HookEngine, NullHookEngine, registry_digest
-from src.browser.permissions import BROWSER_BUILTIN_RULES, BrowserResourceResolver
+from src.browser.permissions import BrowserResourceResolver
 from src.harness.permissions import PermissionEngine
 from src.harness.mcp_setup import MCPRuntime, build_mcp_runtime
 from src.harness.runtime import (
@@ -422,7 +422,6 @@ class SessionContext:
         self.hooks_registry_sha256 = registry_digest(settings.hooks)
         self.permissions = PermissionEngine.from_settings(
             settings.permissions,
-            extra_builtin=BROWSER_BUILTIN_RULES,
             resolver=BrowserResourceResolver(),
             mode=self.config.permission_mode,
         )

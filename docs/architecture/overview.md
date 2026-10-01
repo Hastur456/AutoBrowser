@@ -288,11 +288,11 @@ Two separate checks run before a tool call executes:
   `loop.max_ineffective_actions` times. It is quality control, not authorization.
 - The session-scoped **`PermissionEngine`** (`src/harness/permissions.py`, event
   `permission.decided`) authorizes the final normalized call after `pre_tool_use` hooks:
-  config rules (`permissions.rules`, `deny > ask > allow`), code-defined builtin rules
-  (tool names containing `payment`, `purchase`, `delete_account` or `credential` → ask), the
-  mode (`default`, `read_only`, `dont_ask`, `bypass`) and session grants. A deny is returned
+  the configured `permissions.rules` (`deny > ask > allow`; no rule ships with the code and
+  the engine names no tool, so out of the box nothing asks), the mode (`default`, `read_only`, `dont_ask`, `bypass`) and session grants. A deny is returned
   to the model as the tool output; an ask goes to `permission_request` hooks and the human.
-  See [ADR](../decisions/2026-10-01-permission-engine.md).
+  See [ADR](../decisions/2026-10-01-permission-engine.md) and
+  [Name-Free Permission Defaults](../decisions/2026-10-01-name-free-permission-defaults.md).
 
 ## Browser Semantics
 
@@ -303,8 +303,8 @@ The project follows Playwright MCP semantics:
 - Refs are ephemeral and valid only for the snapshot that produced them.
 - Preferred interactions are `browser_click(ref)`, `browser_type(ref)`, and
   `browser_hover(ref)`.
-- Provider-neutral code may use canonical names such as `browser.snapshot`, but
-  production execution maps them to Playwright MCP tool names.
+- Code, prompts and evals use the tool names the browser server exposes; there is
+  no canonical `browser.*` vocabulary to translate from.
 - If a snapshot does not expose the required control, the agent should request
   a fresh/deeper snapshot or use `browser_evaluate` only when snapshots cannot
   answer the question.

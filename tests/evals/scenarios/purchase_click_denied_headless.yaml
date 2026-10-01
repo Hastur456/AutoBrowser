@@ -17,12 +17,12 @@ model:
           status: pending
     - decision: tool_call
       tool_request:
-        name: browser.snapshot
+        name: browser_snapshot
         args: {}
         reason: Inspect the page.
     - decision: tool_call
       tool_request:
-        name: browser.click
+        name: browser_click
         args:
           ref: e5
         reason: Buy the jacket.

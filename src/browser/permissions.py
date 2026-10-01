@@ -1,12 +1,13 @@
-"""Browser side of the PermissionEngine: resources (domain, click target) and builtin rules.
+"""Browser side of the PermissionEngine: resources (domain, click target).
 
 The engine (:mod:`src.harness.permissions`) is server-neutral; everything that knows about
-URLs, Playwright MCP arguments and snapshot text lives here. Both resources are best-effort
-guardrails, not a security boundary — the real browser boundaries are profile isolation and
-Playwright's ``--blocked-origins``.
+URLs, browser-tool arguments and snapshot text lives here. No tool is named: which tools are
+risky is the configured ``permissions.rules``. Both resources are best-effort guardrails, not
+a security boundary — the real browser boundaries are profile isolation and Playwright's
+``--blocked-origins``.
 
-* ``domain`` — the host a call acts on: ``args.url`` for ``browser_navigate`` (and
-  ``browser_tabs`` ``new``), otherwise the ``- Page URL:`` line of the latest tool output, then
+* ``domain`` — the host a call acts on: its ``url`` argument when it has one (a navigation or
+  a new tab goes there), otherwise the ``- Page URL:`` line of the latest tool output, then
   of the current snapshot (Playwright MCP prints it in both). Lowercase, no ``www.``/port,
   IDN as punycode (:func:`src.config.normalize_domain`). ``data:``/``about:`` pages and an
   unparsable URL give no domain, which permission rules treat fail-closed.
@@ -23,32 +24,12 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
-from src.browser.names import TABS_TOOL
-from src.config import PermissionRule, normalize_domain
+from src.config import normalize_domain
 from src.contracts import PermissionCheck
-
-NAVIGATE_TOOL = "browser_navigate"
 
 _PAGE_URL = re.compile(r"^\s*-\s*Page URL:\s*(\S+)", re.MULTILINE)
 _SCHEMELESS = re.compile(r"^[\w.-]+\.[a-z]{2,}([:/?#]|$)", re.IGNORECASE)
 _ATTRIBUTE = re.compile(r"\s*\[[^\]]*\]")
-
-#: Browser rules no configuration can remove (``extra_builtin`` of the session engine).
-BROWSER_BUILTIN_RULES: tuple[PermissionRule, ...] = (
-    PermissionRule(
-        id="browser-evaluate",
-        decision="ask",
-        always_ask=True,
-        tool=r"browser_evaluate|browser_run_code(_unsafe)?",
-        reason="Running JavaScript in the page needs approval ({tool}).",
-    ),
-    PermissionRule(
-        id="browser-file-upload",
-        decision="ask",
-        tool=r"browser_file_upload|browser_drop",
-        reason="Handing local files to the page needs approval ({tool}).",
-    ),
-)
 
 
 def url_domain(url: Any) -> str:
@@ -88,7 +69,7 @@ def snapshot_element(snapshot: Any, ref: Any) -> str:
 
 
 class BrowserResourceResolver:
-    """:class:`~src.contracts.PermissionResourceResolver` for Playwright-MCP-style tools."""
+    """:class:`~src.contracts.PermissionResourceResolver` for snapshot-driven browser tools."""
 
     def resources(self, check: PermissionCheck, state: Mapping[str, Any]) -> Mapping[str, str]:
         resources: dict[str, str] = {}
@@ -102,7 +83,7 @@ class BrowserResourceResolver:
 
     @staticmethod
     def _domain(check: PermissionCheck, state: Mapping[str, Any]) -> str:
-        if check.tool in {NAVIGATE_TOOL, TABS_TOOL} and check.args.get("url"):
+        if check.args.get("url"):
             # The destination, even when it has no host: never fall back to the current page.
             return url_domain(check.args["url"])
         result = state.get("tool_result") or {}
@@ -128,7 +109,6 @@ class BrowserResourceResolver:
 
 
 __all__ = [
-    "BROWSER_BUILTIN_RULES",
     "BrowserResourceResolver",
     "page_url",
     "snapshot_element",

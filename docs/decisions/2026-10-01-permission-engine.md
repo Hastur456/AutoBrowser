@@ -1,6 +1,7 @@
 # ADR-2026-10-01: PermissionEngine
 
-Status: Accepted
+Status: Accepted; partially superseded by
+[Name-Free Permission Defaults](2026-10-01-name-free-permission-defaults.md)
 Date: 2026-10-01
 
 ## Context

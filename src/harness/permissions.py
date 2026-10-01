@@ -20,6 +20,10 @@ Any exception fails closed (``deny``, ``source: error``). A rule that filters on
 (``domains``, ``not_domains``, ``target``) the resolver could not provide matches for
 ``deny``/``ask`` and not for ``allow``.
 
+The engine knows no tool names and ships no rules: what is risky is only the configured
+``permissions.rules`` (:class:`~src.config.PermissionsSettings`), plus the MCP
+``readOnlyHint`` annotation for ``read_only`` mode.
+
 Server-neutral: resources (domain, click target) come from an injected
 :class:`~src.contracts.PermissionResourceResolver`; the browser one lives in
 :mod:`src.browser.permissions`. Reasons never quote the call arguments.
@@ -43,17 +47,6 @@ from src.contracts import (
 )
 
 logger = logging.getLogger(__name__)
-
-#: Code-defined rules no configuration can remove. Tools whose *name* says they pay, buy,
-#: delete an account or handle credentials need approval (the former policy markers).
-BUILTIN_RULES: tuple[PermissionRule, ...] = (
-    PermissionRule(
-        id="sensitive-tool-name",
-        decision="ask",
-        tool=r"(?i).*(payment|purchase|delete_account|credential).*",
-        reason="Tool requires human approval before use: {tool}",
-    ),
-)
 
 GrantKey = tuple[str, str, str]
 
@@ -128,11 +121,9 @@ class PermissionEngine:
         *,
         mode: PermissionMode = "default",
         rules: Iterable[PermissionRule] = (),
-        builtin: Iterable[PermissionRule] = BUILTIN_RULES,
         resolver: PermissionResourceResolver | None = None,
     ) -> None:
-        compiled = [_CompiledRule.build(rule, "builtin") for rule in builtin]
-        compiled += [_CompiledRule.build(rule, "rule") for rule in rules]
+        compiled = [_CompiledRule.build(rule, "rule") for rule in rules]
         seen: set[str] = set()
         for item in compiled:
             if item.rule.id in seen:
@@ -146,19 +137,18 @@ class PermissionEngine:
     @classmethod
     def from_settings(
         cls,
-        settings: PermissionsSettings,
+        settings: PermissionsSettings | None = None,
         *,
-        builtin: Iterable[PermissionRule] = BUILTIN_RULES,
-        extra_builtin: Iterable[PermissionRule] = (),
         resolver: PermissionResourceResolver | None = None,
         mode: PermissionMode | None = None,
     ) -> PermissionEngine:
-        """Build from ``settings.permissions``; ``mode`` overrides the configured one."""
+        """Build from ``settings.permissions`` (the code defaults when ``None``, never the
+        personal config); ``mode`` overrides the configured one."""
 
+        settings = settings if settings is not None else PermissionsSettings()
         return cls(
             mode=mode or settings.mode,
             rules=settings.rules,
-            builtin=[*builtin, *extra_builtin],
             resolver=resolver,
         )
 
@@ -287,4 +277,4 @@ class PermissionEngine:
         )
 
 
-__all__ = ["BUILTIN_RULES", "GrantKey", "PermissionEngine"]
+__all__ = ["GrantKey", "PermissionEngine"]

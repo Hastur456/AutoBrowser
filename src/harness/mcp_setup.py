@@ -169,8 +169,8 @@ def build_mcp_runtime(
         manager=manager,
         tool_source=tool_source,
         browser_server=browser_server,
-        # Resolve canonical browser.* action names to whatever the browser server
-        # actually exposes (e.g. browser_click) before the schema-based arg filter runs.
+        # Drop browser arguments the exposed tool's schema forbids before the
+        # schema-based arg filter runs.
         normalizers=[BrowserToolNormalizer(), SchemaArgsNormalizer()],
     )
 

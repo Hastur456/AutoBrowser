@@ -34,10 +34,10 @@ HookEventName = Literal[
 HookDecision = Literal["allow", "deny", "ask"]
 PermissionDecision = Literal["allow", "ask", "deny"]
 PermissionMode = Literal["default", "read_only", "dont_ask", "bypass"]
-#: What decided a :class:`PermissionVerdict`: a config rule, a code-defined rule, a
+#: What decided a :class:`PermissionVerdict`: a config rule (``permissions.rules``), a
 #: ``pre_tool_use`` hook ``ask``, the mode default, the ``readOnlyHint`` annotation, a session
 #: grant, or a failed evaluation (always ``deny``).
-PermissionSource = Literal["rule", "builtin", "hook", "mode", "annotation", "grant", "error"]
+PermissionSource = Literal["rule", "hook", "mode", "annotation", "grant", "error"]
 #: A human's answer to an approval prompt: run this call, run it and remember the grant for
 #: the session, or refuse.
 ApprovalAnswer = Literal["once", "session", "deny"]

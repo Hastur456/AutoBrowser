@@ -223,7 +223,7 @@ Useful CLI flags include `--loop`, `--show-state`, `--hide-snapshot`, `--show-to
 
 Use Python 3.12-compatible code. Follow PEP 8 with 4-space indentation, snake_case for functions and modules, PascalCase for classes, and UPPER_SNAKE_CASE for constants. Add type hints for public functions, loop state structures, and browser boundary contracts.
 
-Keep engine, state, and prompt code in the `src/agent_loop/execution/` and `src/agent_loop/prompts.py` patterns. Put runtime-facing Agent Loop contracts, durable event/trace helpers, replay/eval helpers, batch/export helpers, context assembly, skills, and goal lifecycle boundaries in `src/agent_loop/`. Put infrastructure abstractions in `src/harness/` instead of expanding engine modules. Put browser backend contracts, canonical names, shared errors, and backend adapters in `src/browser/`. Prefer strict `LoopState` updates and typed contracts over ad hoc dictionaries when changing loop or browser boundaries.
+Keep engine, state, and prompt code in the `src/agent_loop/execution/` and `src/agent_loop/prompts.py` patterns. Put runtime-facing Agent Loop contracts, durable event/trace helpers, replay/eval helpers, batch/export helpers, context assembly, skills, and goal lifecycle boundaries in `src/agent_loop/`. Put infrastructure abstractions in `src/harness/` instead of expanding engine modules. Put browser tool-name helpers, shared errors, the request normalizer, the permission resource resolver, and browser hooks in `src/browser/`; tool names are the exposed MCP names (no canonical vocabulary). Prefer strict `LoopState` updates and typed contracts over ad hoc dictionaries when changing loop or browser boundaries.
 
 ## Testing Guidelines
 
@@ -249,7 +249,7 @@ Preferred interaction:
 - `browser_type(ref)`
 - `browser_hover(ref)`
 
-Provider-neutral tests may use canonical names such as `browser.snapshot`, `browser.click`, `browser.type`, and `browser.hover`; production execution maps them to the exposed tool names through `BrowserToolNormalizer`.
+Tests, evals and prompts use the exposed tool names (`browser_snapshot`, `browser_click`, …); there is no canonical `browser.*` vocabulary and `BrowserToolNormalizer` never translates names.
 
 Ref freshness:
 

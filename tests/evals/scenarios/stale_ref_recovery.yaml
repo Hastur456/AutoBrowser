@@ -8,18 +8,18 @@ model:
           status: pending
     - decision: tool_call
       tool_request:
-        name: browser.snapshot
+        name: browser_snapshot
         args: {}
         reason: Inspect current refs.
     - decision: tool_call
       tool_request:
-        name: browser.click
+        name: browser_click
         args:
           ref: e1
         reason: Try a stale ref.
     - decision: tool_call
       tool_request:
-        name: browser.click
+        name: browser_click
         args:
           ref: e2
         reason: Click the refreshed result.

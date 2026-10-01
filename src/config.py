@@ -765,8 +765,9 @@ class PermissionRule(_Section):
 class PermissionsSettings(_Section):
     """Deterministic tool authorization (``src/harness/permissions.py``).
 
-    ``rules`` holds only the user's rules: non-removable rules live in code, because a
-    list set in one source replaces (never extends) the list of the sources below it.
+    No rule ships with the code: the engine knows no tool names, so what is risky is only what
+    ``rules`` says. A list set in one source replaces (never extends) the list of the sources
+    below it.
     """
 
     mode: Annotated[

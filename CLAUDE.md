@@ -220,15 +220,19 @@ evaluated after `pre_tool_use` hooks on the final arguments
 (`docs/decisions/2026-10-01-permission-engine.md`; guide: `docs/development/permissions.md`).
 
 - Where things live: contracts (`PermissionCheck`, `PermissionVerdict`, `ApprovalAnswer`) in
-  `src/contracts.py`; settings (`permissions.mode`, `permissions.rules`, `PermissionRule`,
-  `normalize_domain`) in `src/config.py`; `PermissionEngine` + `BUILTIN_RULES` in
-  `src/harness/permissions.py`; the browser resolver (domain from `args.url`/`Page URL:`,
-  click target from `element` + the snapshot line of the ref) and `BROWSER_BUILTIN_RULES` in
-  `src/browser/permissions.py`; the CLI prompt in `src/cli/approval.py`; the call site and
+  `src/contracts.py`; settings (`permissions.mode`, `permissions.rules`,
+  `PermissionRule`, `normalize_domain`) in `src/config.py`;
+  `PermissionEngine` in `src/harness/permissions.py`; the browser resolver (domain from a
+  `url` argument or the `Page URL:`, click target from `element` + the snapshot line of the
+  ref) in `src/browser/permissions.py`; the CLI prompt in `src/cli/approval.py`; the call site and
   `permission.decided`/`approval.resolved` emission in `src/agent_loop/execution/loop.py`.
 - Rules resolve `deny > ask > allow` regardless of order; a rule needing an unresolved
-  resource matches for deny/ask, never for allow; any evaluation error is a deny. Builtin
-  rules live in code (config lists replace, never merge).
+  resource matches for deny/ask, never for allow; any evaluation error is a deny.
+- **No tool names in the engine or `src/browser/`, and no shipped rules**
+  (`docs/decisions/2026-10-01-name-free-permission-defaults.md`). Out of the box nothing
+  asks; risky tools (page JavaScript, file upload, sensitive names) are guarded only by
+  rules the user configures — opt-in examples are commented in `config.example.yaml`.
+  Don't reintroduce code-level rule lists or default ask rules.
 - Modes: `default`, `read_only` (only `readOnlyHint` tools), `dont_ask` (ask → deny; forced
   for a configured `default` without a TTY), `bypass` (asks granted, deny/`always_ask`
   hold). `destructiveHint` is ignored (Playwright sets it on every mutating tool).
@@ -236,8 +240,10 @@ evaluated after `pre_tool_use` hooks on the final arguments
   terminal `blocked`. The human answers `once | session | deny`; `session` stores a
   `(server, tool, domain)` grant on the session-scoped engine.
 - Session-scoped like hooks (`SessionContext.permissions`, built before Chrome/MCP, reaching
-  the loop via `EngineResources.permissions`); without it `EngineResources` gets a default
-  engine with only `BUILTIN_RULES`. Tests build engines from explicit `PermissionsSettings`.
+  the loop via `EngineResources.permissions`); without it `EngineResources` gets
+  `PermissionEngine.from_settings()` — the code-default settings (no rules), never the
+  personal config.
+  Tests build engines from explicit `PermissionsSettings`.
 
 ## Feature Flags (env vars)
 

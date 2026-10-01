@@ -8,18 +8,18 @@ model:
           status: pending
     - decision: tool_call
       tool_request:
-        name: browser.snapshot
+        name: browser_snapshot
         args: {}
         reason: Inspect current refs.
     - decision: tool_call
       tool_request:
-        name: browser.click
+        name: browser_click
         args:
           ref: e7
         reason: Open search.
     - decision: tool_call
       tool_request:
-        name: browser.snapshot
+        name: browser_snapshot
         args: {}
         reason: Inspect after click.
     - decision: replan

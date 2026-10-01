@@ -19,6 +19,7 @@ from typing import Any, Iterable
 import cmd2
 from cmd2 import Cmd2ArgumentParser, with_argparser
 
+from src.browser.names import SNAPSHOT_TOOL
 from src.cli.output import format_mcp_status
 from src.cli.approval import ApprovalPrompt
 from src.harness.session import SessionContext, SessionRuntime, TaskRecord
@@ -359,18 +360,9 @@ class AgentCli(cmd2.Cmd):
         return path
 
     async def _current_url(self) -> str | None:
+        # Read-only: the snapshot's "Page URL:" line, never page JavaScript.
         await self.runtime.start()
-        evaluate = await self._get_optional_tool("browser_evaluate")
-        if evaluate is not None:
-            result = await self._call_tool(
-                evaluate,
-                {"function": "() => window.location.href"},
-            )
-            url = self._extract_url(self._result_text(result))
-            if url:
-                return url
-
-        snapshot = await self._get_optional_tool("browser_snapshot")
+        snapshot = await self._get_optional_tool(SNAPSHOT_TOOL)
         if snapshot is None:
             return None
         text = self._result_text(await self._call_tool(snapshot, {}))
@@ -563,7 +555,7 @@ class AgentCli(cmd2.Cmd):
         return str(result)
 
     def _extract_url(self, text: str) -> str | None:
-        """First URL in a tool's text output (evaluate result or page snapshot)."""
+        """First URL in a page snapshot (its ``Page URL:`` line first)."""
 
         for line in text.splitlines():
             stripped = line.strip().lstrip("-* ").strip()

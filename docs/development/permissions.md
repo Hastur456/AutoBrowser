@@ -76,14 +76,15 @@ annotation inventory is in the ADR. `readOnlyHint` is accurate and is what `read
 
 ## Rules
 
-Rules live in `permissions.rules` — prefer the YAML file (`config.yaml`); a list set in one
-settings source **replaces** the list of the sources below it, it never merges.
+Rules live in `permissions.rules` — the only rules there are (see
+[No Shipped Rules](#no-shipped-rules)). Prefer the YAML file (`config.yaml`); a list set in
+one settings source **replaces** the list of the sources below it, it never merges.
 
 ```yaml
 permissions:
   mode: default
   rules:
-    - id: shop-only                 # required, unique (also across builtin rules)
+    - id: shop-only                 # required, unique
       decision: deny                # allow | ask | deny
       server: playwright            # exact MCP server name; "" (default) = any
       tool: browser_navigate        # re.fullmatch on the exposed tool name; default ".*"
@@ -110,34 +111,40 @@ not be resolved — a `data:` page, a snapshot without `Page URL:`, no snapshot 
 during evaluation is a `deny` with `source: error` (the exception text never reaches the
 model or the events).
 
-Startup fails on a rule that is wrong: a regex that does not compile, a duplicate id, an id
-that clashes with a builtin rule, `always_ask` on a non-`ask` rule, `domains` together with
+Startup fails on a rule that is wrong: a regex that does not compile, a duplicate id,
+`always_ask` on a non-`ask` rule, `domains` together with
 `not_domains`, or a domain that is not a host (`https://…`, a path, a port).
 
 Domains are normalized on both sides: lowercase, no `www.`/`*.`/leading dot, IDN as punycode
 (`пример.рф` → `xn--e1afmkfd.xn--p1ai`).
 
-### Builtin Rules
+### No Shipped Rules
 
-Code-defined, always present, not removable by configuration (a config `deny` on the same
-tool still wins, because deny beats ask):
+No rule ships with the code, and neither the engine nor `src/browser/` names a tool. Out of
+the box nothing asks for approval: every call runs unless a rule you configure says
+otherwise (`read_only` mode still denies non-`readOnlyHint` tools). MCP annotations cannot
+tell page JavaScript from a click (Playwright MCP marks both `readOnlyHint: false,
+destructiveHint: true`), so a guard for risky tools is a rule that names them. Ready-made
+opt-in examples are commented out in `config.example.yaml`:
 
-| id | Decision | Tools | Why |
+| Example id | Decision | Tools | Why you might want it |
 |---|---|---|---|
-| `sensitive-tool-name` | ask | names containing `payment`, `purchase`, `delete_account`, `credential` (any case) | the former name markers |
-| `browser-evaluate` | ask, `always_ask` | `browser_evaluate`, `browser_run_code`, `browser_run_code_unsafe` | arbitrary page JavaScript bypasses every other rule |
-| `browser-file-upload` | ask | `browser_file_upload`, `browser_drop` | hands local files to the page |
+| `page-js` | ask, `always_ask` | `browser_evaluate`, `browser_run_code`, `browser_run_code_unsafe` | arbitrary page JavaScript bypasses every other rule |
+| `file-handoff` | ask | `browser_file_upload`, `browser_drop` | hands local files to the page |
+| `sensitive-tool-names` | ask | names containing `payment`, `purchase`, `delete_account`, `credential` (any case) | the former name markers |
 
-`EngineResources` built without a session engine (unit tests) gets only
-`sensitive-tool-name`; the browser rules are added by `SessionContext` and by the eval harness.
+`EngineResources` built without a session engine (unit tests) gets
+`PermissionEngine.from_settings()`: the code-default settings (no rules), never the personal
+config. See the [ADR](../decisions/2026-10-01-name-free-permission-defaults.md).
 
 ## Resources: Domain and Target
 
 `src/browser/permissions.py` (`BrowserResourceResolver`) gives rules two resources:
 
-- **`domain`** — `args.url` for `browser_navigate` and `browser_tabs` (`new`): the
-  destination, never the current page. For every other tool: the `- Page URL:` line of the
-  latest tool output, else of the current snapshot.
+- **`domain`** — the call's `url` argument when it has one (`browser_navigate`,
+  `browser_tabs` `new`, any other tool taking a `url`): the destination, never the current
+  page. Otherwise the `- Page URL:` line of the latest tool output, else of the current
+  snapshot. The resolver keys on the argument, not on tool names.
 - **`target`** — what an element action acts on: the model's `element` description plus the
   snapshot line of the referenced element (`args.target`, or `ref`), e.g.
   `Buy button` + `button "Купить"`; for `browser_fill_form` every field's `name` and snapshot
@@ -180,7 +187,7 @@ Approval needed (rule purchases): browser_click on shop.example
 ## Debugging a Decision
 
 Every evaluated call emits `permission.decided` — `tool`, `server`, `decision`, `source`
-(`rule`, `builtin`, `hook`, `mode`, `annotation`, `grant`, `error`), `rule_id`, `mode`,
+(`rule`, `hook`, `mode`, `annotation`, `grant`, `error`), `rule_id`, `mode`,
 `reason`, **never the arguments**. Approvals emit `approval.requested` (with `rule_id`) and
 `approval.resolved` (`decision`, `by: hook|human|grant`, `scope: once|session`).
 
@@ -241,7 +248,7 @@ engine = PermissionEngine.from_settings(
 ```
 
 and pass it as `EngineResources.from_harness(..., permissions=engine)`. Reference tests:
-`tests/test_permissions.py` (engine), `tests/test_browser_permissions.py` (resolver, builtin
-rules), `tests/test_agent_loop_permissions.py` (loop order, approvals, grants),
+`tests/test_permissions.py` (engine), `tests/test_browser_permissions.py` (resolver,
+configured browser rules), `tests/test_agent_loop_permissions.py` (loop order, approvals, grants),
 `tests/test_cli_approval.py` (CLI prompt, modes), and the eval scenarios
 `purchase_click_denied_*` (`permissions:` and `human: {answers: [...]}` blocks).

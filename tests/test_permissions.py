@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from src.config import PermissionRule, PermissionsSettings, normalize_domain
 from src.contracts import PermissionCheck
-from src.harness.permissions import BUILTIN_RULES, PermissionEngine
+from src.harness.permissions import PermissionEngine
 
 MODES = ("default", "read_only", "dont_ask", "bypass")
 
@@ -257,31 +257,37 @@ def test_a_matcher_failure_denies() -> None:
     assert (verdict.decision, verdict.source) == ("deny", "error")
 
 
-# --------------------------------------------------------------------------- builtin rules
+# --------------------------------------------------------------------------- no shipped rules
 
 
-def test_the_builtin_marker_rule_asks_for_sensitive_tool_names() -> None:
+def test_no_rule_ships_with_the_code() -> None:
+    assert PermissionsSettings().rules == []
     perms = engine()
-    for name in ("purchase_item", "make_PAYMENT", "delete_account", "get_credentials"):
-        verdict = perms.evaluate(check(name, server="shop"))
-        assert (verdict.decision, verdict.source) == ("ask", "builtin"), name
-        assert verdict.reason == f"Tool requires human approval before use: {name}"
-        assert verdict.rule_id == "sensitive-tool-name"
+    for name in ("purchase_item", "delete_account", "browser_evaluate", "browser_file_upload"):
+        verdict = perms.evaluate(check(name))
+        assert (verdict.decision, verdict.source, verdict.rule_id) == ("allow", "mode", ""), name
+
+
+def test_a_configured_rule_names_the_risky_tools() -> None:
+    perms = engine(
+        rule(
+            "sensitive",
+            "ask",
+            tool=r"(?i).*(payment|purchase|delete_account|credential).*",
+            reason="Tool requires human approval before use: {tool}",
+        )
+    )
+    verdict = perms.evaluate(check("make_PAYMENT", server="shop"))
+    assert (verdict.decision, verdict.source, verdict.rule_id) == ("ask", "rule", "sensitive")
+    assert verdict.reason == "Tool requires human approval before use: make_PAYMENT"
     assert perms.evaluate(check("browser_click")).decision == "allow"
 
 
-def test_config_rules_cannot_remove_builtin_rules() -> None:
-    perms = engine(rule("buy-ok", "allow", tool="purchase_item"))
-    assert perms.evaluate(check("purchase_item")).decision == "ask"
-
-
-def test_extra_builtin_rules_and_duplicate_ids() -> None:
-    extra = rule("js", "ask", tool="browser_evaluate", always_ask=True)
-    perms = engine(extra_builtin=[extra])
-    assert perms.evaluate(check("browser_evaluate")).source == "builtin"
+def test_rule_ids_are_unique() -> None:
     with pytest.raises(ValueError, match="duplicate permission rule id"):
-        engine(rule("sensitive-tool-name", "deny"))
-    assert [item.id for item in BUILTIN_RULES] == ["sensitive-tool-name"]
+        engine(rule("a", "deny"), rule("a", "ask"))
+    with pytest.raises(ValueError, match="duplicate permission rule id"):
+        PermissionEngine(rules=[rule("a", "deny"), rule("a", "ask")])
 
 
 # --------------------------------------------------------------------------- validation

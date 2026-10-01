@@ -26,7 +26,7 @@ GRANTABLE = PermissionVerdict(
 ALWAYS = PermissionVerdict(
     decision="ask",
     reason="Running JavaScript in the page needs approval (browser_evaluate).",
-    source="builtin",
+    source="rule",
     rule_id="browser-evaluate",
     always_ask=True,
 )

@@ -80,4 +80,5 @@ The `PermissionEngine` follows the same pattern: `SessionContext.initialize` bui
 `settings.permissions` before Chrome/MCP start (a clashing rule id fails startup), it holds the
 session's approval grants across tasks, and `run_task` passes it through
 `EngineResources.from_harness(..., permissions=...)`. Without it, `EngineResources` gets a
-default engine with only the code-defined (builtin) rules in `default` mode.
+`PermissionEngine.from_settings()`: the code-default settings (no rules, `default` mode), never
+the personal config.

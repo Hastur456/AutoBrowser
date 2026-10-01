@@ -919,3 +919,9 @@ def test_a_broken_permission_rule_fails_startup(settings: Any) -> None:
                 ]
             }
         )
+
+
+def test_no_permission_rule_ships_with_the_code(settings: Any) -> None:
+    permissions = settings().permissions
+
+    assert (permissions.mode, permissions.rules) == ("default", [])

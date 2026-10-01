@@ -223,8 +223,8 @@ async def test_a_human_refusal_stays_terminal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_without_an_engine_sensitive_names_still_ask_the_human() -> None:
-    """The default ``EngineResources.permissions`` keeps the builtin marker rule."""
+async def test_without_rules_nothing_asks_the_human() -> None:
+    """The default ``EngineResources.permissions`` ships no rule: no tool name asks."""
 
     bought: list[Any] = []
 
@@ -233,7 +233,7 @@ async def test_without_an_engine_sensitive_names_still_ask_the_human() -> None:
         return "bought"
 
     human = Human(True)
-    result, _, _ = await run_engine(
+    result, records, _ = await run_engine(
         [PLAN, call("purchase_item", "c1", sku="1"), DONE],
         tools=[Tool(name="purchase_item", func=purchase)],
         human_input=human,
@@ -241,9 +241,9 @@ async def test_without_an_engine_sensitive_names_still_ask_the_human() -> None:
 
     assert bought == [{"sku": "1"}]
     assert result.status == "done"
-    (reason, verdict) = human.asked[0]
-    assert reason == "Tool requires human approval before use: purchase_item"
-    assert (verdict.source, verdict.rule_id) == ("builtin", "sensitive-tool-name")
+    assert human.asked == []
+    (event,) = permission_events(records)
+    assert (event["decision"], event["source"], event["rule_id"]) == ("allow", "mode", "")
 
 
 @pytest.mark.asyncio

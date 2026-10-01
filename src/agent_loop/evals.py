@@ -21,9 +21,9 @@ from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.replay import TraceSummary, print_action_sequence, summarize_trace
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
-from src.browser.names import is_browser_tool_name, to_playwright_browser_name
+from src.browser.names import is_browser_tool_name
 from src.browser.normalization import BrowserToolNormalizer
-from src.browser.permissions import BROWSER_BUILTIN_RULES, BrowserResourceResolver
+from src.browser.permissions import BrowserResourceResolver
 from src.config import PermissionsSettings
 from src.contracts import ApprovalAnswer, PermissionVerdict, Tool, ToolRequest, ToolResult
 from src.harness.permissions import PermissionEngine
@@ -68,10 +68,7 @@ class _FakeBrowserTools:
             normalized_request["args"] = args
             return normalized_request
 
-        tool_name = to_playwright_browser_name(requested_name)
-        normalized_request["name"] = tool_name
-
-        if tool_name in {"browser_click", "browser_hover", "browser_type"}:
+        if requested_name in {"browser_click", "browser_hover", "browser_type"}:
             ref = self._ref_from_args(args)
             if ref:
                 args.setdefault("ref", ref)
@@ -148,24 +145,6 @@ class _FakeBrowserTools:
             self._advance_snapshot()
             return f"Hovered ref {resolved_ref}."
 
-        async def browser_evaluate(
-            expression: str | None = None,
-            script: str | None = None,
-        ) -> dict[str, str]:
-            """Evaluate a script in the fake browser without mutating page state."""
-
-            payload = str(expression or script or "").strip()
-            if not payload:
-                raise ValueError(
-                    "Fake browser evaluate requires an expression or script."
-                )
-
-            return {
-                "source": "expression" if expression else "script",
-                "expression": payload,
-                "snapshot": self._current_snapshot(),
-            }
-
         return [
             self._tool(browser_navigate, {"url": {"type": "string"}}, required=("url",)),
             self._tool(browser_snapshot, {"depth": {"type": "integer"}}),
@@ -190,13 +169,6 @@ class _FakeBrowserTools:
                 {
                     "ref": {"type": "string"},
                     "target": {"type": "string"},
-                },
-            ),
-            self._tool(
-                browser_evaluate,
-                {
-                    "expression": {"type": "string"},
-                    "script": {"type": "string"},
                 },
             ),
         ]
@@ -391,8 +363,8 @@ async def run_scenario(scenario: EvalScenario) -> EvalResult:
     llm = FakeChatModel(responses=scenario.model_responses)
     harness = BrowserHarness(
         llm=llm,
-        # Same canonical-name normalizer the real session wires for the browser MCP
-        # server (see src/harness/mcp_setup.py), so browser.click etc. resolve here too.
+        # Same browser normalizer the real session wires for the browser MCP server
+        # (see src/harness/mcp_setup.py).
         tool_registry=ToolRegistry(
             providers=[provider], normalizers=[BrowserToolNormalizer(), provider]
         ),
@@ -405,7 +377,6 @@ async def run_scenario(scenario: EvalScenario) -> EvalResult:
         events=emitter,
         permissions=PermissionEngine.from_settings(
             scenario.permissions,
-            extra_builtin=BROWSER_BUILTIN_RULES,
             resolver=BrowserResourceResolver(),
         ),
     )

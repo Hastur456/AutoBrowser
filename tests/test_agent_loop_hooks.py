@@ -26,9 +26,9 @@ from src.agent_loop.execution.loop import (
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import LoopState
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
-from src.browser.names import is_browser_tool_name, to_playwright_browser_name
+from src.browser.names import is_browser_tool_name
 from src.browser.normalization import BrowserToolNormalizer
-from src.config import HooksSettings
+from src.config import HooksSettings, PermissionRule, PermissionsSettings
 from src.contracts import (
     HookEvent,
     HookResult,
@@ -40,6 +40,7 @@ from src.contracts import (
 from src.harness.builtin_hooks import approve_tools
 from src.harness.hooks import HookEngine, NullHookEngine, RegisteredHook
 from src.harness.mcp_tools import MCPToolSource
+from src.harness.permissions import PermissionEngine
 from src.harness.runtime import BrowserHarness
 from src.harness.tools import ToolRegistry
 from src.llm import ModelResponse
@@ -82,10 +83,7 @@ class _FakeBrowserTools:
             normalized_request["args"] = args
             return normalized_request
 
-        tool_name = to_playwright_browser_name(requested_name)
-        normalized_request["name"] = tool_name
-
-        if tool_name in {"browser_click", "browser_hover", "browser_type"}:
+        if requested_name in {"browser_click", "browser_hover", "browser_type"}:
             ref = self._ref_from_args(args)
             if ref:
                 args.setdefault("ref", ref)
@@ -162,24 +160,6 @@ class _FakeBrowserTools:
             self._advance_snapshot()
             return f"Hovered ref {resolved_ref}."
 
-        async def browser_evaluate(
-            expression: str | None = None,
-            script: str | None = None,
-        ) -> dict[str, str]:
-            """Evaluate a script in the fake browser without mutating page state."""
-
-            payload = str(expression or script or "").strip()
-            if not payload:
-                raise ValueError(
-                    "Fake browser evaluate requires an expression or script."
-                )
-
-            return {
-                "source": "expression" if expression else "script",
-                "expression": payload,
-                "snapshot": self._current_snapshot(),
-            }
-
         return [
             self._tool(browser_navigate, {"url": {"type": "string"}}, required=("url",)),
             self._tool(browser_snapshot, {"depth": {"type": "integer"}}),
@@ -199,10 +179,6 @@ class _FakeBrowserTools:
             self._tool(
                 browser_hover,
                 {"ref": {"type": "string"}, "target": {"type": "string"}},
-            ),
-            self._tool(
-                browser_evaluate,
-                {"expression": {"type": "string"}, "script": {"type": "string"}},
             ),
         ]
 
@@ -487,7 +463,7 @@ async def test_ask_then_human_approval_runs_the_tool() -> None:
 
 
 @pytest.mark.asyncio
-async def test_allow_does_not_lift_a_built_in_needs_human() -> None:
+async def test_allow_does_not_lift_a_configured_ask_rule() -> None:
     purchased: list[dict[str, Any]] = []
 
     async def purchase(**kwargs: Any) -> str:
@@ -507,6 +483,7 @@ async def test_allow_does_not_lift_a_built_in_needs_human() -> None:
         hooks=engine,
         tools=[Tool(name="purchase_item", func=purchase)],
         human_input=deny_human,
+        permissions=purchase_permissions(),
     )
 
     assert purchased == []
@@ -577,7 +554,7 @@ async def test_pre_tool_use_sees_the_normalized_request() -> None:
     engine = HookEngine([hook("audit", "pre_tool_use", returning(None, seen))])
 
     await run_engine(
-        [PLAN, tool_call("browser.type", ref="e8", text="jackets"), DONE],
+        [PLAN, tool_call("browser_type", ref="e8", text="jackets"), DONE],
         hooks=engine,
     )
 
@@ -694,7 +671,7 @@ async def test_additional_context_is_a_separate_message_and_leaves_progress_dete
     responses = [
         PLAN,
         tool_call("browser_snapshot"),
-        tool_call("browser.type", ref="e8", text="jackets"),
+        tool_call("browser_type", ref="e8", text="jackets"),
         tool_call("browser_snapshot"),
         DONE,
     ]
@@ -790,8 +767,8 @@ def _comparable(records: list[EventRecord]) -> list[tuple[str, dict[str, Any]]]:
 async def test_hooks_that_do_not_fire_leave_the_event_stream_unchanged() -> None:
     responses = [
         PLAN,
-        tool_call("browser.snapshot"),
-        tool_call("browser.type", ref="e8", text="jackets"),
+        tool_call("browser_snapshot"),
+        tool_call("browser_type", ref="e8", text="jackets"),
         DONE,
     ]
     idle = HookEngine(
@@ -866,7 +843,7 @@ async def test_a_server_matcher_sees_mcp_tools() -> None:
 
 
 class PurchaseTool:
-    """``purchase_item`` trips the builtin ``sensitive-tool-name`` ask rule."""
+    """``purchase_item`` trips the ``purchases`` ask rule of :func:`purchase_permissions`."""
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -884,6 +861,23 @@ class PurchaseTool:
         return "deny"
 
 
+def purchase_permissions() -> PermissionEngine:
+    """The ask rule a profile would configure: no rule ships with the code."""
+
+    return PermissionEngine.from_settings(
+        PermissionsSettings(
+            rules=[
+                PermissionRule(
+                    id="purchases",
+                    decision="ask",
+                    tool="purchase_.*",
+                    reason="Tool requires human approval before use: {tool}",
+                )
+            ]
+        )
+    )
+
+
 PURCHASE = [PLAN, tool_call("purchase_item", sku="1"), DONE]
 
 
@@ -896,7 +890,7 @@ async def test_permission_request_allow_runs_the_tool_without_the_human() -> Non
     )
 
     result, records, _ = await run_engine(
-        PURCHASE, hooks=engine, tools=shop.tools(), human_input=shop.human
+        PURCHASE, hooks=engine, tools=shop.tools(), human_input=shop.human, permissions=purchase_permissions()
     )
 
     assert shop.asked == []
@@ -925,7 +919,7 @@ async def test_permission_request_deny_is_terminal_like_a_human_refusal() -> Non
         [hook("profile", "permission_request", returning(HookResult(decision="deny", reason="Budget.")))]
     )
 
-    result, _, llm = await run_engine(PURCHASE, hooks=engine, tools=shop.tools(), human_input=shop.human)
+    result, _, llm = await run_engine(PURCHASE, hooks=engine, tools=shop.tools(), human_input=shop.human, permissions=purchase_permissions())
 
     assert shop.asked == [] and shop.calls == []
     assert result.status == "blocked"
@@ -946,7 +940,7 @@ async def test_permission_request_without_a_decision_asks_the_human(handler: Any
     shop = PurchaseTool()
     engine = HookEngine([hook("profile", "permission_request", handler)])
 
-    result, _, _ = await run_engine(PURCHASE, hooks=engine, tools=shop.tools(), human_input=shop.human)
+    result, _, _ = await run_engine(PURCHASE, hooks=engine, tools=shop.tools(), human_input=shop.human, permissions=purchase_permissions())
 
     assert len(shop.asked) == 1
     assert result.status == "blocked"
@@ -966,7 +960,7 @@ async def test_a_timed_out_permission_hook_falls_back_to_the_human() -> None:
     engine = HookEngine([hook("slow", "permission_request", slow, timeout_seconds=0.05)])
 
     result, records, _ = await run_engine(
-        PURCHASE, hooks=engine, tools=shop.tools(), human_input=shop.human
+        PURCHASE, hooks=engine, tools=shop.tools(), human_input=shop.human, permissions=purchase_permissions()
     )
 
     assert len(shop.asked) == 1 and shop.calls == []
@@ -1010,7 +1004,7 @@ async def test_approve_tools_is_loadable_from_settings_and_approves_only_its_too
     )
     shop = PurchaseTool()
 
-    approved, _, _ = await run_engine(PURCHASE, hooks=engine, tools=shop.tools(), human_input=shop.human)
+    approved, _, _ = await run_engine(PURCHASE, hooks=engine, tools=shop.tools(), human_input=shop.human, permissions=purchase_permissions())
 
     async def other_purchase(**kwargs: Any) -> str:
         return "bought"
@@ -1019,7 +1013,7 @@ async def test_approve_tools_is_loadable_from_settings_and_approves_only_its_too
         [PLAN, tool_call("purchase_other", sku="2"), DONE],
         hooks=engine,
         tools=[Tool(name="purchase_other", func=other_purchase)],
-        human_input=shop.human,
+        human_input=shop.human, permissions=purchase_permissions(),
     )
 
     assert approved.status == "done" and shop.calls == [{"sku": "1"}]

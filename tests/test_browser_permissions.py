@@ -1,4 +1,4 @@
-"""Browser permission resources (domain, target) and builtin rules.
+"""Browser permission resources (domain, target) and browser rules from configuration.
 
 The snapshot and response samples are verbatim Playwright MCP output (1.64).
 """
@@ -10,7 +10,6 @@ from typing import Any
 import pytest
 
 from src.browser.permissions import (
-    BROWSER_BUILTIN_RULES,
     BrowserResourceResolver,
     page_url,
     snapshot_element,
@@ -51,7 +50,6 @@ def resolve(tool: str, args: dict[str, Any], **state: Any) -> dict[str, str]:
 def engine(*rules: dict[str, Any], mode: str = "default") -> PermissionEngine:
     return PermissionEngine.from_settings(
         PermissionsSettings(mode=mode, rules=[PermissionRule(**rule) for rule in rules]),
-        extra_builtin=BROWSER_BUILTIN_RULES,
         resolver=BrowserResourceResolver(),
     )
 
@@ -104,6 +102,13 @@ def test_navigate_uses_its_destination_not_the_current_page() -> None:
     # A destination without a host never falls back to the current page.
     assert resolve("browser_navigate", {"url": "data:text/html,x"}, snapshot=SNAPSHOT) == {}
     assert resolve("browser_tabs", {"action": "new", "url": "https://a.com"}) == {"domain": "a.com"}
+
+
+def test_any_tool_with_a_url_argument_acts_on_that_url() -> None:
+    # No tool names in the resolver: the url argument is the destination, whoever takes it.
+    assert resolve("other__open", {"url": "https://a.com/x"}, snapshot=SNAPSHOT) == {
+        "domain": "a.com"
+    }
 
 
 def test_element_actions_use_the_page_url() -> None:
@@ -192,32 +197,51 @@ def test_a_session_grant_is_per_domain() -> None:
     assert perms.evaluate(check, {"snapshot": foreign}).decision == "ask"
 
 
-# --------------------------------------------------------------------------- builtin rules
+# --------------------------------------------------------------------------- configured rules
+
+#: The commented examples of ``config.example.yaml``: no rule ships with the code.
+PAGE_JS = {
+    "id": "page-js",
+    "decision": "ask",
+    "always_ask": True,
+    "tool": "browser_evaluate|browser_run_code(_unsafe)?",
+    "reason": "Running JavaScript in the page needs approval ({tool}).",
+}
+FILE_HANDOFF = {
+    "id": "file-handoff",
+    "decision": "ask",
+    "tool": "browser_file_upload|browser_drop",
+    "reason": "Handing local files to the page needs approval ({tool}).",
+}
+
+
+@pytest.mark.parametrize(
+    "tool",
+    ["browser_navigate", "browser_click", "browser_type", "browser_snapshot", "browser_tabs",
+     "browser_evaluate", "browser_run_code_unsafe", "browser_file_upload", "browser_drop"],
+)
+def test_nothing_asks_without_configured_rules(tool: str) -> None:
+    for mode in ("default", "dont_ask", "bypass"):
+        assert decide(engine(mode=mode), tool, {"url": "https://ozon.ru"}, snapshot=SNAPSHOT) == "allow"
 
 
 @pytest.mark.parametrize("tool", ["browser_evaluate", "browser_run_code", "browser_run_code_unsafe"])
-def test_page_javascript_always_asks(tool: str) -> None:
+def test_a_page_javascript_rule_always_asks(tool: str) -> None:
     for mode, expected in [("default", "ask"), ("bypass", "ask"), ("dont_ask", "deny")]:
-        assert decide(engine(mode=mode), tool, {"function": "() => 1"}) == expected, mode
-    perms = engine()
+        assert decide(engine(PAGE_JS, mode=mode), tool, {"function": "() => 1"}) == expected, mode
+    perms = engine(PAGE_JS)
     perms.grant(("playwright", tool, ""))
     verdict = perms.evaluate(PermissionCheck(tool=tool, server="playwright"))
-    assert (verdict.decision, verdict.rule_id, verdict.always_ask) == ("ask", "browser-evaluate", True)
+    assert (verdict.decision, verdict.rule_id, verdict.always_ask) == ("ask", "page-js", True)
 
 
 @pytest.mark.parametrize("tool", ["browser_file_upload", "browser_drop"])
-def test_file_handoff_asks_but_can_be_granted(tool: str) -> None:
-    perms = engine()
+def test_a_file_handoff_rule_asks_but_can_be_granted(tool: str) -> None:
+    perms = engine(FILE_HANDOFF)
     check = PermissionCheck(tool=tool, server="playwright", args={"paths": ["C:/secret.txt"]})
     verdict = perms.evaluate(check, {"snapshot": SNAPSHOT})
-    assert (verdict.decision, verdict.rule_id) == ("ask", "browser-file-upload")
+    assert (verdict.decision, verdict.rule_id) == ("ask", "file-handoff")
     assert "secret" not in verdict.reason
     perms.grant(verdict.grant_key)
     assert perms.evaluate(check, {"snapshot": SNAPSHOT}).decision == "allow"
-    assert decide(engine(mode="bypass"), tool, {}) == "allow"
-
-
-def test_ordinary_browser_actions_are_not_affected() -> None:
-    perms = engine()
-    for tool in ("browser_navigate", "browser_click", "browser_type", "browser_snapshot", "browser_tabs"):
-        assert decide(perms, tool, {"url": "https://ozon.ru"}, snapshot=SNAPSHOT) == "allow", tool
+    assert decide(engine(FILE_HANDOFF, mode="bypass"), tool, {}) == "allow"

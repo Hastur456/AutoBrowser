@@ -9,7 +9,7 @@ import pytest
 
 from src.agent_loop.execution.loop import AgentLoopResult
 from src.agent_loop.execution.state import BrowserState, LoopState
-from src.config import HooksSettings, PermissionsSettings, Settings, get_settings
+from src.config import HooksSettings, PermissionRule, PermissionsSettings, Settings, get_settings
 from src.harness.runtime import (
     HARNESS_EVENT_METADATA_CONFIG_KEY,
     HARNESS_STATE_OVERRIDES_CONFIG_KEY,
@@ -826,14 +826,13 @@ async def test_session_builds_one_permission_engine_for_every_task(
     permissions = runtime.context.permissions
     assert isinstance(permissions, PermissionEngine)
     assert permissions.mode == "dont_ask"
-    # The browser builtin rules and resource resolver are wired in.
+    # Only the configured rules apply: no rule ships with the code, so nothing else asks.
     evaluate = permissions.evaluate(PermissionCheck(tool="browser_evaluate", server="playwright"))
-    assert (evaluate.decision, evaluate.rule_id) == ("deny", "browser-evaluate")
-    # A config deny beats the builtin ask on the same tool.
+    assert (evaluate.decision, evaluate.source) == ("allow", "mode")
     upload = permissions.evaluate(PermissionCheck(tool="browser_file_upload", server="playwright"))
     assert (upload.decision, upload.rule_id) == ("deny", "no-upload")
     drop = permissions.evaluate(PermissionCheck(tool="browser_drop", server="playwright"))
-    assert drop.reason.startswith("Not executed: Handing local files")
+    assert drop.decision == "allow"
     assert [resources.permissions for resources in captured] == [permissions, permissions]
     # A grant from one task is still there for the next one.
     assert captured[1].permissions.grants == {("playwright", "browser_click", "ozon.ru")}
@@ -843,16 +842,20 @@ async def test_session_builds_one_permission_engine_for_every_task(
 
 
 @pytest.mark.asyncio
-async def test_a_rule_clashing_with_a_builtin_fails_session_start_before_chrome(
+async def test_a_duplicate_rule_id_fails_session_start_before_chrome(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    settings = Settings(
-        permissions=PermissionsSettings(
-            rules=[{"id": "sensitive-tool-name", "decision": "allow"}],
-        )
+    # Settings validation already rejects the clash; the engine checks again on its own.
+    clash = PermissionsSettings.model_construct(
+        mode="default",
+        rules=[
+            PermissionRule(id="purchases", decision="ask"),
+            PermissionRule(id="purchases", decision="allow"),
+        ],
     )
+    settings = Settings().model_copy(update={"permissions": clash})
     monkeypatch.setattr("src.harness.session.get_settings", lambda: settings)
     launched: list[int] = []
 

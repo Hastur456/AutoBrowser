@@ -13,8 +13,8 @@
 | Assembled context | Deterministic, ordered prompt blocks produced by `ContextAssembler` (`src/agent_loop/context.py`), the canonical prompt-construction path. |
 | AutoBrowser | The browser automation agent implemented in this repository. |
 | Batch run | Execution of JSONL Golden Set scenarios through fresh `SessionRuntime` instances, with metadata written under `.autobrowser/batches/<batch_id>/`. |
-| Browser error code | Shared browser-layer error vocabulary such as `invalid_ref`, `unknown_action`, and `action_failed`. |
-| `browser_evaluate` | Browser tool fallback for cases where snapshots cannot expose required information. |
+| Browser error code | Shared browser-layer error vocabulary such as `invalid_ref` and `action_failed`. |
+| `browser_evaluate` | Playwright MCP page-JavaScript tool, a fallback for cases where snapshots cannot expose required information; it asks only if a configured rule says so (see the opt-in `page-js` example in `config.example.yaml`). |
 | `browser_find` | Browser tool for plain-text search; not reliable for structured link or attribute extraction. |
 | `browser_snapshot` | Source-of-truth browser observation containing visible page state and element refs. |
 | BrowserAction | Provider-neutral typed browser request using canonical `browser.*` action names. |
@@ -22,7 +22,6 @@
 | BrowserProvider | Legacy protocol (`src/browser/provider.py`) kept only for test scaffolding; superseded in production by `MCPToolSource` and `ToolCallNormalizer`. |
 | BrowserResult | Provider-neutral browser action result shape with status, content, error, and optional error code. |
 | BrowserToolNormalizer | `ToolCallNormalizer` in `src/browser/normalization.py` that maps canonical `browser.*` names to the tool the browser server actually exposes. |
-| Canonical browser action | Provider-neutral browser action name such as `browser.snapshot`, mapped to backend-specific tool names by adapters. |
 | ChatModel | Provider-neutral chat protocol in `src/llm.py`: `async complete(messages, *, tools, **params) -> ModelResponse`. Provider adapters implement it; the engine drives it and never sees provider objects. |
 | Checkpointer | Removed. There is no checkpoint saver; durable history is carried on `LoopState.messages` and `SessionContext.state`, shaped by the functional `MemoryManager`. |
 | Command hook | Hook with `type: command` (`src/harness/command_hooks.py`): an external process that gets the `HookEvent` as JSON on stdin and answers with its exit code (`2` blocks, stderr is the reason) and optional JSON on stdout, following the Claude Code/Codex protocol. |

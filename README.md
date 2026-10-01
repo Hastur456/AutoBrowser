@@ -231,7 +231,7 @@ python -m pytest tests\test_prompts.py
 | `src/config.py` | Project configuration with functionality to load configuration from environment variables and a YAML file. |
 | `src/providers/` | Provider adapters (e.g. `ollama.py`) that map neutral `Message`/`ToolDef` objects to a backend wire format. |
 | `src/agent_loop/` | Runtime-facing action contracts and model parsing, events, trace replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary around the engine-native `AgentLoopEngine`. |
-| `src/browser/` | Browser provider contracts, canonical names, Playwright MCP adapter, and fake browser backend. |
+| `src/browser/` | Browser tool-name helpers, error codes, request normalizer, permission resource resolver, and browser hooks. |
 | `src/harness/` | Session runtime, harness composition root, context, functional memory helpers, tools, policy, and telemetry boundaries. |
 | `src/mcp/` | Playwright MCP process/session lifecycle helpers and provider loading. |
 | `tests/` | Pytest coverage for engine-native behavior, harness boundaries, Agent Loop contracts, CLI, prompts, tools, batch/export, and deterministic eval scenarios. |

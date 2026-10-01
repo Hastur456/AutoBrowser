@@ -35,9 +35,9 @@ class EngineResources:
     :mod:`src.agent_loop.execution.guards` directly. ``hooks`` is the session's
     :class:`~src.harness.hooks.HookEngine`; the default :class:`~src.harness.hooks.NullHookEngine`
     runs nothing, so evals and tests that do not pass one never see hooks. ``permissions`` is
-    the session's :class:`~src.harness.permissions.PermissionEngine`; the default one has only
-    the builtin rules in ``default`` mode (no config is read), so a sensitive tool name still
-    asks the injected ``human_input`` callback.
+    the session's :class:`~src.harness.permissions.PermissionEngine`; the default one is built
+    from the code-default settings (no rules, ``default`` mode, no config is read), so every
+    call runs unless a test passes its own engine.
     """
 
     llm: Any
@@ -46,7 +46,7 @@ class EngineResources:
     context: Any
     events: Any
     hooks: Any = field(default_factory=NullHookEngine)
-    permissions: PermissionEngine = field(default_factory=PermissionEngine)
+    permissions: PermissionEngine = field(default_factory=PermissionEngine.from_settings)
 
     @classmethod
     def from_harness(
@@ -77,7 +77,7 @@ class EngineResources:
             context=harness.context,
             events=events if events is not None else harness.events,
             hooks=hooks if hooks is not None else NullHookEngine(),
-            permissions=permissions if permissions is not None else PermissionEngine(),
+            permissions=permissions if permissions is not None else PermissionEngine.from_settings(),
         )
 
 
