@@ -832,3 +832,90 @@ def test_match_is_accepted_for_tool_events(settings: Any, event: str) -> None:
     ).hooks
 
     assert hooks.registry[0].match.tool == "x"
+
+
+# --------------------------------------------------------------------------
+# The permissions section
+# --------------------------------------------------------------------------
+
+
+def test_permissions_default_to_default_mode_without_rules(settings: Any) -> None:
+    permissions = settings().permissions
+
+    assert permissions.mode == "default"
+    assert permissions.rules == []
+
+
+def test_the_permission_mode_resolves_from_the_environment(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_PERMISSIONS__MODE", "dont_ask")
+
+    assert settings().permissions.mode == "dont_ask"
+
+
+def test_an_unknown_permission_mode_is_rejected(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_PERMISSIONS__MODE", "yolo")
+
+    with pytest.raises(ValueError):
+        settings()
+
+
+def test_permission_rules_are_read_from_the_config_file(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _point_at(
+        monkeypatch,
+        _write_config(
+            tmp_path,
+            """
+            permissions:
+              mode: read_only
+              rules:
+                - id: shop-only
+                  decision: deny
+                  server: playwright
+                  tool: browser_navigate
+                  not_domains: [www.ozon.ru]
+                - id: no-evaluate
+                  decision: ask
+                  tool: "browser_evaluate|browser_run_code_unsafe"
+                  always_ask: true
+                  reason: Arbitrary page JavaScript needs approval.
+            """,
+        ),
+    )
+
+    permissions = settings().permissions
+
+    assert permissions.mode == "read_only"
+    shop, evaluate = permissions.rules
+    assert (shop.id, shop.decision, shop.server, shop.tool) == (
+        "shop-only",
+        "deny",
+        "playwright",
+        "browser_navigate",
+    )
+    assert shop.not_domains == ["ozon.ru"]
+    assert evaluate.always_ask is True
+    assert evaluate.reason == "Arbitrary page JavaScript needs approval."
+
+
+def test_a_broken_permission_rule_fails_startup(settings: Any) -> None:
+    with pytest.raises(ValueError, match="invalid rule pattern"):
+        settings(permissions={"rules": [{"id": "x", "decision": "deny", "tool": "("}]})
+    with pytest.raises(ValueError, match="duplicate permission rule id"):
+        settings(
+            permissions={
+                "rules": [
+                    {"id": "x", "decision": "deny"},
+                    {"id": "x", "decision": "allow"},
+                ]
+            }
+        )

@@ -159,8 +159,8 @@ Every tunable lives in `src/config.py` — a pydantic-settings root read at call
 never imports it back). See
 `docs/decisions/2026-09-16-typed-settings-module.md` and the `.env.example` template.
 
-Names are `AUTOBROWSER_<SECTION>__<FIELD>` over nine sections (`llm`, `browser`, `loop`,
-`observation`, `memory`, `events`, `storage`, `flags`, `hooks`). Env outranks `.env` outranks the code
+Names are `AUTOBROWSER_<SECTION>__<FIELD>` over ten sections (`llm`, `browser`, `loop`,
+`observation`, `memory`, `events`, `storage`, `flags`, `hooks`, `permissions`). Env outranks `.env` outranks the code
 defaults; an empty value means "not set"; sections are `frozen` with `extra="forbid"`.
 `AUTOBROWSER_LLM__API_KEY` is passed to the provider as an explicit `Authorization: Bearer`
 header — the vendor `OLLAMA_API_KEY` is no longer read. Adding a setting means updating

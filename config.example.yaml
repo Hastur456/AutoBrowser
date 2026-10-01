@@ -161,6 +161,38 @@ flags:
   agent_loop: false                             # (default)
 
 # ---------------------------------------------------------------------------
+# Deterministic tool authorization (src/harness/permissions.py), evaluated after
+# pre_tool_use hooks on the final arguments. Matching rules resolve
+# deny > ask > allow, whatever their order. A rule deny is not terminal: the
+# model reads the reason and may take another path. Rules shipped in code (e.g.
+# tool names with payment/purchase/credential -> ask) cannot be removed here.
+permissions:
+  # default:   a call without a matching rule runs.
+  # read_only: only readOnlyHint tools and allow rules run; the rest is denied.
+  # dont_ask:  every approval becomes a deny (headless runs, batch, evals).
+  # bypass:    approvals are granted; deny rules and always_ask still hold.
+  mode: default                                 # (default)
+  rules: []                                     # (default)
+  # rules:
+  #   - id: no-evaluate
+  #     decision: ask                           # allow | ask | deny
+  #     tool: "browser_evaluate|browser_run_code_unsafe"   # re.fullmatch on the name
+  #     always_ask: true                        # no session grant, no bypass
+  #     reason: "Arbitrary page JavaScript needs approval."
+  #   - id: shop-only
+  #     decision: deny
+  #     server: playwright                      # exact; empty = any server
+  #     tool: browser_navigate
+  #     not_domains: [ozon.ru, wildberries.ru]  # suffix match; or domains: [...]
+  #   - id: no-upload
+  #     decision: deny
+  #     tool: browser_file_upload
+  #   - id: no-card-numbers
+  #     decision: deny
+  #     tool: browser_type
+  #     args: {text: '\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}'}  # {arg: re.search}
+
+# ---------------------------------------------------------------------------
 # Deterministic lifecycle hooks around the agent loop (src/harness/hooks.py).
 # Handlers are "package.module:attr" import paths of async callables, resolved
 # at session start -- an import error, a duplicate id or a sync handler fails
