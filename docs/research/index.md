@@ -45,6 +45,18 @@ See [Permission Engine Research](2026-10-01-permission-engine-research.md) and t
 [implementation plan](../development/2026-10-01-permission-engine-implementation-plan.md). Implemented: [ADR](../decisions/2026-10-01-permission-engine.md),
 [Permissions Guide](../development/permissions.md).
 
+### Memory
+
+Survey of memory designs (Claude Code CLAUDE.md + auto memory, Claude API memory tool and
+context editing, Codex memories, Gemini CLI, OpenAI Agents SDK sessions, LangGraph, Letta,
+Browser Use, AWM and related papers), an audit of the current history/carry-forward path,
+and a proposed four-layer model: budgeted history, task digest, and opt-in file-based
+per-domain persistent memory loaded as a `ContextAssembler` block.
+
+See [Memory Harness Research](2026-10-02-memory-harness-research.md) (builds on the
+[memory system design draft](2026-09-14-memory-system-design.md)) and the
+[implementation plan](../development/2026-10-02-memory-implementation-plan.md).
+
 ### Search Flow Robustness
 
 Recent execution traces showed a failure mode on dynamic commerce pages:
