@@ -102,7 +102,7 @@ def test_defaults_match_the_constants_they_replaced(settings: Any) -> None:
     assert config.observation.max_refs_in_observation == 25
 
     # was: src/harness/memory.py
-    assert config.memory.max_tool_message_refs == 25
+    assert config.memory.compact_tool_output_min_chars == 1000
 
     # was: src/agent_loop/events.py
     assert config.events.max_string_chars == 20_000
@@ -707,6 +707,57 @@ def test_the_example_config_file_reproduces_the_defaults(
         assert getattr(loaded, section) == getattr(defaults, section), (
             f"{section} in config.example.yaml no longer matches the code defaults"
         )
+
+
+# --------------------------------------------------------------------------
+# The memory section
+# --------------------------------------------------------------------------
+
+
+def test_memory_features_are_off_by_default(settings: Any) -> None:
+    memory = settings().memory
+
+    assert memory.history_budget_chars == 0
+    assert memory.keep_recent_tasks == 0
+    assert memory.persistent_enabled is False
+    assert memory.tool_enabled is False
+    assert memory.consolidate_on_goal_end is False
+    assert memory.working_notes_max_chars == 0
+    assert memory.dir == "memory"
+
+
+def test_memory_settings_resolve_from_the_environment(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_MEMORY__HISTORY_BUDGET_CHARS", "40000")
+    monkeypatch.setenv("AUTOBROWSER_MEMORY__PERSISTENT_ENABLED", "true")
+    monkeypatch.setenv("AUTOBROWSER_MEMORY__DIR", "profiles/work")
+
+    memory = settings().memory
+
+    assert memory.history_budget_chars == 40000
+    assert memory.persistent_enabled is True
+    assert memory.dir == "profiles/work"
+
+
+def test_the_removed_max_tool_message_refs_is_ignored_with_a_warning(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An old ``.env`` or ``config.yaml`` still naming the dead setting keeps starting."""
+
+    monkeypatch.setenv("AUTOBROWSER_MEMORY__MAX_TOOL_MESSAGE_REFS", "25")
+
+    with pytest.warns(FutureWarning, match="max_tool_message_refs"):
+        memory = settings().memory
+
+    assert not hasattr(memory, "max_tool_message_refs")
+
+
+def test_memory_rejects_negative_budgets(settings: Any) -> None:
+    with pytest.raises(ValueError):
+        settings(memory={"history_budget_chars": -1})
 
 
 # --------------------------------------------------------------------------

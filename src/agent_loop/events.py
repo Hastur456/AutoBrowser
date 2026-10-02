@@ -30,6 +30,11 @@ EventType = Literal[
     "goal.blocked",
     "goal.failed",
     "goal.cancelled",
+    # Persistent memory (src/harness/memory_store.py, memory_consolidation.py).
+    "memory.skipped",
+    "memory.outcome",
+    "memory.consolidated",
+    "memory.consolidation_failed",
 ]
 
 SENSITIVE_KEY_MARKERS = (

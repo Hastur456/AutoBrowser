@@ -19,6 +19,7 @@ from typing import Any
 
 from src.agent_loop.execution.approval import ApprovalJudge
 from src.harness.hooks import NullHookEngine
+from src.harness.memory import NullMemoryContext
 from src.harness.normalization import ToolCallNormalizer
 from src.harness.permissions import PermissionEngine
 from src.harness.tools import ToolRegistry
@@ -40,7 +41,10 @@ class EngineResources:
     from the code-default settings (no rules, ``default`` mode, no config is read), so every
     call runs unless a test passes its own engine. ``approval`` is the session's
     :class:`~src.agent_loop.execution.approval.ApprovalJudge` (model judgments that escalate a
-    call to human approval); the default judges nothing.
+    call to human approval); the default judges nothing. ``memory`` renders the persistent
+    ``Memory`` context block (``render(state) -> str``, the session's ``MemoryContext``);
+    the default renders nothing, so evals and
+    tests never see the developer's memory files.
     """
 
     llm: Any
@@ -51,6 +55,7 @@ class EngineResources:
     hooks: Any = field(default_factory=NullHookEngine)
     permissions: PermissionEngine = field(default_factory=PermissionEngine.from_settings)
     approval: ApprovalJudge = field(default_factory=ApprovalJudge)
+    memory: Any = field(default_factory=NullMemoryContext)
 
     @classmethod
     def from_harness(
@@ -62,6 +67,7 @@ class EngineResources:
         hooks: Any | None = None,
         permissions: PermissionEngine | None = None,
         approval: ApprovalJudge | None = None,
+        memory: Any | None = None,
     ) -> EngineResources:
         """Compose resources from an initialized ``BrowserHarness`` plus the ``llm``.
 
@@ -71,7 +77,8 @@ class EngineResources:
         not a harness concern: the session passes its own ``HookEngine``; without it the
         loop gets a :class:`~src.harness.hooks.NullHookEngine`. ``permissions`` is session-scoped
         too (``SessionContext.permissions``); without it the default engine applies. So is
-        ``approval`` (``SessionContext.approval``); without it nothing is judged.
+        ``approval`` (``SessionContext.approval``); without it nothing is judged. So is
+        ``memory`` (``SessionContext.memory``); without it no ``Memory`` block is rendered.
         """
 
         tool_registry = harness.tools
@@ -85,6 +92,7 @@ class EngineResources:
             hooks=hooks if hooks is not None else NullHookEngine(),
             permissions=permissions if permissions is not None else PermissionEngine.from_settings(),
             approval=approval if approval is not None else ApprovalJudge(),
+            memory=memory if memory is not None else NullMemoryContext(),
         )
 
 

@@ -21,12 +21,18 @@ from src.agent_loop.prompts import (
 )
 from src.agent_loop.skills import browser_agent_rules_resource
 from src.browser.names import is_browser_tool_name
+from src.config import get_settings
 from src.harness.tools import tool_name
 
 ContextRole = Literal["system", "user", "developer"]
 
 # Closing directive appended to the assembled per-turn user prompt.
 ACTION_INSTRUCTION = "Choose the next action."
+
+# Heading of the persistent-memory block (rendered by the session's MemoryContext).
+MEMORY_BLOCK_NAME = "Memory"
+# Marker appended to a block cut to its ``token_budget``.
+TRUNCATED_BLOCK_SUFFIX = "\n... [truncated to fit the context budget]"
 
 
 @dataclass(frozen=True)
@@ -78,10 +84,17 @@ class ContextAssembler:
         *,
         tools: Sequence[Any] | None = None,
         blocks: Sequence[ContextBlock] | None = None,
+        memory: str = "",
     ) -> AssembledContext:
-        """Assemble non-empty blocks from state, tools, and optional additions."""
+        """Assemble non-empty blocks from state, tools, and optional additions.
 
-        selected = list(blocks) if blocks is not None else self._state_blocks(state, tools)
+        ``memory`` is the pre-rendered persistent-memory text (the engine gets it from
+        ``EngineResources.memory``); empty means no ``Memory`` block.
+        """
+
+        selected = (
+            list(blocks) if blocks is not None else self._state_blocks(state, tools, memory)
+        )
         ordered = tuple(
             sorted(
                 (block for block in selected if not block.is_empty()),
@@ -108,7 +121,7 @@ class ContextAssembler:
             if roles is None or block.role in roles
         ]
         return "\n\n".join(
-            f"{block.name}:\n{block.content.strip()}" for block in selected
+            f"{block.name}:\n{_fit(block)}" for block in selected
         )
 
     def user_turn_prompt(
@@ -116,44 +129,49 @@ class ContextAssembler:
         state: Mapping[str, Any],
         *,
         tools: Sequence[Any] | None = None,
+        memory: str = "",
     ) -> str:
         """Return the assembled per-turn user prompt for one agent step.
 
         The rendered user blocks are closed with the action instruction so the
         model always sees the decision directive even when no state block has
-        meaningful content.
+        meaningful content. A non-empty ``memory`` adds the ``Memory`` block.
         """
 
-        prompt = self.assemble(state, tools=tools).turn_prompt.strip()
+        prompt = self.assemble(state, tools=tools, memory=memory).turn_prompt.strip()
         if not prompt:
             return ACTION_INSTRUCTION
         return f"{prompt}\n\n{ACTION_INSTRUCTION}"
 
-    def plan_prompt(self, state: Mapping[str, Any]) -> str:
+    def plan_prompt(self, state: Mapping[str, Any], *, memory: str = "") -> str:
         """Return the planner prompt for the current state.
 
         The planner message is the ``PLANNER_SYSTEM_PROMPT`` and ``PLANNER_USER_PROMPT``
         joined by a blank line, with the observation defaulting to
-        ``"No observation yet."``. This is the sanctioned prompt-assembly boundary for the
+        ``"No observation yet."``. A non-empty ``memory`` is appended as a separate
+        ``Memory`` section. This is the sanctioned prompt-assembly boundary for the
         engine-native loop, which must not import planner prompts from the engine itself.
         """
 
         task = str(state.get("task", "") or "").strip()
         observation = str(state.get("observation", "") or "")
-        return "\n\n".join(
-            [
-                PLANNER_SYSTEM_PROMPT,
-                PLANNER_USER_PROMPT.format(
-                    task=task,
-                    observation=observation or "No observation yet.",
-                ),
-            ]
-        )
+        parts = [
+            PLANNER_SYSTEM_PROMPT,
+            PLANNER_USER_PROMPT.format(
+                task=task,
+                observation=observation or "No observation yet.",
+            ),
+        ]
+        block = _memory_block(memory)
+        if not block.is_empty():
+            parts.append(self.render([block]))
+        return "\n\n".join(parts)
 
     def _state_blocks(
         self,
         state: Mapping[str, Any],
         tools: Sequence[Any] | None,
+        memory: str = "",
     ) -> list[ContextBlock]:
         blocks = [
             ContextBlock(
@@ -163,6 +181,7 @@ class ContextAssembler:
                 priority=10,
                 source="state.task",
             ),
+            _memory_block(memory),
             ContextBlock(
                 name="Plan",
                 role="user",
@@ -185,6 +204,14 @@ class ContextAssembler:
                 content=str(state.get("action_history", "") or ""),
                 priority=25,
                 source="state.action_history",
+            ),
+            # The model's own task-local notes (the optional ``notes`` field of its decision).
+            ContextBlock(
+                name="Working Notes",
+                role="user",
+                content=str(state.get("working_notes", "") or ""),
+                priority=26,
+                source="state.working_notes",
             ),
         ]
         if tools:
@@ -210,6 +237,30 @@ class ContextAssembler:
                 )
             )
         return blocks
+
+
+def _memory_block(memory: str) -> ContextBlock:
+    """The persistent-memory block, between ``Task`` (10) and ``Plan`` (20)."""
+
+    return ContextBlock(
+        name=MEMORY_BLOCK_NAME,
+        role="user",
+        content=str(memory or ""),
+        priority=15,
+        source="memory",
+        token_budget=get_settings().memory.block_max_chars if memory else None,
+    )
+
+
+def _fit(block: ContextBlock) -> str:
+    """The block's content, cut to its ``token_budget`` (characters) when it has one."""
+
+    content = block.content.strip()
+    budget = block.token_budget
+    if budget is None or len(content) <= budget:
+        return content
+    keep = max(0, budget - len(TRUNCATED_BLOCK_SUFFIX))
+    return content[:keep].rstrip() + TRUNCATED_BLOCK_SUFFIX
 
 
 def _format_plan(plan: Any) -> str:
@@ -266,6 +317,7 @@ def _is_browser_relevant(
 
 __all__ = [
     "ACTION_INSTRUCTION",
+    "MEMORY_BLOCK_NAME",
     "AssembledContext",
     "ContextAssembler",
     "ContextBlock",

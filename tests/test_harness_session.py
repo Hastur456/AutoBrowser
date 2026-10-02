@@ -876,3 +876,222 @@ async def test_a_duplicate_rule_id_fails_session_start_before_chrome(
 
     assert launched == []
     assert runtime.context.initialized is False
+
+
+# --------------------------------------------------------------------------- memory
+
+
+from src.config import MemorySettings, StorageSettings  # noqa: E402
+from src.harness.memory import NullMemoryContext, TASK_DIGEST_PREFIX  # noqa: E402
+from src.harness.memory_store import MemoryContext  # noqa: E402
+from src.messages import assistant_message, system_message, user_message  # noqa: E402
+
+
+def use_memory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **fields: Any) -> Path:
+    """Point the session at explicit memory settings and a tmp storage root."""
+
+    root = tmp_path / ".autobrowser"
+    settings = Settings(memory=MemorySettings(**fields), storage=StorageSettings(root_dir=root))
+    monkeypatch.setattr("src.harness.session.get_settings", lambda: settings)
+    return root / "memory"
+
+
+def capture_resources(monkeypatch: pytest.MonkeyPatch, task_runner: Any) -> list[Any]:
+    captured: list[Any] = []
+
+    def runner_factory(resources: Any, **_kwargs: Any) -> Any:
+        captured.append(resources)
+        return task_runner
+
+    monkeypatch.setattr("src.harness.session.native_task_runner", runner_factory)
+    return captured
+
+
+def write_entry(root: Path, rel: str, **meta: Any) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = "\n".join(f"{key}: {value}" for key, value in meta.items())
+    path.write_text(f"---\n{lines}\n---\nUse the search URL.\n", encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_disabled_memory_gives_the_engine_a_null_memory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    use_memory(monkeypatch, tmp_path)
+
+    async def task_runner(*_args: Any) -> AgentLoopResult:
+        return native_result(final_answer="done")
+
+    captured = capture_resources(monkeypatch, task_runner)
+    runtime = make_runtime()
+
+    await runtime.run_task("inspect page")
+
+    assert runtime.context.memory_store is None
+    assert isinstance(captured[0].memory, NullMemoryContext)
+    assert [tool.name for tool in await runtime.context.tool_registry.get_all()] == []
+    payload = json.loads((runtime.context.session_dir / "session.json").read_text())
+    assert payload["memory"] == {"enabled": False, "root": "", "entries": 0, "tools": False}
+
+
+@pytest.mark.asyncio
+async def test_enabled_memory_reaches_the_engine_and_registers_the_tools(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    root = use_memory(monkeypatch, tmp_path, persistent_enabled=True, tool_enabled=True)
+    write_entry(root, "sites/ozon.ru.md", description="Ozon")
+
+    async def task_runner(*_args: Any) -> AgentLoopResult:
+        return native_result(final_answer="done")
+
+    captured = capture_resources(monkeypatch, task_runner)
+    runtime = make_runtime()
+
+    await runtime.run_task("inspect page")
+
+    assert isinstance(captured[0].memory, MemoryContext)
+    assert captured[0].memory is runtime.context.memory
+    names = [tool.name for tool in await runtime.context.tool_registry.get_all()]
+    assert names == ["memory_view", "memory_write"]
+    assert runtime.context.memory_store.task_id == runtime.context.tasks[0].task_id
+    payload = json.loads((runtime.context.session_dir / "session.json").read_text())
+    assert payload["memory"] == {
+        "enabled": True,
+        "root": str(root),
+        "entries": 1,
+        "tools": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_memory_without_tools_registers_none(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    use_memory(monkeypatch, tmp_path, persistent_enabled=True)
+
+    async def task_runner(*_args: Any) -> AgentLoopResult:
+        return native_result(final_answer="done")
+
+    capture_resources(monkeypatch, task_runner)
+    runtime = make_runtime()
+    await runtime.run_task("inspect page")
+
+    assert [tool.name for tool in await runtime.context.tool_registry.get_all()] == []
+
+
+@pytest.mark.asyncio
+async def test_finished_tasks_are_digested_at_the_boundary_and_the_last_stays_whole(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    use_memory(monkeypatch, tmp_path, keep_recent_tasks=1)
+    calls: list[dict[str, Any]] = []
+
+    async def task_runner(
+        _harness: Any, task: str, _config: Any, task_config: dict[str, Any]
+    ) -> AgentLoopResult:
+        overrides = task_config[HARNESS_STATE_OVERRIDES_CONFIG_KEY]
+        calls.append(overrides)
+        messages = list(overrides.get("messages") or [system_message("system")])
+        messages += [
+            user_message(f"User request ({overrides['task_id']}):\n{task}"),
+            assistant_message(content=f"answer to {task}"),
+        ]
+        return native_result(final_answer=f"answer to {task}", messages=messages)
+
+    install_runner(monkeypatch, task_runner)
+    runtime = make_runtime()
+
+    await runtime.run_task("find kettles")
+    await runtime.run_task("open the first one")
+    await runtime.run_task("add it to cart")
+
+    third = calls[2]["messages"]
+    assert third[1].content.startswith(TASK_DIGEST_PREFIX)
+    assert "- request: find kettles" in third[1].content
+    assert "- answer: answer to find kettles" in third[1].content
+    # The follow-up still sees the previous task verbatim.
+    assert third[2].content.endswith("open the first one")
+    assert third[3].content == "answer to open the first one"
+    assert calls[2]["working_notes"] == ""
+
+
+@pytest.mark.asyncio
+async def test_a_done_task_promotes_the_entries_it_loaded(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    root = use_memory(monkeypatch, tmp_path, persistent_enabled=True, promote_after_successes=1)
+    write_entry(root, "sites/ozon.ru.md", description="Ozon", source="agent:old", status="unverified")
+    seen: list[str] = []
+
+    async def task_runner(
+        _harness: Any, _task: str, _config: Any, task_config: dict[str, Any]
+    ) -> AgentLoopResult:
+        task_id = task_config[HARNESS_STATE_OVERRIDES_CONFIG_KEY]["task_id"]
+        state = {"task_id": task_id, "snapshot": "- Page URL: https://ozon.ru/"}
+        seen.append(captured[-1].memory.render(state))
+        return native_result(final_answer="done")
+
+    captured = capture_resources(monkeypatch, task_runner)
+    runtime = make_runtime()
+
+    await runtime.run_task("find a kettle on ozon")
+
+    assert "Use the search URL." in seen[0]
+    assert runtime.context.memory_store.get("sites/ozon.ru.md").status == "verified"
+
+
+class ConsolidatingModel:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+    async def complete(self, messages: Any, **_kwargs: Any) -> Any:
+        from src.llm import ModelResponse
+
+        return ModelResponse(content=self.content, finish_reason="stop")
+
+
+GOOD_CONSOLIDATION = json.dumps(
+    {"entries": [{"path": "sites/ozon.ru.md", "description": "Ozon", "body": "Search URL works."}]}
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content, written", [(GOOD_CONSOLIDATION, True), ("not json", False)])
+async def test_consolidation_after_a_done_task(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    content: str,
+    written: bool,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    root = use_memory(monkeypatch, tmp_path, persistent_enabled=True, consolidate_on_goal_end=True)
+
+    async def task_runner(*_args: Any) -> AgentLoopResult:
+        return native_result(final_answer="Kettle A")
+
+    install_runner(monkeypatch, task_runner)
+    runtime = SessionRuntime(
+        make_config(),
+        llm_factory=lambda **_kwargs: ConsolidatingModel(content),
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        mcp_runtime_factory=no_mcp_runtime,
+    )
+
+    result = await runtime.run_task("find a kettle on ozon")
+
+    assert result.final_answer == "Kettle A"
+    assert (root / "sites" / "ozon.ru.md").exists() is written
+    types = [event["type"] for event in read_typed_events(runtime.context.session_dir)]
+    assert ("memory.consolidated" if written else "memory.consolidation_failed") in types

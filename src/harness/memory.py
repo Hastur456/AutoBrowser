@@ -3,7 +3,9 @@
 :class:`MemoryManager` is the provider-neutral owner of the message-shaping policy — it
 seeds the durable history with the current user task, appends the assistant tool calls /
 tool results / final answers the loop produces, compacts large tool outputs superseded by a
-newer result of the same tool, and formats tool-message bodies. It is a **functional** service: every
+newer result of the same tool, clears the oldest tool outputs once the history outgrows
+``memory.history_budget_chars``, folds finished tasks into one digest message each at the task
+boundary (``memory.keep_recent_tasks``), and formats tool-message bodies. It is a **functional** service: every
 operation takes a ``list`` of :class:`~src.messages.Message` (or the minimal state mapping
 ``ensure_history`` reads) and returns a *new* list; nothing is stored on the instance and
 no input list is mutated in place.
@@ -21,12 +23,13 @@ them (guards, observation, policy, the loop) keep working unchanged.
 
 from __future__ import annotations
 
+import json
+from collections import Counter
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from src.agent_loop.context import ContextAssembler
-from src.config import get_settings
+from src.config import MemorySettings, get_settings
 from src.contracts import CompactToolObservation, ToolRequest, ToolResult
 from src.messages import (
     Message,
@@ -37,16 +40,37 @@ from src.messages import (
     user_message,
 )
 
+if TYPE_CHECKING:  # importing src.agent_loop here would cycle back through its guards
+    from src.agent_loop.context import ContextAssembler
+
 ORIGINAL_USER_REQUEST_PREFIX = "Original user request:\n"
 USER_REQUEST_PREFIX = "User request"
 COMPACTED_TOOL_OUTPUT_PREFIX = "[compacted]"
+CLEARED_TOOL_OUTPUT_PREFIX = "[cleared]"
+TASK_DIGEST_PREFIX = "[harness] Previous task digest:"
+
+_DIGEST_REQUEST_CHARS = 300
+_DIGEST_ANSWER_CHARS = 500
 
 
 class MemoryManager:
-    """Functional history service over provider-neutral ``Message`` lists."""
+    """Functional history service over provider-neutral ``Message`` lists.
 
-    def __init__(self, context: ContextAssembler | None = None) -> None:
+    ``settings`` pins the ``memory`` section (tests pass an explicit one); without it every
+    call reads ``get_settings().memory``.
+    """
+
+    def __init__(
+        self,
+        context: ContextAssembler | None = None,
+        *,
+        settings: MemorySettings | None = None,
+    ) -> None:
         self._context = context
+        self._settings = settings
+
+    def _memory_settings(self) -> MemorySettings:
+        return self._settings if self._settings is not None else get_settings().memory
 
     # -- seeding ------------------------------------------------------------
 
@@ -83,11 +107,13 @@ class MemoryManager:
                 insert_at,
                 user_message(f"{ORIGINAL_USER_REQUEST_PREFIX}{task}"),
             )
-        return self.compact_snapshot_history(messages)
+        return self.apply_history_budget(self.compact_snapshot_history(messages))
 
     def _system_prompt(self) -> str:
         if self._context is not None:
             return self._context.get_system_prompt()
+        from src.agent_loop.context import ContextAssembler
+
         return ContextAssembler().get_system_prompt()
 
     # -- compaction ---------------------------------------------------------
@@ -112,7 +138,7 @@ class MemoryManager:
         """
 
         history = list(messages)
-        min_chars = get_settings().memory.compact_tool_output_min_chars
+        min_chars = self._memory_settings().compact_tool_output_min_chars
         newer_tools: set[str] = set()
         for index in range(len(history) - 1, -1, -1):
             message = history[index]
@@ -138,6 +164,93 @@ class MemoryManager:
                 name=message.name,
             )
         return history
+
+    def apply_history_budget(self, messages: Sequence[Message]) -> list[Message]:
+        """Clear the oldest tool outputs until the history fits ``history_budget_chars``.
+
+        Server-neutral, deterministic and idempotent (the analogue of the Claude API
+        ``clear_tool_uses`` context edit):
+
+        - a budget of ``0`` (the default) or a history within budget is returned unchanged;
+        - non-``tool`` messages (system prompt, user requests, model calls), the newest
+          ``keep_recent_tool_results`` tool outputs and outputs that are already compacted or
+          cleared are never touched;
+        - the remaining tool outputs are replaced oldest first by a ``[cleared]`` placeholder
+          until the history fits. If it still does not fit, nothing else is removed.
+
+        The ``tool_call_id`` is preserved, so ``assistant(tool_calls)`` → ``tool`` pairs stay
+        valid; the Action History block keeps the outcome of every call independently.
+        """
+
+        history = list(messages)
+        settings = self._memory_settings()
+        budget = settings.history_budget_chars
+        if budget <= 0:
+            return history
+        total = history_chars(history)
+        if total <= budget:
+            return history
+
+        tool_indexes = [index for index, message in enumerate(history) if message.role == "tool"]
+        keep = settings.keep_recent_tool_results
+        protected = set(tool_indexes[-keep:]) if keep else set()
+        for index in tool_indexes:
+            if total <= budget:
+                break
+            message = history[index]
+            content = str(message.content or "")
+            if index in protected or content.startswith(
+                (COMPACTED_TOOL_OUTPUT_PREFIX, CLEARED_TOOL_OUTPUT_PREFIX)
+            ):
+                continue
+            name = str(message.name or "tool")
+            placeholder = (
+                f"{CLEARED_TOOL_OUTPUT_PREFIX} {name} output from an earlier step "
+                f"({len(content)} chars) was removed to fit the context budget."
+            )
+            if len(placeholder) >= len(content):
+                continue
+            history[index] = tool_message(
+                tool_call_id=str(message.tool_call_id or ""),
+                content=placeholder,
+                name=message.name,
+            )
+            total -= len(content) - len(placeholder)
+        return history
+
+    # -- task boundary --------------------------------------------------------
+
+    def digest_tasks(self, messages: Sequence[Message]) -> list[Message]:
+        """Fold every finished task older than the newest ``keep_recent_tasks`` into a digest.
+
+        A task segment runs from its ``User request (<task_id>):`` message up to the next one;
+        it is replaced, with all its tool calls and results, by **one** ``[harness] Previous
+        task digest`` user message (the request, the final answer, a count of the tools it
+        called). Messages before the first segment (the system prompt, earlier digests) stay
+        in place, so the order is preserved and every ``tool_call_id`` pair stays whole.
+        ``keep_recent_tasks == 0`` (the default) returns the history unchanged.
+
+        Called once per task boundary by the session, never per turn.
+        """
+
+        history = list(messages)
+        keep = self._memory_settings().keep_recent_tasks
+        if keep <= 0:
+            return history
+        starts = [index for index, message in enumerate(history) if _is_task_request(message)]
+        if len(starts) <= keep:
+            return history
+
+        folded = set(starts[: len(starts) - keep])
+        result = history[: starts[0]]
+        for position, start in enumerate(starts):
+            end = starts[position + 1] if position + 1 < len(starts) else len(history)
+            segment = history[start:end]
+            if start in folded:
+                result.append(user_message(_task_digest(segment)))
+            else:
+                result.extend(segment)
+        return result
 
     # -- appends ------------------------------------------------------------
 
@@ -233,6 +346,47 @@ class MemoryManager:
         return updated
 
 
+def history_chars(messages: Sequence[Message]) -> int:
+    """Characters the history costs: message contents plus tool-call arguments as JSON."""
+
+    total = 0
+    for message in messages:
+        total += len(str(message.content or ""))
+        for call in message.tool_calls:
+            total += len(call.name)
+            total += len(json.dumps(call.arguments, ensure_ascii=False, default=str))
+    return total
+
+
+def _is_task_request(message: Message) -> bool:
+    return getattr(message, "role", None) == "user" and str(message.content).startswith(
+        f"{USER_REQUEST_PREFIX} ("
+    )
+
+
+def _task_digest(segment: Sequence[Message]) -> str:
+    _, _, request = str(segment[0].content).partition("\n")
+    answer = ""
+    tools: Counter[str] = Counter()
+    for message in segment[1:]:
+        if message.role != "assistant":
+            continue
+        if message.tool_calls:
+            tools.update(call.name for call in message.tool_calls if call.name)
+        elif str(message.content or "").strip():
+            answer = str(message.content)
+    tools_used = ", ".join(f"{name}×{count}" for name, count in tools.items()) or "none"
+    answer = _safe_compact_value(answer, _DIGEST_ANSWER_CHARS) or "(no final answer)"
+    return "\n".join(
+        [
+            TASK_DIGEST_PREFIX,
+            f"- request: {_safe_compact_value(request, _DIGEST_REQUEST_CHARS)}",
+            f"- answer: {answer}",
+            f"- tools used: {tools_used}",
+        ]
+    )
+
+
 def _has_user_message(messages: Sequence[Message], content: str) -> bool:
     return any(
         message.role == "user" and str(message.content) == content
@@ -285,6 +439,18 @@ def _raw_tool_message(result: ToolResult) -> str:
     if error:
         parts.extend(["Error:", error])
     return "\n\n".join(part for part in parts if part)
+
+
+class NullMemoryContext:
+    """Persistent memory switched off: renders no ``Memory`` block.
+
+    The default ``EngineResources.memory``; the real one is
+    :class:`src.harness.memory_store.MemoryContext`.
+    """
+
+    def render(self, state: Mapping[str, Any]) -> str:
+        _ = state
+        return ""
 
 
 # Thin module-level aliases over a default MemoryManager. The engine leaves that
@@ -354,11 +520,17 @@ def tool_result_message_content(
 
 
 __all__ = [
+    "CLEARED_TOOL_OUTPUT_PREFIX",
+    "COMPACTED_TOOL_OUTPUT_PREFIX",
     "MemoryManager",
+    "NullMemoryContext",
+    "TASK_DIGEST_PREFIX",
+    "USER_REQUEST_PREFIX",
     "append_ai_tool_call",
     "append_final_ai_response",
     "append_tool_message",
     "ensure_message_history",
+    "history_chars",
     "tool_result_message_content",
     "with_tool_call_id",
 ]

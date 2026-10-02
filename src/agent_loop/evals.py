@@ -241,6 +241,8 @@ class FakeChatModel:
     def __init__(self, responses: list[str]) -> None:
         self._responses = list(responses)
         self._index = 0
+        #: Characters of every prompt sent (message contents), for prompt-size comparisons.
+        self.prompt_chars = 0
 
     async def complete(
         self,
@@ -251,6 +253,7 @@ class FakeChatModel:
     ) -> ModelResponse:
         if not self._responses:
             raise IndexError("FakeChatModel has no scripted responses.")
+        self.prompt_chars += sum(len(str(message.content or "")) for message in messages)
         # Cycle through the scripted responses for deterministic replay.
         content = self._responses[self._index]
         self._index = (self._index + 1) % len(self._responses)
@@ -294,6 +297,8 @@ class EvalResult:
     summary: TraceSummary
     action_sequence: str
     final_state: dict[str, Any]
+    #: Characters of all model prompts; not part of :meth:`metrics` (the baseline).
+    prompt_chars: int = 0
 
     def metrics(self) -> dict[str, Any]:
         return {
@@ -352,8 +357,12 @@ def _scripted_human(answers: list[str]) -> Any:
     return answer
 
 
-async def run_scenario(scenario: EvalScenario) -> EvalResult:
-    """Run one scenario against the engine-native execution loop."""
+async def run_scenario(scenario: EvalScenario, *, memory: Any | None = None) -> EvalResult:
+    """Run one scenario against the engine-native execution loop.
+
+    ``memory`` is an explicit ``Memory`` block renderer (a ``MemoryContext`` over a seed
+    directory); evals never read the developer's memory or its settings.
+    """
 
     sink = InMemoryEventSink()
     session_id = f"eval-{uuid4().hex}"
@@ -379,6 +388,7 @@ async def run_scenario(scenario: EvalScenario) -> EvalResult:
             scenario.permissions,
             resolver=BrowserResourceResolver(),
         ),
+        memory=memory,
     )
     emitter.emit(
         "goal.started",
@@ -431,6 +441,7 @@ async def run_scenario(scenario: EvalScenario) -> EvalResult:
         summary=summary,
         action_sequence=print_action_sequence(events),
         final_state=final_state,
+        prompt_chars=llm.prompt_chars,
     )
 
 

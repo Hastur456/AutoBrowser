@@ -124,13 +124,48 @@ observation:
   action_history_preview_chars: 200             # (default)
 
 # ---------------------------------------------------------------------------
-# Conversation history shaping (the durable list lives on LoopState.messages).
+# Agent memory: history shaping (the durable list lives on LoopState.messages)
+# and persistent memory files under <storage.root_dir>/<memory.dir>/
+# (guide: docs/development/memory.md). Everything past compaction is off by default.
 memory:
-  # Snapshot refs kept on a tool message before older ones are elided.
-  max_tool_message_refs: 25                     # (default)
   # Older tool outputs longer than this are compacted once a newer result of the
   # same tool exists; shorter outputs are always kept.
   compact_tool_output_min_chars: 1000           # (default)
+  # Ceiling on the characters of the conversation history; past it the oldest
+  # tool outputs become a [cleared] placeholder. 0 disables the budget.
+  history_budget_chars: 0                       # (default)
+  # The newest tool outputs the history budget never clears.
+  keep_recent_tool_results: 3                   # (default)
+  # Finished tasks kept verbatim in the session history; older ones are folded
+  # into one digest message each. 0 keeps every task verbatim.
+  keep_recent_tasks: 0                          # (default)
+  # Load persistent memory files into a "Memory" context block.
+  persistent_enabled: false                     # (default)
+  # Memory directory, relative to storage.root_dir.
+  dir: memory                                   # (default)
+  # Lines / characters of the memory index rendered into the prompt.
+  index_max_lines: 200                          # (default)
+  index_max_chars: 25000                        # (default)
+  # Characters of the whole Memory context block.
+  block_max_chars: 12000                        # (default)
+  # Characters of one memory file (truncated on read, refused on write).
+  file_max_chars: 8000                          # (default)
+  # Register the memory_view / memory_write tools (needs persistent_enabled).
+  # Pair it with a review rule, e.g. under permissions.rules:
+  #   - {id: memory-write-review, decision: ask, server: memory, tool: memory_write}
+  tool_enabled: false                           # (default)
+  # Successful tasks that load an unverified entry before it becomes verified.
+  promote_after_successes: 2                    # (default)
+  # Consecutive blocked tasks that load an entry before it becomes stale.
+  stale_after_failures: 2                       # (default)
+  # A verified entry older than this many days renders as stale. 0 = no TTL.
+  stale_after_days: 90                          # (default)
+  # After a done task, ask the model for up to three memory entries (unverified).
+  consolidate_on_goal_end: false                # (default)
+  # Ceiling on the consolidation model call, in seconds.
+  consolidation_timeout_seconds: 30.0           # (default)
+  # Characters of the model's working notes kept for the current task. 0 = off.
+  working_notes_max_chars: 0                    # (default)
 
 # ---------------------------------------------------------------------------
 # Persisted event/trace detail under .autobrowser/sessions/<session_id>/.
@@ -205,6 +240,10 @@ permissions:
   #   - id: sensitive-tool-names
   #     decision: ask
   #     tool: "(?i).*(payment|purchase|delete_account|credential).*"
+  #   - id: memory-write-review                 # human review of agent memory writes
+  #     decision: ask
+  #     server: memory
+  #     tool: memory_write
   #   - id: confirm-forms
   #     decision: ask                           # allow | ask | deny
   #     tool: "browser_fill_form|browser_select_option"  # re.fullmatch on the name

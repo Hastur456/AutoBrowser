@@ -48,6 +48,12 @@ ApprovalJudgeMode = Literal["off", "model", "classifier", "both"]
 #: A human's answer to an approval prompt: run this call, run it and remember the grant for
 #: the session, or refuse.
 ApprovalAnswer = Literal["once", "session", "deny"]
+#: What a persistent memory file describes: one site (``sites/<domain>.md``) or a
+#: reusable procedure (``procedures/<name>.md``).
+MemoryKind = Literal["site", "procedure"]
+#: Trust of a memory entry: written by the human, confirmed by successful tasks, written by
+#: the agent and not yet confirmed, or contradicted by failing tasks / too old.
+MemoryStatus = Literal["user", "verified", "unverified", "stale"]
 
 
 class PlanStep(TypedDict, total=False):
@@ -266,6 +272,43 @@ class PermissionResourceResolver(Protocol):
         """``{"domain": ..., "target": ..., "url": ...}``; ``{}`` (or a missing key) when unknown."""
 
 
+@dataclass(frozen=True)
+class MemoryEntry:
+    """One persistent memory file: harness-owned frontmatter plus a markdown body."""
+
+    #: Relative to the memory root, POSIX: ``"sites/ozon.ru.md"``.
+    path: str
+    kind: MemoryKind
+    #: Normalized domain the entry applies to (it and its subdomains), or ``"*"``.
+    scope: str
+    status: MemoryStatus
+    #: ``"user"`` or ``"agent:<task_id>"``.
+    source: str
+    #: One line for the index.
+    description: str
+    body: str
+    #: ISO date of the last promotion to ``verified``; ``""`` when never verified.
+    verified_at: str = ""
+    #: Successful tasks that loaded the entry.
+    uses: int = 0
+    #: Consecutive blocked tasks that loaded the entry.
+    failures: int = 0
+
+
+class MemoryScopeResolver(Protocol):
+    """Which memory scope the current state is in (the browser one reads the page URL)."""
+
+    def scope(self, state: Mapping[str, Any]) -> str:
+        """The normalized scope key; ``""`` when it is unknown."""
+
+
+class MemoryContentPolicy(Protocol):
+    """Refuses text that must never be persisted as memory (refs, selectors, secrets)."""
+
+    def violation(self, text: str) -> str | None:
+        """The reason ``text`` is refused, or ``None`` when it may be stored."""
+
+
 def goal_status_from_completion(status: CompletionStatus) -> GoalStatus | None:
     """Map a loop completion status into a terminal goal status.
 
@@ -294,6 +337,11 @@ __all__ = [
     "HookEventName",
     "HookHandler",
     "HookResult",
+    "MemoryContentPolicy",
+    "MemoryEntry",
+    "MemoryKind",
+    "MemoryScopeResolver",
+    "MemoryStatus",
     "PermissionCheck",
     "PermissionDecision",
     "PermissionMode",

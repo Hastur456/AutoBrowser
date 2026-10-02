@@ -148,3 +148,81 @@ def test_user_turn_prompt_appends_action_instruction() -> None:
 
 def test_user_turn_prompt_falls_back_to_action_instruction() -> None:
     assert ContextAssembler().user_turn_prompt({}) == "Choose the next action."
+
+
+# --------------------------------------------------------------------------- memory
+
+
+from src.agent_loop.context import MEMORY_BLOCK_NAME, TRUNCATED_BLOCK_SUFFIX  # noqa: E402
+from src.agent_loop.prompts import PLANNER_SYSTEM_PROMPT  # noqa: E402
+
+REGRESSION_STATE = {
+    "task": "find a kettle",
+    "plan": [{"id": 1, "status": "in_progress", "description": "Search"}],
+    "observation": "Results are visible.",
+    "action_history": "1. browser_navigate {} -> success: ok",
+    "working_notes": "",
+}
+
+
+def test_without_memory_the_turn_prompt_is_byte_for_byte_unchanged() -> None:
+    """Regression snapshot: memory and working notes off must not change a single byte."""
+
+    prompt = ContextAssembler().user_turn_prompt(REGRESSION_STATE, tools=[FakeTool("echo")])
+
+    assert prompt == (
+        "Task:\nfind a kettle\n\n"
+        "Plan:\n1. [in_progress] Search\n\n"
+        "Action History:\n1. browser_navigate {} -> success: ok\n\n"
+        "Observation:\nResults are visible.\n\n"
+        "Choose the next action."
+    )
+
+
+def test_without_memory_the_plan_prompt_is_unchanged() -> None:
+    prompt = ContextAssembler().plan_prompt({"task": "find a kettle", "observation": ""})
+
+    assert prompt == (
+        f"{PLANNER_SYSTEM_PROMPT}\n\nTask:\nfind a kettle\n\n"
+        "Observation context:\nNo observation yet.\n\nCreate or revise the plan."
+    )
+
+
+def test_memory_is_a_user_block_between_task_and_plan() -> None:
+    context = ContextAssembler().assemble(REGRESSION_STATE, memory="Persistent memory: hint")
+
+    block = next(block for block in context.blocks if block.name == MEMORY_BLOCK_NAME)
+    assert (block.role, block.priority, block.source) == ("user", 15, "memory")
+    assert [block.name for block in context.blocks][:3] == ["Task", "Memory", "Plan"]
+    assert "Memory:\nPersistent memory: hint" in context.turn_prompt
+    assert "Memory:" not in context.system_prompt
+
+
+def test_empty_memory_adds_no_block() -> None:
+    context = ContextAssembler().assemble(REGRESSION_STATE, memory="  ")
+
+    assert MEMORY_BLOCK_NAME not in [block.name for block in context.blocks]
+
+
+def test_a_block_is_cut_to_its_token_budget() -> None:
+    block = ContextBlock(name="Memory", role="user", content="x" * 500, token_budget=100)
+
+    rendered = ContextAssembler().render([block])
+
+    assert rendered.startswith("Memory:\n")
+    assert len(rendered) == len("Memory:\n") + 100
+    assert rendered.endswith(TRUNCATED_BLOCK_SUFFIX)
+
+
+def test_the_plan_prompt_gets_memory_as_its_own_section() -> None:
+    prompt = ContextAssembler().plan_prompt({"task": "t"}, memory="Index: none")
+
+    assert prompt.endswith("Create or revise the plan.\n\nMemory:\nIndex: none")
+
+
+def test_working_notes_render_after_the_action_history() -> None:
+    context = ContextAssembler().assemble({**REGRESSION_STATE, "working_notes": "Kettle A: 1990"})
+
+    names = [block.name for block in context.blocks]
+    assert names.index("Working Notes") == names.index("Action History") + 1
+    assert "Working Notes:\nKettle A: 1990" in context.turn_prompt

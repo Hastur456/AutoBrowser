@@ -62,6 +62,7 @@ from src.agent_loop.execution.guards import (
     tool_gate_updates,
     tool_request_update,
 )
+from src.agent_loop.execution.notes import offer_notes_argument, split_notes
 from src.agent_loop.execution.observation import ObservationCompiler
 from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
@@ -325,6 +326,12 @@ class TurnController:
         self._approval_colliding: frozenset[str] = frozenset()
         if self._approval.model_signal:
             self._model_tools, self._approval_colliding = offer_approval_argument(tools)
+        # Working notes (memory.working_notes_max_chars > 0): every tool offers the optional
+        # ``notes`` argument, stripped again in ``_classify_action``.
+        self._notes_max_chars = get_settings().memory.working_notes_max_chars
+        self._notes_colliding: frozenset[str] = frozenset()
+        if self._notes_max_chars > 0:
+            self._model_tools, self._notes_colliding = offer_notes_argument(self._model_tools)
         # normalizers are registered with the tool registry (ToolRegistry.get_normalizers)
         self._broker = ToolBroker(resources.tool_registry)
         self._model_driver = ModelDriver(
@@ -382,9 +389,11 @@ class TurnController:
 
         messages = self._history(state)
 
+        mapping = self._prompt_mapping(state)
         turn_prompt = self._resources.context.user_turn_prompt(
-            self._prompt_mapping(state),
+            mapping,
             tools=self._tools,
+            memory=self._resources.memory.render(mapping),
         )
         self._emit("model.requested", {"phase": "agent", "tool_count": len(self._tools)})
         model_turn = await self._model_driver.invoke(
@@ -475,8 +484,15 @@ class TurnController:
 
         if kind == "tool_call":
             request = normalize_tool_request(action.get("tool_request"))
+            notes: str | None = None
+            if self._notes_max_chars > 0:
+                # Working notes are not a tool argument either (see below).
+                request, notes = split_notes(
+                    request, self._notes_colliding, self._notes_max_chars
+                )
+            notes_update = {} if notes is None else {"working_notes": notes}
             if not self._approval.model_signal:
-                return tool_request_update(state, messages, request)
+                return {**tool_request_update(state, messages, request), **notes_update}
             # The model's approval request is not a tool argument: strip it before the
             # history, the repeat tracking, the progress guard, hooks and the tool see it.
             request, approval_request = split_approval_request(
@@ -484,6 +500,7 @@ class TurnController:
             )
             return {
                 **tool_request_update(state, messages, request),
+                **notes_update,
                 "approval_request": approval_request,
             }
 
@@ -889,6 +906,7 @@ class TurnController:
                     state.action_history,
                     get_settings().observation.action_history_limit,
                 ),
+                "working_notes": state.working_notes,
             }
         )
         return mapping
@@ -1062,7 +1080,10 @@ class AgentLoopEngine:
         prior_replans = int(state.replan_count or 0)
         replan_count = prior_replans + 1 if state.plan else prior_replans
 
-        plan_prompt = self._resources.context.plan_prompt(self._plan_mapping(state))
+        mapping = self._plan_mapping(state)
+        plan_prompt = self._resources.context.plan_prompt(
+            mapping, memory=self._resources.memory.render(mapping)
+        )
         self._emit("model.requested", {"phase": "plan"})
         response = await self._resources.llm.complete([*messages, user_message(plan_prompt)])
         self._emit("model.responded", {"phase": "plan"})
@@ -1084,7 +1105,7 @@ class AgentLoopEngine:
         return _build_history(self._resources, state)
 
     def _plan_mapping(self, state: LoopState) -> dict[str, Any]:
-        return {"task": state.task, "observation": state.observation}
+        return {"task": state.task, "task_id": state.task_id, "observation": state.observation}
 
     def _emit(self, event_type: str, payload: Mapping[str, Any]) -> None:
         _emit_event(
