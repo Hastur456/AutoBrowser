@@ -31,7 +31,7 @@ AutoBrowser is a Python 3.12 browser automation agent that turns a
 natural-language task into a plan → reason → policy → execute → observe loop.
 Browser interaction is **snapshot-driven** via Playwright MCP (element `ref`s),
 not CSS/XPath. It runs as a long-lived interactive `cmd2` REPL (`main.py`) over
-an Ollama-compatible chat model (default `gpt-oss:20b-cloud`). Control flow is
+an Ollama-compatible chat model (default `gemma4:31b-cloud`). Control flow is
 **engine-native** — there is no compiled graph. The explicit `AgentLoopEngine`
 owns the loop; see `docs/decisions/2026-08-31-native-agent-loop-engine.md` for
 the ADR that made it the sole runtime.

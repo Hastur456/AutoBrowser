@@ -480,7 +480,7 @@ class TurnController:
             # The model's approval request is not a tool argument: strip it before the
             # history, the repeat tracking, the progress guard, hooks and the tool see it.
             request, approval_request = split_approval_request(
-                request, self._approval_colliding
+                request, self._approval_colliding, self._approval.false_words
             )
             return {
                 **tool_request_update(state, messages, request),

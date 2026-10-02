@@ -147,7 +147,7 @@ class LLMSettings(_Section):
             min_length=1,
             description="Chat model name handed to the provider.",
         ),
-    ] = "gpt-oss:20b-cloud"
+    ] = "gemma4:31b-cloud"
 
     temperature: Annotated[
         float,
@@ -820,6 +820,32 @@ class PermissionsSettings(_Section):
             ),
         ),
     ] = 30.0
+
+    classifier_args_chars: Annotated[
+        int,
+        Field(
+            ge=4,
+            description="Characters of the call's JSON arguments shown to the classifier.",
+        ),
+    ] = 1500
+
+    classifier_description_chars: Annotated[
+        int,
+        Field(
+            ge=4,
+            description="Characters of the tool description shown to the classifier.",
+        ),
+    ] = 400
+
+    approval_false_words: Annotated[
+        frozenset[str],
+        Field(
+            description=(
+                "Lower-case values of the model's approval_request argument that mean "
+                "\"no approval needed\"."
+            ),
+        ),
+    ] = frozenset({"", "false", "no", "none", "null", "0"})
 
     @field_validator("approval_judge", mode="before")
     @classmethod

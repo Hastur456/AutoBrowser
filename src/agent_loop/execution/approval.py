@@ -25,7 +25,7 @@ import asyncio
 import copy
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from src.agent_loop.prompts import (
@@ -37,7 +37,8 @@ from src.contracts import ApprovalJudgeMode, ToolDef, ToolRequest
 from src.harness.tools import to_tool_def, tool_is_read_only
 from src.messages import system_message, user_message
 
-#: The optional argument offered to the acting model on every state-changing tool.
+#: The optional argument offered to the acting model on every state-changing tool. A protocol
+#: name the agent prompt spells out, not a tunable: keep it aligned with ``prompts.py``.
 APPROVAL_ARGUMENT = "approval_request"
 
 APPROVAL_ARGUMENT_SCHEMA: dict[str, Any] = {
@@ -52,10 +53,6 @@ APPROVAL_ARGUMENT_SCHEMA: dict[str, Any] = {
         "product, and adding items to a cart."
     ),
 }
-
-_ARGS_CHARS = 1500
-_DESCRIPTION_CHARS = 400
-_FALSE_WORDS = {"", "false", "no", "none", "null", "0"}
 
 
 def offer_approval_argument(tools: Sequence[Any]) -> tuple[list[ToolDef], frozenset[str]]:
@@ -95,11 +92,16 @@ def offer_approval_argument(tools: Sequence[Any]) -> tuple[list[ToolDef], frozen
 def split_approval_request(
     request: Mapping[str, Any],
     colliding: frozenset[str] = frozenset(),
+    false_words: frozenset[str] | None = None,
 ) -> tuple[ToolRequest, str]:
     """Remove :data:`APPROVAL_ARGUMENT` from ``request``; return it and the model's reason.
 
-    The reason is ``""`` when the model did not ask. A bare ``true`` gets a generic reason.
+    The reason is ``""`` when the model did not ask or answered one of ``false_words``
+    (default: ``permissions.approval_false_words``). A bare ``true`` gets a generic reason.
     """
+
+    if false_words is None:
+        false_words = PermissionsSettings().approval_false_words
 
     cleaned: dict[str, Any] = dict(request)
     name = str(cleaned.get("name", "") or "")
@@ -112,7 +114,7 @@ def split_approval_request(
     if value is True:
         return cleaned, f"The model asked for approval of {name}."  # type: ignore[return-value]
     text = "" if value is None or value is False else str(value).strip()
-    if text.lower() in _FALSE_WORDS:
+    if text.lower() in false_words:
         return cleaned, ""  # type: ignore[return-value]
     return cleaned, text  # type: ignore[return-value]
 
@@ -129,9 +131,27 @@ class ClassifierJudgment:
 class ApprovalClassifier:
     """Ask a chat model whether one state-changing call needs the user's approval."""
 
-    def __init__(self, llm: Any, *, timeout_seconds: float = 30.0) -> None:
+    def __init__(
+        self,
+        llm: Any,
+        *,
+        timeout_seconds: float | None = None,
+        args_chars: int | None = None,
+        description_chars: int | None = None,
+    ) -> None:
+        """An omitted limit takes its ``permissions.classifier_*`` code default."""
+
+        defaults = PermissionsSettings()
         self._llm = llm
-        self._timeout = timeout_seconds
+        self._timeout = (
+            defaults.classifier_timeout_seconds if timeout_seconds is None else timeout_seconds
+        )
+        self._args_chars = defaults.classifier_args_chars if args_chars is None else args_chars
+        self._description_chars = (
+            defaults.classifier_description_chars
+            if description_chars is None
+            else description_chars
+        )
 
     async def judge(
         self,
@@ -149,8 +169,8 @@ class ApprovalClassifier:
             task=task.strip() or "(none)",
             url=resources.get("url") or resources.get("domain") or "(unknown)",
             tool=tool,
-            description=_clip(description, _DESCRIPTION_CHARS) or "(none)",
-            args=_clip(_dump(args or {}), _ARGS_CHARS),
+            description=_clip(description, self._description_chars) or "(none)",
+            args=_clip(_dump(args or {}), self._args_chars),
             target=resources.get("target") or "(none)",
         )
         messages = [system_message(APPROVAL_CLASSIFIER_SYSTEM_PROMPT), user_message(prompt)]
@@ -170,6 +190,10 @@ class ApprovalJudge:
 
     mode: ApprovalJudgeMode = "off"
     classifier: ApprovalClassifier | None = None
+    #: Values of :data:`APPROVAL_ARGUMENT` that mean "no approval needed".
+    false_words: frozenset[str] = field(
+        default_factory=lambda: PermissionsSettings().approval_false_words
+    )
 
     @property
     def model_signal(self) -> bool:
@@ -196,9 +220,16 @@ class ApprovalJudge:
             if settings.classifier_model and llm_factory is not None:
                 classifier_llm = llm_factory(model=settings.classifier_model, temperature=0.0)
             classifier = ApprovalClassifier(
-                classifier_llm, timeout_seconds=settings.classifier_timeout_seconds
+                classifier_llm,
+                timeout_seconds=settings.classifier_timeout_seconds,
+                args_chars=settings.classifier_args_chars,
+                description_chars=settings.classifier_description_chars,
             )
-        return cls(mode=settings.approval_judge, classifier=classifier)
+        return cls(
+            mode=settings.approval_judge,
+            classifier=classifier,
+            false_words=settings.approval_false_words,
+        )
 
 
 def _parse(content: str, tool: str) -> ClassifierJudgment:

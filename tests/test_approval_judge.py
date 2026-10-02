@@ -213,6 +213,51 @@ def test_split_removes_the_argument_and_returns_the_reason(value: Any, reason: s
     assert APPROVAL_ARGUMENT in request["args"]  # the input is not mutated
 
 
+def test_split_honours_configured_false_words() -> None:
+    request = {"name": "pay", "args": {APPROVAL_ARGUMENT: "Nope"}}
+
+    assert split_approval_request(request)[1] == "Nope"
+    assert split_approval_request(request, false_words=frozenset({"nope"}))[1] == ""
+
+
+def test_the_judge_takes_its_limits_from_the_permissions_settings() -> None:
+    settings = PermissionsSettings(
+        approval_judge="both",
+        classifier_timeout_seconds=5.0,
+        classifier_args_chars=20,
+        classifier_description_chars=10,
+        approval_false_words=frozenset({"nope"}),
+    )
+
+    judge = ApprovalJudge.from_settings(settings, llm=object())
+
+    assert judge.false_words == frozenset({"nope"})
+    assert judge.classifier is not None
+    assert (
+        judge.classifier._timeout,
+        judge.classifier._args_chars,
+        judge.classifier._description_chars,
+    ) == (5.0, 20, 10)
+    assert ApprovalJudge().false_words == PermissionsSettings().approval_false_words
+
+
+@pytest.mark.asyncio
+async def test_the_classifier_clips_arguments_and_description() -> None:
+    seen: list[str] = []
+
+    class Recording:
+        async def complete(self, messages: list[Any]) -> ModelResponse:
+            seen.append(str(messages[-1].content))
+            return ModelResponse(content='{"approval": false}')
+
+    classifier = ApprovalClassifier(Recording(), args_chars=12, description_chars=8)
+
+    await classifier.judge(task="t", tool="pay", description="d" * 50, args={"x": "y" * 50})
+
+    assert "ddddd..." in seen[0] and "dddddd" not in seen[0]
+    assert '{"x": "yy...' in seen[0] and "yyy" not in seen[0]
+
+
 # --------------------------------------------------------------------------- the engine
 
 

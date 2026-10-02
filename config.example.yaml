@@ -185,6 +185,10 @@ permissions:
   approval_judge: "off"                         # (default) quoted: bare off is YAML false
   # classifier_model: gemma4:31b-cloud          # (unset by default) null = the session model
   classifier_timeout_seconds: 30.0              # (default)
+  classifier_args_chars: 1500                   # (default) JSON arguments shown to the classifier
+  classifier_description_chars: 400             # (default) tool description shown to it
+  # approval_request values (lower-cased) that mean "no approval needed":
+  approval_false_words: ["", "false", "no", "none", "null", "0"]  # (default)
   rules: []                                     # (default)
   # rules:
   #   # Opt-in guards for risky tools. MCP annotations cannot tell page

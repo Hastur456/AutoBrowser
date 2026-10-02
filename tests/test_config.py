@@ -81,7 +81,7 @@ def test_defaults_match_the_constants_they_replaced(settings: Any) -> None:
     config = settings()
 
     # was: src/llm.py DEFAULT_OLLAMA_MODEL
-    assert config.llm.model == "gpt-oss:20b-cloud"
+    assert config.llm.model == "gemma4:31b-cloud"
 
     # was: src/agent_loop/execution/loop.py DEFAULT_TURN_CAP
     assert config.loop.turn_cap == 50
@@ -180,7 +180,7 @@ def test_section_less_names_are_not_accepted(
     config = settings()
 
     assert config.browser.cdp_port == 9222
-    assert config.llm.model == "gpt-oss:20b-cloud"
+    assert config.llm.model == "gemma4:31b-cloud"
     assert config.flags.agent_loop is False
 
 
@@ -865,6 +865,25 @@ def test_the_approval_judge_resolves_from_the_environment(
 
     permissions = settings().permissions
     assert (permissions.approval_judge, permissions.classifier_model) == ("classifier", "small:1b")
+
+
+def test_the_approval_limits_resolve_from_the_environment(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    defaults = settings().permissions
+    assert (defaults.classifier_args_chars, defaults.classifier_description_chars) == (1500, 400)
+    assert defaults.approval_false_words == frozenset({"", "false", "no", "none", "null", "0"})
+    monkeypatch.setenv("AUTOBROWSER_PERMISSIONS__CLASSIFIER_ARGS_CHARS", "200")
+    monkeypatch.setenv("AUTOBROWSER_PERMISSIONS__CLASSIFIER_DESCRIPTION_CHARS", "50")
+    monkeypatch.setenv("AUTOBROWSER_PERMISSIONS__APPROVAL_FALSE_WORDS", '["no", "нет"]')
+
+    permissions = settings().permissions
+    assert (permissions.classifier_args_chars, permissions.classifier_description_chars) == (
+        200,
+        50,
+    )
+    assert permissions.approval_false_words == frozenset({"no", "нет"})
 
 
 def test_a_bare_yaml_off_approval_judge_is_off(
