@@ -7,8 +7,8 @@ adapter that turns them into invocable tool objects for :class:`~src.harness.too
 
 Naming. By default a tool is exposed under its manager-qualified name
 (``server__tool``). Servers listed in ``unprefixed_servers`` expose their tools under the
-server's own (sanitized) names — this is how the browser server keeps the canonical
-``browser_*`` vocabulary that policy, observation, evals and golden traces rely on. A local
+server's own (sanitized) names — this is how the browser server keeps its own
+``browser_*`` names that observation, evals and golden traces rely on. A local
 name that is not provider-safe or collides with another exposed name falls back to the
 qualified name, so exposure is always unique and deterministic.
 """

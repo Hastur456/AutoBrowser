@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, Protocol, TypedDict
 
 AgentDecision = Literal["tool_call", "replan", "done"]
 PolicyDecision = Literal["approved", "needs_human", "blocked"]
@@ -32,6 +32,22 @@ HookEventName = Literal[
     "goal_end",
 ]
 HookDecision = Literal["allow", "deny", "ask"]
+PermissionDecision = Literal["allow", "ask", "deny"]
+PermissionMode = Literal["default", "read_only", "dont_ask", "bypass"]
+#: What decided a :class:`PermissionVerdict`: a config rule (``permissions.rules``), a
+#: ``pre_tool_use`` hook ``ask``, the acting model's own ``approval_request``, the approval
+#: classifier, the mode default, the ``readOnlyHint`` annotation, a session grant, or a failed
+#: evaluation (always ``deny``).
+PermissionSource = Literal[
+    "rule", "hook", "model", "classifier", "mode", "annotation", "grant", "error"
+]
+#: Who besides the rules may escalate a call to human approval
+#: (``settings.permissions.approval_judge``): nobody, the acting model, a separate classifier
+#: model call, or both.
+ApprovalJudgeMode = Literal["off", "model", "classifier", "both"]
+#: A human's answer to an approval prompt: run this call, run it and remember the grant for
+#: the session, or refuse.
+ApprovalAnswer = Literal["once", "session", "deny"]
 
 
 class PlanStep(TypedDict, total=False):
@@ -159,7 +175,7 @@ class HookEvent:
     args: dict[str, Any] = field(default_factory=dict)
     #: The ``ToolResult`` (``post_tool_use*`` only).
     result: dict[str, Any] = field(default_factory=dict)
-    #: Reason of the built-in ``needs_human`` decision (``permission_request`` only).
+    #: Reason of the permission ``ask`` verdict (``permission_request`` only).
     reason: str = ""
     #: The model's final answer (``stop`` only).
     final_answer: str = ""
@@ -191,6 +207,65 @@ class HookResult:
 HookHandler = Callable[[HookEvent], Awaitable[HookResult | None]]
 
 
+@dataclass(frozen=True)
+class PermissionCheck:
+    """The call a ``PermissionEngine`` authorizes: the final normalized request.
+
+    Holds only dicts and scalars, like :class:`HookEvent`. (Not ``PermissionRequest``: that
+    name belongs to the ``permission_request`` hook event.)
+    """
+
+    #: Exposed tool name after request normalization (and any hook ``updated_input``).
+    tool: str
+    #: ``MCPTool.server``; ``""`` for tools that are not MCP-backed.
+    server: str = ""
+    args: dict[str, Any] = field(default_factory=dict)
+    #: The server declared the MCP ``readOnlyHint`` annotation.
+    read_only: bool = False
+    #: Reason of a ``pre_tool_use`` hook ``ask``; escalates the call to approval.
+    hook_ask_reason: str = ""
+    #: The acting model's own ``approval_request`` for this call; escalates it to approval.
+    model_ask_reason: str = ""
+    #: Reason of the approval classifier's "needs approval"; escalates the call to approval.
+    classifier_ask_reason: str = ""
+
+
+@dataclass(frozen=True)
+class PermissionVerdict:
+    """The authorization decision for one :class:`PermissionCheck`."""
+
+    decision: PermissionDecision
+    #: Shown to the model on a deny; never quotes the arguments.
+    reason: str
+    source: PermissionSource = "mode"
+    #: Id of the deciding rule; ``""`` for mode, annotation, hook and error decisions.
+    rule_id: str = ""
+    #: No session grant can cover this call (``always_ask`` rule, or a hook, model or
+    #: classifier ``ask``).
+    always_ask: bool = False
+    #: ``(server, tool, domain)`` a "for this session" approval would grant; ``None`` when
+    #: the call cannot be granted.
+    grant_key: tuple[str, str, str] | None = None
+
+
+class PermissionResourceResolver(Protocol):
+    """Resolves the resources permission rules match on (``domain``, ``target``).
+
+    ``url`` (the full address the call acts on) is informational: rules do not match on it,
+    the approval classifier shows it to its model.
+
+    Server-specific (the browser resolver reads URLs and snapshots); the engine stays
+    server-neutral. An exception fails the check closed (``deny``).
+    """
+
+    def resources(
+        self,
+        check: PermissionCheck,
+        state: Mapping[str, Any],
+    ) -> Mapping[str, str]:
+        """``{"domain": ..., "target": ..., "url": ...}``; ``{}`` (or a missing key) when unknown."""
+
+
 def goal_status_from_completion(status: CompletionStatus) -> GoalStatus | None:
     """Map a loop completion status into a terminal goal status.
 
@@ -208,6 +283,8 @@ def goal_status_from_completion(status: CompletionStatus) -> GoalStatus | None:
 
 __all__ = [
     "AgentDecision",
+    "ApprovalAnswer",
+    "ApprovalJudgeMode",
     "CompactToolObservation",
     "CompletionStatus",
     "GoalStatus",
@@ -217,6 +294,12 @@ __all__ = [
     "HookEventName",
     "HookHandler",
     "HookResult",
+    "PermissionCheck",
+    "PermissionDecision",
+    "PermissionMode",
+    "PermissionResourceResolver",
+    "PermissionSource",
+    "PermissionVerdict",
     "PlanStep",
     "PolicyDecision",
     "PolicyEvent",

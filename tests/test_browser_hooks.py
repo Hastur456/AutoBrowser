@@ -296,8 +296,8 @@ async def test_browser_hooks_in_the_loop_see_normalized_names_and_keep_snapshots
     result, records, _ = await run_engine(
         [
             PLAN,
-            tool_call("browser.navigate", url="https://evil.example/"),
-            tool_call("browser.snapshot"),
+            tool_call("browser_navigate", url="https://evil.example/"),
+            tool_call("browser_snapshot"),
             DONE,
         ],
         hooks=engine,

@@ -62,6 +62,7 @@ def extract_event_metrics(events: Iterable[EventRecord | Mapping[str, Any]]) -> 
             for event in normalized_events
             if (event.type == "policy.decided" and _is_policy_block(event.payload))
             or (event.type == "hook.decided" and _is_hook_block(event.payload))
+            or (event.type == "permission.decided" and event.payload.get("decision") == "deny")
         ),
         approval_request_count=_count_type(normalized_events, "approval.requested"),
         observation_count=_count_type(normalized_events, "observation.compiled"),

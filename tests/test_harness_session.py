@@ -9,7 +9,7 @@ import pytest
 
 from src.agent_loop.execution.loop import AgentLoopResult
 from src.agent_loop.execution.state import BrowserState, LoopState
-from src.config import HooksSettings, Settings, get_settings
+from src.config import HooksSettings, PermissionRule, PermissionsSettings, Settings, get_settings
 from src.harness.runtime import (
     HARNESS_EVENT_METADATA_CONFIG_KEY,
     HARNESS_STATE_OVERRIDES_CONFIG_KEY,
@@ -25,6 +25,8 @@ from src.harness.session import (
     WorkspaceContext,
 )
 from src.harness.hooks import HookConfigError, HookEngine, NullHookEngine, registry_digest
+from src.contracts import PermissionCheck
+from src.harness.permissions import PermissionEngine
 from src.harness.tools import ToolRegistry
 
 
@@ -112,7 +114,7 @@ def install_runner(
     """Inject a fake task runner in place of ``native_task_runner``."""
     monkeypatch.setattr(
         "src.harness.session.native_task_runner",
-        lambda _resources: runner,
+        lambda _resources, **_kwargs: runner,
     )
 
 
@@ -646,7 +648,7 @@ async def test_session_loads_hooks_once_and_hands_them_to_the_engine(
     async def task_runner(*_args: Any) -> AgentLoopResult:
         return native_result(final_answer="done")
 
-    def runner_factory(resources: Any) -> Any:
+    def runner_factory(resources: Any, **_kwargs: Any) -> Any:
         captured.append(resources)
         return task_runner
 
@@ -680,7 +682,7 @@ async def test_disabled_hooks_give_the_engine_a_null_hook_engine(
     async def task_runner(*_args: Any) -> AgentLoopResult:
         return native_result(final_answer="done")
 
-    def runner_factory(resources: Any) -> Any:
+    def runner_factory(resources: Any, **_kwargs: Any) -> Any:
         captured.append(resources)
         return task_runner
 
@@ -785,3 +787,92 @@ async def test_stop_blocks_start_from_zero_in_every_task_of_a_session(
     ]
     assert "stop_blocks" not in runtime.context.state
     CALLS.clear()
+
+
+# --------------------------------------------------------------------------
+# Permissions are session-scoped
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_session_builds_one_permission_engine_for_every_task(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    settings = Settings(
+        permissions=PermissionsSettings(
+            mode="dont_ask",
+            rules=[{"id": "no-upload", "decision": "deny", "tool": "browser_file_upload"}],
+        )
+    )
+    monkeypatch.setattr("src.harness.session.get_settings", lambda: settings)
+    captured: list[Any] = []
+
+    async def task_runner(*_args: Any) -> AgentLoopResult:
+        return native_result(final_answer="done")
+
+    def runner_factory(resources: Any, **_kwargs: Any) -> Any:
+        captured.append(resources)
+        return task_runner
+
+    monkeypatch.setattr("src.harness.session.native_task_runner", runner_factory)
+    runtime = make_runtime()
+
+    await runtime.run_task("first")
+    runtime.context.permissions.grant(("playwright", "browser_click", "ozon.ru"))
+    await runtime.run_task("second")
+
+    permissions = runtime.context.permissions
+    assert isinstance(permissions, PermissionEngine)
+    assert permissions.mode == "dont_ask"
+    # Only the configured rules apply: no rule ships with the code, so nothing else asks.
+    evaluate = permissions.evaluate(PermissionCheck(tool="browser_evaluate", server="playwright"))
+    assert (evaluate.decision, evaluate.source) == ("allow", "mode")
+    upload = permissions.evaluate(PermissionCheck(tool="browser_file_upload", server="playwright"))
+    assert (upload.decision, upload.rule_id) == ("deny", "no-upload")
+    drop = permissions.evaluate(PermissionCheck(tool="browser_drop", server="playwright"))
+    assert drop.decision == "allow"
+    assert [resources.permissions for resources in captured] == [permissions, permissions]
+    # A grant from one task is still there for the next one.
+    assert captured[1].permissions.grants == {("playwright", "browser_click", "ozon.ru")}
+    assert runtime.context.session_dir is not None
+    session_payload = json.loads((runtime.context.session_dir / "session.json").read_text())
+    assert session_payload["permissions"] == {"mode": "dont_ask", "approval_judge": "off"}
+    assert [resources.approval.mode for resources in captured] == ["off", "off"]
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_rule_id_fails_session_start_before_chrome(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    # Settings validation already rejects the clash; the engine checks again on its own.
+    clash = PermissionsSettings.model_construct(
+        mode="default",
+        rules=[
+            PermissionRule(id="purchases", decision="ask"),
+            PermissionRule(id="purchases", decision="allow"),
+        ],
+    )
+    settings = Settings().model_copy(update={"permissions": clash})
+    monkeypatch.setattr("src.harness.session.get_settings", lambda: settings)
+    launched: list[int] = []
+
+    def start_chrome(_path: str, _profile: str, port: int) -> None:
+        launched.append(port)
+
+    runtime = SessionRuntime(
+        make_config(no_mcp=False),
+        llm_factory=llm_factory,
+        start_chrome_cdp=start_chrome,
+        wait_for_port=noop_wait,
+        mcp_runtime_factory=no_mcp_runtime,
+    )
+
+    with pytest.raises(ValueError, match="duplicate permission rule id"):
+        await runtime.start()
+
+    assert launched == []
+    assert runtime.context.initialized is False

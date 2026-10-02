@@ -96,7 +96,7 @@ from pydantic_settings import (
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
-from src.contracts import HookEventName
+from src.contracts import ApprovalJudgeMode, HookEventName, PermissionDecision, PermissionMode
 from src.mcp.config import MCPServerConfig
 
 #: Env var namespace for every setting.
@@ -147,7 +147,7 @@ class LLMSettings(_Section):
             min_length=1,
             description="Chat model name handed to the provider.",
         ),
-    ] = "gpt-oss:20b-cloud"
+    ] = "gemma4:31b-cloud"
 
     temperature: Annotated[
         float,
@@ -630,6 +630,240 @@ class HooksSettings(_Section):
     ] = Field(default_factory=list)
 
 
+def normalize_domain(value: str) -> str:
+    """Canonical host form shared by permission rules and resource resolvers.
+
+    Lowercase, no leading ``*.``/``.``/``www.``, IDN labels as punycode; ``""`` stays ``""``.
+    Raises ``ValueError`` for a value that is not a host (a URL, a path, a port).
+    """
+
+    host = str(value or "").strip().lower().rstrip(".")
+    for prefix in ("*.", ".", "www."):
+        host = host.removeprefix(prefix)
+    if not host:
+        return ""
+    if any(char in host for char in "/:@ ?#"):
+        raise ValueError(f"not a domain: {value!r} (write the host only, e.g. ozon.ru)")
+    try:
+        return host.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise ValueError(f"not a domain: {value!r}: {exc}") from exc
+
+
+def _compile(pattern: str, what: str) -> str:
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        raise ValueError(f"invalid {what} pattern {pattern!r}: {exc}") from exc
+    return pattern
+
+
+class PermissionRule(_Section):
+    """One declarative permission rule (see ``src/harness/permissions.py``).
+
+    Every filter that is set must match; conflicts between matching rules resolve
+    ``deny > ask > allow`` regardless of order. A filter on a resource (``domains``,
+    ``not_domains``, ``target``) whose value could not be resolved fails closed: the rule
+    matches for ``deny``/``ask`` and does not match for ``allow``.
+    """
+
+    id: Annotated[
+        str,
+        Field(min_length=1, description="Unique rule id, shown in permission.decided events."),
+    ]
+
+    decision: Annotated[
+        PermissionDecision,
+        Field(description="What a matching call gets: allow, ask (approval) or deny."),
+    ]
+
+    tool: Annotated[
+        str,
+        Field(
+            min_length=1,
+            description=(
+                "Regular expression matched with ``re.fullmatch`` against the exposed "
+                "tool name; ``a|b`` works as a list."
+            ),
+        ),
+    ] = ".*"
+
+    server: Annotated[
+        str,
+        Field(description="Exact MCP server name; empty matches any server."),
+    ] = ""
+
+    args: Annotated[
+        dict[str, str],
+        Field(
+            description=(
+                "``{argument: regex}``, each searched (``re.search``) in the string form "
+                "of that argument; a missing argument does not match."
+            ),
+        ),
+    ] = Field(default_factory=dict)
+
+    domains: Annotated[
+        list[str],
+        Field(description="Match only on these domains (suffix: ozon.ru covers www.ozon.ru)."),
+    ] = Field(default_factory=list)
+
+    not_domains: Annotated[
+        list[str],
+        Field(description="Match only outside these domains (suffix match)."),
+    ] = Field(default_factory=list)
+
+    target: Annotated[
+        str,
+        Field(description="Regex searched in the resolved action target (e.g. a button label)."),
+    ] = ""
+
+    always_ask: Annotated[
+        bool,
+        Field(description="``ask`` only: no session grant and no bypass mode can cover it."),
+    ] = False
+
+    reason: Annotated[
+        str,
+        Field(
+            description=(
+                "Shown to the model and the approver; ``{tool}`` is replaced by the tool "
+                "name. Empty generates one from the rule id. Never put secrets here."
+            ),
+        ),
+    ] = ""
+
+    @field_validator("tool", "target", mode="after")
+    @classmethod
+    def _compile_patterns(cls, value: str) -> str:
+        return _compile(value, "rule") if value else value
+
+    @field_validator("args", mode="after")
+    @classmethod
+    def _compile_arg_patterns(cls, value: dict[str, str]) -> dict[str, str]:
+        for key, pattern in value.items():
+            _compile(pattern, f"args.{key}")
+        return value
+
+    @field_validator("domains", "not_domains", mode="after")
+    @classmethod
+    def _normalize_domains(cls, value: list[str]) -> list[str]:
+        domains = [normalize_domain(item) for item in value]
+        if "" in domains:
+            raise ValueError("empty domain in the list")
+        return domains
+
+    @model_validator(mode="after")
+    def _consistent(self) -> PermissionRule:
+        if self.always_ask and self.decision != "ask":
+            raise ValueError(f"rule {self.id!r}: always_ask is only valid for decision: ask.")
+        if self.domains and self.not_domains:
+            raise ValueError(f"rule {self.id!r}: use either domains or not_domains, not both.")
+        return self
+
+
+class PermissionsSettings(_Section):
+    """Tool authorization (``src/harness/permissions.py``).
+
+    No rule ships with the code: the engine knows no tool names, so what is risky is what
+    ``rules`` says plus, when ``approval_judge`` enables them, the model judgments
+    (``src/agent_loop/execution/approval.py``). A list set in one source replaces (never
+    extends) the list of the sources below it.
+    """
+
+    mode: Annotated[
+        PermissionMode,
+        Field(
+            description=(
+                "default: calls without a matching rule run; read_only: only readOnlyHint "
+                "tools (and allow rules) run; dont_ask: every approval becomes a deny; "
+                "bypass: approvals are granted, deny rules and always_ask still hold."
+            ),
+        ),
+    ] = "default"
+
+    rules: Annotated[
+        list[PermissionRule],
+        Field(description="Permission rules; order does not matter (deny > ask > allow)."),
+    ] = Field(default_factory=list)
+
+    approval_judge: Annotated[
+        ApprovalJudgeMode,
+        Field(
+            description=(
+                "Who besides the rules may ask the human to approve a state-changing call: "
+                "off; model (the acting model fills an approval_request argument offered on "
+                "every tool without readOnlyHint); classifier (a separate model call judges "
+                "each such call the rules let through); both. Their asks are always_ask and "
+                "can never lift a rule."
+            ),
+        ),
+    ] = "off"
+
+    classifier_model: Annotated[
+        str | None,
+        Field(
+            min_length=1,
+            description=(
+                "Chat model of the approval classifier; ``None`` reuses the session model."
+            ),
+        ),
+    ] = None
+
+    classifier_timeout_seconds: Annotated[
+        float,
+        Field(
+            gt=0.0,
+            description=(
+                "How long one classifier call may take; a timeout or a failure asks the "
+                "human (fail closed)."
+            ),
+        ),
+    ] = 30.0
+
+    classifier_args_chars: Annotated[
+        int,
+        Field(
+            ge=4,
+            description="Characters of the call's JSON arguments shown to the classifier.",
+        ),
+    ] = 1500
+
+    classifier_description_chars: Annotated[
+        int,
+        Field(
+            ge=4,
+            description="Characters of the tool description shown to the classifier.",
+        ),
+    ] = 400
+
+    approval_false_words: Annotated[
+        frozenset[str],
+        Field(
+            description=(
+                "Lower-case values of the model's approval_request argument that mean "
+                "\"no approval needed\"."
+            ),
+        ),
+    ] = frozenset({"", "false", "no", "none", "null", "0"})
+
+    @field_validator("approval_judge", mode="before")
+    @classmethod
+    def _yaml_off(cls, value: Any) -> Any:
+        # YAML 1.1 reads a bare ``off`` as ``False``.
+        return "off" if value is False else value
+
+    @field_validator("rules", mode="after")
+    @classmethod
+    def _unique_ids(cls, value: list[PermissionRule]) -> list[PermissionRule]:
+        seen: set[str] = set()
+        for rule in value:
+            if rule.id in seen:
+                raise ValueError(f"duplicate permission rule id {rule.id!r}")
+            seen.add(rule.id)
+        return value
+
+
 def _resolve_config_path() -> Path | None:
     """Return the YAML file to load, if any.
 
@@ -722,6 +956,7 @@ class Settings(BaseSettings):
     storage: StorageSettings = Field(default_factory=StorageSettings)
     flags: FlagsSettings = Field(default_factory=FlagsSettings)
     hooks: HooksSettings = Field(default_factory=HooksSettings)
+    permissions: PermissionsSettings = Field(default_factory=PermissionsSettings)
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
     #: Name of the ``mcp_servers`` entry that provides browser tools (exposed unprefixed).
     #: ``None`` falls back to ``"playwright"`` when such an entry exists.
@@ -796,9 +1031,12 @@ __all__ = [
     "LoopSettings",
     "MemorySettings",
     "ObservationSettings",
+    "PermissionRule",
+    "PermissionsSettings",
     "Settings",
     "StorageSettings",
     "TOOL_HOOK_EVENTS",
     "get_settings",
+    "normalize_domain",
     "reload_settings",
 ]

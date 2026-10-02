@@ -27,11 +27,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.browser.names import TABS_TOOL, is_browser_snapshot_name, is_browser_tool_name
 from src.config import get_settings
 from src.contracts import CompactToolObservation, ToolResult
 from src.harness.memory import append_tool_message, tool_result_message_content
 
-from src.agent_loop.execution.policy import SNAPSHOT_TOOL, TABS_TOOL, is_browser_tool
 from src.agent_loop.execution.progress import record_action, repeat_note
 from src.agent_loop.execution.state import LoopState
 
@@ -170,8 +170,8 @@ class ToolResultNormalizer:
             status=status,
             content=str(result.get("content", "") or ""),
             compact=compact_observation or _fallback_compact_observation(result),
-            is_browser_tool=is_browser_tool(tool_name),
-            is_snapshot=tool_name == SNAPSHOT_TOOL and status == "success",
+            is_browser_tool=is_browser_tool_name(tool_name),
+            is_snapshot=is_browser_snapshot_name(tool_name) and status == "success",
         )
 
 

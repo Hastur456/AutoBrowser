@@ -8,30 +8,30 @@ model:
           status: pending
     - decision: tool_call
       tool_request:
-        name: browser.snapshot
+        name: browser_snapshot
         args: {}
         reason: Inspect filters.
     - decision: tool_call
       tool_request:
-        name: browser.type
+        name: browser_type
         args:
           ref: e5
           text: "2000"
         reason: Set minimum price.
     - decision: tool_call
       tool_request:
-        name: browser.snapshot
+        name: browser_snapshot
         args: {}
         reason: Inspect apply control.
     - decision: tool_call
       tool_request:
-        name: browser.click
+        name: browser_click
         args:
           ref: e6
         reason: Apply filter.
     - decision: tool_call
       tool_request:
-        name: browser.snapshot
+        name: browser_snapshot
         args: {}
         reason: Inspect filtered results.
     - decision: done

@@ -12,6 +12,7 @@ from mcp import types
 from src.agent_loop.execution.tools import ToolBroker
 from src.browser.normalization import BrowserToolNormalizer
 from src.harness.mcp_tools import MCPToolSource, call_tool_result_to_text
+from src.harness.tools import tool_is_read_only
 from src.mcp import MCPManager
 
 FAKE_SERVER = str(Path(__file__).parent / "mcp_fixtures" / "fake_server.py")
@@ -67,6 +68,10 @@ def test_exposure_prefixed_and_unprefixed() -> None:
             by_name = {t.name: t for t in await source.get_tools()}
             assert by_name["echo"].qualified_name == "browser__echo"
             assert by_name["echo"].args == {"text": by_name["echo"].input_schema["properties"]["text"]}
+            # Server annotations reach the harness tool (the PermissionEngine reads them).
+            assert tool_is_read_only(by_name["browser__get_user"])
+            assert not tool_is_read_only(by_name["increment"])
+            assert not tool_is_read_only(by_name["echo"]) and by_name["echo"].annotations is None
 
     run(scenario())
 

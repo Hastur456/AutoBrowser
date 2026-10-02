@@ -81,7 +81,7 @@ def install_runner(monkeypatch: pytest.MonkeyPatch, runner: Any) -> None:
     """Inject a fake task runner in place of ``native_task_runner``."""
     monkeypatch.setattr(
         "src.harness.session.native_task_runner",
-        lambda _resources: runner,
+        lambda _resources, **_kwargs: runner,
     )
 
 

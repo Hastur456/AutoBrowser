@@ -33,13 +33,13 @@ def test_forbidden_args_are_dropped() -> None:
     assert out["args"] == {"selector": "#go"}
 
 
-def test_canonical_name_resolves_to_exposed_tool() -> None:
-    # names.py maps the canonical dotted action to the Playwright tool name.
+def test_names_are_never_translated() -> None:
+    # No canonical vocabulary: an unexposed name reaches the broker as "unknown tool".
     tools = {"browser_click": tool("browser_click", {"ref": {}})}
     out = BrowserToolNormalizer().normalize_request(
         {"name": "browser.click", "args": {"ref": "e1"}}, {}, tools
     )
-    assert out["name"] == "browser_click"
+    assert out == {"name": "browser.click", "args": {"ref": "e1"}}
 
 
 def test_non_browser_requests_pass_through() -> None:

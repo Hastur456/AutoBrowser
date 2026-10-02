@@ -123,6 +123,28 @@ def identical_outcome_count(
     return 0
 
 
+def ineffective_repeat_reason(
+    history: Sequence[ActionRecord],
+    tool: Any,
+    args: Any,
+    limit: int,
+) -> str | None:
+    """Model-facing reason to skip a call whose identical outcome reached ``limit``, else ``None``.
+
+    A progress check, not authorization: the call is pointless, not forbidden.
+    """
+
+    identical = identical_outcome_count(history, tool, args)
+    if identical < limit:
+        return None
+    return (
+        f"Not executed: {tool} with these exact arguments already returned "
+        f"the identical result {identical} times in this task (see Action History). "
+        "Running it again cannot produce new information. Change the approach or the "
+        "evidence you rely on, or finish with what is known."
+    )
+
+
 def repeat_note(record: ActionRecord) -> str:
     """Model-facing note for a call that reproduced an earlier outcome, else ``""``."""
 
@@ -157,6 +179,7 @@ __all__ = [
     "ActionRecord",
     "call_key",
     "identical_outcome_count",
+    "ineffective_repeat_reason",
     "outcome_key",
     "record_action",
     "render_action_history",

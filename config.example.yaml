@@ -52,7 +52,7 @@
 
 llm:
   # Chat model id, as the provider expects it.
-  model: gpt-oss:20b-cloud                      # (default)
+  model: gemma4:31b-cloud                      # (default)
   # Sampling temperature. 0.0 keeps planning deterministic.
   temperature: 0.0                              # (default)
   # Base URL of the Ollama-compatible endpoint. null = unset: the provider then
@@ -161,12 +161,83 @@ flags:
   agent_loop: false                             # (default)
 
 # ---------------------------------------------------------------------------
+# Deterministic tool authorization (src/harness/permissions.py), evaluated after
+# pre_tool_use hooks on the final arguments. Matching rules resolve
+# deny > ask > allow, whatever their order. A rule deny is not terminal: the
+# model reads the reason and may take another path. No rule ships with the code
+# and the engine knows no tool names: without rules nothing asks for approval.
+permissions:
+  # default:   a call without a matching rule runs.
+  # read_only: only readOnlyHint tools and allow rules run; the rest is denied.
+  # dont_ask:  every approval becomes a deny (headless runs, batch, evals).
+  # bypass:    approvals are granted; deny rules and always_ask still hold.
+  mode: default                                 # (default)
+  # Who besides the rules may ask you to approve a state-changing call (a tool
+  # without readOnlyHint). Their asks are always_ask (no session grant, no
+  # bypass), turn into a deny under dont_ask and can never lift a rule.
+  # off:        only rules and hooks ask.
+  # model:      every such tool gets an optional approval_request argument; the
+  #             acting model fills it ("pay 9 826 RUB for 2 items") and you are
+  #             asked. No extra model call.
+  # classifier: a separate model call judges every such call the rules let
+  #             through; a failure or timeout asks (fail closed).
+  # both:       either one asking is enough.
+  approval_judge: "off"                         # (default) quoted: bare off is YAML false
+  # classifier_model: gemma4:31b-cloud          # (unset by default) null = the session model
+  classifier_timeout_seconds: 30.0              # (default)
+  classifier_args_chars: 1500                   # (default) JSON arguments shown to the classifier
+  classifier_description_chars: 400             # (default) tool description shown to it
+  # approval_request values (lower-cased) that mean "no approval needed":
+  approval_false_words: ["", "false", "no", "none", "null", "0"]  # (default)
+  rules: []                                     # (default)
+  # rules:
+  #   # Opt-in guards for risky tools. MCP annotations cannot tell page
+  #   # JavaScript from a click, so a rule has to name the tools.
+  #   - id: page-js
+  #     decision: ask
+  #     always_ask: true                        # no session grant, no bypass
+  #     tool: "browser_evaluate|browser_run_code(_unsafe)?"
+  #     reason: "Running JavaScript in the page needs approval ({tool})."
+  #   - id: file-handoff
+  #     decision: ask
+  #     tool: "browser_file_upload|browser_drop"
+  #     reason: "Handing local files to the page needs approval ({tool})."
+  #   - id: sensitive-tool-names
+  #     decision: ask
+  #     tool: "(?i).*(payment|purchase|delete_account|credential).*"
+  #   - id: confirm-forms
+  #     decision: ask                           # allow | ask | deny
+  #     tool: "browser_fill_form|browser_select_option"  # re.fullmatch on the name
+  #     always_ask: false                       # true: no session grant, no bypass
+  #     reason: "Filling forms needs approval ({tool})."
+  #   - id: shop-only
+  #     decision: deny
+  #     server: playwright                      # exact; empty = any server
+  #     tool: browser_navigate
+  #     not_domains: [ozon.ru, wildberries.ru]  # suffix match; or domains: [...]
+  #   - id: no-upload
+  #     decision: deny
+  #     tool: browser_file_upload
+  #   # Click-target guardrail: matches the model's `element` text and the snapshot line
+  #   # of the clicked ref (role + accessible name). A heuristic, not a boundary --
+  #   # expect false positives; unresolvable targets ask (fail closed).
+  #   - id: purchases
+  #     decision: ask
+  #     tool: browser_click
+  #     target: '(?i)купить|оформить|оплатить|удалить|отправить|buy|pay|delete|submit'
+  #   - id: no-card-numbers
+  #     decision: deny
+  #     tool: browser_type
+  #     args: {text: '\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}'}  # {arg: re.search}
+
+# ---------------------------------------------------------------------------
 # Deterministic lifecycle hooks around the agent loop (src/harness/hooks.py).
 # Handlers are "package.module:attr" import paths of async callables, resolved
 # at session start -- an import error, a duplicate id or a sync handler fails
 # startup. With `options`, the handler is a factory called once as
-# handler(**options). A hook never lifts a built-in `blocked` policy decision,
-# and `permission_request` is the only way to approve a `needs_human` tool.
+# handler(**options). Hooks run before the permission rules: a hook `allow`
+# never lifts a rule, and `permission_request` is the only hook that can approve
+# a call the permissions ask about.
 hooks:
   # Master switch; off means no hook runs and nothing is emitted.
   enabled: false                                # (default)
@@ -210,7 +281,7 @@ hooks:
   #
   # registry:
   #   # Clicking "Оплатить" / "Оформить заказ" / "Удалить" / "Place order" needs approval.
-  #   # The CLI wires no human callback, so `ask` ends the task `blocked`; add
+  #   # The CLI asks in a terminal (headless: denied, the model continues); add
   #   # --decision deny to block only that call. --keyword TEXT replaces the defaults.
   #   - id: sensitive-actions
   #     event: pre_tool_use

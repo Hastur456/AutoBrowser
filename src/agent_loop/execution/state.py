@@ -74,6 +74,9 @@ class LoopState:
 
     decision: str = ""
     tool_request: ToolRequest = field(default_factory=dict)
+    # The acting model's ``approval_request`` for ``tool_request``, stripped from its arguments
+    # (``execution/approval.py``); cleared at the start of every turn.
+    approval_request: str = ""
     tool_result: ToolResult = field(default_factory=dict)
     policy_decision: PolicyDecision | str = ""
     policy_event: dict[str, Any] = field(default_factory=dict)
@@ -130,14 +133,16 @@ class LoopState:
         return replace(self, **loop_updates)
 
     def snapshot_mapping(self) -> dict[str, Any]:
-        """Minimal mapping fed to a tool-call normalizer's ``normalize_request``.
+        """Minimal mapping fed to normalizers and permission resource resolvers.
 
-        Normalizers read state via ``.get(...)`` (only ``snapshot`` today), so a
-        plain dict keeps them unchanged while the loop uses the typed dataclass.
+        Both read state via ``.get(...)`` (``snapshot``, and ``tool_result`` — the latest
+        tool output — for the permission resolver), so a plain dict keeps them unchanged
+        while the loop uses the typed dataclass.
         """
 
         return {
             "snapshot": self.browser.snapshot,
+            "tool_result": dict(self.tool_result or {}),
             "error": self.error,
             "last_tool": self.last_tool,
             "last_args": dict(self.last_args),

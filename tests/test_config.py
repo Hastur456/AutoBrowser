@@ -81,7 +81,7 @@ def test_defaults_match_the_constants_they_replaced(settings: Any) -> None:
     config = settings()
 
     # was: src/llm.py DEFAULT_OLLAMA_MODEL
-    assert config.llm.model == "gpt-oss:20b-cloud"
+    assert config.llm.model == "gemma4:31b-cloud"
 
     # was: src/agent_loop/execution/loop.py DEFAULT_TURN_CAP
     assert config.loop.turn_cap == 50
@@ -180,7 +180,7 @@ def test_section_less_names_are_not_accepted(
     config = settings()
 
     assert config.browser.cdp_port == 9222
-    assert config.llm.model == "gpt-oss:20b-cloud"
+    assert config.llm.model == "gemma4:31b-cloud"
     assert config.flags.agent_loop is False
 
 
@@ -832,3 +832,138 @@ def test_match_is_accepted_for_tool_events(settings: Any, event: str) -> None:
     ).hooks
 
     assert hooks.registry[0].match.tool == "x"
+
+
+# --------------------------------------------------------------------------
+# The permissions section
+# --------------------------------------------------------------------------
+
+
+def test_permissions_default_to_default_mode_without_rules(settings: Any) -> None:
+    permissions = settings().permissions
+
+    assert permissions.mode == "default"
+    assert permissions.rules == []
+
+
+def test_the_permission_mode_resolves_from_the_environment(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_PERMISSIONS__MODE", "dont_ask")
+
+    assert settings().permissions.mode == "dont_ask"
+
+
+def test_the_approval_judge_resolves_from_the_environment(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert settings().permissions.approval_judge == "off"
+    monkeypatch.setenv("AUTOBROWSER_PERMISSIONS__APPROVAL_JUDGE", "classifier")
+    monkeypatch.setenv("AUTOBROWSER_PERMISSIONS__CLASSIFIER_MODEL", "small:1b")
+
+    permissions = settings().permissions
+    assert (permissions.approval_judge, permissions.classifier_model) == ("classifier", "small:1b")
+
+
+def test_the_approval_limits_resolve_from_the_environment(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    defaults = settings().permissions
+    assert (defaults.classifier_args_chars, defaults.classifier_description_chars) == (1500, 400)
+    assert defaults.approval_false_words == frozenset({"", "false", "no", "none", "null", "0"})
+    monkeypatch.setenv("AUTOBROWSER_PERMISSIONS__CLASSIFIER_ARGS_CHARS", "200")
+    monkeypatch.setenv("AUTOBROWSER_PERMISSIONS__CLASSIFIER_DESCRIPTION_CHARS", "50")
+    monkeypatch.setenv("AUTOBROWSER_PERMISSIONS__APPROVAL_FALSE_WORDS", '["no", "нет"]')
+
+    permissions = settings().permissions
+    assert (permissions.classifier_args_chars, permissions.classifier_description_chars) == (
+        200,
+        50,
+    )
+    assert permissions.approval_false_words == frozenset({"no", "нет"})
+
+
+def test_a_bare_yaml_off_approval_judge_is_off(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = _write_config(tmp_path, "permissions:\n  approval_judge: off\n")
+    _point_at(monkeypatch, path)
+
+    assert settings().permissions.approval_judge == "off"
+
+
+def test_an_unknown_permission_mode_is_rejected(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_PERMISSIONS__MODE", "yolo")
+
+    with pytest.raises(ValueError):
+        settings()
+
+
+def test_permission_rules_are_read_from_the_config_file(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _point_at(
+        monkeypatch,
+        _write_config(
+            tmp_path,
+            """
+            permissions:
+              mode: read_only
+              rules:
+                - id: shop-only
+                  decision: deny
+                  server: playwright
+                  tool: browser_navigate
+                  not_domains: [www.ozon.ru]
+                - id: no-evaluate
+                  decision: ask
+                  tool: "browser_evaluate|browser_run_code_unsafe"
+                  always_ask: true
+                  reason: Arbitrary page JavaScript needs approval.
+            """,
+        ),
+    )
+
+    permissions = settings().permissions
+
+    assert permissions.mode == "read_only"
+    shop, evaluate = permissions.rules
+    assert (shop.id, shop.decision, shop.server, shop.tool) == (
+        "shop-only",
+        "deny",
+        "playwright",
+        "browser_navigate",
+    )
+    assert shop.not_domains == ["ozon.ru"]
+    assert evaluate.always_ask is True
+    assert evaluate.reason == "Arbitrary page JavaScript needs approval."
+
+
+def test_a_broken_permission_rule_fails_startup(settings: Any) -> None:
+    with pytest.raises(ValueError, match="invalid rule pattern"):
+        settings(permissions={"rules": [{"id": "x", "decision": "deny", "tool": "("}]})
+    with pytest.raises(ValueError, match="duplicate permission rule id"):
+        settings(
+            permissions={
+                "rules": [
+                    {"id": "x", "decision": "deny"},
+                    {"id": "x", "decision": "allow"},
+                ]
+            }
+        )
+
+
+def test_no_permission_rule_ships_with_the_code(settings: Any) -> None:
+    permissions = settings().permissions
+
+    assert (permissions.mode, permissions.rules) == ("default", [])

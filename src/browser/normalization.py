@@ -1,17 +1,10 @@
 """Browser tool-call normalization, independent of any MCP server or adapter.
 
-Replaces ``src/browser/provider.py`` (``BrowserProvider``) and
-``src/browser/adapters/playwright_mcp.py`` (``PlaywrightMCPBrowserProvider``). Tools no
-longer come from a provider — they come from the MCP Manager via the tool registry — so what
-remains is a pure, stateless request normalizer:
-
-* resolve a canonical browser action (``browser_press_key``) to the tool actually exposed
-  (whatever the browser server calls it), using the shared vocabulary in
-  :mod:`src.browser.names` — no server-specific name table;
-* drop arguments the tool's JSON schema forbids (``additionalProperties: false``).
-
-Arguments are otherwise passed through unchanged: no element-reference rewriting and no
-snapshot lookups. Results are passed through unchanged.
+Tools come from the MCP Manager via the tool registry, under the names the server exposes,
+so what remains is a pure, stateless request normalizer: it drops arguments the tool's JSON
+schema forbids (``additionalProperties: false``). Names are never translated, arguments are
+otherwise passed through unchanged (no element-reference rewriting, no snapshot lookups),
+and results are passed through unchanged.
 
 The broker hands in the current ``{name: tool}`` map, so the normalizer holds no tools.
 """
@@ -21,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Protocol, runtime_checkable
 
-from src.browser.names import is_browser_tool_name, to_canonical_browser_name
+from src.browser.names import is_browser_tool_name
 from src.contracts import ToolRequest, ToolResult
 
 
@@ -76,9 +69,7 @@ class BrowserToolNormalizer(ToolCallNormalizer):
         if not is_browser_tool_name(requested):
             return normalized  # type: ignore[return-value]
 
-        name = self.resolve_name(requested, tools)
-        normalized["name"] = name
-        tool = tools.get(name)
+        tool = tools.get(requested)
         if tool is None:
             return normalized  # type: ignore[return-value]
 
@@ -87,18 +78,6 @@ class BrowserToolNormalizer(ToolCallNormalizer):
         if isinstance(properties, Mapping) and schema.get("additionalProperties") is False:
             normalized["args"] = {key: value for key, value in args.items() if key in properties}
         return normalized  # type: ignore[return-value]
-
-    @staticmethod
-    def resolve_name(requested: str, tools: Mapping[str, Any]) -> str:
-        """Exact exposed name wins; otherwise match by canonical browser action."""
-
-        if requested in tools:
-            return requested
-        canonical = to_canonical_browser_name(requested)
-        for exposed in sorted(tools):
-            if is_browser_tool_name(exposed) and to_canonical_browser_name(exposed) == canonical:
-                return exposed
-        return requested
 
     def normalize_result(self, result: ToolResult) -> ToolResult:
         return dict(result)  # type: ignore[return-value]

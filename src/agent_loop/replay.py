@@ -97,6 +97,16 @@ def print_action_sequence(events: list[EventRecord]) -> str:
         if event.type == "hook.decided":
             lines.append(_hook_line(event))
             continue
+        if event.type == "permission.decided" and event.payload.get("decision") != "allow":
+            lines.append(_permission_line(event))
+            continue
+        if event.type == "approval.resolved":
+            payload = event.payload
+            lines.append(
+                f"   approval: {payload.get('decision', '')} by {payload.get('by', '')}"
+                f" ({payload.get('scope', '')})"
+            )
+            continue
         if _proposed_request(event) is None:
             continue
         action = next(actions)
@@ -139,6 +149,14 @@ def _hook_line(event: EventRecord) -> str:
         if value:
             line = f"{line} ({key}: {value})"
     return line
+
+
+def _permission_line(event: EventRecord) -> str:
+    payload = event.payload
+    rule = str(payload.get("rule_id", "") or payload.get("source", "") or "")
+    line = f"   permission [{payload.get('tool', '')}]: {payload.get('decision', '')} ({rule})"
+    reason = str(payload.get("reason", "") or "")
+    return f"{line} - {reason}" if reason else line
 
 
 def _tool_statuses(events: list[EventRecord]) -> list[str]:
@@ -200,6 +218,8 @@ def _policy_block_count(events: list[EventRecord]) -> int:
 def _is_policy_block(event: EventRecord) -> bool:
     if event.type == "policy.decided":
         return event.payload.get("decision") == "blocked"
+    if event.type == "permission.decided":
+        return event.payload.get("decision") == "deny"
     # A pre_tool_use hook deny is a policy block from the task's point of view.
     return (
         event.type == "hook.decided"

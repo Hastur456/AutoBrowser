@@ -15,6 +15,22 @@
     "tool_call_count": 5,
     "trace_complete": true
   },
+  "purchase_click_denied_by_human": {
+    "model_turn_count": 3,
+    "policy_block_count": 0,
+    "repeated_action_count": 0,
+    "terminal_status": "blocked",
+    "tool_call_count": 1,
+    "trace_complete": true
+  },
+  "purchase_click_denied_headless": {
+    "model_turn_count": 4,
+    "policy_block_count": 1,
+    "repeated_action_count": 0,
+    "terminal_status": "completed",
+    "tool_call_count": 1,
+    "trace_complete": true
+  },
   "search_basic": {
     "model_turn_count": 5,
     "policy_block_count": 0,

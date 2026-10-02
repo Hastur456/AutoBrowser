@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from src.agent_loop.engine import native_task_runner
+from src.agent_loop.engine import HumanInputCallback, native_task_runner
 from src.agent_loop.events import (
     AgentTraceSink,
     CompositeEventSink,
@@ -19,10 +19,14 @@ from src.agent_loop.events import (
     JsonlEventSink,
 )
 from src.agent_loop.execution.completion import native_latest_state_loader
+from src.agent_loop.execution.approval import ApprovalJudge
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalRunRequest, GoalRunner
 from src.config import get_settings
+from src.contracts import PermissionMode
 from src.harness.hooks import HookEngine, NullHookEngine, registry_digest
+from src.browser.permissions import BrowserResourceResolver
+from src.harness.permissions import PermissionEngine
 from src.harness.mcp_setup import MCPRuntime, build_mcp_runtime
 from src.harness.runtime import (
     HARNESS_EVENT_METADATA_CONFIG_KEY,
@@ -100,6 +104,8 @@ class SessionConfig:
     cdp_port: int
     cdp_timeout: float
     turn_cap: int
+    #: Overrides ``settings.permissions.mode`` for this session; ``None`` keeps it.
+    permission_mode: PermissionMode | None = None
 
     @classmethod
     def from_args(cls, args: Any) -> "SessionConfig":
@@ -120,6 +126,7 @@ class SessionConfig:
             cdp_port=args.cdp_port,
             cdp_timeout=args.cdp_timeout,
             turn_cap=args.turn_cap,
+            permission_mode=getattr(args, "permission_mode", None),
         )
 
     def task_config(self) -> dict[str, Any]:
@@ -384,6 +391,12 @@ class SessionContext:
     #: Session-scoped lifecycle hooks, loaded from ``settings.hooks`` in :meth:`initialize`.
     hooks: HookEngine | NullHookEngine = field(default_factory=NullHookEngine)
     hooks_registry_sha256: str = ""
+    #: Session-scoped tool authorization (rules, mode, approval grants), loaded from
+    #: ``settings.permissions`` in :meth:`initialize`.
+    permissions: PermissionEngine = field(default_factory=PermissionEngine)
+    #: Session-scoped model judgments that escalate a call to approval, built from
+    #: ``settings.permissions.approval_judge`` in :meth:`initialize`.
+    approval: ApprovalJudge = field(default_factory=ApprovalJudge)
     chrome_process: Any | None = None
     initialized: bool = False
 
@@ -403,13 +416,19 @@ class SessionContext:
         if self.initialized:
             return
 
-        # Load hooks first: a broken registry must fail startup before Chrome/MCP launch.
+        # Load hooks and permissions first: a broken registry or rule must fail startup
+        # before Chrome/MCP launch.
         settings = get_settings()
         self.hooks = HookEngine.from_settings(
             settings.hooks,
             progress_timeout_seconds=settings.loop.progress_timeout_seconds,
         )
         self.hooks_registry_sha256 = registry_digest(settings.hooks)
+        self.permissions = PermissionEngine.from_settings(
+            settings.permissions,
+            resolver=BrowserResourceResolver(),
+            mode=self.config.permission_mode,
+        )
 
         now = datetime.now(UTC)
         self.metadata.started_at = now
@@ -428,6 +447,11 @@ class SessionContext:
         self.llm = llm_factory(
             model=self.config.model,
             temperature=self.config.temperature,
+        )
+        self.approval = ApprovalJudge.from_settings(
+            settings.permissions,
+            llm=self.llm,
+            llm_factory=llm_factory,
         )
         if self.config.no_mcp:
             self.tool_registry = ToolRegistry()
@@ -534,6 +558,10 @@ class SessionContext:
                 "enabled": isinstance(self.hooks, HookEngine),
                 "registry_sha256": self.hooks_registry_sha256,
             },
+            "permissions": {
+                "mode": self.permissions.mode,
+                "approval_judge": self.approval.mode,
+            },
         }
 
     def persist(self) -> None:
@@ -611,6 +639,7 @@ class SessionRuntime:
         harness_factory: HarnessFactory = BrowserHarness,
         input_fn: Callable[[str], str] = input,
         output_fn: Callable[..., None] = print,
+        human_input: HumanInputCallback | None = None,
     ) -> None:
         self.config = config
         self.context = SessionContext(config)
@@ -622,6 +651,8 @@ class SessionRuntime:
         self._harness_factory = harness_factory
         self._input = input_fn
         self._output = output_fn
+        #: Answers permission ``ask`` verdicts; ``None`` denies them (headless runs).
+        self._human_input = human_input
 
     @property
     def harness(self) -> BrowserHarness:
@@ -634,6 +665,8 @@ class SessionRuntime:
     async def start(self) -> None:
         """Initialize long-lived resources once for this process session."""
 
+        if self.context.initialized:
+            return
         await self.context.initialize(
             llm_factory=self._llm_factory,
             start_chrome_cdp=self._start_chrome_cdp,
@@ -643,6 +676,11 @@ class SessionRuntime:
             print_tools=self._print_tools,
             harness_factory=self._harness_factory,
         )
+        if self.context.permissions.mode == "bypass":
+            self._output(
+                "WARNING: permission mode 'bypass' grants every approval; only deny rules "
+                "and always-ask rules still hold."
+            )
 
     async def run_task(self, task: str) -> Any:
         """Run one user task through the existing agent implementation."""
@@ -690,11 +728,13 @@ class SessionRuntime:
             llm=self.context.llm,
             events=self.context.event_emitter,
             hooks=self.context.hooks,
+            permissions=self.context.permissions,
+            approval=self.context.approval,
         )
         runner = GoalRunner(
             harness=self.harness,
             session_config=self.config,
-            task_runner=native_task_runner(resources),
+            task_runner=native_task_runner(resources, human_input=self._human_input),
             event_emitter=self.context.event_emitter,
             latest_state_loader=load_latest_state,
         )

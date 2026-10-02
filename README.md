@@ -170,8 +170,14 @@ python main.py --show-state --hide-snapshot --task "inspect page"
 
 Useful flags include `--show-state`, `--show-tools`, `--json`,
 `--hide-snapshot`, `--compress-tools`, `--model`, `--temperature`,
-`--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, and
-`--turn-cap`. `--loop` is still accepted for compatibility.
+`--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap` and
+`--permission-mode`. `--loop` is still accepted for compatibility.
+
+`--permission-mode default|read_only|dont_ask|bypass` overrides `permissions.mode` for the
+session. In a terminal the CLI asks before a call the permission rules flag
+(`[y] once`, `[s] for the session` on that tool and domain, `[n] deny`; a refusal ends the
+task `blocked`); without a terminal (piped `--task`, `run_batch.py`) a configured `default`
+mode becomes `dont_ask`, so such calls are denied and the model continues.
 
 ## Test
 
@@ -225,7 +231,7 @@ python -m pytest tests\test_prompts.py
 | `src/config.py` | Project configuration with functionality to load configuration from environment variables and a YAML file. |
 | `src/providers/` | Provider adapters (e.g. `ollama.py`) that map neutral `Message`/`ToolDef` objects to a backend wire format. |
 | `src/agent_loop/` | Runtime-facing action contracts and model parsing, events, trace replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary around the engine-native `AgentLoopEngine`. |
-| `src/browser/` | Browser provider contracts, canonical names, Playwright MCP adapter, and fake browser backend. |
+| `src/browser/` | Browser tool-name helpers, error codes, request normalizer, permission resource resolver, and browser hooks. |
 | `src/harness/` | Session runtime, harness composition root, context, functional memory helpers, tools, policy, and telemetry boundaries. |
 | `src/mcp/` | Playwright MCP process/session lifecycle helpers and provider loading. |
 | `tests/` | Pytest coverage for engine-native behavior, harness boundaries, Agent Loop contracts, CLI, prompts, tools, batch/export, and deterministic eval scenarios. |

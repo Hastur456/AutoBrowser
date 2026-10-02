@@ -158,6 +158,10 @@ def _add_session_defaults(parser: argparse.ArgumentParser) -> None:
         json=False,
         compress_tools=False,
         cdp_timeout=settings.browser.cdp_timeout_seconds,
+        # Nobody answers approvals in a batch: a configured ``default`` mode becomes
+        # ``dont_ask`` (approvals are non-terminal denies), even when run from a terminal.
+        interactive=False,
+        permission_mode=None,
     )
 
 

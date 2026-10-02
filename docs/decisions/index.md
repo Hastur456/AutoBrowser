@@ -4,6 +4,23 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-10-02 Model-Based Approval Judge](2026-10-02-model-approval-judge.md) (Proposed):
+  opt-in `permissions.approval_judge` (`off | model | classifier | both`) lets the acting
+  model's `approval_request` argument or a separate classifier call escalate a
+  state-changing call to human approval without rules; judge asks are `always_ask` and never
+  lift a rule; the engine stays deterministic. Agent/planner prompts stop refusing
+  user-requested purchases and rely on the approval gate.
+- [2026-10-01 Name-Free Permission Defaults](2026-10-01-name-free-permission-defaults.md):
+  the engine and `src/browser/` hold no tool names and no rule ships with the code
+  (`BUILTIN_RULES`/`BROWSER_BUILTIN_RULES` deleted, `builtin` source gone), so nothing asks
+  out of the box; risky-tool guards are opt-in config examples. The canonical `browser.*`
+  vocabulary and the REPL's `browser_evaluate` are removed. Supersedes parts of the
+  PermissionEngine ADR.
+- [2026-10-01 PermissionEngine](2026-10-01-permission-engine.md): deterministic,
+  session-scoped `allow | ask | deny` authorization after `pre_tool_use` hooks — config rules
+  (`deny > ask > allow`), modes (`default`/`read_only`/`dont_ask`/`bypass`), fail-closed,
+  session grants; progress guard split out of `policy.py`; `destructiveHint` ignored per the
+  Playwright MCP annotation inventory.
 - [2026-09-30 Command Hooks](2026-09-30-command-hooks.md): `type: command` hooks run an
   external process in the Claude Code/Codex style — event JSON on stdin, exit `2` blocks
   with stderr as the reason, JSON stdout maps onto `HookResult`; engine semantics unchanged.

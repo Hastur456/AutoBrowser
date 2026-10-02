@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from src.agent_loop.execution.tools import PreparedToolCall, ToolBroker
-from src.browser.names import is_browser_tool_name, to_playwright_browser_name
+from src.browser.names import is_browser_tool_name
 from src.browser.normalization import BrowserToolNormalizer
 from src.contracts import Tool, ToolRequest, ToolResult
 from src.harness.mcp_tools import MCPToolSource
@@ -58,9 +58,7 @@ class _FakeBrowserType:
             normalized_request["args"] = args
             return normalized_request
 
-        tool_name = to_playwright_browser_name(requested_name)
-        normalized_request["name"] = tool_name
-        if tool_name == "browser_type":
+        if requested_name == "browser_type":
             ref = str(args.get("ref", "") or "").strip()
             if ref:
                 args.setdefault("target", ref)
@@ -116,7 +114,7 @@ async def test_prepare_does_not_run_the_tool_and_reports_no_server_for_a_plain_t
 async def test_prepare_normalizes_the_request_through_the_registry_normalizers() -> None:
     broker = _fake_browser_broker()
 
-    prepared = await broker.prepare({"name": "browser.type", "args": {"ref": "e8", "text": "x"}})
+    prepared = await broker.prepare({"name": "browser_type", "args": {"ref": "e8", "text": "x"}})
 
     assert prepared.request["name"] == "browser_type"
     assert prepared.request["args"]["target"] == "e8"
@@ -128,7 +126,7 @@ async def test_prepare_normalizes_the_request_through_the_registry_normalizers()
 async def test_preparing_an_already_prepared_request_changes_nothing() -> None:
     broker = _fake_browser_broker()
 
-    first = await broker.prepare({"name": "browser.type", "args": {"ref": "e8", "text": "x"}})
+    first = await broker.prepare({"name": "browser_type", "args": {"ref": "e8", "text": "x"}})
     second = await broker.prepare(first.request)
 
     assert second.request == first.request

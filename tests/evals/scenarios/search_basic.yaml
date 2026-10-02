@@ -11,19 +11,19 @@ model:
           status: pending
     - decision: tool_call
       tool_request:
-        name: browser.snapshot
+        name: browser_snapshot
         args: {}
         reason: Inspect the page.
     - decision: tool_call
       tool_request:
-        name: browser.type
+        name: browser_type
         args:
           ref: e8
           text: jackets
         reason: Type the search query.
     - decision: tool_call
       tool_request:
-        name: browser.snapshot
+        name: browser_snapshot
         args: {}
         reason: Inspect the results.
     - decision: done

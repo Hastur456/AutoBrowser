@@ -5,6 +5,9 @@ Behaviour switches mirror the failure modes the manager must handle: a stateful 
 call), a delayed silent exit (death with nothing in flight), runtime tool registration with
 ``notifications/tools/list_changed``, a dotted tool name (name sanitizing), a resource and a
 prompt.
+
+Annotations: ``get.user`` is read-only, ``increment`` a non-destructive mutation and
+``echo`` is unannotated (a server without annotations).
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ import sys
 import threading
 
 from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import ToolAnnotations
 
 server = FastMCP(
     os.environ.get("FAKE_SERVER_NAME", "fake"),
@@ -30,7 +34,7 @@ def echo(text: str) -> str:
     return text
 
 
-@server.tool()
+@server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False))
 def increment() -> str:
     """Increment an in-process counter (server-side state)."""
     _state["counter"] += 1
@@ -76,7 +80,7 @@ async def add_tool(name: str, ctx: Context) -> str:
     return "added"
 
 
-@server.tool(name="get.user")
+@server.tool(name="get.user", annotations=ToolAnnotations(readOnlyHint=True))
 def get_user_dotted() -> str:
     """A tool whose MCP name is not provider-safe."""
     return "dotted"

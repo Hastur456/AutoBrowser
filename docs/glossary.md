@@ -13,8 +13,8 @@
 | Assembled context | Deterministic, ordered prompt blocks produced by `ContextAssembler` (`src/agent_loop/context.py`), the canonical prompt-construction path. |
 | AutoBrowser | The browser automation agent implemented in this repository. |
 | Batch run | Execution of JSONL Golden Set scenarios through fresh `SessionRuntime` instances, with metadata written under `.autobrowser/batches/<batch_id>/`. |
-| Browser error code | Shared browser-layer error vocabulary such as `invalid_ref`, `unknown_action`, and `action_failed`. |
-| `browser_evaluate` | Browser tool fallback for cases where snapshots cannot expose required information. |
+| Browser error code | Shared browser-layer error vocabulary such as `invalid_ref` and `action_failed`. |
+| `browser_evaluate` | Playwright MCP page-JavaScript tool, a fallback for cases where snapshots cannot expose required information; it asks only if a configured rule says so (see the opt-in `page-js` example in `config.example.yaml`). |
 | `browser_find` | Browser tool for plain-text search; not reliable for structured link or attribute extraction. |
 | `browser_snapshot` | Source-of-truth browser observation containing visible page state and element refs. |
 | BrowserAction | Provider-neutral typed browser request using canonical `browser.*` action names. |
@@ -22,13 +22,12 @@
 | BrowserProvider | Legacy protocol (`src/browser/provider.py`) kept only for test scaffolding; superseded in production by `MCPToolSource` and `ToolCallNormalizer`. |
 | BrowserResult | Provider-neutral browser action result shape with status, content, error, and optional error code. |
 | BrowserToolNormalizer | `ToolCallNormalizer` in `src/browser/normalization.py` that maps canonical `browser.*` names to the tool the browser server actually exposes. |
-| Canonical browser action | Provider-neutral browser action name such as `browser.snapshot`, mapped to backend-specific tool names by adapters. |
 | ChatModel | Provider-neutral chat protocol in `src/llm.py`: `async complete(messages, *, tools, **params) -> ModelResponse`. Provider adapters implement it; the engine drives it and never sees provider objects. |
 | Checkpointer | Removed. There is no checkpoint saver; durable history is carried on `LoopState.messages` and `SessionContext.state`, shaped by the functional `MemoryManager`. |
 | Command hook | Hook with `type: command` (`src/harness/command_hooks.py`): an external process that gets the `HookEvent` as JSON on stdin and answers with its exit code (`2` blocks, stderr is the reason) and optional JSON on stdout, following the Claude Code/Codex protocol. |
 | Compact observation | Short observer output derived from a tool result and used by the next agent step. |
 | CompletionStatus | Loop completion status (`continue`/`done`/`blocked`/`cancelled`) carried on `AgentLoopResult`; `GoalRunner` maps it to a terminal `GoalStatus` via `goal_status_from_completion()` in `src/contracts.py`. |
-| Config section | One of the eight frozen pydantic sub-models on `Settings` (`llm`, `browser`, `loop`, `observation`, `memory`, `events`, `storage`, `flags`). Each owns an `AUTOBROWSER_<SECTION>__<FIELD>` environment namespace and rejects unknown keys. |
+| Config section | One of the ten frozen pydantic sub-models on `Settings` (`llm`, `browser`, `loop`, `observation`, `memory`, `events`, `storage`, `flags`, `hooks`, `permissions`). Each owns an `AUTOBROWSER_<SECTION>__<FIELD>` environment namespace and rejects unknown keys. |
 | ContextAssembler | The sole prompt-construction boundary in `src/agent_loop/context.py`: builds the durable system prompt, the per-turn user prompt, and the planner prompt from ordered `ContextBlock`s. |
 | Direct search URL fallback | Navigating directly to a site's search results URL when UI search controls do not make progress. |
 | EngineResources | Bundled runtime collaborators (`llm`, `tool_registry`, `tool_normalizers`, `context`, `events`, `hooks`) built from `BrowserHarness` (plus the session's `HookEngine`) and passed to `AgentLoopEngine`. |
@@ -61,7 +60,10 @@
 | Planner | Engine phase that creates or revises compact task plans. |
 | Playwright MCP | Browser automation tool provider whose snapshot refs drive interactions. |
 | PlaywrightMCPBrowserProvider | Removed. Former Playwright adapter; replaced by `MCPManager` + `MCPToolSource` + `BrowserToolNormalizer`. |
-| Policy | Engine-owned classification in `src/agent_loop/execution/policy.py` that labels a tool request `approved`, `needs_human`, or `blocked` before execution. |
+| Policy | The gate result of a tool turn stored on `LoopState.policy_decision` (`approved`, `needs_human`, `blocked`). `blocked` comes from the progress guard, a hook deny or a permission deny; `policy.decided` is emitted only by the progress guard. |
+| PermissionEngine | Session-scoped, deterministic tool authorization in `src/harness/permissions.py`: `PermissionCheck` → `allow`/`ask`/`deny` from rules (`deny > ask > allow`), the mode and session grants; fails closed; emits `permission.decided`. |
+| Permission mode | `permissions.mode`: `default` (no rule → allow), `read_only` (only `readOnlyHint` tools), `dont_ask` (every ask → deny), `bypass` (asks granted; deny rules and `always_ask` hold). |
+| Grant | A session-only approval of `(server, tool, domain)` stored by the `PermissionEngine` after a human answers "session"; never covers `always_ask` rules or hook asks. |
 | ProposedAction | Provider-neutral model action contract (`answer`/`tool_call`/`update_plan`/`ask_user`/`delegate`/`compact_memory`/`stop`) parsed from a model turn and mapped to `LoopState` updates by the engine. |
 | Provider adapter | Thin adapter that implements `ChatModel` by serializing neutral `Message`/`ToolDef` objects to a backend wire format and parsing the reply back into a `ModelResponse`. |
 | Qualified tool name | `server__tool` name produced by `src/mcp/naming.py` (sanitized, max 64 chars) for tools of non-browser servers. |

@@ -10,6 +10,7 @@ import re
 import sys
 import threading
 from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -18,7 +19,9 @@ from typing import Any, Iterable
 import cmd2
 from cmd2 import Cmd2ArgumentParser, with_argparser
 
+from src.browser.names import SNAPSHOT_TOOL
 from src.cli.output import format_mcp_status
+from src.cli.approval import ApprovalPrompt
 from src.harness.session import SessionContext, SessionRuntime, TaskRecord
 from src.harness.tools import ToolRegistry
 from src.mcp import ConnectionState
@@ -105,10 +108,18 @@ class AgentCli(cmd2.Cmd):
     prompt = "autobrowser> "
     intro = "AutoBrowser CLI. Type 'help' for commands."
 
-    def __init__(self, runtime: SessionRuntime, *, use_color: bool | None = None) -> None:
+    def __init__(
+        self,
+        runtime: SessionRuntime,
+        *,
+        use_color: bool | None = None,
+        approvals: ApprovalPrompt | None = None,
+    ) -> None:
         super().__init__(allow_cli_args=False, include_ipy=False)
         self.prompt = "autobrowser> "
         self.runtime = runtime
+        #: Pending permission approvals of the running task; the next input line answers.
+        self.approvals = approvals
         self._runtime_loop = RuntimeLoop()
         self.use_color = sys.stdout.isatty() if use_color is None else use_color
         self._task_future: Future[Any] | None = None
@@ -134,8 +145,11 @@ class AgentCli(cmd2.Cmd):
             self.disable_command(command, "This CLI exposes only AutoBrowser commands.")
 
     def default(self, statement: cmd2.Statement) -> None:
-        """Treat free-form input as an agent task."""
+        """Treat free-form input as an agent task (or the answer to a pending approval)."""
 
+        if self.approvals is not None and self.approvals.pending:
+            self.approvals.answer(statement.raw)
+            return
         text = str(statement).strip()
         if text:
             self._run_task_text(text)
@@ -346,18 +360,9 @@ class AgentCli(cmd2.Cmd):
         return path
 
     async def _current_url(self) -> str | None:
+        # Read-only: the snapshot's "Page URL:" line, never page JavaScript.
         await self.runtime.start()
-        evaluate = await self._get_optional_tool("browser_evaluate")
-        if evaluate is not None:
-            result = await self._call_tool(
-                evaluate,
-                {"function": "() => window.location.href"},
-            )
-            url = self._extract_url(self._result_text(result))
-            if url:
-                return url
-
-        snapshot = await self._get_optional_tool("browser_snapshot")
+        snapshot = await self._get_optional_tool(SNAPSHOT_TOOL)
         if snapshot is None:
             return None
         text = self._result_text(await self._call_tool(snapshot, {}))
@@ -550,7 +555,7 @@ class AgentCli(cmd2.Cmd):
         return str(result)
 
     def _extract_url(self, text: str) -> str | None:
-        """First URL in a tool's text output (evaluate result or page snapshot)."""
+        """First URL in a page snapshot (its ``Page URL:`` line first)."""
 
         for line in text.splitlines():
             stripped = line.strip().lstrip("-* ").strip()
@@ -582,13 +587,30 @@ class AgentCli(cmd2.Cmd):
         return f"{colors[color]}{text}\033[0m"
 
 
-def run_cli(runtime: SessionRuntime, *, initial_task: str | None = None) -> int:
+def _run_blocking(cli: AgentCli, coro: Any) -> Any:
+    """Run ``coro`` on the runtime loop, answering approvals on this (terminal) thread."""
+
+    future = cli._runtime_loop.submit(coro)
+    while True:
+        try:
+            return future.result(timeout=0.1)
+        except FutureTimeoutError:
+            if cli.approvals is not None:
+                cli.approvals.serve()
+
+
+def run_cli(
+    runtime: SessionRuntime,
+    *,
+    initial_task: str | None = None,
+    approvals: ApprovalPrompt | None = None,
+) -> int:
     """Run the interactive CLI for a prepared `SessionRuntime`."""
 
-    cli = AgentCli(runtime)
+    cli = AgentCli(runtime, approvals=approvals)
     try:
         if initial_task:
-            cli._runtime_loop.run(runtime.run_task(initial_task))
+            _run_blocking(cli, runtime.run_task(initial_task))
         cli.cmdloop()
         return 0
     finally:

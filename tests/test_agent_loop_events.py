@@ -346,3 +346,48 @@ def test_agent_trace_projects_hook_decisions_without_arguments(tmp_path: Path) -
         },
     ]
     assert "secret.example" not in trace_path.read_text(encoding="utf-8")
+
+
+def test_agent_trace_projects_permission_decisions_without_arguments(tmp_path: Path) -> None:
+    trace_path = tmp_path / "agent_trace.jsonl"
+    emitter = EventEmitter(AgentTraceSink(trace_path), session_id="session-1")
+
+    emitter.emit(
+        "permission.decided",
+        source="test",
+        payload={
+            "tool": "browser_navigate",
+            "server": "playwright",
+            "decision": "deny",
+            "source": "rule",
+            "rule_id": "shop-only",
+            "mode": "default",
+            "reason": "Denied by rule shop-only.",
+            # Never emitted by the loop; the projection must not pass it through anyway.
+            "args": {"url": "https://secret.example"},
+        },
+    )
+    emitter.emit(
+        "approval.resolved",
+        source="test",
+        payload={"decision": "allow", "by": "human", "scope": "session"},
+    )
+
+    trace_events = [
+        json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert [{k: v for k, v in event.items() if k != "timestamp"} for event in trace_events] == [
+        {
+            "type": "permission.decided",
+            "tool": "browser_navigate",
+            "server": "playwright",
+            "decision": "deny",
+            "source": "rule",
+            "rule_id": "shop-only",
+            "mode": "default",
+            "reason": "Denied by rule shop-only.",
+        },
+        {"type": "approval.resolved", "decision": "allow", "by": "human", "scope": "session"},
+    ]
+    assert "secret.example" not in trace_path.read_text(encoding="utf-8")
