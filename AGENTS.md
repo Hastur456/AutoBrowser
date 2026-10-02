@@ -155,6 +155,8 @@ python -m pytest tests\test_agent_loop_events.py tests\test_agent_loop_replay.py
 python -m pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
 python -m pytest tests\test_context_assembler.py tests\test_goal_runner.py
 python -m pytest tests\test_harness_hooks.py tests\test_agent_loop_hooks.py tests\test_browser_hooks.py tests\test_builtin_hooks.py tests\test_command_hooks.py tests\test_hook_scripts.py
+python -m pytest tests\test_harness_memory.py tests\test_memory_store.py tests\test_memory_tool.py tests\test_memory_consolidation.py tests\test_working_notes.py tests\test_browser_memory.py tests\test_memory_boundaries.py
+python scripts/run_evals.py --memory-seed tests\evals\memory_seed   # evals with and without seed memory
 ```
 
 Check docs-only diffs with:

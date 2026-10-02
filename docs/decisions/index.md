@@ -4,6 +4,14 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-10-02 Layered Agent Memory](2026-10-02-layered-agent-memory.md): four memory layers,
+  all opt-in through `memory.*` — a deterministic history budget (`[cleared]` old tool
+  outputs), task-local working notes (an optional `notes` tool argument), a task digest at the
+  task boundary, and persistent per-site / procedure markdown files (`MemoryStore`, a
+  generated index, a `Memory` context block, `memory_view`/`memory_write` tools through the
+  normal permission pipeline, a content policy, staged trust, opt-in consolidation). The
+  engine only calls `resources.memory.render(state)`. Extends the session-scoped context
+  memory ADR.
 - [2026-10-02 Model-Based Approval Judge](2026-10-02-model-approval-judge.md) (Proposed):
   opt-in `permissions.approval_judge` (`off | model | classifier | both`) lets the acting
   model's `approval_request` argument or a separate classifier call escalate a

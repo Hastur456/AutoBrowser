@@ -23,9 +23,12 @@ development workflows.
   persisted session records, and shutdown.
 - [Search Task Sequence](search-task-sequence.md): expected browser-tool flow
   for search and result extraction tasks.
+- [Memory Layers](memory-layers.md): per-turn context assembly (history budget,
+  `Memory` and `Working Notes` blocks, memory tools in the normal pipeline) and the
+  task boundary (task digest, staged trust, opt-in consolidation).
 
 ## Update Guidance
 
 Update diagrams when engine phases, loop boundaries, session lifecycle,
-harness injection, tool execution, policy routing, lifecycle hooks, or MCP
-integration behavior changes.
+harness injection, tool execution, policy routing, lifecycle hooks, memory
+layers, or MCP integration behavior changes.

@@ -30,7 +30,7 @@
 | Config section | One of the ten frozen pydantic sub-models on `Settings` (`llm`, `browser`, `loop`, `observation`, `memory`, `events`, `storage`, `flags`, `hooks`, `permissions`). Each owns an `AUTOBROWSER_<SECTION>__<FIELD>` environment namespace and rejects unknown keys. |
 | ContextAssembler | The sole prompt-construction boundary in `src/agent_loop/context.py`: builds the durable system prompt, the per-turn user prompt, and the planner prompt from ordered `ContextBlock`s. |
 | Direct search URL fallback | Navigating directly to a site's search results URL when UI search controls do not make progress. |
-| EngineResources | Bundled runtime collaborators (`llm`, `tool_registry`, `tool_normalizers`, `context`, `events`, `hooks`) built from `BrowserHarness` (plus the session's `HookEngine`) and passed to `AgentLoopEngine`. |
+| EngineResources | Bundled runtime collaborators (`llm`, `tool_registry`, `tool_normalizers`, `context`, `events`, `hooks`, `permissions`, `approval`, `memory`) built from `BrowserHarness` (plus the session's `HookEngine`, `PermissionEngine`, `ApprovalJudge` and `MemoryContext`) and passed to `AgentLoopEngine`. |
 | EventRecord | Durable JSON-safe event envelope for session, goal, engine, model, action, policy, tool, observation, and terminal lifecycle events. |
 | Executor | Engine phase that resolves and invokes approved tool requests through `ToolBroker`/`ToolRegistry`. |
 | Export row | JSONL task-level analytics row produced by `scripts/export_sessions.py` from persisted session, task, event, feedback, and batch metadata. |
@@ -52,7 +52,15 @@
 | MCPManager | Server-agnostic host-side pool of MCP clients in `src/mcp/manager.py`: connection owner tasks, reconnect, discovery, `list_changed`, liveness, shutdown. |
 | MCPRuntime | Session-level bundle from `src/harness/mcp_setup.py`: manager, `MCPToolSource`, browser server name, and normalizers; started once per session. |
 | MCPToolSource | Bridge in `src/harness/mcp_tools.py` that exposes the manager catalog as invocable tools (browser server unprefixed, others `server__tool`). |
-| MemoryManager | Functional (stateless) history service in `src/harness/memory.py` that shapes a `list[Message]` — seeding the user task, appending tool calls/results, compacting snapshots — and returns new lists; the durable history lives on `LoopState.messages`, not on the service. |
+| History budget | `memory.history_budget_chars`: past it `MemoryManager.apply_history_budget` replaces the oldest tool outputs with a `[cleared]` placeholder (keeping the `tool_call_id`), never the newest `keep_recent_tool_results` or a non-tool message. Off (`0`) by default. |
+| Memory block | The `Memory` context block (user role, priority 15) rendered by `MemoryContext`: a header, the generated index and the bodies of the entries for the current site; absent when persistent memory is off. |
+| Memory entry | One persistent memory file (`MemoryEntry` in `src/contracts.py`): `sites/<domain>.md` or `procedures/<name>.md` with harness-owned frontmatter (`scope`, `status`, `source`, `description`, `verified_at`, `uses`, `failures`) and a markdown body. |
+| Memory tools | `memory_view` (`readOnlyHint`) and `memory_write` (`create`/`str_replace`/`delete`) on `server: memory` (`src/harness/memory_tool.py`), registered when `memory.tool_enabled`; they pass through hooks and the `PermissionEngine` like any MCP tool. |
+| MemoryConsolidator | Opt-in (`memory.consolidate_on_goal_end`) session-side model call after a `done` task that proposes at most three memory entries, written `unverified` through the content policy (`src/harness/memory_consolidation.py`). |
+| MemoryContentPolicy | Protocol (`src/contracts.py`) that refuses text which must never be persisted; the browser implementation `BrowserMemoryPolicy` rejects refs, selectors, prompt-injection phrases and secret-like pairs. |
+| MemoryContext | Session-scoped renderer of the `Memory` block (`render(state) -> str`), reaching the engine as `EngineResources.memory`; `NullMemoryContext` renders nothing. |
+| MemoryManager | Functional (stateless) history service in `src/harness/memory.py` that shapes a `list[Message]` — seeding the user task, appending tool calls/results, compacting snapshots, applying the history budget, digesting finished tasks — and returns new lists; the durable history lives on `LoopState.messages`, not on the service. |
+| MemoryStore | Persistent memory files under `<storage.root_dir>/<memory.dir>/` (`src/harness/memory_store.py`): cached reads, path safety, the generated index, scope lookup, policy-checked writes and staged trust. |
 | Message | Provider-neutral chat message (`src/messages.py`) with a `system`/`user`/`assistant`/`tool` role; assistant messages may carry `tool_calls`, and a `tool` message pairs a result back to exactly one `ToolCall.id`. |
 | ModelResponse | Canonical provider-neutral model reply (`content` and/or `tool_calls`, plus `finish_reason`) returned by a `ChatModel`. |
 | Observer | Engine phase that translates tool results and snapshots into compact loop state updates. |
@@ -66,6 +74,9 @@
 | Grant | A session-only approval of `(server, tool, domain)` stored by the `PermissionEngine` after a human answers "session"; never covers `always_ask` rules or hook asks. |
 | ProposedAction | Provider-neutral model action contract (`answer`/`tool_call`/`update_plan`/`ask_user`/`delegate`/`compact_memory`/`stop`) parsed from a model turn and mapped to `LoopState` updates by the engine. |
 | Provider adapter | Thin adapter that implements `ChatModel` by serializing neutral `Message`/`ToolDef` objects to a backend wire format and parsing the reply back into a `ModelResponse`. |
+| Staged trust | Memory entry lifecycle `unverified → verified → stale` driven by the outcomes of the tasks that loaded the entry (`MemoryStore.record_outcome`) and a `stale_after_days` TTL; the user's entries never change. |
+| Task digest | One `[harness] Previous task digest` message (request, final answer, tool counts) replacing a finished task older than `memory.keep_recent_tasks` at the task boundary (`MemoryManager.digest_tasks`). |
+| Working notes | Task-local notes the model keeps through the optional `notes` tool argument (`memory.working_notes_max_chars`), stored on `LoopState.working_notes` and rendered as the `Working Notes` block. |
 | Qualified tool name | `server__tool` name produced by `src/mcp/naming.py` (sanitized, max 64 chars) for tools of non-browser servers. |
 | readOnlyHint | MCP tool annotation used by `tool_is_read_only` to decide whether a call can change the page. |
 | ref | Ephemeral Playwright MCP element identifier such as `e123`; valid only for the snapshot that produced it. |

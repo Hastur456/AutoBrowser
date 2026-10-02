@@ -1,6 +1,27 @@
 # Memory — план реализации
 
-Дата: 2026-10-02 · Ветка: `ref/memory-manager` · Статус: **Proposed**
+Дата: 2026-10-02 · Ветка: `ref/memory-manager` · Статус: **Implemented** (кроме коммитов 6 и 6b)
+
+> **Итог реализации.** Сделаны коммиты 1–5 и 7–10, решение зафиксировано в
+> [ADR 2026-10-02 Layered Agent Memory](../decisions/2026-10-02-layered-agent-memory.md),
+> руководство — [memory.md](memory.md). Отклонения от плана:
+>
+> - `max_tool_message_refs` не ломает старт: старый ключ принимается и игнорируется с
+>   `FutureWarning` (вариант «мягкости» из §14; он стоит в личном `config.yaml`).
+> - `notes` (фаза 4) — необязательный **аргумент tool**, а не поле JSON-решения: модель
+>   действует нативными tool calls, у которых JSON-решения нет. Механизм тот же, что у
+>   `approval_request`.
+> - `NullMemoryContext` живёт в `src/harness/memory.py`, а не в `memory_store.py`: иначе
+>   `execution/resources.py` нарушил бы инвариант 1 из §12.
+> - Консолидация не перезаписывает записи `user` и `verified` (иначе фоновая догадка
+>   понижала бы подтверждённое знание) и выполняется синхронно после задачи с таймаутом.
+> - Eval-сравнение: `scripts/run_evals.py --memory-seed tests/evals/memory_seed` прогоняет
+>   сценарии с seed-памятью и печатает размер промпта; сценарии скриптованные, поэтому исход
+>   обязан совпасть с baseline.
+> - Seed-пример Ozon лежит в `tests/evals/memory_seed/sites/ozon.ru.md` (каталог
+>   `examples/` не версионируется).
+> - Коммиты 6 (включение по умолчанию) и 6b (перенос Ozon-подсказок) ждут прогонов на
+>   реальной модели.
 
 Основа: [Memory Harness Research](../research/2026-10-02-memory-harness-research.md)
 (далее «research»), входной черновик — [Memory System Design](../research/2026-09-14-memory-system-design.md).

@@ -252,6 +252,30 @@ evaluated after `pre_tool_use` hooks on the final arguments
   personal config.
   Tests build engines from explicit `PermissionsSettings`.
 
+## Memory
+
+Four layers, everything past snapshot compaction **off by default** (`memory.*` settings;
+guide: `docs/development/memory.md`; ADR: `docs/decisions/2026-10-02-layered-agent-memory.md`).
+
+- L1 history budget (`history_budget_chars`) and L3 task digest (`keep_recent_tasks`) are
+  `MemoryManager` methods in `src/harness/memory.py`; the digest runs once per task boundary in
+  `session._task_state_overrides`, never per turn.
+- L2 working notes (`working_notes_max_chars`): an optional `notes` tool argument, stripped
+  like `approval_request` (`src/agent_loop/execution/notes.py`), kept on the task-local
+  `LoopState.working_notes`.
+- L4 persistent memory (`persistent_enabled`): `MemoryStore`/`MemoryContext` in
+  `src/harness/memory_store.py`, files under `.autobrowser/memory/{sites,procedures}/*.md`;
+  `memory_view`/`memory_write` tools (`tool_enabled`, `server: memory`) in
+  `src/harness/memory_tool.py`; staged trust and opt-in consolidation
+  (`src/harness/memory_consolidation.py`) run in `SessionRuntime` after `goal_end`. Browser
+  scope and the content policy live in `src/browser/memory.py`.
+- The engine only calls `resources.memory.render(state)`. It must not import the memory store,
+  tool or browser modules, or name the memory tools (`tests/test_memory_boundaries.py`). Every
+  write passes the `MemoryContentPolicy` (no refs, selectors, injection phrases or secrets);
+  user files are never changed by the agent; review of writes is a user permission rule,
+  never a shipped one.
+- Tests build `MemoryStore(tmp_path, MemorySettings(...))`, never `get_settings()`.
+
 ## Feature Flags (env vars)
 
 - `AUTOBROWSER_FLAGS__AGENT_LOOP` (also `--agent-loop`) — **inert.** The engine-native path is the
