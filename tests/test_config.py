@@ -855,6 +855,29 @@ def test_the_permission_mode_resolves_from_the_environment(
     assert settings().permissions.mode == "dont_ask"
 
 
+def test_the_approval_judge_resolves_from_the_environment(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert settings().permissions.approval_judge == "off"
+    monkeypatch.setenv("AUTOBROWSER_PERMISSIONS__APPROVAL_JUDGE", "classifier")
+    monkeypatch.setenv("AUTOBROWSER_PERMISSIONS__CLASSIFIER_MODEL", "small:1b")
+
+    permissions = settings().permissions
+    assert (permissions.approval_judge, permissions.classifier_model) == ("classifier", "small:1b")
+
+
+def test_a_bare_yaml_off_approval_judge_is_off(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    path = _write_config(tmp_path, "permissions:\n  approval_judge: off\n")
+    _point_at(monkeypatch, path)
+
+    assert settings().permissions.approval_judge == "off"
+
+
 def test_an_unknown_permission_mode_is_rejected(
     settings: Any,
     monkeypatch: pytest.MonkeyPatch,

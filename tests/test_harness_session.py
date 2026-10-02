@@ -838,7 +838,8 @@ async def test_session_builds_one_permission_engine_for_every_task(
     assert captured[1].permissions.grants == {("playwright", "browser_click", "ozon.ru")}
     assert runtime.context.session_dir is not None
     session_payload = json.loads((runtime.context.session_dir / "session.json").read_text())
-    assert session_payload["permissions"] == {"mode": "dont_ask"}
+    assert session_payload["permissions"] == {"mode": "dont_ask", "approval_judge": "off"}
+    assert [resources.approval.mode for resources in captured] == ["off", "off"]
 
 
 @pytest.mark.asyncio

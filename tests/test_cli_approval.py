@@ -50,6 +50,17 @@ async def ask(prompt: ApprovalPrompt, verdict: PermissionVerdict, *answers: str)
 # --------------------------------------------------------------------------- the prompt
 
 
+@pytest.mark.parametrize("source", ["model", "classifier"])
+def test_a_judge_question_names_who_asked_and_offers_no_session(source: str) -> None:
+    verdict = PermissionVerdict(
+        decision="ask", reason="Оплата заказа на 9 826 ₽.", source=source, always_ask=True  # type: ignore[arg-type]
+    )
+    text = approval_question(REQUEST, verdict.reason, verdict)
+    assert text.startswith(f"Approval needed (asked by the {source}): browser_click")
+    assert "Оплата заказа на 9 826 ₽." in text
+    assert "[s]" not in text
+
+
 def test_the_question_names_tool_domain_rule_and_choices() -> None:
     text = approval_question(REQUEST, GRANTABLE.reason, GRANTABLE)
     assert text.startswith("Approval needed (rule buy): browser_click on ozon.ru")

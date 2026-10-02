@@ -4,6 +4,12 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-10-02 Model-Based Approval Judge](2026-10-02-model-approval-judge.md) (Proposed):
+  opt-in `permissions.approval_judge` (`off | model | classifier | both`) lets the acting
+  model's `approval_request` argument or a separate classifier call escalate a
+  state-changing call to human approval without rules; judge asks are `always_ask` and never
+  lift a rule; the engine stays deterministic. Agent/planner prompts stop refusing
+  user-requested purchases and rely on the approval gate.
 - [2026-10-01 Name-Free Permission Defaults](2026-10-01-name-free-permission-defaults.md):
   the engine and `src/browser/` hold no tool names and no rule ships with the code
   (`BUILTIN_RULES`/`BROWSER_BUILTIN_RULES` deleted, `builtin` source gone), so nothing asks

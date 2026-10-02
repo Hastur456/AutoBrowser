@@ -239,6 +239,13 @@ evaluated after `pre_tool_use` hooks on the final arguments
 - A permission deny is **not** terminal (the model reads the reason); a refused approval is
   terminal `blocked`. The human answers `once | session | deny`; `session` stores a
   `(server, tool, domain)` grant on the session-scoped engine.
+- Opt-in model judge (`permissions.approval_judge: off | model | classifier | both`,
+  `src/agent_loop/execution/approval.py`, `docs/decisions/2026-10-02-model-approval-judge.md`):
+  the acting model's optional `approval_request` argument (offered on tools without
+  `readOnlyHint`, stripped at parse time) or a separate classifier call can escalate a default
+  `allow` to an `always_ask`. The engine still never calls a model; judge asks never lift a
+  rule. The agent prompt tells the model the approval gate exists, so it must not refuse
+  user-requested purchases — keep that aligned with the classifier prompt and tests.
 - Session-scoped like hooks (`SessionContext.permissions`, built before Chrome/MCP, reaching
   the loop via `EngineResources.permissions`); without it `EngineResources` gets
   `PermissionEngine.from_settings()` — the code-default settings (no rules), never the

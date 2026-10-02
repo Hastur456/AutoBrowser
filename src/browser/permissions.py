@@ -11,6 +11,9 @@ a security boundary — the real browser boundaries are profile isolation and Pl
   of the current snapshot (Playwright MCP prints it in both). Lowercase, no ``www.``/port,
   IDN as punycode (:func:`src.config.normalize_domain`). ``data:``/``about:`` pages and an
   unparsable URL give no domain, which permission rules treat fail-closed.
+* ``url`` — the full address behind ``domain`` (the ``url`` argument or the page URL),
+  informational: rules do not match on it, the approval classifier shows it to its model
+  (a path such as ``/gocheckout`` says more than the host).
 * ``target`` — what an element action acts on, for rules such as "a click on «Купить» needs
   approval": the model's ``element`` description plus the snapshot line of the referenced
   element (role and accessible name from the page), joined by ``\\n`` so a rule matches
@@ -73,19 +76,22 @@ class BrowserResourceResolver:
 
     def resources(self, check: PermissionCheck, state: Mapping[str, Any]) -> Mapping[str, str]:
         resources: dict[str, str] = {}
-        domain = self._domain(check, state)
+        url = self._url(check, state)
+        domain = url_domain(url)
         if domain:
             resources["domain"] = domain
+        if url:
+            resources["url"] = url
         target = self._target(check, state)
         if target:
             resources["target"] = target
         return resources
 
     @staticmethod
-    def _domain(check: PermissionCheck, state: Mapping[str, Any]) -> str:
+    def _url(check: PermissionCheck, state: Mapping[str, Any]) -> str:
         if check.args.get("url"):
             # The destination, even when it has no host: never fall back to the current page.
-            return url_domain(check.args["url"])
+            return str(check.args["url"]).strip()
         result = state.get("tool_result") or {}
         for text in (
             result.get("content") if isinstance(result, Mapping) else "",
@@ -93,7 +99,7 @@ class BrowserResourceResolver:
         ):
             url = page_url(text)
             if url:
-                return url_domain(url)
+                return url
         return ""
 
     @staticmethod

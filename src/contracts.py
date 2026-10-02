@@ -35,9 +35,16 @@ HookDecision = Literal["allow", "deny", "ask"]
 PermissionDecision = Literal["allow", "ask", "deny"]
 PermissionMode = Literal["default", "read_only", "dont_ask", "bypass"]
 #: What decided a :class:`PermissionVerdict`: a config rule (``permissions.rules``), a
-#: ``pre_tool_use`` hook ``ask``, the mode default, the ``readOnlyHint`` annotation, a session
-#: grant, or a failed evaluation (always ``deny``).
-PermissionSource = Literal["rule", "hook", "mode", "annotation", "grant", "error"]
+#: ``pre_tool_use`` hook ``ask``, the acting model's own ``approval_request``, the approval
+#: classifier, the mode default, the ``readOnlyHint`` annotation, a session grant, or a failed
+#: evaluation (always ``deny``).
+PermissionSource = Literal[
+    "rule", "hook", "model", "classifier", "mode", "annotation", "grant", "error"
+]
+#: Who besides the rules may escalate a call to human approval
+#: (``settings.permissions.approval_judge``): nobody, the acting model, a separate classifier
+#: model call, or both.
+ApprovalJudgeMode = Literal["off", "model", "classifier", "both"]
 #: A human's answer to an approval prompt: run this call, run it and remember the grant for
 #: the session, or refuse.
 ApprovalAnswer = Literal["once", "session", "deny"]
@@ -217,6 +224,10 @@ class PermissionCheck:
     read_only: bool = False
     #: Reason of a ``pre_tool_use`` hook ``ask``; escalates the call to approval.
     hook_ask_reason: str = ""
+    #: The acting model's own ``approval_request`` for this call; escalates it to approval.
+    model_ask_reason: str = ""
+    #: Reason of the approval classifier's "needs approval"; escalates the call to approval.
+    classifier_ask_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -229,7 +240,8 @@ class PermissionVerdict:
     source: PermissionSource = "mode"
     #: Id of the deciding rule; ``""`` for mode, annotation, hook and error decisions.
     rule_id: str = ""
-    #: No session grant can cover this call (``always_ask`` rule or hook ``ask``).
+    #: No session grant can cover this call (``always_ask`` rule, or a hook, model or
+    #: classifier ``ask``).
     always_ask: bool = False
     #: ``(server, tool, domain)`` a "for this session" approval would grant; ``None`` when
     #: the call cannot be granted.
@@ -238,6 +250,9 @@ class PermissionVerdict:
 
 class PermissionResourceResolver(Protocol):
     """Resolves the resources permission rules match on (``domain``, ``target``).
+
+    ``url`` (the full address the call acts on) is informational: rules do not match on it,
+    the approval classifier shows it to its model.
 
     Server-specific (the browser resolver reads URLs and snapshots); the engine stays
     server-neutral. An exception fails the check closed (``deny``).
@@ -248,7 +263,7 @@ class PermissionResourceResolver(Protocol):
         check: PermissionCheck,
         state: Mapping[str, Any],
     ) -> Mapping[str, str]:
-        """``{"domain": ..., "target": ...}``; ``{}`` (or a missing key) when unknown."""
+        """``{"domain": ..., "target": ..., "url": ...}``; ``{}`` (or a missing key) when unknown."""
 
 
 def goal_status_from_completion(status: CompletionStatus) -> GoalStatus | None:
@@ -269,6 +284,7 @@ def goal_status_from_completion(status: CompletionStatus) -> GoalStatus | None:
 __all__ = [
     "AgentDecision",
     "ApprovalAnswer",
+    "ApprovalJudgeMode",
     "CompactToolObservation",
     "CompletionStatus",
     "GoalStatus",

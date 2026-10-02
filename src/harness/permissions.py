@@ -10,8 +10,9 @@ Evaluation (order and specificity of rules do not matter):
 
 1. any matching ``deny`` rule → deny (no mode, grant or hook lifts it);
 2. ``read_only`` mode, a tool without ``readOnlyHint`` and no matching ``allow`` → deny;
-3. matching ``ask`` rules or a hook ``ask`` → a session grant, ``bypass`` (unless
-   ``always_ask``/hook), ``dont_ask`` (→ deny) or ``ask``;
+3. matching ``ask`` rules, or an ``ask`` from a hook, the acting model (its own
+   ``approval_request``) or the approval classifier → a session grant, ``bypass`` (unless
+   ``always_ask``/hook/model/classifier), ``dont_ask`` (→ deny) or ``ask``;
 4. any matching ``allow`` rule → allow;
 5. otherwise allow (the mode default; ``destructiveHint`` is ignored — Playwright MCP sets it
    on every mutating tool, see ``docs/decisions/2026-10-01-permission-engine.md``).
@@ -20,9 +21,14 @@ Any exception fails closed (``deny``, ``source: error``). A rule that filters on
 (``domains``, ``not_domains``, ``target``) the resolver could not provide matches for
 ``deny``/``ask`` and not for ``allow``.
 
-The engine knows no tool names and ships no rules: what is risky is only the configured
-``permissions.rules`` (:class:`~src.config.PermissionsSettings`), plus the MCP
-``readOnlyHint`` annotation for ``read_only`` mode.
+The engine knows no tool names and ships no rules: what is risky is the configured
+``permissions.rules`` (:class:`~src.config.PermissionsSettings`), the MCP ``readOnlyHint``
+annotation for ``read_only`` mode, and -- when ``permissions.approval_judge`` enables them --
+the model judgments the loop puts on the :class:`~src.contracts.PermissionCheck`
+(``model_ask_reason``, ``classifier_ask_reason``). The engine itself never calls a model: it
+stays a deterministic function of the check, the rules, the mode and the grants. A model or
+classifier ``ask`` is like a hook ``ask``: it can only add an approval, never lift a rule,
+and no session grant covers it.
 
 Server-neutral: resources (domain, click target) come from an injected
 :class:`~src.contracts.PermissionResourceResolver`; the browser one lives in
@@ -109,6 +115,12 @@ class _CompiledRule:
         return f"Allowed by rule {self.rule.id}."
 
 
+def _judge_ask(check: PermissionCheck) -> bool:
+    """A hook, the acting model or the classifier asked for approval of ``check``."""
+
+    return bool(check.hook_ask_reason or check.model_ask_reason or check.classifier_ask_reason)
+
+
 def _in_domains(domain: str, domains: Iterable[str]) -> bool:
     return any(domain == item or domain.endswith(f".{item}") for item in domains)
 
@@ -183,10 +195,20 @@ class PermissionEngine:
                 source="error",
             )
 
+    def resources(
+        self,
+        check: PermissionCheck,
+        state: Mapping[str, Any] | None = None,
+    ) -> dict[str, str]:
+        """What the resolver knows about ``check`` (``domain``, ``target``, ``url``); ``{}``
+        without a resolver. Raises what the resolver raises."""
+
+        if self._resolver is None:
+            return {}
+        return dict(self._resolver.resources(check, state or {}))
+
     def _evaluate(self, check: PermissionCheck, state: Mapping[str, Any]) -> PermissionVerdict:
-        resources: Mapping[str, str] = (
-            dict(self._resolver.resources(check, state)) if self._resolver is not None else {}
-        )
+        resources = self.resources(check, state)
         matched = [item for item in self._rules if item.matches(check, resources)]
         by_decision = {
             decision: [item for item in matched if item.rule.decision == decision]
@@ -212,7 +234,7 @@ class PermissionEngine:
                 source="mode",
             )
 
-        if by_decision["ask"] or check.hook_ask_reason:
+        if by_decision["ask"] or _judge_ask(check):
             return self._resolve_ask(check, by_decision["ask"], resources)
 
         if by_decision["allow"]:
@@ -236,12 +258,18 @@ class PermissionEngine:
         asks: list[_CompiledRule],
         resources: Mapping[str, str],
     ) -> PermissionVerdict:
-        always = bool(check.hook_ask_reason) or any(item.rule.always_ask for item in asks)
+        always = _judge_ask(check) or any(item.rule.always_ask for item in asks)
         key: GrantKey = (check.server, check.tool, str(resources.get("domain", "") or ""))
+        reason: str
+        source: PermissionSource
         if asks:
             reason, source, rule_id = asks[0].reason(check), asks[0].source, asks[0].rule.id
-        else:
+        elif check.hook_ask_reason:
             reason, source, rule_id = check.hook_ask_reason, "hook", ""
+        elif check.model_ask_reason:
+            reason, source, rule_id = check.model_ask_reason, "model", ""
+        else:
+            reason, source, rule_id = check.classifier_ask_reason, "classifier", ""
 
         if not always and key in self._grants:
             return PermissionVerdict(

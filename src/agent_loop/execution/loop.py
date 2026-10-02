@@ -40,12 +40,17 @@ shape v1 emits — so the parity test can read the tool-name sequence identicall
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from src.agent_loop.actions import normalize_tool_request
+from src.agent_loop.execution.approval import (
+    offer_approval_argument,
+    split_approval_request,
+)
 from src.agent_loop.execution.guards import (
     CompletionController,
     blocked_response,
@@ -313,6 +318,13 @@ class TurnController:
         self._source = source
         self._hooks = resources.hooks
         self._permissions = resources.permissions
+        self._approval = resources.approval
+        # What the model sees: with the model judge on, every state-changing tool offers the
+        # optional ``approval_request`` argument (stripped again in ``_run_tool_turn``).
+        self._model_tools: list[Any] = list(tools)
+        self._approval_colliding: frozenset[str] = frozenset()
+        if self._approval.model_signal:
+            self._model_tools, self._approval_colliding = offer_approval_argument(tools)
         # normalizers are registered with the tool registry (ToolRegistry.get_normalizers)
         self._broker = ToolBroker(resources.tool_registry)
         self._model_driver = ModelDriver(
@@ -328,6 +340,8 @@ class TurnController:
     async def run_turn(self, state: LoopState) -> TurnResult:
         """Run one turn and describe what the engine should do next."""
 
+        if state.approval_request:
+            state = state.apply({"approval_request": ""})
         state = state.apply(await self._agent_step(state))
         decision = str(state.decision or "")
 
@@ -375,7 +389,7 @@ class TurnController:
         self._emit("model.requested", {"phase": "agent", "tool_count": len(self._tools)})
         model_turn = await self._model_driver.invoke(
             [*messages, user_message(turn_prompt)],
-            tools=self._tools,
+            tools=self._model_tools,
         )
         self._emit(
             "model.responded",
@@ -461,7 +475,17 @@ class TurnController:
 
         if kind == "tool_call":
             request = normalize_tool_request(action.get("tool_request"))
-            return tool_request_update(state, messages, request)
+            if not self._approval.model_signal:
+                return tool_request_update(state, messages, request)
+            # The model's approval request is not a tool argument: strip it before the
+            # history, the repeat tracking, the progress guard, hooks and the tool see it.
+            request, approval_request = split_approval_request(
+                request, self._approval_colliding
+            )
+            return {
+                **tool_request_update(state, messages, request),
+                "approval_request": approval_request,
+            }
 
         if kind == "update_plan":
             return replan_response(str(action.get("reason", "") or "Replanning requested."))
@@ -538,6 +562,7 @@ class TurnController:
         """
 
         request = dict(state.tool_request or {})
+        model_ask_reason = state.approval_request
         self._emit("action.proposed", {"tool_request": request})
 
         progress_reason = progress_block_reason(state, request)
@@ -572,7 +597,7 @@ class TurnController:
 
         if prepared.tool is not None:
             state, terminal, blocked = await self._authorize(
-                state, prepared, started_request, hook_ask_reason
+                state, prepared, started_request, hook_ask_reason, model_ask_reason
             )
             if terminal is not None:
                 return state, terminal
@@ -607,24 +632,40 @@ class TurnController:
         prepared: PreparedToolCall,
         started_request: ToolRequest,
         hook_ask_reason: str,
+        model_ask_reason: str = "",
     ) -> tuple[LoopState, CompletionStatus | None, bool]:
         """Evaluate permissions on the final prepared call and resolve an ``ask``.
 
         Returns ``(state, terminal_status, blocked)``: ``terminal_status`` is ``"blocked"``
         when the approval was refused (by a ``permission_request`` hook or the human);
         ``blocked`` is a non-terminal permission deny whose reason the model reads.
+
+        With the approval classifier on, a state-changing call that the engine allows only by
+        default (no rule, no grant, no ask) is judged by the classifier first; its "needs
+        approval" re-evaluates the call as an ``ask``.
         """
 
-        verdict = self._permissions.evaluate(
-            PermissionCheck(
-                tool=str(prepared.request.get("name", "") or ""),
-                server=prepared.server,
-                args=copy.deepcopy(dict(prepared.request.get("args") or {})),
-                read_only=tool_is_read_only(prepared.tool),
-                hook_ask_reason=hook_ask_reason,
-            ),
-            state.snapshot_mapping(),
+        snapshot = state.snapshot_mapping()
+        check = PermissionCheck(
+            tool=str(prepared.request.get("name", "") or ""),
+            server=prepared.server,
+            args=copy.deepcopy(dict(prepared.request.get("args") or {})),
+            read_only=tool_is_read_only(prepared.tool),
+            hook_ask_reason=hook_ask_reason,
+            model_ask_reason=model_ask_reason,
         )
+        verdict = self._permissions.evaluate(check, snapshot)
+        if (
+            self._approval.classifies
+            and verdict.decision == "allow"
+            and verdict.source == "mode"
+            and not verdict.rule_id
+            and not check.read_only
+        ):
+            reason = await self._classify(state, prepared, check, snapshot)
+            if reason:
+                check = dataclasses.replace(check, classifier_ask_reason=reason)
+                verdict = self._permissions.evaluate(check, snapshot)
         self._emit(
             "permission.decided",
             _permission_payload(verdict, prepared, self._permissions.mode),
@@ -676,6 +717,41 @@ class TurnController:
             scope = "session"
         self._emit_approval_resolved("allow", by="human", scope=scope)
         return state, None, False
+
+    async def _classify(
+        self,
+        state: LoopState,
+        prepared: PreparedToolCall,
+        check: PermissionCheck,
+        snapshot: Mapping[str, Any],
+    ) -> str:
+        """Ask the approval classifier about ``check``; the ask reason, ``""`` when safe."""
+
+        classifier = self._approval.classifier
+        if classifier is None:
+            return ""
+        try:
+            resources = self._permissions.resources(check, snapshot)
+        except Exception:  # noqa: BLE001 - the classifier then judges without page context
+            resources = {}
+        self._emit("model.requested", {"phase": "approval", "tool": check.tool})
+        judgment = await classifier.judge(
+            task=state.task,
+            tool=check.tool,
+            description=str(getattr(prepared.tool, "description", "") or ""),
+            args=check.args,
+            resources=resources,
+        )
+        self._emit(
+            "model.responded",
+            {
+                "phase": "approval",
+                "tool": check.tool,
+                "needs_approval": judgment.needs_approval,
+                "error": judgment.error,
+            },
+        )
+        return judgment.reason if judgment.needs_approval else ""
 
     def _emit_approval_resolved(self, decision: str, *, by: str, scope: str) -> None:
         self._emit("approval.resolved", {"decision": decision, "by": by, "scope": scope})

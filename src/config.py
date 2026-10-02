@@ -96,7 +96,7 @@ from pydantic_settings import (
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
-from src.contracts import HookEventName, PermissionDecision, PermissionMode
+from src.contracts import ApprovalJudgeMode, HookEventName, PermissionDecision, PermissionMode
 from src.mcp.config import MCPServerConfig
 
 #: Env var namespace for every setting.
@@ -763,11 +763,12 @@ class PermissionRule(_Section):
 
 
 class PermissionsSettings(_Section):
-    """Deterministic tool authorization (``src/harness/permissions.py``).
+    """Tool authorization (``src/harness/permissions.py``).
 
-    No rule ships with the code: the engine knows no tool names, so what is risky is only what
-    ``rules`` says. A list set in one source replaces (never extends) the list of the sources
-    below it.
+    No rule ships with the code: the engine knows no tool names, so what is risky is what
+    ``rules`` says plus, when ``approval_judge`` enables them, the model judgments
+    (``src/agent_loop/execution/approval.py``). A list set in one source replaces (never
+    extends) the list of the sources below it.
     """
 
     mode: Annotated[
@@ -785,6 +786,46 @@ class PermissionsSettings(_Section):
         list[PermissionRule],
         Field(description="Permission rules; order does not matter (deny > ask > allow)."),
     ] = Field(default_factory=list)
+
+    approval_judge: Annotated[
+        ApprovalJudgeMode,
+        Field(
+            description=(
+                "Who besides the rules may ask the human to approve a state-changing call: "
+                "off; model (the acting model fills an approval_request argument offered on "
+                "every tool without readOnlyHint); classifier (a separate model call judges "
+                "each such call the rules let through); both. Their asks are always_ask and "
+                "can never lift a rule."
+            ),
+        ),
+    ] = "off"
+
+    classifier_model: Annotated[
+        str | None,
+        Field(
+            min_length=1,
+            description=(
+                "Chat model of the approval classifier; ``None`` reuses the session model."
+            ),
+        ),
+    ] = None
+
+    classifier_timeout_seconds: Annotated[
+        float,
+        Field(
+            gt=0.0,
+            description=(
+                "How long one classifier call may take; a timeout or a failure asks the "
+                "human (fail closed)."
+            ),
+        ),
+    ] = 30.0
+
+    @field_validator("approval_judge", mode="before")
+    @classmethod
+    def _yaml_off(cls, value: Any) -> Any:
+        # YAML 1.1 reads a bare ``off`` as ``False``.
+        return "off" if value is False else value
 
     @field_validator("rules", mode="after")
     @classmethod

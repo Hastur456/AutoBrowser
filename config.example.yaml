@@ -172,6 +172,19 @@ permissions:
   # dont_ask:  every approval becomes a deny (headless runs, batch, evals).
   # bypass:    approvals are granted; deny rules and always_ask still hold.
   mode: default                                 # (default)
+  # Who besides the rules may ask you to approve a state-changing call (a tool
+  # without readOnlyHint). Their asks are always_ask (no session grant, no
+  # bypass), turn into a deny under dont_ask and can never lift a rule.
+  # off:        only rules and hooks ask.
+  # model:      every such tool gets an optional approval_request argument; the
+  #             acting model fills it ("pay 9 826 RUB for 2 items") and you are
+  #             asked. No extra model call.
+  # classifier: a separate model call judges every such call the rules let
+  #             through; a failure or timeout asks (fail closed).
+  # both:       either one asking is enough.
+  approval_judge: "off"                         # (default) quoted: bare off is YAML false
+  # classifier_model: gemma4:31b-cloud          # (unset by default) null = the session model
+  classifier_timeout_seconds: 30.0              # (default)
   rules: []                                     # (default)
   # rules:
   #   # Opt-in guards for risky tools. MCP annotations cannot tell page

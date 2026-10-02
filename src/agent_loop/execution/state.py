@@ -74,6 +74,9 @@ class LoopState:
 
     decision: str = ""
     tool_request: ToolRequest = field(default_factory=dict)
+    # The acting model's ``approval_request`` for ``tool_request``, stripped from its arguments
+    # (``execution/approval.py``); cleared at the start of every turn.
+    approval_request: str = ""
     tool_result: ToolResult = field(default_factory=dict)
     policy_decision: PolicyDecision | str = ""
     policy_event: dict[str, Any] = field(default_factory=dict)

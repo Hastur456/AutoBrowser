@@ -97,29 +97,41 @@ def test_page_url_and_snapshot_element_read_real_playwright_output() -> None:
 
 def test_navigate_uses_its_destination_not_the_current_page() -> None:
     assert resolve("browser_navigate", {"url": "https://evil.com/x"}, snapshot=SNAPSHOT) == {
-        "domain": "evil.com"
+        "domain": "evil.com",
+        "url": "https://evil.com/x",
     }
     # A destination without a host never falls back to the current page.
-    assert resolve("browser_navigate", {"url": "data:text/html,x"}, snapshot=SNAPSHOT) == {}
-    assert resolve("browser_tabs", {"action": "new", "url": "https://a.com"}) == {"domain": "a.com"}
+    assert resolve("browser_navigate", {"url": "data:text/html,x"}, snapshot=SNAPSHOT) == {
+        "url": "data:text/html,x"
+    }
+    assert resolve("browser_tabs", {"action": "new", "url": "https://a.com"}) == {
+        "domain": "a.com",
+        "url": "https://a.com",
+    }
 
 
 def test_any_tool_with_a_url_argument_acts_on_that_url() -> None:
     # No tool names in the resolver: the url argument is the destination, whoever takes it.
     assert resolve("other__open", {"url": "https://a.com/x"}, snapshot=SNAPSHOT) == {
-        "domain": "a.com"
+        "domain": "a.com",
+        "url": "https://a.com/x",
     }
 
 
 def test_element_actions_use_the_page_url() -> None:
     resources = resolve("browser_click", {"element": "Buy button", "target": "e2"}, snapshot=SNAPSHOT)
-    assert resources == {"domain": "ozon.ru", "target": 'Buy button\nbutton "Купить"'}
+    assert resources == {
+        "domain": "ozon.ru",
+        "url": "https://www.ozon.ru/product/123/?utm=1",
+        "target": 'Buy button\nbutton "Купить"',
+    }
 
 
 def test_the_latest_tool_output_wins_over_an_older_snapshot() -> None:
     result = {"name": "browser_navigate", "status": "success", "content": NAVIGATE_RESPONSE}
     resources = resolve("browser_type", {"text": "x"}, snapshot=SNAPSHOT, tool_result=result)
     assert resources["domain"] == "evil.example.com"
+    assert resources["url"] == "https://evil.example.com/login"
     # An error without a Page URL falls back to the snapshot.
     failed = {"name": "browser_click", "status": "error", "error": "boom", "content": ""}
     assert resolve("browser_type", {}, snapshot=SNAPSHOT, tool_result=failed)["domain"] == "ozon.ru"

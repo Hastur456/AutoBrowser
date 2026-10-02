@@ -24,6 +24,9 @@ flowchart TD
   Pre -->|deny| Turn
   Pre -->|allow / ask / rewrite| Permissions[PermissionEngine.evaluate]
   Permissions -->|deny| Turn
+  Permissions -->|allow by default, state-changing, classifier on| Classifier[[approval classifier]]
+  Classifier -->|safe| Exec
+  Classifier -->|needs approval / failed| Perm
   Permissions -->|allow| Exec
   Permissions -->|ask| Perm{{"hook: permission_request"}}
   Perm -->|allow| Exec
@@ -75,3 +78,7 @@ permission `deny` is not terminal: the model reads the reason and may take anoth
 `ask` emits `approval.requested`; `permission_request` hooks may stand in for the human, and
 the human answers `once`, `session` (stores a `(server, tool, domain)` grant) or `deny`
 (terminal `blocked`). Every resolved approval emits `approval.resolved`.
+With `permissions.approval_judge` on
+([ADR](../decisions/2026-10-02-model-approval-judge.md)), the model's own `approval_request`
+argument (stripped when the call is parsed) and the approval classifier can turn a default
+`allow` into an `always_ask`; neither can lift a rule.

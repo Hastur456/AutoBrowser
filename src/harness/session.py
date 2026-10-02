@@ -19,6 +19,7 @@ from src.agent_loop.events import (
     JsonlEventSink,
 )
 from src.agent_loop.execution.completion import native_latest_state_loader
+from src.agent_loop.execution.approval import ApprovalJudge
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalRunRequest, GoalRunner
 from src.config import get_settings
@@ -393,6 +394,9 @@ class SessionContext:
     #: Session-scoped tool authorization (rules, mode, approval grants), loaded from
     #: ``settings.permissions`` in :meth:`initialize`.
     permissions: PermissionEngine = field(default_factory=PermissionEngine)
+    #: Session-scoped model judgments that escalate a call to approval, built from
+    #: ``settings.permissions.approval_judge`` in :meth:`initialize`.
+    approval: ApprovalJudge = field(default_factory=ApprovalJudge)
     chrome_process: Any | None = None
     initialized: bool = False
 
@@ -443,6 +447,11 @@ class SessionContext:
         self.llm = llm_factory(
             model=self.config.model,
             temperature=self.config.temperature,
+        )
+        self.approval = ApprovalJudge.from_settings(
+            settings.permissions,
+            llm=self.llm,
+            llm_factory=llm_factory,
         )
         if self.config.no_mcp:
             self.tool_registry = ToolRegistry()
@@ -549,7 +558,10 @@ class SessionContext:
                 "enabled": isinstance(self.hooks, HookEngine),
                 "registry_sha256": self.hooks_registry_sha256,
             },
-            "permissions": {"mode": self.permissions.mode},
+            "permissions": {
+                "mode": self.permissions.mode,
+                "approval_judge": self.approval.mode,
+            },
         }
 
     def persist(self) -> None:
@@ -717,6 +729,7 @@ class SessionRuntime:
             events=self.context.event_emitter,
             hooks=self.context.hooks,
             permissions=self.context.permissions,
+            approval=self.context.approval,
         )
         runner = GoalRunner(
             harness=self.harness,

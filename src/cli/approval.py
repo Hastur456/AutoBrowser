@@ -61,7 +61,12 @@ def approval_question(request: ToolRequest, reason: str, verdict: PermissionVerd
     if verdict.grant_key is not None and not verdict.always_ask:
         choices.append(f"[s] session for {tool}{where}")
     choices.append("[n] deny")
-    rule = f" (rule {verdict.rule_id})" if verdict.rule_id else ""
+    if verdict.rule_id:
+        rule = f" (rule {verdict.rule_id})"
+    elif verdict.source in ("model", "classifier"):
+        rule = f" (asked by the {verdict.source})"
+    else:
+        rule = ""
     return (
         f"Approval needed{rule}: {tool}{where}\n"
         f"  {reason}\n"

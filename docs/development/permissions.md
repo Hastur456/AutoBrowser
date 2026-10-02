@@ -184,10 +184,49 @@ Approval needed (rule purchases): browser_click on shop.example
 - A `permission_request` hook (for example `src.harness.builtin_hooks:approve_tools`) can
   answer instead of the human — the way to pre-approve tools in a profile.
 
+## Model Approval Judge
+
+Rules only see strings. `permissions.approval_judge` lets models decide when to ask
+([ADR](../decisions/2026-10-02-model-approval-judge.md), `src/agent_loop/execution/approval.py`):
+
+```yaml
+permissions:
+  approval_judge: model          # off | model | classifier | both ("off" quoted in YAML)
+  # classifier_model: qwen3:8b   # classifier only; unset = the session model
+  classifier_timeout_seconds: 30.0
+  rules: []                      # optional; rules and judges combine
+```
+
+| Mode | Who decides | Cost | Weak spot |
+|---|---|---|---|
+| `model` | The acting model fills the optional `approval_request` argument offered on every tool without `readOnlyHint` | none | a model persuaded by the page may skip it |
+| `classifier` | A separate model call judges each state-changing call the rules let through (task, page URL, tool, arguments, target line) | one call per state-changing tool call | latency; may over-ask on ambiguous actions |
+| `both` | Either one asking is enough; a model ask skips the classifier | as `classifier` minus model-flagged calls | — |
+
+- The question names who asked and shows their reason, written for you:
+
+  ```text
+  Approval needed (asked by the model): browser_click on ozon.ru
+    Оплата заказа на 9 826 ₽ (2 товара), способ оплаты: сохранённая карта.
+    args: {"element": "Оплатить онлайн", "ref": "e412"}
+    [y] once   [n] deny
+  ```
+
+- Judge asks are `always_ask`: no `s` (a `(server, tool, domain)` grant would silence the next
+  payment), not lifted by `bypass`; under `dont_ask` (no TTY, batch) they are denies the model
+  reads. They never lift a deny rule, and an `allow` rule or a session grant skips the
+  classifier.
+- A classifier failure, timeout or unreadable answer asks (fail closed); the
+  `model.responded` event with `phase: approval` carries `needs_approval` and `error`.
+- `permission.decided` reports `source: model` or `source: classifier`.
+- The agent prompt tells the model that this gate exists, so it proceeds with purchases the
+  user asked for instead of refusing up front, and leaves card numbers, CVV, passwords and
+  one-time codes to the user (stop `blocked` with instructions).
+
 ## Debugging a Decision
 
 Every evaluated call emits `permission.decided` — `tool`, `server`, `decision`, `source`
-(`rule`, `hook`, `mode`, `annotation`, `grant`, `error`), `rule_id`, `mode`,
+(`rule`, `hook`, `model`, `classifier`, `mode`, `annotation`, `grant`, `error`), `rule_id`, `mode`,
 `reason`, **never the arguments**. Approvals emit `approval.requested` (with `rule_id`) and
 `approval.resolved` (`decision`, `by: hook|human|grant`, `scope: once|session`).
 
