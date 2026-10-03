@@ -225,6 +225,8 @@ Useful CLI flags include `--loop`, `--show-state`, `--hide-snapshot`, `--show-to
 
 Use Python 3.12-compatible code. Follow PEP 8 with 4-space indentation, snake_case for functions and modules, PascalCase for classes, and UPPER_SNAKE_CASE for constants. Add type hints for public functions, loop state structures, and browser boundary contracts.
 
+Every tunable value — a limit, budget, character cap, count, threshold, timeout, retry count, default model or path — is a field in `src/config.py` (a pydantic section, read through `get_settings()` or an injected `*Settings` object), documented in `.env.example` and `config.example.yaml` and covered by `tests/test_config.py`. Never add it as a module constant (`MAX_ENTRIES = 3`) or an inline literal (`text[:300]`) in a project file. UPPER_SNAKE_CASE constants are only for fixed vocabulary that is not a tuning knob: file and directory names, prefixes and markers, tool and server names, regular expressions, prompt text, schema keys.
+
 Keep engine, state, and prompt code in the `src/agent_loop/execution/` and `src/agent_loop/prompts.py` patterns. Put runtime-facing Agent Loop contracts, durable event/trace helpers, replay/eval helpers, batch/export helpers, context assembly, skills, and goal lifecycle boundaries in `src/agent_loop/`. Put infrastructure abstractions in `src/harness/` instead of expanding engine modules. Put browser tool-name helpers, shared errors, the request normalizer, the permission resource resolver, and browser hooks in `src/browser/`; tool names are the exposed MCP names (no canonical vocabulary). Prefer strict `LoopState` updates and typed contracts over ad hoc dictionaries when changing loop or browser boundaries.
 
 ## Testing Guidelines

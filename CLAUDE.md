@@ -307,6 +307,16 @@ Focused test groups are grouped by area in `AGENTS.md` / `docs/development/setup
 
 ## When Changing Things
 
+- **Tunables go to the config, never into project files.** Any limit, budget, character
+  cap, count, threshold, timeout or default you introduce or touch becomes a field of the
+  matching section in `src/config.py` (or a new section), with its default, bounds and
+  description. Add it to `.env.example` and `config.example.yaml` (both are checked against
+  the code by `tests/test_config.py`). Code reads it via `get_settings()` or an injected
+  `*Settings`. Don't add a module constant (`MAX_ENTRIES = 3`, `_FIELD_CHARS = 4_000`) or an
+  inline magic number (`str(exc)[:300]`). Constants are only for fixed vocabulary: names,
+  prefixes, markers, regexes, prompt text, schema keys. If you find an existing hardcoded
+  tunable in code you are changing, move it to the config in the same change.
+  `tests/test_memory_boundaries.py` enforces this for the memory modules.
 - Prompt change → update the prompt file, adjust `tests/test_prompts.py`, run it, and for
   browser-behavior changes inspect one `--show-state` trace for loops.
 - The engine-native path is the only path — there is no compiled-graph rollback. Keep every
