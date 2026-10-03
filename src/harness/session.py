@@ -20,14 +20,20 @@ from src.agent_loop.events import (
 )
 from src.agent_loop.execution.completion import native_latest_state_loader
 from src.agent_loop.execution.approval import ApprovalJudge
+from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalRunRequest, GoalRunner
 from src.config import get_settings
 from src.contracts import PermissionMode
 from src.harness.hooks import HookEngine, NullHookEngine, registry_digest
+from src.browser.memory import BrowserMemoryPolicy, BrowserMemoryScope
 from src.browser.permissions import BrowserResourceResolver
 from src.harness.permissions import PermissionEngine
 from src.harness.mcp_setup import MCPRuntime, build_mcp_runtime
+from src.harness.memory import MemoryManager, NullMemoryContext
+from src.harness.memory_consolidation import MemoryConsolidator
+from src.harness.memory_store import MemoryContext, MemoryStore
+from src.harness.memory_tool import memory_tools
 from src.harness.runtime import (
     HARNESS_EVENT_METADATA_CONFIG_KEY,
     HARNESS_STATE_OVERRIDES_CONFIG_KEY,
@@ -83,6 +89,7 @@ TASK_BOUNDARY_RESETS: dict[str, Any] = {
     "ineffective_action_count": 0,
     "counters": {},
     "policy_event": {},
+    "working_notes": "",
 }
 
 
@@ -339,6 +346,12 @@ def _task_state_overrides(
         for key in SESSION_STATE_KEYS
         if key in session_state
     }
+    if carried_state.get("messages"):
+        # The session owns the carry-forward, MemoryManager the shape of the history:
+        # finished tasks past memory.keep_recent_tasks become one digest message each.
+        carried_state["messages"] = MemoryManager(settings=get_settings().memory).digest_tasks(
+            list(carried_state["messages"])  # type: ignore[arg-type]
+        )
     reset_state = {
         key: value.copy() if isinstance(value, (dict, list)) else value
         for key, value in TASK_BOUNDARY_RESETS.items()
@@ -397,6 +410,11 @@ class SessionContext:
     #: Session-scoped model judgments that escalate a call to approval, built from
     #: ``settings.permissions.approval_judge`` in :meth:`initialize`.
     approval: ApprovalJudge = field(default_factory=ApprovalJudge)
+    #: Session-scoped persistent memory (``settings.memory.persistent_enabled``), built in
+    #: :meth:`initialize`; ``None`` when switched off.
+    memory_store: MemoryStore | None = None
+    #: Renders the ``Memory`` context block for the engine (``EngineResources.memory``).
+    memory: MemoryContext | NullMemoryContext = field(default_factory=NullMemoryContext)
     chrome_process: Any | None = None
     initialized: bool = False
 
@@ -429,6 +447,12 @@ class SessionContext:
             resolver=BrowserResourceResolver(),
             mode=self.config.permission_mode,
         )
+        self._initialize_memory(settings)
+        session_tools = (
+            memory_tools(self.memory_store)
+            if self.memory_store is not None and settings.memory.tool_enabled
+            else []
+        )
 
         now = datetime.now(UTC)
         self.metadata.started_at = now
@@ -454,7 +478,7 @@ class SessionContext:
             llm_factory=llm_factory,
         )
         if self.config.no_mcp:
-            self.tool_registry = ToolRegistry()
+            self.tool_registry = ToolRegistry(session_tools)
         else:
             mcp: MCPRuntime | None = None
             try:
@@ -477,6 +501,7 @@ class SessionContext:
             # The MCP tool source is live: rediscovery (list_changed) and servers going
             # down / coming back are reflected on the next registry read.
             self.tool_registry = ToolRegistry(
+                session_tools,
                 providers=[mcp.tool_source],
                 normalizers=mcp.normalizers,
             )
@@ -499,6 +524,38 @@ class SessionContext:
         )
         self.events.emit("session.started", self)
 
+    def _initialize_memory(self, settings: Any) -> None:
+        """Build the persistent memory store and its context renderer (or switch them off)."""
+
+        memory = settings.memory
+        if not memory.persistent_enabled:
+            self.memory_store = None
+            self.memory = NullMemoryContext()
+            return
+        self.memory_store = MemoryStore.from_settings(
+            memory,
+            settings.storage,
+            policy=BrowserMemoryPolicy(),
+            on_event=self.emit_memory_event,
+        )
+        self.memory = MemoryContext(
+            self.memory_store,
+            BrowserMemoryScope(),
+            tools_enabled=memory.tool_enabled,
+        )
+
+    def emit_memory_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        """Forward a memory event (``memory.*``) to the session's event stream."""
+
+        task_id = self.memory_store.task_id if self.memory_store is not None else ""
+        self.event_emitter.emit(
+            event_type,  # type: ignore[arg-type]
+            source="harness.memory",
+            payload=payload,
+            task_id=task_id or None,
+            goal_id=task_id or None,
+        )
+
     def reset_task(self, task: str, *, task_id: str | None = None) -> TaskRecord:
         """Start tracking a new task inside the session."""
 
@@ -506,6 +563,8 @@ class SessionContext:
         record = TaskRecord(task=task, started_at=now, task_id=task_id or f"task-{uuid4().hex}")
         self.current_task = task
         self.tasks.append(record)
+        if self.memory_store is not None:
+            self.memory_store.bind_task(record.task_id)
         self.metadata.last_activity = now
         self.persist()
         self.events.emit("task.started", record)
@@ -562,6 +621,18 @@ class SessionContext:
                 "mode": self.permissions.mode,
                 "approval_judge": self.approval.mode,
             },
+            "memory": self._memory_snapshot(),
+        }
+
+    def _memory_snapshot(self) -> dict[str, Any]:
+        store = self.memory_store
+        if store is None:
+            return {"enabled": False, "root": "", "entries": 0, "tools": False}
+        return {
+            "enabled": True,
+            "root": str(store.root),
+            "entries": len(store.entries()),
+            "tools": isinstance(self.memory, MemoryContext) and self.memory.tools_enabled,
         }
 
     def persist(self) -> None:
@@ -730,6 +801,7 @@ class SessionRuntime:
             hooks=self.context.hooks,
             permissions=self.context.permissions,
             approval=self.context.approval,
+            memory=self.context.memory,
         )
         runner = GoalRunner(
             harness=self.harness,
@@ -743,12 +815,60 @@ class SessionRuntime:
         except Exception as exc:
             if latest_state is not None:
                 self.context.state.replace(latest_state)
+            self._forget_memory(task_id)
             self.context.fail_task(record, exc)
             raise
         if goal_result.latest_state is not None:
             self.context.state.replace(dict(goal_result.latest_state))
+        await self._update_memory(task, task_id, goal_result.status, goal_result.result)
         self.context.finish_task(record, goal_result.result)
         return goal_result.result
+
+    async def _update_memory(self, task: str, task_id: str, status: str, result: Any) -> None:
+        """After ``goal_end``: staged trust for the entries the task loaded, then the opt-in
+        consolidation of a completed task. Memory never fails a task."""
+
+        store = self.context.memory_store
+        if store is None:
+            return
+        outcome = {"completed": "done", "blocked": "blocked"}.get(status, "cancelled")
+        try:
+            store.record_outcome(task_id, outcome)
+        except OSError as exc:
+            reason = f"outcome: {exc}"[: store.settings.event_reason_chars]
+            self.context.emit_memory_event(
+                "memory.skipped", {"task_id": task_id, "reason": reason}
+            )
+        settings = get_settings().memory
+        if outcome == "done" and settings.consolidate_on_goal_end and self.context.llm is not None:
+            state = getattr(result, "state", None)
+            history = list(getattr(state, "action_history", None) or [])
+            domains: set[str] = set()
+            if isinstance(self.context.memory, MemoryContext):
+                domains = set(self.context.memory.visited(task_id))
+            if state is not None:
+                domains.add(BrowserMemoryScope().scope(state.snapshot_mapping()))
+            consolidator = MemoryConsolidator(
+                self.context.llm,
+                store,
+                timeout_seconds=settings.consolidation_timeout_seconds,
+                on_event=self.context.emit_memory_event,
+            )
+            await consolidator.consolidate(
+                task_id=task_id,
+                task=task,
+                final_answer=str(getattr(result, "final_answer", "") or ""),
+                action_history=render_action_history(history, len(history)),
+                domains=domains,
+            )
+        self._forget_memory(task_id)
+
+    def _forget_memory(self, task_id: str) -> None:
+        store = self.context.memory_store
+        if store is not None:
+            store.record_outcome(task_id, "cancelled")  # drops what the task loaded
+        if isinstance(self.context.memory, MemoryContext):
+            self.context.memory.forget(task_id)
 
     def _session_thread_id(self) -> str:
         return f"{SESSION_THREAD_PREFIX}{self.context.session_id}"

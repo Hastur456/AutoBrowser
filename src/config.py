@@ -76,6 +76,7 @@ from __future__ import annotations
 
 import os
 import re
+import warnings
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -361,16 +362,31 @@ class ObservationSettings(_Section):
     ] = 200
 
 
-class MemorySettings(_Section):
-    """Conversation-history shaping budgets (see ``src/harness/memory.py``)."""
+#: Memory keys that were removed but are still accepted (and ignored, with a warning) so an
+#: old ``.env``/``config.yaml`` keeps starting. ``max_tool_message_refs`` was never read.
+_REMOVED_MEMORY_KEYS = ("max_tool_message_refs",)
 
-    max_tool_message_refs: Annotated[
-        int,
-        Field(
-            ge=1,
-            description="Refs kept when a tool message is summarized into history.",
-        ),
-    ] = 25
+
+class MemorySettings(_Section):
+    """Agent memory (``docs/development/2026-10-02-memory-implementation-plan.md``).
+
+    History shaping lives in ``src/harness/memory.py`` (compaction, the history budget, the
+    task digest); persistent memory files in ``src/harness/memory_store.py``. Everything
+    beyond compaction is off by default.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_removed_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict) and any(key in data for key in _REMOVED_MEMORY_KEYS):
+            data = {key: value for key, value in data.items() if key not in _REMOVED_MEMORY_KEYS}
+            warnings.warn(
+                "memory.max_tool_message_refs was removed (it was never used); "
+                "delete it from your .env / config file.",
+                FutureWarning,
+                stacklevel=2,
+            )
+        return data
 
     compact_tool_output_min_chars: Annotated[
         int,
@@ -382,6 +398,217 @@ class MemorySettings(_Section):
             ),
         ),
     ] = 1000
+
+    compressed_tool_result_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "With --compress-tools: characters of the summary or error kept in a "
+                "tool message."
+            ),
+        ),
+    ] = 500
+
+    compressed_snapshot_summary_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="With --compress-tools: characters of a snapshot summary kept.",
+        ),
+    ] = 300
+
+    compressed_snapshot_error_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="With --compress-tools: characters of a snapshot error kept.",
+        ),
+    ] = 400
+
+    # -- L1 working context / L3 session -------------------------------------
+
+    history_budget_chars: Annotated[
+        int,
+        Field(
+            ge=0,
+            description=(
+                "Ceiling on the characters of the conversation history; past it the oldest "
+                "tool outputs are replaced by a [cleared] placeholder. 0 disables the budget."
+            ),
+        ),
+    ] = 0
+
+    keep_recent_tool_results: Annotated[
+        int,
+        Field(ge=0, description="The newest tool outputs the history budget never clears."),
+    ] = 3
+
+    keep_recent_tasks: Annotated[
+        int,
+        Field(
+            ge=0,
+            description=(
+                "Finished tasks kept verbatim in the session history; older ones are folded "
+                "into one digest message each. 0 keeps every task verbatim."
+            ),
+        ),
+    ] = 0
+
+    digest_request_chars: Annotated[
+        int,
+        Field(ge=1, description="Characters of the user request kept in a task digest."),
+    ] = 300
+
+    digest_answer_chars: Annotated[
+        int,
+        Field(ge=1, description="Characters of the final answer kept in a task digest."),
+    ] = 500
+
+    # -- L4 persistent memory -------------------------------------------------
+
+    persistent_enabled: Annotated[
+        bool,
+        Field(description="Load persistent memory files into a Memory context block."),
+    ] = False
+
+    dir: Annotated[
+        str,
+        Field(min_length=1, description="Memory directory, relative to storage.root_dir."),
+    ] = "memory"
+
+    index_max_lines: Annotated[
+        int,
+        Field(ge=1, description="Lines of the memory index rendered into the prompt."),
+    ] = 200
+
+    index_max_chars: Annotated[
+        int,
+        Field(ge=1, description="Characters of the memory index rendered into the prompt."),
+    ] = 25_000
+
+    index_description_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Characters of the first body line used as the index description of a "
+                "file whose frontmatter has none."
+            ),
+        ),
+    ] = 120
+
+    block_max_chars: Annotated[
+        int,
+        Field(ge=1, description="Characters of the whole Memory context block."),
+    ] = 12_000
+
+    block_min_section_chars: Annotated[
+        int,
+        Field(
+            ge=0,
+            description=(
+                "A body the Memory block budget would cut below this many characters is "
+                "left out of the block instead of being shown as a stub."
+            ),
+        ),
+    ] = 40
+
+    file_max_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Characters of one memory file: longer bodies are truncated on read and "
+                "refused on write."
+            ),
+        ),
+    ] = 8_000
+
+    tool_enabled: Annotated[
+        bool,
+        Field(
+            description=(
+                "Register the memory_view / memory_write tools (needs persistent_enabled)."
+            ),
+        ),
+    ] = False
+
+    promote_after_successes: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="Successful tasks that load an unverified entry before it is verified.",
+        ),
+    ] = 2
+
+    stale_after_failures: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="Consecutive blocked tasks that load an entry before it is stale.",
+        ),
+    ] = 2
+
+    stale_after_days: Annotated[
+        int,
+        Field(
+            ge=0,
+            description="A verified entry older than this renders as stale. 0 disables the TTL.",
+        ),
+    ] = 90
+
+    consolidate_on_goal_end: Annotated[
+        bool,
+        Field(
+            description=(
+                "After a done task, ask the model for up to consolidation_max_entries "
+                "memory entries (written as unverified)."
+            ),
+        ),
+    ] = False
+
+    consolidation_timeout_seconds: Annotated[
+        float,
+        Field(gt=0, description="Ceiling on the consolidation model call."),
+    ] = 30.0
+
+    consolidation_max_entries: Annotated[
+        int,
+        Field(ge=1, description="Entries one consolidation call may write."),
+    ] = 3
+
+    consolidation_field_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Characters of each consolidation prompt field (the task, the final answer, "
+                "the action journal)."
+            ),
+        ),
+    ] = 4_000
+
+    event_reason_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="Characters of a reason, detail or path recorded in a memory.* event.",
+        ),
+    ] = 300
+
+    # -- L2 task state ---------------------------------------------------------
+
+    working_notes_max_chars: Annotated[
+        int,
+        Field(
+            ge=0,
+            description=(
+                "Characters of the model's working notes kept for the current task. "
+                "0 disables working notes."
+            ),
+        ),
+    ] = 0
 
 
 class EventSettings(_Section):

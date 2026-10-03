@@ -29,8 +29,8 @@ Get-Content -LiteralPath path\to\file.md -Encoding UTF8
 
 AutoBrowser is a Python 3.12 browser automation agent that turns a
 natural-language task into a plan → reason → policy → execute → observe loop.
-Browser interaction is **snapshot-driven** via Playwright MCP (element `ref`s),
-not CSS/XPath. It runs as a long-lived interactive `cmd2` REPL (`main.py`) over
+Browser interaction goes through the tools of the configured MCP servers (Playwright
+MCP by default). It runs as a long-lived interactive `cmd2` REPL (`main.py`) over
 an Ollama-compatible chat model (default `gemma4:31b-cloud`). Control flow is
 **engine-native** — there is no compiled graph. The explicit `AgentLoopEngine`
 owns the loop; see `docs/decisions/2026-08-31-native-agent-loop-engine.md` for
@@ -122,32 +122,25 @@ reads the reason); a refused approval is terminal `blocked`. `settings.loop.turn
 (default 50) bounds the loop. Authorization lives in `src/harness/permissions.py`
 (`docs/decisions/2026-10-01-permission-engine.md`); there is no `execution/policy.py`.
 
-## Browser Semantics (Hard Invariant)
+## Development Direction
 
-The agent is **snapshot-driven, not selector-driven** (see `docs/development/browser-agent-rules.md`):
+The MVP is moving away from deterministic, browser-specific rules towards a universal agent
+without hardcodes: the model decides how to work with whatever tools the configured MCP
+servers expose. Don't add new tool-, site- or page-structure-specific rules to the engine,
+guards, harness, memory policy or descriptive docs. The prompts still carry older browser
+rules; they are revised separately by the user — leave them unchanged unless asked.
 
-- `browser_snapshot` is the only source of truth; element identity is an ephemeral `ref=e123`
-  valid **only** for the snapshot that produced it. Never guess CSS/XPath/class/DOM.
-- Ref-based `click`/`type`/`hover` require a current snapshot. If the ref is absent from the
-  latest snapshot, **replan from visible refs** — never reuse a historical ref.
-- Don't snapshot after every action; don't re-click a search affordance after an unchanged
-  snapshot; prefer typing into an editable control, then fall back to a direct search URL
-  (e.g. Ozon `https://www.ozon.ru/search/?text=<query>`).
-
-These rules are **duplicated across prompts, the guards, the observer, and provider
-tests**. Changing one layer can reintroduce stale-ref/loop bugs — keep them aligned, and
-don't remove an invariant from a prompt unless policy/observer/evals still enforce it.
 `tests/mcp_fixtures/fake_server.py` (a real MCP server) and the local `_FakeBrowserTools`
 helper (`src/agent_loop/evals.py`, duplicated where individual tests need it — there is no
-shared `BrowserProvider` protocol or production fake anymore) exercise this behavior
-deterministically without Chrome/CDP.
+shared `BrowserProvider` protocol or production fake anymore) exercise the loop without
+Chrome/CDP.
 
 ## Session vs Task Boundary
 
 All tasks in one REPL session share one session identity (from
 `SessionContext.session_id`), passed into each task config as
 `configurable.thread_id`. Across tasks the runtime carries forward only durable context
-(messages, latest observation, current snapshot, browser state, last-action metadata) and
+(messages, latest observation, browser state, last-action metadata) and
 **resets task-local fields** (`plan`, `decision`, `final_answer`, tool request/result,
 policy state, errors, retry/replan/repeat counters) before the next task. Carried state is
 injected through the harness-internal state-override key
@@ -223,8 +216,8 @@ evaluated after `pre_tool_use` hooks on the final arguments
   `src/contracts.py`; settings (`permissions.mode`, `permissions.rules`,
   `PermissionRule`, `normalize_domain`) in `src/config.py`;
   `PermissionEngine` in `src/harness/permissions.py`; the browser resolver (domain from a
-  `url` argument or the `Page URL:`, click target from `element` + the snapshot line of the
-  ref) in `src/browser/permissions.py`; the CLI prompt in `src/cli/approval.py`; the call site and
+  `url` argument or the `Page URL:`, click target from the `element` argument and the page
+  observation) in `src/browser/permissions.py`; the CLI prompt in `src/cli/approval.py`; the call site and
   `permission.decided`/`approval.resolved` emission in `src/agent_loop/execution/loop.py`.
 - Rules resolve `deny > ask > allow` regardless of order; a rule needing an unresolved
   resource matches for deny/ask, never for allow; any evaluation error is a deny.
@@ -251,6 +244,30 @@ evaluated after `pre_tool_use` hooks on the final arguments
   `PermissionEngine.from_settings()` — the code-default settings (no rules), never the
   personal config.
   Tests build engines from explicit `PermissionsSettings`.
+
+## Memory
+
+Four layers, everything past the compaction of superseded tool outputs **off by default** (`memory.*` settings;
+guide: `docs/development/memory.md`; ADR: `docs/decisions/2026-10-02-layered-agent-memory.md`).
+
+- L1 history budget (`history_budget_chars`) and L3 task digest (`keep_recent_tasks`) are
+  `MemoryManager` methods in `src/harness/memory.py`; the digest runs once per task boundary in
+  `session._task_state_overrides`, never per turn.
+- L2 working notes (`working_notes_max_chars`): an optional `notes` tool argument, stripped
+  like `approval_request` (`src/agent_loop/execution/notes.py`), kept on the task-local
+  `LoopState.working_notes`.
+- L4 persistent memory (`persistent_enabled`): `MemoryStore`/`MemoryContext` in
+  `src/harness/memory_store.py`, files under `.autobrowser/memory/{sites,procedures}/*.md`;
+  `memory_view`/`memory_write` tools (`tool_enabled`, `server: memory`) in
+  `src/harness/memory_tool.py`; staged trust and opt-in consolidation
+  (`src/harness/memory_consolidation.py`) run in `SessionRuntime` after `goal_end`. Browser
+  scope and the content policy live in `src/browser/memory.py`.
+- The engine only calls `resources.memory.render(state)`. It must not import the memory store,
+  tool or browser modules, or name the memory tools (`tests/test_memory_boundaries.py`). Every
+  write passes the `MemoryContentPolicy` (no injection phrases, secrets or page-specific hints);
+  user files are never changed by the agent; review of writes is a user permission rule,
+  never a shipped one.
+- Tests build `MemoryStore(tmp_path, MemorySettings(...))`, never `get_settings()`.
 
 ## Feature Flags (env vars)
 
@@ -283,6 +300,16 @@ Focused test groups are grouped by area in `AGENTS.md` / `docs/development/setup
 
 ## When Changing Things
 
+- **Tunables go to the config, never into project files.** Any limit, budget, character
+  cap, count, threshold, timeout or default you introduce or touch becomes a field of the
+  matching section in `src/config.py` (or a new section), with its default, bounds and
+  description. Add it to `.env.example` and `config.example.yaml` (both are checked against
+  the code by `tests/test_config.py`). Code reads it via `get_settings()` or an injected
+  `*Settings`. Don't add a module constant (`MAX_ENTRIES = 3`, `_FIELD_CHARS = 4_000`) or an
+  inline magic number (`str(exc)[:300]`). Constants are only for fixed vocabulary: names,
+  prefixes, markers, regexes, prompt text, schema keys. If you find an existing hardcoded
+  tunable in code you are changing, move it to the config in the same change.
+  `tests/test_memory_boundaries.py` enforces this for the memory modules.
 - Prompt change → update the prompt file, adjust `tests/test_prompts.py`, run it, and for
   browser-behavior changes inspect one `--show-state` trace for loops.
 - The engine-native path is the only path — there is no compiled-graph rollback. Keep every

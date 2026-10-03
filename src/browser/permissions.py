@@ -25,36 +25,11 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from typing import Any
-from urllib.parse import urlsplit
 
-from src.config import normalize_domain
+from src.browser.pages import current_page_url, page_url, url_domain
 from src.contracts import PermissionCheck
 
-_PAGE_URL = re.compile(r"^\s*-\s*Page URL:\s*(\S+)", re.MULTILINE)
-_SCHEMELESS = re.compile(r"^[\w.-]+\.[a-z]{2,}([:/?#]|$)", re.IGNORECASE)
 _ATTRIBUTE = re.compile(r"\s*\[[^\]]*\]")
-
-
-def url_domain(url: Any) -> str:
-    """Normalized host of ``url``; ``""`` when it has none (``data:``, ``about:``, garbage)."""
-
-    text = str(url or "").strip()
-    if not text:
-        return ""
-    if "://" not in text and _SCHEMELESS.match(text):
-        text = f"http://{text}"  # "ozon.ru/search" as typed by a model
-    try:
-        host = urlsplit(text).hostname or ""
-        return normalize_domain(host)
-    except ValueError:
-        return ""
-
-
-def page_url(text: Any) -> str:
-    """The ``- Page URL:`` of a Playwright MCP response or snapshot, else ``""``."""
-
-    match = _PAGE_URL.search(str(text or ""))
-    return match.group(1) if match else ""
 
 
 def snapshot_element(snapshot: Any, ref: Any) -> str:
@@ -92,15 +67,7 @@ class BrowserResourceResolver:
         if check.args.get("url"):
             # The destination, even when it has no host: never fall back to the current page.
             return str(check.args["url"]).strip()
-        result = state.get("tool_result") or {}
-        for text in (
-            result.get("content") if isinstance(result, Mapping) else "",
-            state.get("snapshot"),
-        ):
-            url = page_url(text)
-            if url:
-                return url
-        return ""
+        return current_page_url(state)
 
     @staticmethod
     def _target(check: PermissionCheck, state: Mapping[str, Any]) -> str:

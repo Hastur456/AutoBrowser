@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from src.agent_loop.prompts import (
     AGENT_SYSTEM_PROMPT,
     APPROVAL_CLASSIFIER_SYSTEM_PROMPT,
     APPROVAL_CLASSIFIER_USER_PROMPT,
+    MEMORY_CONSOLIDATION_SYSTEM_PROMPT,
+    MEMORY_CONSOLIDATION_USER_PROMPT,
     OBSERVER_SYSTEM_PROMPT,
     PLANNER_SYSTEM_PROMPT,
 )
+from src.agent_loop.execution.notes import NOTES_ARGUMENT_SCHEMA
+from src.config import MemorySettings
+from src.harness.memory_store import MEMORY_HEADER, TOOLS_HINT, UNVERIFIED_PREFIX, MemoryStore
+from src.harness.memory_tool import memory_tools
 
 PROMPT_CONSTRAINTS = {
     "core": (
@@ -133,3 +141,51 @@ def test_approval_classifier_prompt_judges_only_the_action() -> None:
     fields = {"task", "url", "tool", "description", "args", "target"}
     rendered = APPROVAL_CLASSIFIER_USER_PROMPT.format(**{f: f"<{f}>" for f in fields})
     assert all(f"<{f}>" in rendered for f in fields)
+
+
+def test_memory_consolidation_prompt_keeps_the_browser_invariants() -> None:
+    prompt = " ".join(MEMORY_CONSOLIDATION_SYSTEM_PROMPT.lower().split())
+
+    assert "element refs (ref=e123) or css/xpath selectors" in prompt
+    assert "refs expire with every snapshot" in prompt
+    assert "form values, personal data, logins, passwords, tokens" in prompt
+    assert "instructions addressed to the agent" in prompt
+    assert "advice to scrape the page: tag or class filters, page javascript" in prompt
+    assert "describe a control by its role and visible name" in prompt
+    assert 'at most the number of entries given under "entry limit"' in prompt
+    assert "never propose a path the index lists as [user] or [verified]" in prompt
+    assert "an entry you return replaces the whole file" in prompt
+    assert "keep every fact from the current body that still holds" in prompt
+    assert "an entry you leave out stays as it is" in prompt
+    assert '{"entries": []}' in prompt
+    fields = {"task", "final_answer", "domains", "action_history", "index", "entries", "max_entries"}
+    rendered = MEMORY_CONSOLIDATION_USER_PROMPT.format(**{f: f"<{f}>" for f in fields})
+    assert all(f"<{f}>" in rendered for f in fields)
+
+
+def test_the_memory_block_keeps_the_snapshot_first_and_forbids_refs() -> None:
+    """The Memory block text is prompt text too (rendered only when memory is enabled)."""
+
+    assert "the current snapshot always wins" in MEMORY_HEADER
+    assert "verify against the current snapshot" in UNVERIFIED_PREFIX
+    hint = TOOLS_HINT.lower()
+    assert "memory_view" in hint and "memory_write" in hint
+    assert "url templates" in hint
+    assert "never save element refs, selectors, form values or personal data" in hint
+
+
+def test_the_memory_write_description_forbids_refs_selectors_and_scraping(tmp_path: Path) -> None:
+    """Tool descriptions are prompt text: keep them aligned with BrowserMemoryPolicy."""
+
+    tools = {tool.name: tool for tool in memory_tools(MemoryStore(tmp_path, MemorySettings()))}
+    description = " ".join(tools["memory_write"].description.lower().split())
+
+    assert "never save element refs, css/xpath selectors" in description
+    assert "advice to scrape the page (tag or class filters, page javascript" in description
+
+
+def test_the_working_notes_argument_forbids_refs() -> None:
+    description = NOTES_ARGUMENT_SCHEMA["description"].lower()
+
+    assert "never put element refs here" in description
+    assert "omit it to keep the notes" in description

@@ -2,9 +2,8 @@
 
 AutoBrowser is a Python 3.12 browser automation agent with an engine-native
 execution loop. It turns a natural-language task into a controlled plan, policy
-check, tool execution, and observation loop. Browser interaction is driven by
-Playwright MCP snapshots and element refs instead of CSS selectors or DOM
-assumptions.
+check, tool execution, and observation loop. Browser interaction goes through
+the tools of the configured MCP servers (Playwright MCP by default).
 
 ## What It Does
 
@@ -17,11 +16,11 @@ assumptions.
   replay, scenario evals, batch runs, exports, context assembly, and goal
   lifecycle boundaries.
 - Executes tool calls through a harness-owned registry and policy layer.
-- Observes tool output and browser snapshots before deciding the next action.
+- Observes tool output before deciding the next action.
 - Keeps a process-long session alive so multiple tasks can run without
   restarting the application.
 - Preserves useful context between tasks in one session, including prior
-  observations, current snapshots, browser state, and dialogue history.
+  observations, browser state, and dialogue history.
 - Writes runtime session records under `.autobrowser/sessions/<session_id>/`.
 - Supports dry CLI runs without browser/MCP tools for development checks.
 
@@ -141,8 +140,8 @@ Use `--no-mcp` only for dry checks that do not need live browser access:
 python main.py --no-mcp
 ```
 
-With `--no-mcp`, commands still work, but browser navigation, snapshots, and
-live website extraction are unavailable.
+With `--no-mcp`, commands still work, but browser navigation and live website
+extraction are unavailable.
 
 Each session creates `.autobrowser/sessions/<session_id>/` with `session.json`,
 `tasks.json`, and a `workspace/` tree for runtime artifacts. These files are
@@ -151,7 +150,7 @@ local runtime output and are ignored by git.
 Within one interactive session, tasks share a session identity derived from
 `SessionContext.session_id` and reused as `configurable.thread_id`. The runtime
 carries forward only durable context such as messages, latest observation,
-current snapshot, and browser progress. Task-local fields such as the prior
+and browser progress. Task-local fields such as the prior
 plan, terminal decision, final answer, errors, and retry counters are reset
 before the next task starts. There is no compiled graph and no checkpoint
 thread.
@@ -271,19 +270,6 @@ still receives a `TaskRecord.task_id` for persisted history and message
 attribution, and `goal_id == task_id`. `SessionRuntime` carries session-useful
 context into the next invocation and resets task-local fields at the task
 boundary.
-
-## Browser Interaction Rules
-
-AutoBrowser follows Playwright MCP semantics:
-
-- `browser_snapshot` is the source of truth.
-- Element identity comes from snapshot refs such as `ref=e123`.
-- Preferred interactions are `browser_click(ref)`, `browser_type(ref)`, and
-  `browser_hover(ref)`.
-- Do not rely on CSS selectors, XPath, class names, or assumed DOM structure.
-
-See [docs/development/browser-agent-rules.md](docs/development/browser-agent-rules.md)
-for the full interaction contract.
 
 ## Documentation
 

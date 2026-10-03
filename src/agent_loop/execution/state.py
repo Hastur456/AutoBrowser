@@ -99,6 +99,9 @@ class LoopState:
     # Task-local count of model completions a stop hook rejected (bounded by
     # ``hooks.max_stop_blocks``). Not part of ``to_session_state`` either.
     stop_blocks: int = 0
+    # Task-local notes the model keeps through the optional ``notes`` tool argument
+    # (``execution/notes.py``); rendered as the Working Notes block. Not carried across tasks.
+    working_notes: str = ""
 
     final_answer: str = ""
     # Explicit terminal status ("done"/"blocked"/"cancelled") set by whoever ends the run;
