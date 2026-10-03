@@ -49,9 +49,6 @@ COMPACTED_TOOL_OUTPUT_PREFIX = "[compacted]"
 CLEARED_TOOL_OUTPUT_PREFIX = "[cleared]"
 TASK_DIGEST_PREFIX = "[harness] Previous task digest:"
 
-_DIGEST_REQUEST_CHARS = 300
-_DIGEST_ANSWER_CHARS = 500
-
 
 class MemoryManager:
     """Functional history service over provider-neutral ``Message`` lists.
@@ -234,7 +231,8 @@ class MemoryManager:
         """
 
         history = list(messages)
-        keep = self._memory_settings().keep_recent_tasks
+        settings = self._memory_settings()
+        keep = settings.keep_recent_tasks
         if keep <= 0:
             return history
         starts = [index for index, message in enumerate(history) if _is_task_request(message)]
@@ -247,7 +245,7 @@ class MemoryManager:
             end = starts[position + 1] if position + 1 < len(starts) else len(history)
             segment = history[start:end]
             if start in folded:
-                result.append(user_message(_task_digest(segment)))
+                result.append(user_message(_task_digest(segment, settings)))
             else:
                 result.extend(segment)
         return result
@@ -321,16 +319,18 @@ class MemoryManager:
         if not compress:
             return _raw_tool_message(result)
 
+        settings = self._memory_settings()
         tool_name = str(result.get("name", "tool") or "tool").strip()
         if tool_name == "browser_snapshot":
-            return _snapshot_tool_message(result, compact)
+            return _snapshot_tool_message(result, compact, settings)
 
+        limit = settings.compressed_tool_result_chars
         status = str(result.get("status", "error") or "error")
         if status == "error":
-            error = _safe_compact_value(result.get("error", "") or observation, 500)
+            error = _safe_compact_value(result.get("error", "") or observation, limit)
             return "\n\n".join(part for part in [tool_name, "Tool failed.", error] if part)
 
-        summary = _safe_compact_value(compact.get("summary") or observation, 500)
+        summary = _safe_compact_value(compact.get("summary") or observation, limit)
         return "\n\n".join(part for part in [tool_name, summary] if part)
 
     @staticmethod
@@ -364,7 +364,7 @@ def _is_task_request(message: Message) -> bool:
     )
 
 
-def _task_digest(segment: Sequence[Message]) -> str:
+def _task_digest(segment: Sequence[Message], settings: MemorySettings) -> str:
     _, _, request = str(segment[0].content).partition("\n")
     answer = ""
     tools: Counter[str] = Counter()
@@ -376,11 +376,11 @@ def _task_digest(segment: Sequence[Message]) -> str:
         elif str(message.content or "").strip():
             answer = str(message.content)
     tools_used = ", ".join(f"{name}×{count}" for name, count in tools.items()) or "none"
-    answer = _safe_compact_value(answer, _DIGEST_ANSWER_CHARS) or "(no final answer)"
+    answer = _safe_compact_value(answer, settings.digest_answer_chars) or "(no final answer)"
     return "\n".join(
         [
             TASK_DIGEST_PREFIX,
-            f"- request: {_safe_compact_value(request, _DIGEST_REQUEST_CHARS)}",
+            f"- request: {_safe_compact_value(request, settings.digest_request_chars)}",
             f"- answer: {answer}",
             f"- tools used: {tools_used}",
         ]
@@ -394,7 +394,7 @@ def _has_user_message(messages: Sequence[Message], content: str) -> bool:
     )
 
 
-def _safe_compact_value(value: Any, limit: int = 500) -> str:
+def _safe_compact_value(value: Any, limit: int) -> str:
     text = str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not text:
         return ""
@@ -413,14 +413,20 @@ def _raw_value(value: Any) -> str:
 def _snapshot_tool_message(
     result: ToolResult,
     compact: CompactToolObservation,
+    settings: MemorySettings,
 ) -> str:
     tool_name = str(result.get("name", "browser_snapshot") or "browser_snapshot")
     status = str(result.get("status", "error") or "error")
     if status == "error":
-        error = _safe_compact_value(result.get("error", "") or "Snapshot failed.", 400)
+        error = _safe_compact_value(
+            result.get("error", "") or "Snapshot failed.",
+            settings.compressed_snapshot_error_chars,
+        )
         return "\n\n".join(part for part in [tool_name, "Tool failed.", error] if part)
 
-    summary = _safe_compact_value(compact.get("summary"), 300)
+    summary = _safe_compact_value(
+        compact.get("summary"), settings.compressed_snapshot_summary_chars
+    )
 
     parts = [tool_name, summary]
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,32 @@ def test_the_engine_knows_no_memory_files_or_memory_tool_names(path: Path) -> No
         "memory_write",
     ):
         assert forbidden not in source, f"{path.name} mentions {forbidden}"
+
+
+MEMORY_MODULES = (
+    ROOT / "src" / "harness" / "memory.py",
+    ROOT / "src" / "harness" / "memory_store.py",
+    ROOT / "src" / "harness" / "memory_tool.py",
+    ROOT / "src" / "harness" / "memory_consolidation.py",
+    ROOT / "src" / "browser" / "memory.py",
+    ROOT / "src" / "agent_loop" / "execution" / "notes.py",
+)
+
+
+@pytest.mark.parametrize("path", MEMORY_MODULES, ids=lambda path: path.relative_to(ROOT).as_posix())
+def test_memory_limits_live_in_the_settings_not_in_module_constants(path: Path) -> None:
+    """Every memory tunable is a ``MemorySettings`` field (``src/config.py``), never a module
+    constant such as ``MAX_ENTRIES = 3``."""
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else [getattr(node, "target", None)]
+        value = getattr(node, "value", None)
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)) or value is None:
+            continue
+        numeric = isinstance(value, ast.Constant) and type(value.value) in (int, float)
+        names = [target.id for target in targets if isinstance(target, ast.Name)]
+        assert not numeric, f"{path.name}: {names} is a numeric module constant; move it to MemorySettings"
 
 
 def test_memory_files_are_reached_only_through_the_session() -> None:

@@ -835,8 +835,9 @@ class SessionRuntime:
         try:
             store.record_outcome(task_id, outcome)
         except OSError as exc:
+            reason = f"outcome: {exc}"[: store.settings.event_reason_chars]
             self.context.emit_memory_event(
-                "memory.skipped", {"task_id": task_id, "reason": f"outcome: {exc}"[:300]}
+                "memory.skipped", {"task_id": task_id, "reason": reason}
             )
         settings = get_settings().memory
         if outcome == "done" and settings.consolidate_on_goal_end and self.context.llm is not None:

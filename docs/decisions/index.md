@@ -4,6 +4,11 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-10-03 Merging Memory Consolidation](2026-10-03-merging-memory-consolidation.md):
+  consolidation sees the full bodies of the visited sites' entries and merges into them; a
+  consolidation rewrite keeps `uses`/`failures` (`create(keep_trust=True)`) so site entries
+  can still reach `verified`; `BrowserMemoryPolicy` refuses DOM-scraping advice; the memory
+  limits move from module constants to `MemorySettings`. Extends the layered memory ADR.
 - [2026-10-02 Layered Agent Memory](2026-10-02-layered-agent-memory.md): four memory layers,
   all opt-in through `memory.*` — a deterministic history budget (`[cleared]` old tool
   outputs), task-local working notes (an optional `notes` tool argument), a task digest at the

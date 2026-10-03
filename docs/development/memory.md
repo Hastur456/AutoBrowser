@@ -75,8 +75,9 @@ description: Ozon — search URL and the price-filter fallback   # one line for 
 
 What to write: URL templates, the visible names and roles of controls ("textbox Search",
 "button Show results"), the order of steps that worked, site behavior that costs turns. What
-not to write (the agent's writes are refused, see below): element refs, CSS/XPath, form
-values, personal data, secrets, instructions to the agent.
+not to write (the agent's writes are refused, see below): element refs, CSS/XPath, advice to
+scrape the page (tag or class filters, page JavaScript, searching the page text or source),
+form values, personal data, secrets, instructions to the agent.
 
 ## What the Model Sees
 
@@ -100,7 +101,9 @@ For ozon.ru:
   files only) appear everywhere. The planner sees the index only, because there is no page yet.
 - `unverified` and `stale` bodies start with `[unverified — verify against the current snapshot]`.
 - The block is cut to `block_max_chars`: unverified/stale bodies first, then verified, yours
-  last. Each body is capped at `file_max_chars`.
+  last. A body that would be cut below `block_min_section_chars` is left out instead. Each
+  body is capped at `file_max_chars`.
+- A file without a `description` gets the first body line, cut to `index_description_chars`.
 
 ## How the Agent Writes
 
@@ -117,7 +120,9 @@ The harness stamps the frontmatter (`status: unverified`, `source: agent:<task_i
 model never sees or edits it. A refused write is a tool error the model reads (the turn goes
 on): unsafe path (`..`, absolute, `\`, percent-encoding, outside `sites/`/`procedures/`),
 your file, body over `file_max_chars`, `*` scope, or a `BrowserMemoryPolicy` violation (refs,
-selectors, injection phrases, `password: …`-style secrets).
+selectors, DOM-scraping advice such as `` `a` tag filters ``, `browser_evaluate`, `innerText`
+or "search the page text", injection phrases, `password: …`-style secrets). A `create` or
+`str_replace` by the model starts the entry's staged trust over (`uses`/`failures` = 0).
 
 ## Staged Trust
 
@@ -138,13 +143,23 @@ A `verified` entry whose `verified_at` is older than `stale_after_days` renders 
 
 With `consolidate_on_goal_end: true`, after a `done` task the session makes one model call
 (prompt `MEMORY_CONSOLIDATION_SYSTEM_PROMPT` in `src/agent_loop/prompts.py`) with the task,
-the final answer, the action journal (no raw snapshots), the sites visited and the current
-index. The model answers with up to three `{path, description, body}` entries. Each goes
-through the same `create` path as `memory_write` (policy, limits, `unverified`); entries that
-are yours or already `verified` are left alone. The outcome is `memory.consolidated`
-(`written`, `rejected` with reasons) or `memory.consolidation_failed` (error, timeout,
-unreadable JSON). The task result is never affected. The call runs inline, bounded by
+the final answer, the action journal (no raw snapshots), the sites visited, the current
+index and the **full bodies of the entries for the visited sites** (each field cut to
+`consolidation_field_chars`, bodies to `file_max_chars`). The model answers with up to
+`consolidation_max_entries` `{path, description, body}` entries. Each goes through the same
+`create` path as `memory_write` (policy, limits, `unverified`); entries that are yours or
+already `verified` are left alone. The outcome is `memory.consolidated` (`written`,
+`rejected` with reasons) or `memory.consolidation_failed` (error, timeout, unreadable JSON).
+The task result is never affected. The call runs inline, bounded by
 `consolidation_timeout_seconds`.
+
+An entry the model returns replaces the whole file, so the prompt asks it to merge: keep every
+fact of the current body that still holds and add what the task taught, and leave out entries
+it has nothing new for. A rewrite by consolidation **keeps** the entry's `uses`/`failures`
+(`MemoryStore.create(..., keep_trust=True)`): staged trust has just counted this task's
+success for the entry, and resetting the counters on every task would keep a site's entry
+`unverified` forever. See
+[ADR-2026-10-03: Merging Memory Consolidation](../decisions/2026-10-03-merging-memory-consolidation.md).
 
 ## History Budget and Task Digest
 
@@ -156,6 +171,8 @@ unreadable JSON). The task result is never affected. The call runs inline, bound
   `Action History` block still shows every call's outcome.
 - **Digest** (`keep_recent_tasks`): when a new task starts, every finished task except the
   newest `keep_recent_tasks` becomes one message:
+
+  The request and the answer are cut to `digest_request_chars` / `digest_answer_chars`:
 
   ```text
   [harness] Previous task digest:
@@ -180,7 +197,8 @@ never carried across tasks.
 
 - `session.json` → `"memory": {"enabled", "root", "entries", "tools"}`.
 - `events.jsonl`: `memory.skipped` (a broken file), `memory.outcome` (staged trust),
-  `memory.consolidated` / `memory.consolidation_failed`, plus the normal `tool.started` /
+  `memory.consolidated` / `memory.consolidation_failed` (reasons cut to
+  `event_reason_chars`), plus the normal `tool.started` /
   `tool.finished` / `permission.decided` for `memory_view` / `memory_write`.
 - `python main.py --show-state --task "..."` shows the turn state; the `Memory` block is part
   of the per-turn user prompt.
@@ -192,7 +210,9 @@ never carried across tasks.
 Tests and evals never read memory or its settings through `get_settings()` (a personal
 `config.yaml` would leak in): build `MemoryStore(tmp_path, MemorySettings(...))`, or
 `tests.evals.runner.seed_memory()`. The engine must not import `memory_store`/`memory_tool`/
-`src.browser.memory` or name the memory tools (`tests/test_memory_boundaries.py`). Tests:
+`src.browser.memory` or name the memory tools, and no memory module may hold a numeric
+module constant — every limit is a `MemorySettings` field (`tests/test_memory_boundaries.py`).
+Tests:
 `tests/test_harness_memory.py` (budget, digest, pair validity), `tests/test_memory_store.py`,
 `tests/test_memory_tool.py`, `tests/test_memory_consolidation.py`,
 `tests/test_working_notes.py`, `tests/test_browser_memory.py`, the memory section of

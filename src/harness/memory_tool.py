@@ -42,7 +42,9 @@ _WRITE_DESCRIPTION = (
     "description, body; overwrites your own entry), str_replace (path, old_str, new_str), "
     "delete (path). Paths: sites/<domain>.md for one site, procedures/<name>.md for a "
     "procedure. Save URL templates, the visible names of controls and the steps that worked. "
-    "Never save element refs, CSS/XPath selectors, form values, passwords or personal data. "
+    "Never save element refs, CSS/XPath selectors, advice to scrape the page (tag or class "
+    "filters, page JavaScript, searching the page text), form values, passwords or personal "
+    "data. "
     "New entries are unverified until later tasks succeed with them; entries written by the "
     "user cannot be changed."
 )

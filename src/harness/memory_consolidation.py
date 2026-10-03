@@ -1,11 +1,18 @@
 """Opt-in memory consolidation after a successful task (``memory.consolidate_on_goal_end``).
 
 One stateless model call per ``done`` task: the task, the final answer, the rendered action
-journal (no raw snapshots), the sites visited and the current index go in; up to three
+journal (no raw snapshots), the sites visited, the current index and the full bodies of the
+entries for those sites go in; up to ``memory.consolidation_max_entries``
 ``{path, description, body}`` entries come out. Every entry is written through
 :meth:`MemoryStore.create` — the same content policy and size limit as ``memory_write``,
 always as ``unverified`` with ``source: agent:<task_id>`` — so staged trust decides whether
 later tasks confirm it.
+
+The model sees the current bodies so it can merge instead of replace: an entry it returns is
+the whole new file. Rewriting an existing entry keeps its ``uses``/``failures``
+(``keep_trust``) — the successes :meth:`MemoryStore.record_outcome` has just counted for it
+still hold for the merged body, and resetting them on every task would keep a site's entry
+``unverified`` forever.
 
 The session calls this after ``goal_end``, never the engine or ``GoalRunner``: the engine still
 never calls a model outside its own turn. A model error, a timeout or an unreadable answer
@@ -23,6 +30,7 @@ from src.agent_loop.prompts import (
     MEMORY_CONSOLIDATION_SYSTEM_PROMPT,
     MEMORY_CONSOLIDATION_USER_PROMPT,
 )
+from src.contracts import MemoryEntry
 from src.harness.memory_store import (
     MemoryEventCallback,
     MemoryPathError,
@@ -31,12 +39,9 @@ from src.harness.memory_store import (
 )
 from src.messages import system_message, user_message
 
-MAX_ENTRIES = 3
-_FIELD_CHARS = 4_000
-
 
 class MemoryConsolidator:
-    """Turns one finished task into at most :data:`MAX_ENTRIES` unverified memory entries."""
+    """Turns one finished task into at most ``consolidation_max_entries`` unverified entries."""
 
     def __init__(
         self,
@@ -62,12 +67,18 @@ class MemoryConsolidator:
     ) -> list[str]:
         """Write the proposed entries; return their paths. Never raises."""
 
+        settings = self._store.settings
+        field_chars = settings.consolidation_field_chars
+        reason_chars = settings.event_reason_chars
+        visited = sorted({domain for domain in domains if domain})
         prompt = MEMORY_CONSOLIDATION_USER_PROMPT.format(
-            task=_clip(task) or "(none)",
-            final_answer=_clip(final_answer) or "(none)",
-            domains=", ".join(sorted({domain for domain in domains if domain})) or "(unknown)",
-            action_history=_clip(action_history) or "(no tool calls)",
+            task=_clip(task, field_chars) or "(none)",
+            final_answer=_clip(final_answer, field_chars) or "(none)",
+            domains=", ".join(visited) or "(unknown)",
+            action_history=_clip(action_history, field_chars) or "(no tool calls)",
             index=self._store.render_index() or "(empty)",
+            entries=self._current_entries(visited) or "(none)",
+            max_entries=settings.consolidation_max_entries,
         )
         messages = [system_message(MEMORY_CONSOLIDATION_SYSTEM_PROMPT), user_message(prompt)]
         try:
@@ -76,14 +87,18 @@ class MemoryConsolidator:
         except Exception as exc:  # noqa: BLE001 - consolidation must never fail the task
             self._emit(
                 "memory.consolidation_failed",
-                {"task_id": task_id, "reason": type(exc).__name__, "detail": str(exc)[:300]},
+                {
+                    "task_id": task_id,
+                    "reason": type(exc).__name__,
+                    "detail": str(exc)[:reason_chars],
+                },
             )
             return []
 
         self._store.bind_task(task_id)
         written: list[str] = []
         rejected: list[dict[str, str]] = []
-        for proposal in proposals[:MAX_ENTRIES]:
+        for proposal in proposals[: settings.consolidation_max_entries]:
             path = str(proposal.get("path", "") or "")
             try:
                 existing = self._store.get(path)
@@ -95,9 +110,12 @@ class MemoryConsolidator:
                     description=str(proposal.get("description", "") or ""),
                     body=str(proposal.get("body", "") or ""),
                     scope=str(proposal.get("scope", "") or "") or None,
+                    keep_trust=True,
                 )
             except (MemoryWriteError, MemoryPathError) as exc:
-                rejected.append({"path": path[:200], "reason": str(exc)[:300]})
+                rejected.append(
+                    {"path": path[:reason_chars], "reason": str(exc)[:reason_chars]}
+                )
                 continue
             written.append(entry.path)
         self._emit(
@@ -105,6 +123,19 @@ class MemoryConsolidator:
             {"task_id": task_id, "written": written, "rejected": rejected},
         )
         return written
+
+    def _current_entries(self, domains: Sequence[str]) -> str:
+        """The full bodies of the entries for ``domains``, so the model can merge into them."""
+
+        seen: dict[str, MemoryEntry] = {}
+        for domain in domains:
+            for entry in self._store.entries_for_scope(domain):
+                seen.setdefault(entry.path, entry)
+        limit = self._store.settings.file_max_chars
+        return "\n\n".join(
+            f"### {entry.path} [{entry.status}] — {entry.description}\n{_clip(entry.body, limit)}"
+            for entry in sorted(seen.values(), key=lambda entry: entry.path)
+        )
 
     def _emit(self, event_type: str, payload: dict[str, Any]) -> None:
         if self._on_event is not None:
@@ -122,9 +153,9 @@ def _parse(content: str) -> Sequence[dict[str, Any]]:
     return [entry for entry in entries if isinstance(entry, dict)]
 
 
-def _clip(value: Any, limit: int = _FIELD_CHARS) -> str:
+def _clip(value: Any, limit: int) -> str:
     text = str(value or "").strip()
     return text if len(text) <= limit else text[:limit].rstrip() + " [truncated]"
 
 
-__all__ = ["MAX_ENTRIES", "MemoryConsolidator"]
+__all__ = ["MemoryConsolidator"]

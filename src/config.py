@@ -399,6 +399,33 @@ class MemorySettings(_Section):
         ),
     ] = 1000
 
+    compressed_tool_result_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "With --compress-tools: characters of the summary or error kept in a "
+                "tool message."
+            ),
+        ),
+    ] = 500
+
+    compressed_snapshot_summary_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="With --compress-tools: characters of a snapshot summary kept.",
+        ),
+    ] = 300
+
+    compressed_snapshot_error_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="With --compress-tools: characters of a snapshot error kept.",
+        ),
+    ] = 400
+
     # -- L1 working context / L3 session -------------------------------------
 
     history_budget_chars: Annotated[
@@ -428,6 +455,16 @@ class MemorySettings(_Section):
         ),
     ] = 0
 
+    digest_request_chars: Annotated[
+        int,
+        Field(ge=1, description="Characters of the user request kept in a task digest."),
+    ] = 300
+
+    digest_answer_chars: Annotated[
+        int,
+        Field(ge=1, description="Characters of the final answer kept in a task digest."),
+    ] = 500
+
     # -- L4 persistent memory -------------------------------------------------
 
     persistent_enabled: Annotated[
@@ -450,10 +487,32 @@ class MemorySettings(_Section):
         Field(ge=1, description="Characters of the memory index rendered into the prompt."),
     ] = 25_000
 
+    index_description_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Characters of the first body line used as the index description of a "
+                "file whose frontmatter has none."
+            ),
+        ),
+    ] = 120
+
     block_max_chars: Annotated[
         int,
         Field(ge=1, description="Characters of the whole Memory context block."),
     ] = 12_000
+
+    block_min_section_chars: Annotated[
+        int,
+        Field(
+            ge=0,
+            description=(
+                "A body the Memory block budget would cut below this many characters is "
+                "left out of the block instead of being shown as a stub."
+            ),
+        ),
+    ] = 40
 
     file_max_chars: Annotated[
         int,
@@ -503,8 +562,8 @@ class MemorySettings(_Section):
         bool,
         Field(
             description=(
-                "After a done task, ask the model for up to three memory entries "
-                "(written as unverified)."
+                "After a done task, ask the model for up to consolidation_max_entries "
+                "memory entries (written as unverified)."
             ),
         ),
     ] = False
@@ -513,6 +572,30 @@ class MemorySettings(_Section):
         float,
         Field(gt=0, description="Ceiling on the consolidation model call."),
     ] = 30.0
+
+    consolidation_max_entries: Annotated[
+        int,
+        Field(ge=1, description="Entries one consolidation call may write."),
+    ] = 3
+
+    consolidation_field_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Characters of each consolidation prompt field (the task, the final answer, "
+                "the action journal)."
+            ),
+        ),
+    ] = 4_000
+
+    event_reason_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description="Characters of a reason, detail or path recorded in a memory.* event.",
+        ),
+    ] = 300
 
     # -- L2 task state ---------------------------------------------------------
 

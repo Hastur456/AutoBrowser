@@ -243,6 +243,50 @@ def test_long_requests_and_answers_are_truncated() -> None:
     assert request_line.endswith("[truncated]")
 
 
+def test_compressed_tool_messages_are_cut_to_the_settings() -> None:
+    manager = _manager(
+        compressed_tool_result_chars=30,
+        compressed_snapshot_summary_chars=40,
+        compressed_snapshot_error_chars=50,
+    )
+
+    def content(name: str, status: str, **result: str) -> str:
+        return manager.tool_result_content(
+            {"name": name, "status": status, "content": "", "error": "", **result},
+            {"summary": "s" * 500},
+            "o" * 500,
+            compress=True,
+        )
+
+    summary = content("tool_a", "success").split("\n\n")[-1]
+    error = content("tool_a", "error", error="e" * 500).split("\n\n")[-1]
+    snapshot = content("browser_snapshot", "success").split("\n\n")[-1]
+    snapshot_error = content("browser_snapshot", "error", error="e" * 500).split("\n\n")[-1]
+
+    assert [len(summary), len(error), len(snapshot), len(snapshot_error)] == [30, 30, 40, 50]
+    assert all(text.endswith("[truncated]") for text in (summary, error, snapshot, snapshot_error))
+    raw =manager.tool_result_content(
+        {"name": "tool_a", "status": "success", "content": "c" * 500, "error": ""},
+        {"summary": "s"},
+        "o",
+    )
+    assert "c" * 500 in raw  # without compression nothing is cut
+
+
+def test_the_digest_limits_come_from_the_settings() -> None:
+    history = [
+        *_task("task-1", "r" * 1000, [], "a" * 2000),
+        *_task("task-2", "next", [], "done"),
+    ]
+    manager = _manager(keep_recent_tasks=1, digest_request_chars=40, digest_answer_chars=60)
+
+    request_line, answer_line = manager.digest_tasks(history)[0].content.splitlines()[1:3]
+
+    assert len(request_line) == len("- request: ") + 40
+    assert len(answer_line) == len("- answer: ") + 60
+    assert answer_line.endswith("[truncated]")
+
+
 def test_existing_digests_are_kept_on_the_next_boundary() -> None:
     manager = _manager(keep_recent_tasks=1)
     first = manager.digest_tasks(_session_history())

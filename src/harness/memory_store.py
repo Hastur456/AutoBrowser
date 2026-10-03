@@ -237,8 +237,14 @@ class MemoryStore:
         description: str,
         body: str,
         scope: str | None = None,
+        keep_trust: bool = False,
     ) -> MemoryEntry:
-        """Create or overwrite an agent entry as ``unverified``; the human's files are read-only."""
+        """Create or overwrite an agent entry as ``unverified``; the human's files are read-only.
+
+        An overwrite starts the staged trust over (``uses``/``failures`` = 0) unless
+        ``keep_trust`` is set: consolidation merges what a task learned into the current body,
+        so the successes already counted for that entry still apply.
+        """
 
         path = self.resolve(rel)
         rel_posix = self._rel(path)
@@ -261,6 +267,8 @@ class MemoryStore:
             description=description,
             body=str(body or "").strip(),
         )
+        if keep_trust and existing is not None:
+            entry = dataclasses.replace(entry, uses=existing.uses, failures=existing.failures)
         self._check(entry)
         self._write(path, entry)
         return entry
@@ -407,10 +415,15 @@ class MemoryStore:
             return cached[1]
         entry: MemoryEntry | None
         try:
-            entry = _parse(rel_posix, path.read_text(encoding="utf-8"))
+            entry = _parse(
+                rel_posix,
+                path.read_text(encoding="utf-8"),
+                description_chars=self._settings.index_description_chars,
+            )
         except (OSError, UnicodeDecodeError, yaml.YAMLError, ValueError) as exc:
             entry = None
-            self._emit("memory.skipped", {"path": rel_posix, "reason": str(exc)[:300]})
+            reason = str(exc)[: self._settings.event_reason_chars]
+            self._emit("memory.skipped", {"path": rel_posix, "reason": reason})
         self._cache[rel_posix] = (key, entry)
         return entry
 
@@ -531,7 +544,7 @@ class MemoryContext:
         fixed = "\n".join(head)
         title = f"For {domain or 'every site'}:"
         budget = settings.block_max_chars - len(fixed) - len(title) - 4
-        sections = _fit_sections(sections, scoped, budget)
+        sections = _fit_sections(sections, scoped, budget, settings.block_min_section_chars)
 
         shown = [entry.path for entry, section in zip(scoped, sections) if section]
         self._store.note_loaded(task_id, shown)
@@ -544,7 +557,7 @@ class MemoryContext:
 # -- file format -------------------------------------------------------------------------
 
 
-def _parse(rel_posix: str, text: str) -> MemoryEntry:
+def _parse(rel_posix: str, text: str, *, description_chars: int) -> MemoryEntry:
     directory = rel_posix.split("/", 1)[0]
     match = _FRONTMATTER.match(text)
     if match is None:
@@ -569,7 +582,9 @@ def _parse(rel_posix: str, text: str) -> MemoryEntry:
     if scope != ANY_SCOPE:
         scope = normalize_domain(scope)
     body = body.strip()
-    description = " ".join(str(meta.get("description") or _first_line(body)).split())
+    description = " ".join(
+        str(meta.get("description") or _first_line(body, description_chars)).split()
+    )
     return MemoryEntry(
         path=rel_posix,
         kind=kind,  # type: ignore[arg-type]
@@ -613,11 +628,11 @@ def _count(value: Any) -> int:
         return 0
 
 
-def _first_line(body: str) -> str:
+def _first_line(body: str, limit: int) -> str:
     for line in body.splitlines():
         line = line.strip().lstrip("#").strip()
         if line:
-            return line[:120]
+            return line[:limit]
     return ""
 
 
@@ -637,6 +652,7 @@ def _fit_sections(
     sections: list[str],
     entries: list[MemoryEntry],
     budget: int,
+    min_section_chars: int,
 ) -> list[str]:
     """Cut bodies to ``budget``: unverified/stale first, then verified, the human's last."""
 
@@ -652,7 +668,7 @@ def _fit_sections(
         section = sections[index]
         keep = len(section) - overflow - len(_TRUNCATED)
         header_end = section.find("\n") + 1
-        if keep <= header_end + 40:
+        if keep <= header_end + min_section_chars:
             overflow -= len(section) + 2
             sections[index] = ""
         else:

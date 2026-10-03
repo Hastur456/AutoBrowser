@@ -3,7 +3,8 @@
 Where each memory layer acts: on every history build and turn prompt (L1, L2, L4 read), at the
 task boundary (L3) and after `goal_end` (staged trust, consolidation). See the
 [Memory guide](../development/memory.md) and
-[ADR-2026-10-02: Layered Agent Memory](../decisions/2026-10-02-layered-agent-memory.md).
+[ADR-2026-10-02: Layered Agent Memory](../decisions/2026-10-02-layered-agent-memory.md)
+(consolidation merging: [ADR-2026-10-03](../decisions/2026-10-03-merging-memory-consolidation.md)).
 
 ## Context Assembly (Every Turn)
 
@@ -47,8 +48,9 @@ sequenceDiagram
   Session->>Store: record_outcome(task_id, done | blocked | cancelled)
   Note over Store: promote / stale / refresh, user entries untouched
   opt consolidate_on_goal_end and done
-    Session->>LLM: MEMORY_CONSOLIDATION prompt (task, answer, journal, sites, index)
-    LLM-->>Session: {"entries": [...]} (max 3)
-    Session->>Store: create(...) each, policy-checked, unverified
+    Session->>Store: entries_for_scope(visited sites)
+    Session->>LLM: MEMORY_CONSOLIDATION prompt (task, answer, journal, sites, index, current bodies)
+    LLM-->>Session: {"entries": [...]} (max consolidation_max_entries)
+    Session->>Store: create(..., keep_trust=True) each, policy-checked, unverified, counters kept
   end
 ```
