@@ -16,10 +16,6 @@ AutoBrowser turns a natural-language browser task into a controlled loop:
 5. Observe the result and update compact state.
 6. Repeat until a final answer is available.
 
-The browser agent is snapshot-driven. It should use Playwright MCP refs from
-`browser_snapshot`, not CSS selectors, XPath, class names, or assumed DOM
-structure.
-
 ## Source Layout
 
 | Path | Responsibility |
@@ -169,8 +165,8 @@ session lifecycle, and keeps runtime concerns replaceable in tests.
 
 Conversation history is not stored on the harness. The functional `MemoryManager`
 in `src/harness/memory.py` shapes a `list[Message]` — seeding the user task,
-appending assistant tool calls and tool results, compacting superseded browser
-snapshots, and formatting tool-message bodies — through module-level helpers the
+appending assistant tool calls and tool results, compacting superseded tool
+outputs, and formatting tool-message bodies — through module-level helpers the
 engine calls. The durable history itself lives on `LoopState.messages` and in the
 cross-task `SessionContext.state` carry-forward; there is no checkpoint saver.
 
@@ -204,8 +200,8 @@ thread anymore, and `goal_id == task_id`.
 After each task, `SessionRuntime` remembers the latest loop state in
 `SessionContext.state` (from the terminal `AgentLoopResult.session_state`). The
 next task receives only the context that is useful across task boundaries:
-durable messages, latest observation, current snapshot, browser state, and last
-browser action metadata. Task-local fields such as plan, terminal decision,
+durable messages, latest observation, browser state, and last browser action
+metadata. Task-local fields such as plan, terminal decision,
 final answer, tool request/result, policy state, errors, and retry counters are
 reset before the next invocation. This lets follow-up tasks use prior results
 and browser progress without inheriting stale completion or failure state.
@@ -233,7 +229,7 @@ For search tasks, the plan must preserve this contract:
 ## Agent Reasoning
 
 The reasoning step uses the current task, task ID, plan, latest observation,
-latest snapshot, available refs, retry counters, and durable message history.
+retry counters, and durable message history.
 It must return either a native tool call, a JSON replan decision, or a JSON done
 decision. `TurnController._agent_step` maps a parsed `ProposedAction` to a flat
 `LoopState` update; terminal status is derived from the resulting state by
@@ -242,8 +238,6 @@ decision. `TurnController._agent_step` maps a parsed `ProposedAction` to a flat
 The system prompt emphasizes:
 
 - the fewest useful browser actions;
-- no fresh `browser_snapshot` after every successful action;
-- direct use of editable `textbox`/`searchbox` refs for `browser_type`;
 - early fallback to direct search URLs when repeated search affordance clicks
   do not expose an input;
 - immediate completion once extracted data satisfies the user request.
@@ -258,9 +252,7 @@ stateless `ToolCallNormalizer`s ([diagram](../diagrams/browser-provider-boundary
   browser server exposes;
 - `SchemaArgsNormalizer` removes arguments the tool schema disallows.
 
-No ref rewriting or snapshot lookup happens in the tool path; a stale ref comes
-back as the server's own error and the agent must re-snapshot. A tool that
-reports `isError` raises `MCPToolExecutionError`, and the broker propagates any
+A tool that reports `isError` raises `MCPToolExecutionError`, and the broker propagates any
 `error_code` into the `ToolResult`. Every executed call is recorded in the
 server-neutral action journal
 ([ADR](../decisions/2026-09-28-server-neutral-progress-journal.md)), which feeds
@@ -271,10 +263,9 @@ Tool success and failure are normalized into `ToolResult` state.
 
 ## Observer
 
-The observer translates a single tool result into compact loop state. It stores
-successful snapshots as the current source of truth, clears stale snapshots
-after browser actions, tracks invalid-ref recovery, and detects ineffective
-browser actions by comparing snapshot fingerprints.
+The observer translates a single tool result into compact loop state and
+detects ineffective browser actions (an action that leaves the observed page
+unchanged).
 
 When compression is enabled, an observer LLM can summarize tool output, but it
 must use only the latest `ToolResult` JSON.
@@ -294,20 +285,13 @@ Two separate checks run before a tool call executes:
   See [ADR](../decisions/2026-10-01-permission-engine.md) and
   [Name-Free Permission Defaults](../decisions/2026-10-01-name-free-permission-defaults.md).
 
-## Browser Semantics
+## Browser Tools
 
-The project follows Playwright MCP semantics:
-
-- `browser_snapshot` is the source of truth.
-- Element identity is the snapshot ref, such as `ref=e123`.
-- Refs are ephemeral and valid only for the snapshot that produced them.
-- Preferred interactions are `browser_click(ref)`, `browser_type(ref)`, and
-  `browser_hover(ref)`.
-- Code, prompts and evals use the tool names the browser server exposes; there is
-  no canonical `browser.*` vocabulary to translate from.
-- If a snapshot does not expose the required control, the agent should request
-  a fresh/deeper snapshot or use `browser_evaluate` only when snapshots cannot
-  answer the question.
+The agent works with whatever tools the configured MCP servers expose
+(Playwright MCP by default); the direction is a universal agent without
+tool- or site-specific hardcodes in the engine, guards or harness. Code, prompts
+and evals use the tool names the browser server exposes; there is no canonical
+`browser.*` vocabulary to translate from.
 
 ## Known Operational Risks
 
@@ -317,8 +301,8 @@ The project follows Playwright MCP semantics:
 - The turn cap (`settings.loop.turn_cap`, default 50) can be reached when the agent repeats
   tool calls without progress. Retry counters, observer hints, policy checks,
   and prompt rules are the current controls.
-- Tool-output compression must preserve enough snapshot/ref detail for safe
-  follow-up actions.
+- Tool-output compression must preserve enough page detail for safe follow-up
+  actions.
 - `AUTOBROWSER_FLAGS__AGENT_LOOP`/`SessionConfig.agent_loop` are inert compatibility
   flags; they parse but do not change routing and can be removed once external
   tooling stops referencing them.

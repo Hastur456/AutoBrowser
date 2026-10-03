@@ -94,7 +94,7 @@ See `docs/decisions/2026-09-28-universal-mcp-manager.md`.
 - `src/harness/normalization.py`: `ToolCallNormalizer` protocol and `SchemaArgsNormalizer`.
 - `src/browser/`: shared browser vocabulary only: `names.py` (canonical `browser.*` names), `errors.py`, `contracts.py`, and `normalization.py` (`BrowserToolNormalizer`). `provider.py`/`fake.py` remain as test scaffolding.
 
-`ToolBroker` folds every call through the registered normalizers (request before, result after). There is no ref rewriting or snapshot lookup in the tool path.
+`ToolBroker` folds every call through the registered normalizers (request before, result after).
 
 Use canonical `browser.*` names in provider-neutral tests when helpful. The Playwright adapter maps them to runtime MCP tool names.
 
@@ -108,8 +108,8 @@ After each task, `SessionRuntime` remembers the latest loop state in `SessionCon
 
 - durable `messages`;
 - latest `observation`;
-- current `snapshot` and browser state;
-- last browser action metadata needed for stale-snapshot and ineffective-action checks.
+- browser state;
+- last browser action metadata needed for ineffective-action checks.
 
 Before a new task starts, task-local fields must be reset so stale completion or retry state is not inherited:
 
@@ -235,49 +235,11 @@ Use `pytest` and `pytest-asyncio` for asynchronous engine, harness, and MCP beha
 
 Prefer focused unit tests for loop decisions, policy decisions, state transitions, tool registry behavior, browser provider normalization, observer normalization, Agent Loop event/action contracts, context assembly, goal lifecycle, metrics, replay, batch, and export behavior. Add integration tests for engine/harness wiring, harness injection, tool execution boundaries, provider-backed browser execution, and scenario eval coverage. Use `tests/mcp_fixtures/fake_server.py` or `FakeBrowserProvider` when tests need tool/browser behavior without external services. Do not require external services in default tests unless they are skipped or mocked.
 
-## Playwright MCP Development Rules
+## Browser Tool Rules
 
-This project is not a traditional Playwright project. The browser agent must follow Playwright MCP semantics.
+The MVP is moving away from deterministic, browser-specific rules towards a universal agent without hardcodes: the model decides how to use whatever tools the configured MCP servers expose. Do not add tool-, site- or page-structure-specific rules to the engine, guards, harness or memory policy. The prompts still carry older browser rules; they are revised separately — leave them unchanged unless asked.
 
-Source of truth:
-
-- `browser_snapshot`
-
-Element identity:
-
-- `ref=e123`
-
-Preferred interaction:
-
-- `browser_click(ref)`
-- `browser_type(ref)`
-- `browser_hover(ref)`
-
-Tests, evals and prompts use the exposed tool names (`browser_snapshot`, `browser_click`, …); there is no canonical `browser.*` vocabulary and `BrowserToolNormalizer` never translates names.
-
-Ref freshness:
-
-- Ref-based actions require a current `browser_snapshot`.
-- If there is no current snapshot, request `browser_snapshot` before clicking, typing, or hovering.
-- If the requested ref is not present in the latest snapshot, replan from visible refs instead of reusing refs from history or a prior page.
-
-Do not:
-
-- guess CSS selectors
-- generate XPath
-- rely on class names
-- assume DOM structure
-- put Playwright MCP schema adaptation in executor or prompt code
-
-If the snapshot does not expose the needed element:
-
-1. Capture another snapshot.
-2. Increase snapshot depth if appropriate.
-3. Use `browser_evaluate` only if the snapshot cannot answer the question.
-
-Reuse the current snapshot and refs when they are still valid. Snapshot usage is guided by the prompts only; the engine has no snapshot-specific policy, forced-snapshot, or unchanged-snapshot rules. Generic guards (identical repeated calls, identical repeated outcomes) apply to `browser_snapshot` like any other tool.
-
-The agent is snapshot-driven, not selector-driven.
+Tests, evals and prompts use the exposed tool names (`browser_navigate`, `browser_click`, …); there is no canonical `browser.*` vocabulary and `BrowserToolNormalizer` never translates names. Do not put Playwright MCP schema adaptation in executor or prompt code: add servers through `mcp_servers` and adapt calls with `ToolCallNormalizer`s.
 
 ## Commit & Pull Request Guidelines
 

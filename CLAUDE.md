@@ -29,8 +29,8 @@ Get-Content -LiteralPath path\to\file.md -Encoding UTF8
 
 AutoBrowser is a Python 3.12 browser automation agent that turns a
 natural-language task into a plan → reason → policy → execute → observe loop.
-Browser interaction is **snapshot-driven** via Playwright MCP (element `ref`s),
-not CSS/XPath. It runs as a long-lived interactive `cmd2` REPL (`main.py`) over
+Browser interaction goes through the tools of the configured MCP servers (Playwright
+MCP by default). It runs as a long-lived interactive `cmd2` REPL (`main.py`) over
 an Ollama-compatible chat model (default `gemma4:31b-cloud`). Control flow is
 **engine-native** — there is no compiled graph. The explicit `AgentLoopEngine`
 owns the loop; see `docs/decisions/2026-08-31-native-agent-loop-engine.md` for
@@ -122,32 +122,25 @@ reads the reason); a refused approval is terminal `blocked`. `settings.loop.turn
 (default 50) bounds the loop. Authorization lives in `src/harness/permissions.py`
 (`docs/decisions/2026-10-01-permission-engine.md`); there is no `execution/policy.py`.
 
-## Browser Semantics (Hard Invariant)
+## Development Direction
 
-The agent is **snapshot-driven, not selector-driven** (see `docs/development/browser-agent-rules.md`):
+The MVP is moving away from deterministic, browser-specific rules towards a universal agent
+without hardcodes: the model decides how to work with whatever tools the configured MCP
+servers expose. Don't add new tool-, site- or page-structure-specific rules to the engine,
+guards, harness, memory policy or descriptive docs. The prompts still carry older browser
+rules; they are revised separately by the user — leave them unchanged unless asked.
 
-- `browser_snapshot` is the only source of truth; element identity is an ephemeral `ref=e123`
-  valid **only** for the snapshot that produced it. Never guess CSS/XPath/class/DOM.
-- Ref-based `click`/`type`/`hover` require a current snapshot. If the ref is absent from the
-  latest snapshot, **replan from visible refs** — never reuse a historical ref.
-- Don't snapshot after every action; don't re-click a search affordance after an unchanged
-  snapshot; prefer typing into an editable control, then fall back to a direct search URL
-  (e.g. Ozon `https://www.ozon.ru/search/?text=<query>`).
-
-These rules are **duplicated across prompts, the guards, the observer, and provider
-tests**. Changing one layer can reintroduce stale-ref/loop bugs — keep them aligned, and
-don't remove an invariant from a prompt unless policy/observer/evals still enforce it.
 `tests/mcp_fixtures/fake_server.py` (a real MCP server) and the local `_FakeBrowserTools`
 helper (`src/agent_loop/evals.py`, duplicated where individual tests need it — there is no
-shared `BrowserProvider` protocol or production fake anymore) exercise this behavior
-deterministically without Chrome/CDP.
+shared `BrowserProvider` protocol or production fake anymore) exercise the loop without
+Chrome/CDP.
 
 ## Session vs Task Boundary
 
 All tasks in one REPL session share one session identity (from
 `SessionContext.session_id`), passed into each task config as
 `configurable.thread_id`. Across tasks the runtime carries forward only durable context
-(messages, latest observation, current snapshot, browser state, last-action metadata) and
+(messages, latest observation, browser state, last-action metadata) and
 **resets task-local fields** (`plan`, `decision`, `final_answer`, tool request/result,
 policy state, errors, retry/replan/repeat counters) before the next task. Carried state is
 injected through the harness-internal state-override key
@@ -223,8 +216,8 @@ evaluated after `pre_tool_use` hooks on the final arguments
   `src/contracts.py`; settings (`permissions.mode`, `permissions.rules`,
   `PermissionRule`, `normalize_domain`) in `src/config.py`;
   `PermissionEngine` in `src/harness/permissions.py`; the browser resolver (domain from a
-  `url` argument or the `Page URL:`, click target from `element` + the snapshot line of the
-  ref) in `src/browser/permissions.py`; the CLI prompt in `src/cli/approval.py`; the call site and
+  `url` argument or the `Page URL:`, click target from the `element` argument and the page
+  observation) in `src/browser/permissions.py`; the CLI prompt in `src/cli/approval.py`; the call site and
   `permission.decided`/`approval.resolved` emission in `src/agent_loop/execution/loop.py`.
 - Rules resolve `deny > ask > allow` regardless of order; a rule needing an unresolved
   resource matches for deny/ask, never for allow; any evaluation error is a deny.
@@ -254,7 +247,7 @@ evaluated after `pre_tool_use` hooks on the final arguments
 
 ## Memory
 
-Four layers, everything past snapshot compaction **off by default** (`memory.*` settings;
+Four layers, everything past the compaction of superseded tool outputs **off by default** (`memory.*` settings;
 guide: `docs/development/memory.md`; ADR: `docs/decisions/2026-10-02-layered-agent-memory.md`).
 
 - L1 history budget (`history_budget_chars`) and L3 task digest (`keep_recent_tasks`) are
@@ -271,7 +264,7 @@ guide: `docs/development/memory.md`; ADR: `docs/decisions/2026-10-02-layered-age
   scope and the content policy live in `src/browser/memory.py`.
 - The engine only calls `resources.memory.render(state)`. It must not import the memory store,
   tool or browser modules, or name the memory tools (`tests/test_memory_boundaries.py`). Every
-  write passes the `MemoryContentPolicy` (no refs, selectors, injection phrases or secrets);
+  write passes the `MemoryContentPolicy` (no injection phrases, secrets or page-specific hints);
   user files are never changed by the agent; review of writes is a user permission rule,
   never a shipped one.
 - Tests build `MemoryStore(tmp_path, MemorySettings(...))`, never `get_settings()`.

@@ -14,9 +14,8 @@
 | AutoBrowser | The browser automation agent implemented in this repository. |
 | Batch run | Execution of JSONL Golden Set scenarios through fresh `SessionRuntime` instances, with metadata written under `.autobrowser/batches/<batch_id>/`. |
 | Browser error code | Shared browser-layer error vocabulary such as `invalid_ref` and `action_failed`. |
-| `browser_evaluate` | Playwright MCP page-JavaScript tool, a fallback for cases where snapshots cannot expose required information; it asks only if a configured rule says so (see the opt-in `page-js` example in `config.example.yaml`). |
+| `browser_evaluate` | Playwright MCP page-JavaScript tool; it asks only if a configured rule says so (see the opt-in `page-js` example in `config.example.yaml`). |
 | `browser_find` | Browser tool for plain-text search; not reliable for structured link or attribute extraction. |
-| `browser_snapshot` | Source-of-truth browser observation containing visible page state and element refs. |
 | BrowserAction | Provider-neutral typed browser request using canonical `browser.*` action names. |
 | BrowserHarness | Runtime composition root that holds context, tools, policy, telemetry, events, and the reasoning `llm`; `EngineResources.from_harness` bundles them for the engine. |
 | BrowserProvider | Legacy protocol (`src/browser/provider.py`) kept only for test scaffolding; superseded in production by `MCPToolSource` and `ToolCallNormalizer`. |
@@ -35,7 +34,7 @@
 | Executor | Engine phase that resolves and invokes approved tool requests through `ToolBroker`/`ToolRegistry`. |
 | Export row | JSONL task-level analytics row produced by `scripts/export_sessions.py` from persisted session, task, event, feedback, and batch metadata. |
 | Fail-closed | Hook failure mode where a timeout or exception counts as `deny`. The default for `goal_start` and `pre_tool_use`; other events fail open (no decision). `HookSpec.fail_closed` overrides it. |
-| FakeBrowserProvider | Legacy deterministic browser provider used by tests to replay snapshots without Chrome, CDP, or MCP. |
+| FakeBrowserProvider | Legacy deterministic browser provider used by tests to replay browser responses without Chrome, CDP, or MCP. |
 | GoalRunner | One-task lifecycle boundary between `SessionRuntime` and the engine; emits goal lifecycle events, delegates execution through `native_task_runner`, captures latest state through `LatestStateLoader`, and does not own the model/action loop. |
 | GoalRunRequest | Immutable input object for one `GoalRunner` execution, including task text, task id, goal id, session thread id, task config, and state overrides. |
 | GoalRunResult | Immutable terminal object returned or internally constructed by `GoalRunner`, including raw task result or exception, latest state, and explicit terminal status. |
@@ -45,7 +44,7 @@
 | Hook event | One lifecycle point a hook runs on (`goal_start`, `pre_tool_use`, `permission_request`, `post_tool_use`, `post_tool_use_failure`, `stop`, `goal_end`), and the neutral `HookEvent` object handed to it. |
 | Hook handler | Async callable `HookEvent -> HookResult \| None`: for `type: python` named by `package.module:attr` (a factory when `options` are set), for `type: command` a `CommandHook` wrapping an external process; `None` means no opinion. |
 | HookEngine | Session-scoped runner of the hook registry: sequential handlers, `deny > ask > allow` aggregation, per-hook timeouts, one `hook.decided` event per handler via the loop. `NullHookEngine` is the disabled no-op. |
-| Ineffective browser action | A successful browser action whose follow-up snapshot has the same visible fingerprint as the previous snapshot. |
+| Ineffective browser action | A successful browser action after which the observed page is unchanged. |
 | LatestStateLoader | Callable port injected into `GoalRunner` to load latest loop state from the current harness/config, with fallback to the task result's session state. |
 | LoopState | The frozen dataclass (in `src/agent_loop/execution/state.py`) that carries all loop state; `apply()` is strict and rejects unknown keys. |
 | MCP | Model Context Protocol; every tool server (Playwright included) is an entry in `Settings.mcp_servers` managed by `MCPManager`. |
@@ -57,16 +56,16 @@
 | Memory entry | One persistent memory file (`MemoryEntry` in `src/contracts.py`): `sites/<domain>.md` or `procedures/<name>.md` with harness-owned frontmatter (`scope`, `status`, `source`, `description`, `verified_at`, `uses`, `failures`) and a markdown body. |
 | Memory tools | `memory_view` (`readOnlyHint`) and `memory_write` (`create`/`str_replace`/`delete`) on `server: memory` (`src/harness/memory_tool.py`), registered when `memory.tool_enabled`; they pass through hooks and the `PermissionEngine` like any MCP tool. |
 | MemoryConsolidator | Opt-in (`memory.consolidate_on_goal_end`) session-side model call after a `done` task that sees the current bodies of the visited sites' entries and proposes at most `memory.consolidation_max_entries` merged entries, written `unverified` through the content policy with their trust counters kept (`src/harness/memory_consolidation.py`). |
-| MemoryContentPolicy | Protocol (`src/contracts.py`) that refuses text which must never be persisted; the browser implementation `BrowserMemoryPolicy` rejects refs, selectors, prompt-injection phrases and secret-like pairs. |
+| MemoryContentPolicy | Protocol (`src/contracts.py`) that refuses text which must never be persisted; the browser implementation `BrowserMemoryPolicy` rejects page-specific hints, prompt-injection phrases and secret-like pairs. |
 | MemoryContext | Session-scoped renderer of the `Memory` block (`render(state) -> str`), reaching the engine as `EngineResources.memory`; `NullMemoryContext` renders nothing. |
-| MemoryManager | Functional (stateless) history service in `src/harness/memory.py` that shapes a `list[Message]` — seeding the user task, appending tool calls/results, compacting snapshots, applying the history budget, digesting finished tasks — and returns new lists; the durable history lives on `LoopState.messages`, not on the service. |
+| MemoryManager | Functional (stateless) history service in `src/harness/memory.py` that shapes a `list[Message]` — seeding the user task, appending tool calls/results, compacting superseded tool outputs, applying the history budget, digesting finished tasks — and returns new lists; the durable history lives on `LoopState.messages`, not on the service. |
 | MemoryStore | Persistent memory files under `<storage.root_dir>/<memory.dir>/` (`src/harness/memory_store.py`): cached reads, path safety, the generated index, scope lookup, policy-checked writes and staged trust. |
 | Message | Provider-neutral chat message (`src/messages.py`) with a `system`/`user`/`assistant`/`tool` role; assistant messages may carry `tool_calls`, and a `tool` message pairs a result back to exactly one `ToolCall.id`. |
 | ModelResponse | Canonical provider-neutral model reply (`content` and/or `tool_calls`, plus `finish_reason`) returned by a `ChatModel`. |
-| Observer | Engine phase that translates tool results and snapshots into compact loop state updates. |
+| Observer | Engine phase that translates tool results into compact loop state updates. |
 | Ollama provider | Thin `ChatModel` adapter in `src/providers/ollama.py` (`OllamaChatModel` / `ollama_llm_factory`) that maps neutral `Message`/`ToolDef` objects to Ollama's `/api/chat` shape and parses replies into `ModelResponse`. |
 | Planner | Engine phase that creates or revises compact task plans. |
-| Playwright MCP | Browser automation tool provider whose snapshot refs drive interactions. |
+| Playwright MCP | Browser automation MCP server the agent uses by default. |
 | PlaywrightMCPBrowserProvider | Removed. Former Playwright adapter; replaced by `MCPManager` + `MCPToolSource` + `BrowserToolNormalizer`. |
 | Policy | The gate result of a tool turn stored on `LoopState.policy_decision` (`approved`, `needs_human`, `blocked`). `blocked` comes from the progress guard, a hook deny or a permission deny; `policy.decided` is emitted only by the progress guard. |
 | PermissionEngine | Session-scoped, deterministic tool authorization in `src/harness/permissions.py`: `PermissionCheck` → `allow`/`ask`/`deny` from rules (`deny > ask > allow`), the mode and session grants; fails closed; emits `permission.decided`. |
@@ -79,7 +78,6 @@
 | Working notes | Task-local notes the model keeps through the optional `notes` tool argument (`memory.working_notes_max_chars`), stored on `LoopState.working_notes` and rendered as the `Working Notes` block. |
 | Qualified tool name | `server__tool` name produced by `src/mcp/naming.py` (sanitized, max 64 chars) for tools of non-browser servers. |
 | readOnlyHint | MCP tool annotation used by `tool_is_read_only` to decide whether a call can change the page. |
-| ref | Ephemeral Playwright MCP element identifier such as `e123`; valid only for the snapshot that produced it. |
 | SchemaArgsNormalizer | `ToolCallNormalizer` in `src/harness/normalization.py` that drops arguments the tool schema forbids. |
 | ServerRegistry | Declarative MCP server list (`StdioServerConfig` / `StreamableHttpServerConfig`) in `src/mcp/config.py`; holds no connections. |
 | Session records | Runtime-local JSON files under `.autobrowser/sessions/<session_id>/`, currently `session.json` and `tasks.json`. |
@@ -92,7 +90,6 @@
 | SessionRuntime | Process-lifetime coordinator that runs the session loop, delegates lifecycle state to `SessionContext`, and sends each task to `GoalRunner`. |
 | SessionState | Mutable mapping wrapper for shared session-level state that should not require a dedicated typed field yet. |
 | Settings | The pydantic-settings root in `src/config.py`, composed of eight config sections and read through `get_settings()`. A neutral leaf like `src/contracts.py`: it imports nothing from the loop, harness, or browser layers. |
-| Snapshot depth | Tool argument that controls how much visible hierarchy `browser_snapshot` returns. |
 | State override channel | Harness-internal config entry (`HARNESS_STATE_OVERRIDES_CONFIG_KEY`) used to inject carried session state into the next engine run; stripped before the engine sees the task config. |
 | Stateful server | MCP server declared `stateful: true`; its reconnect is surfaced as `ServerConnectionLostError(stateful=True)` rather than hidden. |
 | Task boundary reset | Clearing task-local loop fields such as plan, final answer, errors, policy state, tool request/result, and retry counters before a new task starts. |
