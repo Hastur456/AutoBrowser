@@ -88,6 +88,15 @@ def test_browser_rule_resource_is_local_and_deterministic() -> None:
     assert resource.load().startswith("# Browser Agent Rules")
 
 
+def test_browser_rule_resource_declares_the_tools_it_is_about() -> None:
+    resource = browser_agent_rules_resource()
+
+    assert resource.applies_to_tool("browser_click")
+    assert resource.applies_to_tool(" browser_snapshot ")
+    assert not resource.applies_to_tool("fs__read")
+    assert not resource.applies_to_tool("")
+
+
 def test_context_assembler_sorts_by_priority_then_name_and_source() -> None:
     blocks = [
         ContextBlock("Zeta", "user", "z", priority=10, source="b"),

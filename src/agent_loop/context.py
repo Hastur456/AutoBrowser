@@ -20,7 +20,6 @@ from src.agent_loop.prompts import (
     PLANNER_USER_PROMPT,
 )
 from src.agent_loop.skills import browser_agent_rules_resource
-from src.browser.names import is_browser_tool_name
 from src.config import get_settings
 from src.harness.tools import tool_name
 
@@ -295,7 +294,8 @@ def _is_browser_relevant(
     state: Mapping[str, Any],
     tools: Sequence[Any] | None,
 ) -> bool:
-    if any(is_browser_tool_name(tool_name(tool)) for tool in tools or []):
+    resource = browser_agent_rules_resource()
+    if any(resource.applies_to_tool(tool_name(tool)) for tool in tools or []):
         return True
     if any(
         state.get(key)
@@ -308,10 +308,7 @@ def _is_browser_relevant(
     ):
         return True
     task = str(state.get("task", "")).lower()
-    return any(
-        term in task
-        for term in browser_agent_rules_resource().trigger_terms
-    )
+    return any(term in task for term in resource.trigger_terms)
 
 
 __all__ = [
