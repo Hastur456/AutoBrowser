@@ -1,6 +1,30 @@
 # Явные объекты агента — план реализации
 
-Дата: 2026-10-17 · Ветка: `refactor/explicit-agent-objects` · Статус: **Proposed**
+Дата: 2026-10-17 · Ветка: `refactor/explicit-agent-objects` · Статус: **In progress**
+(коммиты 1–5 и документация к ним сделаны; коммит 6 ждёт согласования ADR)
+
+> **Ход реализации.** Решение по коммитам 1–5 зафиксировано в
+> [ADR 2026-10-17 Injected Tool Roles](../decisions/2026-10-17-injected-tool-roles.md).
+> Отклонения от плана:
+>
+> - Коммит 1: `src/autobrowser` был нужен сборщику `uv_build`, поэтому проект объявлен
+>   неустанавливаемым uv-приложением (`[tool.uv] package = false`, без `[build-system]` и
+>   `[project.scripts]`); в `uv.lock` источник проекта стал `virtual`.
+> - Коммит 2: `policy_decision`/`policy_event` в `TASK_BOUNDARY_RESETS` оказались живыми
+>   (`policy.decided`, тесты) и остались. Carry-over безопаснее, чем описано в §2.2:
+>   `LoopState.from_state_overrides` пропускает неизвестные ключи. Вместо теста
+>   «`SESSION_STATE_KEYS ⊆ LoopState`» — тест, что `to_session_state()` и
+>   `SESSION_STATE_KEYS` описывают одни и те же поля.
+> - Коммит 3: `read_only_tools` остался в `TurnController` — он вычисляется из аннотаций
+>   живого списка инструментов, а не из ролей. `NullToolRoles` живёт в
+>   `src/harness/tools.py`. Роли передаёт сессия (`SessionContext.tool_roles`), как
+>   `permissions`/`memory`, а не `BrowserHarness`.
+> - Коммит 4: запрет «литерала `browser_`» сужен до слов, начинающихся с `browser_`:
+>   поля `last_browser_action` и т. п. остаются до отдельного переименования `BrowserState`.
+>   Docstring'и движка поправлены в этом же коммите, allowlist не понадобился.
+> - Коммит 5: `context.py` спрашивает сам ресурс (`PromptResource.trigger_tool_prefixes`,
+>   `applies_to_tool`); `evals.py` оставлен как есть — это точка сборки с поддельным
+>   браузерным сервером, и он уже передаёт `BrowserToolRoles` явно.
 
 ## 1. Зачем
 

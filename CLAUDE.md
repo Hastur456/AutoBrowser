@@ -102,6 +102,14 @@ adaptation in the engine or prompts — add servers through `mcp_servers` (`src/
 `src/harness/mcp_setup.py`) and adapt calls with `ToolCallNormalizer`s. See
 `docs/decisions/2026-09-28-universal-mcp-manager.md`.
 
+`src/agent_loop/execution/` imports nothing from `src/browser/` and names no browser tool
+(`tests/test_engine_boundaries.py`). Server-specific facts arrive as objects in
+`EngineResources`: which tool returns the snapshot and which tools act on the environment is
+`EngineResources.tool_roles` (`ToolRoles` contract; `BrowserToolRoles` from
+`SessionContext`, `NullToolRoles` — no snapshot kept — by default). Anything that builds
+`EngineResources` for a browser must pass the roles, or snapshot caching silently stops
+(`docs/decisions/2026-10-17-injected-tool-roles.md`).
+
 ## The Engine Loop
 
 `AgentLoopEngine.run` (in `src/agent_loop/execution/loop.py`):

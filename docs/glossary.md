@@ -102,5 +102,6 @@
 | ToolCallNormalizer | Stateless protocol folded by `ToolBroker` around every call (`normalize_request` before, `normalize_result` after). |
 | ToolDef | Provider-neutral, model-visible tool schema (`name`, `description`, `input_schema`) independent of any provider. |
 | ToolRegistry | Lazy registry that exposes tools from static lists, generic providers, browser providers, or MCP clients. |
+| ToolRoles | Contract in `src/contracts.py` telling the engine which exposed tool returns the environment snapshot (`is_observation`) and which tools act on that environment (`is_stateful`); `BrowserToolRoles` in `src/browser/roles.py`, `NullToolRoles` (no roles, no snapshot kept) by default. Reaches the engine as `EngineResources.tool_roles`. |
 | Trace replay | Loading `events.jsonl` records to summarize terminal status and print compact action sequences for diagnostics or eval failures. |
 | Turn cap | `settings.loop.turn_cap` (default 50) upper bound on engine turns before the run is blocked; set via `AUTOBROWSER_LOOP__TURN_CAP`. |

@@ -4,6 +4,12 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-10-17 Injected Tool Roles](2026-10-17-injected-tool-roles.md): the engine imports
+  nothing from `src/browser/`; which tool returns the snapshot and which tools act on the
+  environment comes from a `ToolRoles` object in `EngineResources` (`BrowserToolRoles` from the
+  session, `NullToolRoles` by default). The dead tab-activation path and the
+  `pending_browser_tab_*` fields are removed; `tests/test_engine_boundaries.py` fences the
+  engine. Refines the server-neutral progress journal ADR.
 - [2026-10-03 Merging Memory Consolidation](2026-10-03-merging-memory-consolidation.md):
   consolidation sees the full bodies of the visited sites' entries and merges into them; a
   consolidation rewrite keeps `uses`/`failures` (`create(keep_trust=True)`) so site entries

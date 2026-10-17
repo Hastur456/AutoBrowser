@@ -23,6 +23,7 @@ flowchart LR
   SessionCtx --> Harness[BrowserHarness]
   SessionCtx --> Hooks[HookEngine]
   SessionCtx --> Permissions[PermissionEngine: rules, mode, grants]
+  SessionCtx --> Roles[ToolRoles: BrowserToolRoles]
   Hooks --> HookHandlers[Hook handlers: builtin_hooks, browser.hooks]
   Hooks --> CommandHooks[CommandHook: external process]
   MCPRuntime --> Manager[MCPManager]
@@ -40,6 +41,7 @@ flowchart LR
   Resources --> LLM
   Resources --> Hooks
   Resources --> Permissions
+  Resources --> Roles
   Tools --> StaticTools[Static tools]
   Tools --> Providers[Generic providers]
   Tools --> ToolSource
@@ -50,6 +52,7 @@ flowchart LR
   TurnController --> ModelDriver[ModelDriver]
   TurnController --> ToolBroker[ToolBroker]
   TurnController --> ObsCompiler[ObservationCompiler]
+  ObsCompiler --> Roles
   ToolBroker --> Tools
   ToolBroker --> Normalizers
   TurnController --> Journal[Action journal]
@@ -82,3 +85,11 @@ session's approval grants across tasks, and `run_task` passes it through
 `EngineResources.from_harness(..., permissions=...)`. Without it, `EngineResources` gets a
 `PermissionEngine.from_settings()`: the code-default settings (no rules, `default` mode), never
 the personal config.
+
+Tool roles follow it too, without settings: `SessionContext.tool_roles` is a
+`BrowserToolRoles` (`src/browser/roles.py`) that `run_task` passes through
+`EngineResources.from_harness(..., tool_roles=...)`. The `ObservationCompiler` keeps the
+snapshot a tool with `is_observation` returns and drops it after a successful, non-read-only
+`is_stateful` call. Without roles, `EngineResources` gets `NullToolRoles` and keeps no
+snapshot. The engine imports nothing from `src/browser/`
+(`tests/test_engine_boundaries.py`).
