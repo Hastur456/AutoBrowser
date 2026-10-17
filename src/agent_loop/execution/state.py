@@ -33,8 +33,6 @@ BROWSER_STATE_FIELDS = frozenset(
         "last_browser_action",
         "ineffective_browser_action",
         "ineffective_browser_actions",
-        "pending_browser_tab_index",
-        "pending_browser_tab_reason",
     }
 )
 
@@ -51,8 +49,6 @@ class BrowserState:
     last_browser_action: ToolRequest = field(default_factory=dict)
     ineffective_browser_action: ToolRequest = field(default_factory=dict)
     ineffective_browser_actions: list[ToolRequest] = field(default_factory=list)
-    pending_browser_tab_index: int = 0
-    pending_browser_tab_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -154,8 +150,6 @@ class LoopState:
             "ineffective_browser_actions": [
                 dict(action) for action in self.browser.ineffective_browser_actions
             ],
-            "pending_browser_tab_index": self.browser.pending_browser_tab_index,
-            "pending_browser_tab_reason": self.browser.pending_browser_tab_reason,
         }
 
     def to_session_state(self) -> dict[str, Any]:
@@ -178,8 +172,6 @@ class LoopState:
             "ineffective_browser_actions": [
                 dict(action) for action in self.browser.ineffective_browser_actions
             ],
-            "pending_browser_tab_index": self.browser.pending_browser_tab_index,
-            "pending_browser_tab_reason": self.browser.pending_browser_tab_reason,
         }
 
     @classmethod

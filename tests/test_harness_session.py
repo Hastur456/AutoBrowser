@@ -16,6 +16,7 @@ from src.harness.runtime import (
 )
 from src.harness.session import (
     ArtifactRegistry,
+    SESSION_STATE_KEYS,
     SESSION_THREAD_PREFIX,
     SessionConfig,
     SessionContext,
@@ -105,6 +106,16 @@ def native_result(
         session_state=state.to_session_state(),
         state=state,
     )
+
+
+def test_loop_state_carry_forward_matches_session_state_keys() -> None:
+    """The engine's carry-forward and the session's key list describe the same fields."""
+
+    carried = LoopState().to_session_state()
+
+    assert set(carried) == set(SESSION_STATE_KEYS)
+    restored = LoopState.from_state_overrides(carried)
+    assert restored.to_session_state() == carried
 
 
 def install_runner(

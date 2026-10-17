@@ -9,7 +9,6 @@ from src.browser import (
 )
 from src.browser.names import (
     SNAPSHOT_TOOL,
-    TABS_TOOL,
     is_browser_snapshot_name,
     is_browser_tool_name,
 )
@@ -17,7 +16,6 @@ from src.browser.names import (
 
 def test_browser_tool_names_are_the_exposed_names() -> None:
     assert SNAPSHOT_TOOL == "browser_snapshot"
-    assert TABS_TOOL == "browser_tabs"
     assert is_browser_tool_name("browser_missing")
     assert not is_browser_tool_name("fs__read")
     assert is_browser_snapshot_name("browser_snapshot")

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 BROWSER_TOOL_PREFIX = "browser_"
 SNAPSHOT_TOOL = "browser_snapshot"
-TABS_TOOL = "browser_tabs"
 
 
 def is_browser_tool_name(name: str) -> bool:
@@ -27,7 +26,6 @@ def is_browser_snapshot_name(name: str) -> bool:
 __all__ = [
     "BROWSER_TOOL_PREFIX",
     "SNAPSHOT_TOOL",
-    "TABS_TOOL",
     "is_browser_snapshot_name",
     "is_browser_tool_name",
 ]

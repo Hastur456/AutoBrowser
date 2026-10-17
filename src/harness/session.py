@@ -70,8 +70,6 @@ SESSION_STATE_KEYS = (
     "last_browser_action",
     "ineffective_browser_action",
     "ineffective_browser_actions",
-    "pending_browser_tab_index",
-    "pending_browser_tab_reason",
 )
 
 TASK_BOUNDARY_RESETS: dict[str, Any] = {

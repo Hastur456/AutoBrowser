@@ -55,7 +55,6 @@ from src.agent_loop.execution.guards import (
     CompletionController,
     blocked_response,
     done_response,
-    pending_tab_activation_request,
     progress_block_reason,
     replan_response,
     tool_block_updates,

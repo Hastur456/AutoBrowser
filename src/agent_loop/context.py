@@ -304,7 +304,6 @@ def _is_browser_relevant(
             "browser",
             "last_browser_action",
             "ineffective_browser_action",
-            "pending_browser_tab_index",
         )
     ):
         return True

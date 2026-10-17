@@ -27,7 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.browser.names import TABS_TOOL, is_browser_snapshot_name, is_browser_tool_name
+from src.browser.names import is_browser_snapshot_name, is_browser_tool_name
 from src.config import get_settings
 from src.contracts import CompactToolObservation, ToolResult
 from src.harness.memory import append_tool_message, tool_result_message_content
@@ -196,9 +196,6 @@ class BrowserStateReducer:
             and norm.status == "success"
             and norm.tool_name not in self._read_only_tools
         ):
-            if norm.tool_name == TABS_TOOL:
-                updates["pending_browser_tab_index"] = 0
-                updates["pending_browser_tab_reason"] = ""
             updates["snapshot"] = ""
 
         return BrowserReduction(updates=updates)
