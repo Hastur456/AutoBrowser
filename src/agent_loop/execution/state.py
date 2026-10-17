@@ -118,17 +118,17 @@ class LoopState:
             return self
 
         loop_updates: dict[str, Any] = {}
-        browser_updates: dict[str, Any] = {}
+        nested_updates: dict[str, Any] = {}
         for key, value in updates.items():
             if key in BROWSER_STATE_FIELDS:
-                browser_updates[key] = value
+                nested_updates[key] = value
             elif key in _LOOP_STATE_FIELDS:
                 loop_updates[key] = value
             else:
                 raise ValueError(f"Unknown LoopState update key: {key!r}")
 
-        if browser_updates:
-            loop_updates["browser"] = replace(self.browser, **browser_updates)
+        if nested_updates:
+            loop_updates["browser"] = replace(self.browser, **nested_updates)
         return replace(self, **loop_updates)
 
     def snapshot_mapping(self) -> dict[str, Any]:

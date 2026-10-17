@@ -1,14 +1,13 @@
 """Resource bundle for the engine-native execution loop.
 
 :class:`EngineResources` gathers exactly what :class:`~src.agent_loop.execution.loop.AgentExecutionLoop`
-needs to drive one goal — without a graph or a harness rewrite. It composes objects the
-harness already owns (tool registry, browser providers, prompt context, event emitter)
-plus the reasoning ``llm``, which the harness does **not** store on itself
-(``BrowserHarness.__init__`` passes ``llm`` straight into the graph builder), so it is
-supplied separately by the caller in ``SessionRuntime.run_task``.
+needs to drive one goal. It composes objects the harness already owns (tool registry and
+its normalizers, prompt context, event emitter), the session-scoped collaborators (hooks,
+permissions, approval judge, memory, tool roles) and the reasoning ``llm``, which the
+caller (``SessionRuntime.run_task``) supplies explicitly.
 
-This module imports nothing from ``src/agent/``: it depends only on the harness and browser
-layers, matching the decoupling rule for the whole ``src/agent_loop/execution/`` package.
+Like the whole ``src/agent_loop/execution/`` package, this module imports nothing from
+``src/browser/``: server-specific behaviour arrives as the objects bundled here.
 """
 
 from __future__ import annotations

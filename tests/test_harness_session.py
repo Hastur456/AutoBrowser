@@ -8,7 +8,9 @@ from typing import Any
 import pytest
 
 from src.agent_loop.execution.loop import AgentLoopResult
+from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import BrowserState, LoopState
+from src.browser.roles import BrowserToolRoles
 from src.config import HooksSettings, PermissionRule, PermissionsSettings, Settings, get_settings
 from src.harness.runtime import (
     HARNESS_EVENT_METADATA_CONFIG_KEY,
@@ -1106,3 +1108,30 @@ async def test_consolidation_after_a_done_task(
     assert (root / "sites" / "ozon.ru.md").exists() is written
     types = [event["type"] for event in read_typed_events(runtime.context.session_dir)]
     assert ("memory.consolidated" if written else "memory.consolidation_failed") in types
+
+
+@pytest.mark.asyncio
+async def test_session_runtime_hands_the_engine_browser_tool_roles(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The real session wiring must not fall back to NullToolRoles (no snapshot kept)."""
+
+    monkeypatch.chdir(tmp_path)
+    seen: list[EngineResources] = []
+
+    async def task_runner(*_args: Any) -> AgentLoopResult:
+        return native_result(final_answer="done")
+
+    def capture(resources: EngineResources, **_kwargs: Any) -> Any:
+        seen.append(resources)
+        return task_runner
+
+    monkeypatch.setattr("src.harness.session.native_task_runner", capture)
+    runtime = make_runtime()
+
+    await runtime.start()
+    await runtime.run_task("inspect page")
+
+    assert len(seen) == 1
+    assert isinstance(seen[0].tool_roles, BrowserToolRoles)

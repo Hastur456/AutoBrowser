@@ -6,10 +6,11 @@ in :mod:`src.agent_loop.execution.loop`. There is no compiled graph; the legacy
 graph runtime was removed.
 
 The modules here operate on the typed :class:`~src.agent_loop.execution.state.LoopState`
-dataclass instead of the legacy ``AgentState`` TypedDict, and import **nothing** from
-``src/agent/``: neutral contracts/thresholds come from :mod:`src.contracts`, browser-schema
-leaves from :mod:`src.browser.observation`, and message builders from :mod:`src.harness.memory`.
-Only the stateful control logic lives here; those stateless leaves are reused as-is.
+dataclass and stay server-neutral: they import nothing from ``src/browser/`` and compare tool
+names exactly as exposed. Neutral contracts come from :mod:`src.contracts`, message builders
+from :mod:`src.harness.memory`, and everything server-specific (tool roles, permission
+resources, call normalizers) arrives through
+:class:`~src.agent_loop.execution.resources.EngineResources`.
 """
 
 from __future__ import annotations
