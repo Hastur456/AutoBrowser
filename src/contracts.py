@@ -272,6 +272,23 @@ class PermissionResourceResolver(Protocol):
         """``{"domain": ..., "target": ..., "url": ...}``; ``{}`` (or a missing key) when unknown."""
 
 
+class ToolRoles(Protocol):
+    """What the engine may assume about a tool, decided outside the engine.
+
+    The engine compares tool names exactly as exposed and never derives a role from a
+    name; a server-specific implementation (the browser one lives in ``src/browser/``)
+    answers instead. Read-only tools are not a role: they come from the MCP
+    ``readOnlyHint`` annotation.
+    """
+
+    def is_observation(self, name: str) -> bool:
+        """A successful call returns the current environment state (the kept snapshot)."""
+
+    def is_stateful(self, name: str) -> bool:
+        """The tool acts on that environment: a successful call that is not read-only
+        invalidates the kept snapshot."""
+
+
 @dataclass(frozen=True)
 class MemoryEntry:
     """One persistent memory file: harness-owned frontmatter plus a markdown body."""
@@ -356,5 +373,6 @@ __all__ = [
     "ToolDef",
     "ToolRequest",
     "ToolResult",
+    "ToolRoles",
     "ToolStatus",
 ]

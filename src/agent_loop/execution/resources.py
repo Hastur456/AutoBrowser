@@ -22,7 +22,8 @@ from src.harness.hooks import NullHookEngine
 from src.harness.memory import NullMemoryContext
 from src.harness.normalization import ToolCallNormalizer
 from src.harness.permissions import PermissionEngine
-from src.harness.tools import ToolRegistry
+from src.contracts import ToolRoles
+from src.harness.tools import NullToolRoles, ToolRegistry
 
 
 @dataclass(frozen=True)
@@ -44,7 +45,9 @@ class EngineResources:
     call to human approval); the default judges nothing. ``memory`` renders the persistent
     ``Memory`` context block (``render(state) -> str``, the session's ``MemoryContext``);
     the default renders nothing, so evals and
-    tests never see the developer's memory files.
+    tests never see the developer's memory files. ``tool_roles`` tells the observation
+    compiler which tool returns the environment snapshot and which tools act on it; the
+    default :class:`~src.harness.tools.NullToolRoles` assigns none, so no snapshot is kept.
     """
 
     llm: Any
@@ -56,6 +59,7 @@ class EngineResources:
     permissions: PermissionEngine = field(default_factory=PermissionEngine.from_settings)
     approval: ApprovalJudge = field(default_factory=ApprovalJudge)
     memory: Any = field(default_factory=NullMemoryContext)
+    tool_roles: ToolRoles = field(default_factory=NullToolRoles)
 
     @classmethod
     def from_harness(
@@ -68,6 +72,7 @@ class EngineResources:
         permissions: PermissionEngine | None = None,
         approval: ApprovalJudge | None = None,
         memory: Any | None = None,
+        tool_roles: ToolRoles | None = None,
     ) -> EngineResources:
         """Compose resources from an initialized ``BrowserHarness`` plus the ``llm``.
 
@@ -79,6 +84,8 @@ class EngineResources:
         too (``SessionContext.permissions``); without it the default engine applies. So is
         ``approval`` (``SessionContext.approval``); without it nothing is judged. So is
         ``memory`` (``SessionContext.memory``); without it no ``Memory`` block is rendered.
+        So are ``tool_roles`` (``SessionContext.tool_roles``); without them no snapshot is
+        kept.
         """
 
         tool_registry = harness.tools
@@ -93,6 +100,7 @@ class EngineResources:
             permissions=permissions if permissions is not None else PermissionEngine.from_settings(),
             approval=approval if approval is not None else ApprovalJudge(),
             memory=memory if memory is not None else NullMemoryContext(),
+            tool_roles=tool_roles if tool_roles is not None else NullToolRoles(),
         )
 
 

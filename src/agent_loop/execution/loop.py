@@ -338,6 +338,7 @@ class TurnController:
             tool_registry=resources.tool_registry,
         )
         self._observation = ObservationCompiler(
+            tool_roles=resources.tool_roles,
             read_only_tools=frozenset(
                 tool_name(tool) for tool in tools if tool_is_read_only(tool)
             ),

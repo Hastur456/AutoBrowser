@@ -28,6 +28,7 @@ from src.agent_loop.execution.state import LoopState
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
 from src.browser.names import is_browser_tool_name
 from src.browser.normalization import BrowserToolNormalizer
+from src.browser.roles import BrowserToolRoles
 from src.config import HooksSettings, PermissionRule, PermissionsSettings
 from src.contracts import (
     HookEvent,
@@ -332,7 +333,12 @@ async def run_engine(
     llm = CountingModel(responses)
     harness = BrowserHarness(llm=llm, tool_registry=registry, event_emitter=emitter)
     resources = EngineResources.from_harness(
-        harness, llm=llm, events=emitter, hooks=hooks, permissions=permissions
+        harness,
+        llm=llm,
+        events=emitter,
+        hooks=hooks,
+        permissions=permissions,
+        tool_roles=BrowserToolRoles(),
     )
     engine = AgentLoopEngine(resources, human_input=human_input)
     result = await engine.run(

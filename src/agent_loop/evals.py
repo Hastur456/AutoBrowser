@@ -24,6 +24,7 @@ from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALI
 from src.browser.names import is_browser_tool_name
 from src.browser.normalization import BrowserToolNormalizer
 from src.browser.permissions import BrowserResourceResolver
+from src.browser.roles import BrowserToolRoles
 from src.config import PermissionsSettings
 from src.contracts import ApprovalAnswer, PermissionVerdict, Tool, ToolRequest, ToolResult
 from src.harness.permissions import PermissionEngine
@@ -389,6 +390,7 @@ async def run_scenario(scenario: EvalScenario, *, memory: Any | None = None) -> 
             resolver=BrowserResourceResolver(),
         ),
         memory=memory,
+        tool_roles=BrowserToolRoles(),
     )
     emitter.emit(
         "goal.started",

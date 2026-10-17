@@ -24,10 +24,11 @@ from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalRunRequest, GoalRunner
 from src.config import get_settings
-from src.contracts import PermissionMode
+from src.contracts import PermissionMode, ToolRoles
 from src.harness.hooks import HookEngine, NullHookEngine, registry_digest
 from src.browser.memory import BrowserMemoryPolicy, BrowserMemoryScope
 from src.browser.permissions import BrowserResourceResolver
+from src.browser.roles import BrowserToolRoles
 from src.harness.permissions import PermissionEngine
 from src.harness.mcp_setup import MCPRuntime, build_mcp_runtime
 from src.harness.memory import MemoryManager, NullMemoryContext
@@ -413,6 +414,9 @@ class SessionContext:
     memory_store: MemoryStore | None = None
     #: Renders the ``Memory`` context block for the engine (``EngineResources.memory``).
     memory: MemoryContext | NullMemoryContext = field(default_factory=NullMemoryContext)
+    #: Which browser tool returns the page snapshot and which ones act on the page
+    #: (``EngineResources.tool_roles``).
+    tool_roles: ToolRoles = field(default_factory=BrowserToolRoles)
     chrome_process: Any | None = None
     initialized: bool = False
 
@@ -800,6 +804,7 @@ class SessionRuntime:
             permissions=self.context.permissions,
             approval=self.context.approval,
             memory=self.context.memory,
+            tool_roles=self.context.tool_roles,
         )
         runner = GoalRunner(
             harness=self.harness,

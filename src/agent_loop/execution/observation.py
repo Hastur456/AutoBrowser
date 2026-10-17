@@ -1,10 +1,11 @@
 """Engine-native observation compilation, split into explicit responsibilities.
 
 - :class:`ToolResultNormalizer` — classify the latest raw ``ToolResult`` into neutral facts
-  (name, status, whether it is a browser tool / a snapshot) with no state mutation.
+  (name, status, whether it acts on the environment / returns its snapshot) with no state
+  mutation. The roles come from the injected :class:`~src.contracts.ToolRoles`.
 - :class:`BrowserStateReducer` — keep the latest ``snapshot``; drop it after any other
-  successful browser tool (the page may have changed) unless the server annotated that tool
-  ``readOnlyHint``.
+  successful stateful tool (the environment may have changed) unless the server annotated
+  that tool ``readOnlyHint``.
 - :class:`ProgressDetector` — success/failure accounting: ``consecutive_failures`` and
   ``error``.
 - :class:`ObservationCompiler` — orchestrate the above into the flat update dict, append the
@@ -27,10 +28,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.browser.names import is_browser_snapshot_name, is_browser_tool_name
 from src.config import get_settings
-from src.contracts import CompactToolObservation, ToolResult
+from src.contracts import CompactToolObservation, ToolResult, ToolRoles
 from src.harness.memory import append_tool_message, tool_result_message_content
+from src.harness.tools import NullToolRoles
 
 from src.agent_loop.execution.progress import record_action, repeat_note
 from src.agent_loop.execution.state import LoopState
@@ -133,7 +134,7 @@ class NormalizedToolResult:
     status: Any
     content: str
     compact: CompactToolObservation
-    is_browser_tool: bool
+    is_stateful: bool
     is_snapshot: bool
 
 
@@ -154,6 +155,9 @@ class ProgressOutcome:
 class ToolResultNormalizer:
     """Classify the latest ``ToolResult`` into the neutral facts the reducers consume."""
 
+    def __init__(self, tool_roles: ToolRoles | None = None) -> None:
+        self._roles = tool_roles or NullToolRoles()
+
     def normalize(
         self,
         state: LoopState,
@@ -170,8 +174,8 @@ class ToolResultNormalizer:
             status=status,
             content=str(result.get("content", "") or ""),
             compact=compact_observation or _fallback_compact_observation(result),
-            is_browser_tool=is_browser_tool_name(tool_name),
-            is_snapshot=is_browser_snapshot_name(tool_name) and status == "success",
+            is_stateful=self._roles.is_stateful(tool_name),
+            is_snapshot=self._roles.is_observation(tool_name) and status == "success",
         )
 
 
@@ -180,7 +184,7 @@ class BrowserStateReducer:
 
     ``read_only_tools`` are the exposed names of tools whose server declared the MCP
     ``readOnlyHint`` annotation; they cannot change the page, so they keep the current
-    snapshot valid. Every other successful browser tool invalidates it.
+    snapshot valid. Every other successful stateful tool invalidates it.
     """
 
     def __init__(self, read_only_tools: frozenset[str] = frozenset()) -> None:
@@ -192,7 +196,7 @@ class BrowserStateReducer:
         if norm.is_snapshot:
             updates["snapshot"] = norm.content
         elif (
-            norm.is_browser_tool
+            norm.is_stateful
             and norm.status == "success"
             and norm.tool_name not in self._read_only_tools
         ):
@@ -227,9 +231,10 @@ class ObservationCompiler:
         normalizer: ToolResultNormalizer | None = None,
         reducer: BrowserStateReducer | None = None,
         detector: ProgressDetector | None = None,
+        tool_roles: ToolRoles | None = None,
         read_only_tools: frozenset[str] = frozenset(),
     ) -> None:
-        self._normalizer = normalizer or ToolResultNormalizer()
+        self._normalizer = normalizer or ToolResultNormalizer(tool_roles)
         self._reducer = reducer or BrowserStateReducer(read_only_tools)
         self._detector = detector or ProgressDetector()
 

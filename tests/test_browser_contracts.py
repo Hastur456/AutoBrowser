@@ -12,6 +12,7 @@ from src.browser.names import (
     is_browser_snapshot_name,
     is_browser_tool_name,
 )
+from src.browser.roles import BrowserToolRoles
 
 
 def test_browser_tool_names_are_the_exposed_names() -> None:
@@ -19,6 +20,16 @@ def test_browser_tool_names_are_the_exposed_names() -> None:
     assert is_browser_tool_name("browser_missing")
     assert not is_browser_tool_name("fs__read")
     assert is_browser_snapshot_name("browser_snapshot")
+
+
+def test_browser_tool_roles_follow_the_exposed_names() -> None:
+    roles = BrowserToolRoles()
+
+    assert roles.is_observation("browser_snapshot")
+    assert not roles.is_observation("browser_click")
+    assert roles.is_stateful("browser_click")
+    assert roles.is_stateful("browser_snapshot")
+    assert not roles.is_stateful("fs__read")
 
 
 def test_the_old_dotted_vocabulary_is_gone() -> None:
