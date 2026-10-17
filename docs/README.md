@@ -63,6 +63,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   migration guide from browser providers to the MCP Manager (Russian).
 - [Agent Loop Progress Recovery](development/2026-09-26-agent-loop-progress-recovery.md):
   post-migration plan for progress detection and completion (Russian).
+- [Explicit Agent Objects Plan](development/2026-10-17-explicit-agent-objects-plan.md):
+  browser-neutral engine via injected tool roles, dead-code removal, typed
+  layer objects (Russian).
 - [Browser Provider Boundary ADR](decisions/2026-07-26-browser-provider-boundary.md):
   superseded record for the former Playwright adapter boundary.
 - [Task Memory Isolation ADR](decisions/2026-07-24-task-memory-isolation-and-session-persistence.md):
