@@ -126,9 +126,7 @@ dependencies = [
     "zstandard==0.25.0",
 ]
 
-[project.scripts]
-autobrowser = "autobrowser:main"
-
-[build-system]
-requires = ["uv_build>=0.12.21,<0.13.0"]
-build-backend = "uv_build"
+[tool.uv]
+# An application run as `python main.py`, not an installable package: there is no
+# `autobrowser` module to build, so uv only syncs dependencies.
+package = false
