@@ -4,6 +4,7 @@
 | --- | --- |
 | Action History | Context block rendered by `ContextAssembler` from the action journal: recent tool calls with argument/result previews and repeat counts. |
 | Action journal | Server-neutral per-task record of executed tool calls (`ActionRecord`: `args_key`, `outcome_key`, `occurrence`) in `src/agent_loop/execution/progress.py`, used to detect repeats. |
+| Agent | The assembled agent in `src/agent_loop/execution/loop.py`: `EngineResources` plus the human-approval channel; `run(TaskRequest)` drives one fresh `AgentLoopEngine`. Composed for production by `SessionContext.build_agent()`. |
 | Agent Loop contracts | Runtime-facing contracts under `src/agent_loop/` for proposed actions, model turns, events, traces, metrics, context assembly, batch/export, evals, and goal lifecycle boundaries around the engine-native loop. |
 | Agent step | The reasoning phase of a `TurnController` turn that chooses a tool call, a replan, or a done decision. |
 | AgentLoopEngine | The explicit control-flow owner in `src/agent_loop/execution/loop.py`: builds the initial plan, then drives a bounded `while` loop of `TurnController` turns and returns a terminal `AgentLoopResult`. |
@@ -35,9 +36,9 @@
 | Export row | JSONL task-level analytics row produced by `scripts/export_sessions.py` from persisted session, task, event, feedback, and batch metadata. |
 | Fail-closed | Hook failure mode where a timeout or exception counts as `deny`. The default for `goal_start` and `pre_tool_use`; other events fail open (no decision). `HookSpec.fail_closed` overrides it. |
 | FakeBrowserProvider | Legacy deterministic browser provider used by tests to replay browser responses without Chrome, CDP, or MCP. |
-| GoalRunner | One-task lifecycle boundary between `SessionRuntime` and the engine; emits goal lifecycle events, delegates execution through `native_task_runner`, captures latest state through `LatestStateLoader`, and does not own the model/action loop. |
-| GoalRunRequest | Immutable input object for one `GoalRunner` execution, including task text, task id, goal id, session thread id, task config, and state overrides. |
-| GoalRunResult | Immutable terminal object returned or internally constructed by `GoalRunner`, including raw task result or exception, latest state, and explicit terminal status. |
+| GoalRunner | One-task lifecycle boundary between `SessionRuntime` and the engine: `GoalRunner(task_runner, events, limits)` emits goal lifecycle events, runs the task runner (`Agent.run`) under the `GoalLimits` timeout and progress watchdog, and does not own the model/action loop. |
+| GoalLimits | Frozen time budgets of one goal run (`timeout_seconds`, `progress_timeout_seconds`), built from `LoopSettings` by `GoalLimits.from_settings()`. |
+| GoalRunResult | Frozen terminal object returned by `GoalRunner`: the `TaskRequest`, the `AgentLoopResult` and the explicit terminal `GoalStatus`. |
 | GoalStatus | Terminal goal lifecycle status (`completed`/`failed`/`cancelled`/`blocked`) returned by `GoalRunner` in `GoalRunResult`, derived from the engine's `CompletionStatus`. |
 | Harness | Runtime layer around the engine; owns infrastructure that should not be hardcoded into loop code. |
 | Hook | Deterministic check registered in `hooks.registry` (`src/harness/hooks.py`) that can deny/ask/rewrite a tool call, rewrite its output, add model context, or reject a premature completion at a fixed lifecycle point. Disabled by default. |
@@ -45,7 +46,6 @@
 | Hook handler | Async callable `HookEvent -> HookResult \| None`: for `type: python` named by `package.module:attr` (a factory when `options` are set), for `type: command` a `CommandHook` wrapping an external process; `None` means no opinion. |
 | HookEngine | Session-scoped runner of the hook registry: sequential handlers, `deny > ask > allow` aggregation, per-hook timeouts, one `hook.decided` event per handler via the loop. `NullHookEngine` is the disabled no-op. |
 | Ineffective browser action | A successful browser action after which the observed page is unchanged. |
-| LatestStateLoader | Callable port injected into `GoalRunner` to load latest loop state from the current harness/config, with fallback to the task result's session state. |
 | LoopState | The frozen dataclass (in `src/agent_loop/execution/state.py`) that carries all loop state; `apply()` is strict and rejects unknown keys. |
 | MCP | Model Context Protocol; every tool server (Playwright included) is an entry in `Settings.mcp_servers` managed by `MCPManager`. |
 | MCPManager | Server-agnostic host-side pool of MCP clients in `src/mcp/manager.py`: connection owner tasks, reconnect, discovery, `list_changed`, liveness, shutdown. |
@@ -82,7 +82,6 @@
 | ServerRegistry | Declarative MCP server list (`StdioServerConfig` / `StreamableHttpServerConfig`) in `src/mcp/config.py`; holds no connections. |
 | Session records | Runtime-local JSON files under `.autobrowser/sessions/<session_id>/`, currently `session.json` and `tasks.json`. |
 | Session workspace | Runtime-local directory under `.autobrowser/sessions/<session_id>/workspace/` for downloads, screenshots, temp files, and artifacts. |
-| Session-scoped thread ID | Stable `configurable.thread_id` derived from `SessionContext.session_id` and reused for all tasks in one interactive session; used for attribution, not a checkpoint thread. |
 | SessionConfig | Args-derived configuration used to initialize a long-lived `SessionRuntime` and shared task config. |
 | SessionContext | Root object for one process-scoped session; owns session state, task history, workspace, artifacts, events, and runtime handles. |
 | SessionEventBus | Minimal synchronous event bus for session lifecycle events such as task start, task finish, and session close. |
@@ -90,13 +89,14 @@
 | SessionRuntime | Process-lifetime coordinator that runs the session loop, delegates lifecycle state to `SessionContext`, and sends each task to `GoalRunner`. |
 | SessionState | Mutable mapping wrapper for shared session-level state that should not require a dedicated typed field yet. |
 | Settings | The pydantic-settings root in `src/config.py`, composed of eight config sections and read through `get_settings()`. A neutral leaf like `src/contracts.py`: it imports nothing from the loop, harness, or browser layers. |
-| State override channel | Harness-internal config entry (`HARNESS_STATE_OVERRIDES_CONFIG_KEY`) used to inject carried session state into the next engine run; stripped before the engine sees the task config. |
+| State override channel | `TaskRequest.state_overrides`: the carried session state plus task-local resets handed to the next engine run. |
 | Stateful server | MCP server declared `stateful: true`; its reconnect is surfaced as `ServerConnectionLostError(stateful=True)` rather than hidden. |
 | Task boundary reset | Clearing task-local loop fields such as plan, final answer, errors, policy state, tool request/result, and retry counters before a new task starts. |
 | Task ID | Generated identifier stored on `TaskRecord` and loop state to attribute one user request inside a session (`goal_id == task_id`). |
 | Task lifecycle | One user request delegated to the engine, ending when `AgentLoopEngine` reaches a terminal `AgentLoopResult`. |
-| Task thread ID | Deprecated term for the former per-task checkpoint thread ID; replaced by the session-scoped thread ID plus per-task `task_id`. |
+| Task thread ID | Deprecated term for the former per-task checkpoint thread ID; tasks are attributed by `session_id` plus per-task `task_id`. |
 | TaskRecord | Session history entry for one user task, including task ID, task text, result, start time, and finish time. |
+| TaskRequest | Frozen contract in `src/contracts.py` for one task: task text, `task_id` (= `goal_id`), `session_id`, `state_overrides`, `turn_cap`, `compress_tools`. Built by the session, passed through `GoalRunner` to `Agent.run`. |
 | Tool | Provider-neutral executable tool (`src/contracts.py`): `name`, async `func`, `description`, and JSON-Schema `input_schema`; `to_def()` yields the model-visible `ToolDef`, and `invoke()` dispatches with `**args`. |
 | ToolCall | A single tool invocation proposed by an assistant `Message` (`id`, `name`, `arguments`). |
 | ToolCallNormalizer | Stateless protocol folded by `ToolBroker` around every call (`normalize_request` before, `normalize_result` after). |

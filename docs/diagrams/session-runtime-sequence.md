@@ -28,20 +28,20 @@ sequenceDiagram
     Context->>MCP: Start Chrome/CDP and load tools
   end
   Context->>Harness: Build one harness for the session
+  Session->>Context: build_agent() -> one Agent for the session
   loop For each user task
     User->>Session: Submit task
     Session->>Context: reset_task(task)
     Context->>Files: Update session.json and tasks.json
     Session->>Context: Build carried state and reset task-local fields
-    Session->>Goals: run_task(task, session thread_id, state overrides)
-    Goals->>Engine: native_task_runner -> AgentLoopEngine.run
+    Session->>Goals: run(TaskRequest: task, ids, carried state, turn cap)
+    Goals->>Engine: Agent.run(TaskRequest) -> AgentLoopEngine.run
     Engine->>Engine: plan + bounded TurnController loop
     Engine->>MCP: Execute approved tool calls
     MCP-->>Engine: Tool results and snapshots
     Engine-->>Goals: Terminal AgentLoopResult
     Goals-->>Session: GoalRunResult with explicit status
-    Session->>Goals: Load latest state from result
-    Session->>Context: Remember messages, observation, snapshot, browser state
+    Session->>Context: Remember result.session_state (messages, observation, snapshot)
     Session->>Context: finish_task(result)
     Context->>Files: Update session.json and tasks.json
     Session-->>User: Print final answer and prompt again

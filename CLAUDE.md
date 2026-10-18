@@ -42,13 +42,12 @@ Control flow lives in `src/agent_loop/execution/`, not in a compiled graph:
 
 - `loop.py` — `AgentLoopEngine` (builds the initial plan, then drives a bounded
   `while` loop of `TurnController` turns and returns a terminal `AgentLoopResult`)
-  and `native_task_runner` (composes `EngineResources`).
+  and `Agent` (an assembled agent over `EngineResources`; `run(TaskRequest)` drives
+  one fresh engine run).
 - `state.py` — the frozen `LoopState` dataclass. `LoopState.apply()` is STRICT —
   it raises `ValueError` on unknown keys. `LoopState()` constructs with all
   defaults; `to_session_state()` yields the `SESSION_STATE_KEYS` dict carried
   across tasks.
-- `completion.py` — `native_latest_state_loader` (unwraps the
-  `AgentLoopResult.session_state` carry-forward for the next task).
 - `guards.py`, `observation.py`, `tools.py`, `resources.py` — the
   loop guards (including `CompletionController` and the progress guard), observation
   compiler, tool broker, and `EngineResources` bundling.
@@ -78,11 +77,18 @@ provider-neutral `ChatModel` contract in `src/llm.py`, implemented by thin adapt
 ## Ownership Chain & Layering Rules
 
 ```text
-SessionRuntime -> GoalRunner -> native_task_runner -> AgentLoopEngine -> TurnController
+SessionRuntime -> GoalRunner -> Agent -> AgentLoopEngine -> TurnController
 ```
 
-Each layer is hard-fenced; **respect the boundary the code is trying to keep**:
+Each layer receives explicit, typed objects (no `Any` bundles, no `getattr` on a
+neighbour, no magic config keys) and is hard-fenced; **respect the boundary the code is
+trying to keep**:
 
+- `SessionContext.build_agent()` — the one place the production agent is composed
+  (harness tools/context/events + model, hooks, permissions, approval judge, memory,
+  tool roles). `SessionRuntime.start()` builds the `Agent` once; every task is
+  `GoalRunner(task_runner=agent.run, events, GoalLimits).run(TaskRequest)`. Evals compose
+  their own `Agent` over fake tools.
 - `src/harness/session.py` — `SessionRuntime`/`SessionContext`: process & session lifecycle,
   MCP/browser resource lifetime, task history, context handoff. **Not a task solver.**
 - `src/agent_loop/goals.py` — `GoalRunner`: one-task lifecycle + goal events only. Must not
@@ -145,15 +151,14 @@ Chrome/CDP.
 
 ## Session vs Task Boundary
 
-All tasks in one REPL session share one session identity (from
-`SessionContext.session_id`), passed into each task config as
-`configurable.thread_id`. Across tasks the runtime carries forward only durable context
+All tasks in one REPL session share one session identity (`SessionContext.session_id`,
+carried as `TaskRequest.session_id`). Across tasks the runtime carries forward only durable context
 (messages, latest observation, browser state, last-action metadata) and
 **resets task-local fields** (`plan`, `decision`, `final_answer`, tool request/result,
-policy state, errors, retry/replan/repeat counters) before the next task. Carried state is
-injected through the harness-internal state-override key
-(`HARNESS_STATE_OVERRIDES_CONFIG_KEY`), which is stripped from the task config before the
-engine sees it.
+policy state, errors, retry/replan/repeat counters) before the next task. Carried state
+travels as `TaskRequest.state_overrides` (built by `session._task_state_overrides`) and
+comes back as `AgentLoopResult.session_state`, which the session stores in
+`SessionContext.state`; a failed task leaves the previous state in place.
 
 ## Configuration
 

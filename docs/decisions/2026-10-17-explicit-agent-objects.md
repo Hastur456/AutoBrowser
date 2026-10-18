@@ -1,6 +1,6 @@
 # ADR-2026-10-17: Explicit Agent Objects Along the Ownership Chain
 
-Status: Proposed
+Status: Accepted (implemented 2026-10-18)
 Date: 2026-10-17
 
 ## Context
@@ -31,7 +31,7 @@ reference for the target feel: one factory assembles the agent from explicit obj
 tools, backends, middleware, interrupt points), and each layer receives exactly what it uses.
 The engine-native loop stays; only the seams change.
 
-## Decision (proposed)
+## Decision
 
 1. **`TaskRequest` replaces `task_config` plumbing.** A frozen dataclass (in
    `src/agent_loop/goals.py`, next to `GoalRunRequest`, which it absorbs):
@@ -88,6 +88,29 @@ The engine-native loop stays; only the seams change.
 6. **Dead shims go.** `src/agent_loop/engine.py` (imports move to
    `src.agent_loop.execution.loop` or the package root), `getattr` on `AgentLoopResult` in
    `src/harness/session.py`.
+
+## Implementation notes
+
+Implemented on `refactor/explicit-agent-objects` in four commits (typed resources; `Agent` +
+`TaskRequest` + `GoalRunner`/`GoalLimits`; shim removal; docs). Where the code differs from the
+proposal above:
+
+- **Composition lives on `SessionContext.build_agent(human_input)`**, not in a free
+  `build_agent` in `src/harness/`: the session context already owns every collaborator, so the
+  method needs no argument list to forward. `SessionRuntime.start()` builds the `Agent` once per
+  session (not per task). Evals compose their own `Agent` over fake tools on purpose; the batch
+  runner goes through `SessionRuntime` and needs nothing of its own.
+- **`TaskRequest` lives in `src/contracts.py`** (it crosses the session, goal and engine
+  layers) and has no `thread_id` or `metadata`: the LangGraph-era thread id and the
+  `run_name`/`tags`/`metadata` entries of `SessionConfig.task_config()` had no reader.
+- **`GoalRunResult(request, result, status)`**: the separate `latest_state` field went with the
+  loader, since the carried state is `result.session_state`.
+- **Types instead of new protocols** where the engine may import the implementation:
+  `ChatModel`, `ContextAssembler`, `EventEmitter`, `HookEngine | NullHookEngine`. Only memory
+  got a protocol (`MemoryRenderer` in `src/contracts.py`), because the engine must not import
+  `src/harness/memory_store.py`.
+- **`loop.latest_state_timeout_seconds` is removed**; an old `.env`/`config.yaml` naming it
+  still starts (ignored with a `FutureWarning`).
 
 ## Consequences
 

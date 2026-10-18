@@ -22,7 +22,7 @@ AutoBrowser turns a natural-language browser task into a controlled loop:
 | --- | --- |
 | `main.py` | CLI parsing and wiring the process into `SessionRuntime`. |
 | `src/cli/` | `cmd2` interactive REPL, parser, output formatting, and session bootstrap. |
-| `src/agent_loop/execution/` | The engine-native control loop: `AgentLoopEngine`, `TurnController`, the frozen `LoopState`, completion/observation/guards/policy helpers, `EngineResources`, and `native_task_runner`. |
+| `src/agent_loop/execution/` | The engine-native control loop: `AgentLoopEngine`, `TurnController`, the frozen `LoopState`, observation/guards helpers, `EngineResources`, and the `Agent` that runs one `TaskRequest`. |
 | `src/agent_loop/` | Runtime-facing action contracts, model action parsing, lifecycle events, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary. |
 | `src/contracts.py` | Provider-neutral typed tool/plan/observation contracts (no imports from the loop, harness, or browser layers). |
 | `src/config.py` | Typed environment-driven settings — the single source of truth for every tunable. Neutral leaf like `src/contracts.py`; see [the settings ADR](../decisions/2026-09-16-typed-settings-module.md). |
@@ -85,17 +85,19 @@ One-task execution passes through `GoalRunner` in `src/agent_loop/goals.py`:
 ```text
 SessionRuntime
   -> GoalRunner
-      -> native_task_runner
+      -> Agent.run(TaskRequest)
           -> AgentLoopEngine
               -> TurnController
 ```
 
-`SessionRuntime` starts the session, allocates task and goal ids, builds task
-config, injects carried session state, persists latest state into
-`SessionContext`, and marks task history finished or failed. `GoalRunner` owns
-the goal lifecycle boundary for that task: it emits `goal.started`, delegates to
-`native_task_runner` (which composes `EngineResources` from `BrowserHarness`),
-captures carry-forward state through a `LatestStateLoader`, reads the terminal
+`SessionRuntime.start()` asks `SessionContext.build_agent()` for the session's
+`Agent` (`EngineResources` from `BrowserHarness` plus the model and the
+session-scoped hooks, permissions, approval judge, memory and tool roles). For each
+task it allocates the task id, builds a `TaskRequest` (task, ids, carried state, turn
+cap), stores the result's `session_state` in `SessionContext`, and marks task
+history finished or failed. `GoalRunner(task_runner=agent.run, events, GoalLimits)`
+owns the goal lifecycle boundary for that task: it emits `goal.started`, runs the
+agent under the wall-clock timeout and the progress watchdog, reads the terminal
 `AgentLoopResult.status` directly, emits `goal.completed`, `goal.blocked`,
 `goal.cancelled`, or `goal.failed`, and returns a `GoalRunResult` with explicit
 terminal status. The current `goal_id` is equal to the task id.
@@ -192,8 +194,8 @@ unprefixed `browser_*` names; other servers use `server__tool`.
 `BrowserProvider`/`FakeBrowserProvider` remain only as test scaffolding.
 
 All tasks in one interactive session share a session identity derived from
-`SessionContext.session_id`, passed into each task config as
-`configurable.thread_id`. Each `TaskRecord` still receives its own `task_id` for
+`SessionContext.session_id`, carried as `TaskRequest.session_id`. Each `TaskRecord`
+still receives its own `task_id` for
 persisted task history and message attribution; there is no checkpoint
 thread anymore, and `goal_id == task_id`.
 
@@ -206,10 +208,8 @@ final answer, tool request/result, policy state, errors, and retry counters are
 reset before the next invocation. This lets follow-up tasks use prior results
 and browser progress without inheriting stale completion or failure state.
 
-`BrowserHarness` owns the internal state-override channel
-(`HARNESS_STATE_OVERRIDES_CONFIG_KEY`) used to inject this carried session state
-into the next `AgentLoopEngine.run` call. That internal key is stripped from the
-task config before the engine sees it.
+The carried state reaches the next run as `TaskRequest.state_overrides`; there is
+no task-config dict and no harness-internal key.
 
 ## Planner
 

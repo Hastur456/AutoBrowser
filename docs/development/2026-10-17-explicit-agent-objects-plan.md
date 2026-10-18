@@ -1,7 +1,15 @@
 # Явные объекты агента — план реализации
 
 Дата: 2026-10-17 · Ветка: `refactor/explicit-agent-objects` · Статус: **In progress**
-(коммиты 1–5 и документация к ним сделаны; коммит 6 ждёт согласования ADR)
+(коммиты 1–7 сделаны; следующий этап — §8, удаление `src/browser/names.py`)
+
+> **Коммит 6 (2026-10-18).** Сделан по
+> [ADR 2026-10-17 Explicit Agent Objects](../decisions/2026-10-17-explicit-agent-objects.md)
+> тремя коммитами: типизированные `EngineResources`; `Agent` + `TaskRequest` +
+> `GoalRunner(task_runner, events, GoalLimits)` с удалением `task_config`-обвязки, загрузчика
+> состояния и `loop.latest_state_timeout_seconds`; удаление шима `src/agent_loop/engine.py`.
+> Сборка агента — `SessionContext.build_agent()`, один раз на сессию. Отклонения от черновика —
+> в разделе «Implementation notes» ADR.
 
 > **Ход реализации.** Решение по коммитам 1–5 зафиксировано в
 > [ADR 2026-10-17 Injected Tool Roles](../decisions/2026-10-17-injected-tool-roles.md).
@@ -245,3 +253,25 @@ ADR с целевыми сигнатурами на ревью у пользов
 | Расхождение инвариантов промптов, guards и observer | меняется только способ классификации, не правила; сверка baseline эвалов после коммитов 2, 3, 6 |
 | Коммит 6 разрастается | ADR до кода; разбиение на 6a–6c; при необходимости вынос в следующую ветку |
 | Новые тюнаблы | не ожидаются; если появятся — только через `src/config.py` + `.env.example` + `config.example.yaml` |
+
+## 8. Следующий этап — удалить `src/browser/names.py`
+
+Определение браузера по префиксу `browser_` и snapshot по имени `browser_snapshot` ломает идею
+универсальных MCP-серверов: префикс — соглашение одного сервера, а не свойство протокола.
+Движок от этого уже очищен (§4, коммиты 3–4), но под абстракцией `BrowserToolRoles` логика та же.
+
+- **Браузер — по серверу, не по имени.** Браузерный сервер известен из
+  `settings.browser_mcp_server` (он же передаётся в `MCPToolSource(unprefixed_servers=...)`),
+  у каждого MCP-инструмента есть `server`. `BrowserToolRoles` и `BrowserToolNormalizer`
+  проверяют сервер инструмента.
+- **Snapshot — без имени в коде.** Нужен выбор: (а) поле настроек (например,
+  `browser.snapshot_tool`) по правилу «tunables в конфиге»; (б) отказаться от отдельного
+  кэширования snapshot (модель читает вывод, `readOnlyHint` уже говорит о неизменности) —
+  меняет поведение и baseline эвалов.
+- **Убрать остальные литералы:** `"browser_"` в `src/agent_loop/skills.py` (блок «Browser
+  Rules» включать по наличию браузерного сервера), `"browser_snapshot"` в
+  `src/harness/memory.py`, `src/cli/output.py`, `src/cli/agent_cli.py`; поддельный сервер в
+  `src/agent_loop/evals.py` объявляет свой `server`.
+- **Расширить тест на границы** на весь `src/`, кроме конфигурации.
+- ADR, уточняющий [Injected Tool Roles](../decisions/2026-10-17-injected-tool-roles.md).
+

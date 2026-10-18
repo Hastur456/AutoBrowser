@@ -4,11 +4,12 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
-- [2026-10-17 Explicit Agent Objects](2026-10-17-explicit-agent-objects.md) (Proposed):
-  a `TaskRequest` replaces the `task_config` dict plumbing, an `Agent` object replaces the
-  `native_task_runner` closure, one `build_agent` composes every path, `GoalRunner` gets typed
-  `GoalLimits`, `EngineResources` fields become protocols, and the graph-era shims
-  (`native_latest_state_loader`, `src/agent_loop/engine.py`) go.
+- [2026-10-17 Explicit Agent Objects](2026-10-17-explicit-agent-objects.md): a `TaskRequest`
+  replaces the `task_config` dict plumbing, an `Agent` object replaces the `native_task_runner`
+  closure, `SessionContext.build_agent()` composes the production agent once per session,
+  `GoalRunner(task_runner, events, GoalLimits)` drops `harness`/`session_config`/`getattr`,
+  `EngineResources` fields are typed, and the graph-era shims (`native_latest_state_loader`,
+  `src/agent_loop/engine.py`, `loop.latest_state_timeout_seconds`) go.
 - [2026-10-17 Injected Tool Roles](2026-10-17-injected-tool-roles.md): the engine imports
   nothing from `src/browser/`; which tool returns the snapshot and which tools act on the
   environment comes from a `ToolRoles` object in `EngineResources` (`BrowserToolRoles` from the

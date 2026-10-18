@@ -148,7 +148,7 @@ Each session creates `.autobrowser/sessions/<session_id>/` with `session.json`,
 local runtime output and are ignored by git.
 
 Within one interactive session, tasks share a session identity derived from
-`SessionContext.session_id` and reused as `configurable.thread_id`. The runtime
+`SessionContext.session_id` and carried as `TaskRequest.session_id`. The runtime
 carries forward only durable context such as messages, latest observation,
 and browser progress. Task-local fields such as the prior
 plan, terminal decision, final answer, errors, and retry counters are reset
@@ -265,7 +265,7 @@ use `tests/mcp_fixtures/fake_server.py` without external services.
 
 `SessionRuntime` owns the long-lived process lifecycle through `SessionContext`.
 All tasks in one interactive session share a session identity derived from
-`SessionContext.session_id` (reused as `configurable.thread_id`); each task
+`SessionContext.session_id` (carried as `TaskRequest.session_id`); each task
 still receives a `TaskRecord.task_id` for persisted history and message
 attribution, and `goal_id == task_id`. `SessionRuntime` carries session-useful
 context into the next invocation and resets task-local fields at the task

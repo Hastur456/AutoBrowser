@@ -31,7 +31,7 @@ engine-native execution loop. The CLI entry point is `main.py`. Core code lives 
 
 - `src/agent_loop/execution/`: the engine-native control loop — `AgentLoopEngine`,
   `TurnController`, the frozen `LoopState`, completion/observation/guards/policy
-  helpers, `EngineResources`, and `native_task_runner`.
+  helpers, `EngineResources`, and the `Agent` that runs one `TaskRequest`.
 - `src/agent_loop/`: runtime-facing action contracts, model action parsing, eventing, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary around the engine.
 - `src/contracts.py`: provider-neutral typed tool/plan/observation contracts and loop thresholds (no imports from the loop, harness, or browser layers).
 - `src/state.py`: type-only `AgentState` TypedDict kept for browser-layer annotation.
@@ -102,7 +102,7 @@ Use canonical `browser.*` names in provider-neutral tests when helpful. The Play
 
 AutoBrowser is a long-lived interactive session, not a single-shot task runner. `SessionRuntime` owns the process lifecycle and delegates session-owned state to `SessionContext`.
 
-All tasks in one interactive session share a session identity derived from `SessionContext.session_id`, passed into each task config as `configurable.thread_id`. Each user request still gets its own `TaskRecord.task_id` for task history and message attribution, and `goal_id == task_id`.
+All tasks in one interactive session share a session identity derived from `SessionContext.session_id`, carried as `TaskRequest.session_id`. Each user request still gets its own `TaskRecord.task_id` for task history and message attribution, and `goal_id == task_id`.
 
 After each task, `SessionRuntime` remembers the latest loop state in `SessionContext.state` (from the terminal `AgentLoopResult.session_state`). The next task carries forward only session-useful context:
 
@@ -117,10 +117,9 @@ Before a new task starts, task-local fields must be reset so stale completion or
 - `tool_request`, `tool_result`, `policy_decision`, and `policy_event`;
 - `error`, retry counters, replan counters, repeat counters, and ineffective-action counters.
 
-`BrowserHarness` owns the internal state-override channel
-(`HARNESS_STATE_OVERRIDES_CONFIG_KEY`) used to inject carried session state into
-the next `AgentLoopEngine.run` call. Strip harness-internal config before the
-engine sees the task config.
+The carried state reaches the next run as `TaskRequest.state_overrides`; there is no
+task-config dict and no harness-internal key. The production agent is composed once per
+session by `SessionContext.build_agent()`.
 
 Preserve this boundary: the session layer manages lifecycle and context handoff,
 while the engine-native loop still owns planning, reasoning, tool execution,
