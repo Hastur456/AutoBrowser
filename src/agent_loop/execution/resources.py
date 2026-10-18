@@ -14,15 +14,21 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING
 
+from src.agent_loop.context import ContextAssembler
+from src.agent_loop.events import EventEmitter
 from src.agent_loop.execution.approval import ApprovalJudge
-from src.harness.hooks import NullHookEngine
+from src.contracts import MemoryRenderer, ToolRoles
+from src.harness.hooks import HookEngine, NullHookEngine
 from src.harness.memory import NullMemoryContext
 from src.harness.normalization import ToolCallNormalizer
 from src.harness.permissions import PermissionEngine
-from src.contracts import ToolRoles
 from src.harness.tools import NullToolRoles, ToolRegistry
+from src.llm import ChatModel
+
+if TYPE_CHECKING:
+    from src.harness.runtime import BrowserHarness
 
 
 @dataclass(frozen=True)
@@ -49,28 +55,28 @@ class EngineResources:
     default :class:`~src.harness.tools.NullToolRoles` assigns none, so no snapshot is kept.
     """
 
-    llm: Any
+    llm: ChatModel
     tool_registry: ToolRegistry
     tool_normalizers: Sequence[ToolCallNormalizer]
-    context: Any
-    events: Any
-    hooks: Any = field(default_factory=NullHookEngine)
+    context: ContextAssembler
+    events: EventEmitter
+    hooks: HookEngine | NullHookEngine = field(default_factory=NullHookEngine)
     permissions: PermissionEngine = field(default_factory=PermissionEngine.from_settings)
     approval: ApprovalJudge = field(default_factory=ApprovalJudge)
-    memory: Any = field(default_factory=NullMemoryContext)
+    memory: MemoryRenderer = field(default_factory=NullMemoryContext)
     tool_roles: ToolRoles = field(default_factory=NullToolRoles)
 
     @classmethod
     def from_harness(
         cls,
-        harness: Any,
+        harness: BrowserHarness,
         *,
-        llm: Any,
-        events: Any | None = None,
-        hooks: Any | None = None,
+        llm: ChatModel,
+        events: EventEmitter | None = None,
+        hooks: HookEngine | NullHookEngine | None = None,
         permissions: PermissionEngine | None = None,
         approval: ApprovalJudge | None = None,
-        memory: Any | None = None,
+        memory: MemoryRenderer | None = None,
         tool_roles: ToolRoles | None = None,
     ) -> EngineResources:
         """Compose resources from an initialized ``BrowserHarness`` plus the ``llm``.

@@ -272,6 +272,17 @@ class PermissionResourceResolver(Protocol):
         """``{"domain": ..., "target": ..., "url": ...}``; ``{}`` (or a missing key) when unknown."""
 
 
+class MemoryRenderer(Protocol):
+    """Renders the persistent ``Memory`` context block for the current state.
+
+    The engine's only view of persistent memory; the store, its files and tools stay in
+    ``src/harness/``.
+    """
+
+    def render(self, state: Mapping[str, Any]) -> str:
+        """The block text; ``""`` when there is nothing to show."""
+
+
 class ToolRoles(Protocol):
     """What the engine may assume about a tool, decided outside the engine.
 
@@ -357,6 +368,7 @@ __all__ = [
     "MemoryContentPolicy",
     "MemoryEntry",
     "MemoryKind",
+    "MemoryRenderer",
     "MemoryScopeResolver",
     "MemoryStatus",
     "PermissionCheck",
