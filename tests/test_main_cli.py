@@ -36,6 +36,7 @@ class FakeMCPRuntime:
     def __init__(self, tools: list[FakeTool] | None = None) -> None:
         self.tool_source = FakeToolSource(tools or [])
         self.normalizers: list[Any] = []
+        self.browser_server: str | None = "playwright"
 
     async def start(self, *, require_browser: bool = True) -> None:
         _ = require_browser

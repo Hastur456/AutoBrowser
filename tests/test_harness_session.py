@@ -56,6 +56,7 @@ class FakeMCPRuntime:
     def __init__(self, tools: list[Any] | None = None) -> None:
         self.tool_source = FakeToolSource(tools)
         self.normalizers: list[Any] = []
+        self.browser_server: str | None = "playwright"
         self.started = False
         self.closed = False
 
