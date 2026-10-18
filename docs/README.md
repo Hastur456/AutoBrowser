@@ -60,7 +60,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Server-Neutral Progress Journal ADR](decisions/2026-09-28-server-neutral-progress-journal.md):
   action journal, `Action History`, repeat blocking and honest completion.
 - [Injected Tool Roles ADR](decisions/2026-10-17-injected-tool-roles.md): the engine
-  imports nothing from `src/browser/`; snapshot roles arrive through `EngineResources`.
+  imports nothing from `src/browser/`; superseded on roles by the next record.
+- [Name-Free Tool Handling ADR](decisions/2026-10-19-name-free-tool-handling.md): no logic
+  keyed on tool names; snapshots per server from `readOnlyHint`.
 - [MCP Manager Migration](development/2026-09-24-mcp-manager-migration.md):
   migration guide from browser providers to the MCP Manager (Russian).
 - [Agent Loop Progress Recovery](development/2026-09-26-agent-loop-progress-recovery.md):

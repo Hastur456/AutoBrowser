@@ -18,7 +18,7 @@ flowchart LR
   Runtime --> Source[MCPToolSource]
   Catalog --> Source
   Source -->|"browser server unprefixed, others server__tool"| Registry2[ToolRegistry]
-  Runtime --> Norm["normalizers: BrowserToolNormalizer, SchemaArgsNormalizer"]
+  Runtime --> Norm["normalizers: SchemaArgsNormalizer"]
   Norm --> Registry2
   Registry2 --> Resources[EngineResources]
   Resources --> Broker[ToolBroker]

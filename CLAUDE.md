@@ -108,13 +108,19 @@ adaptation in the engine or prompts — add servers through `mcp_servers` (`src/
 `src/harness/mcp_setup.py`) and adapt calls with `ToolCallNormalizer`s. See
 `docs/decisions/2026-09-28-universal-mcp-manager.md`.
 
-`src/agent_loop/execution/` imports nothing from `src/browser/` and names no browser tool
-(`tests/test_engine_boundaries.py`). Server-specific facts arrive as objects in
-`EngineResources`: which tool returns the snapshot and which tools act on the environment is
-`EngineResources.tool_roles` (`ToolRoles` contract; `BrowserToolRoles` from
-`SessionContext`, `NullToolRoles` — no snapshot kept — by default). Anything that builds
-`EngineResources` for a browser must pass the roles, or snapshot caching silently stops
-(`docs/decisions/2026-10-17-injected-tool-roles.md`).
+**No logic is keyed on tool names** — the harness works the same with any tools, browser or
+not (`docs/decisions/2026-10-19-name-free-tool-handling.md`). `src/agent_loop/execution/`
+imports nothing from `src/browser/`, and no module under `src/` except the user's
+`prompts.py` holds a browser tool name (`tests/test_engine_boundaries.py`). Instead:
+
+- kept snapshots are per server, from the MCP `readOnlyHint`: a successful read-only call
+  stores its output in `BrowserState.snapshots[server]`, a successful state-changing call of
+  that server drops it; tools without annotations keep nothing;
+- the browser layer reads text formats (`- Page URL:`, `[ref=…]`) from the latest output and
+  the kept snapshots, never names;
+- arguments are filtered by the tool schema (`SchemaArgsNormalizer`);
+- prompt resources come from the session's configuration (`ContextAssembler(resources=…)`;
+  the browser rules iff a browser server is configured).
 
 ## The Engine Loop
 

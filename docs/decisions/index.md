@@ -4,6 +4,12 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-10-19 Name-Free Tool Handling](2026-10-19-name-free-tool-handling.md): nothing
+  decides by a tool name. Kept snapshots are per server from `readOnlyHint`; arguments are
+  filtered by schema only; the session configures prompt resources; memory compresses every
+  tool alike; the CLI reads the page URL from state. `src/browser/names.py`, `ToolRoles` and
+  `BrowserToolNormalizer` are removed and `src/` is fenced against tool-name literals.
+  Supersedes the injected tool roles ADR on how roles are decided.
 - [2026-10-17 Explicit Agent Objects](2026-10-17-explicit-agent-objects.md): a `TaskRequest`
   replaces the `task_config` dict plumbing, an `Agent` object replaces the `native_task_runner`
   closure, `SessionContext.build_agent()` composes the production agent once per session,

@@ -20,7 +20,7 @@ sequenceDiagram
   Policy-->>Broker: Approved action
   Broker->>Registry: Current {name: tool} map
   Broker->>Norm: normalize_request(request, state, tools)
-  Note over Norm: BrowserToolNormalizer: browser.* -> exposed name<br/>SchemaArgsNormalizer: drop forbidden args
+  Note over Norm: SchemaArgsNormalizer: drop arguments the schema forbids (any server)
   Norm-->>Broker: Tool name and args
   Broker->>Tool: invoke(args)
   Tool->>Manager: call_tool(server, tool, args)

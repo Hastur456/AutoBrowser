@@ -1,6 +1,7 @@
 # ADR-2026-10-17: Injected Tool Roles and a Browser-Free Engine
 
-Status: Accepted
+Status: Superseded on how roles are decided by
+[2026-10-19 Name-Free Tool Handling](2026-10-19-name-free-tool-handling.md)
 Date: 2026-10-17
 
 ## Context

@@ -21,7 +21,6 @@
 | BrowserHarness | Runtime composition root that holds context, tools, policy, telemetry, events, and the reasoning `llm`; `EngineResources.from_harness` bundles them for the engine. |
 | BrowserProvider | Legacy protocol (`src/browser/provider.py`) kept only for test scaffolding; superseded in production by `MCPToolSource` and `ToolCallNormalizer`. |
 | BrowserResult | Provider-neutral browser action result shape with status, content, error, and optional error code. |
-| BrowserToolNormalizer | `ToolCallNormalizer` in `src/browser/normalization.py` that maps canonical `browser.*` names to the tool the browser server actually exposes. |
 | ChatModel | Provider-neutral chat protocol in `src/llm.py`: `async complete(messages, *, tools, **params) -> ModelResponse`. Provider adapters implement it; the engine drives it and never sees provider objects. |
 | Checkpointer | Removed. There is no checkpoint saver; durable history is carried on `LoopState.messages` and `SessionContext.state`, shaped by the functional `MemoryManager`. |
 | Command hook | Hook with `type: command` (`src/harness/command_hooks.py`): an external process that gets the `HookEvent` as JSON on stdin and answers with its exit code (`2` blocks, stderr is the reason) and optional JSON on stdout, following the Claude Code/Codex protocol. |
@@ -66,7 +65,7 @@
 | Ollama provider | Thin `ChatModel` adapter in `src/providers/ollama.py` (`OllamaChatModel` / `ollama_llm_factory`) that maps neutral `Message`/`ToolDef` objects to Ollama's `/api/chat` shape and parses replies into `ModelResponse`. |
 | Planner | Engine phase that creates or revises compact task plans. |
 | Playwright MCP | Browser automation MCP server the agent uses by default. |
-| PlaywrightMCPBrowserProvider | Removed. Former Playwright adapter; replaced by `MCPManager` + `MCPToolSource` + `BrowserToolNormalizer`. |
+| PlaywrightMCPBrowserProvider | Removed. Former Playwright adapter; replaced by `MCPManager` + `MCPToolSource` + `SchemaArgsNormalizer`. |
 | Policy | The gate result of a tool turn stored on `LoopState.policy_decision` (`approved`, `needs_human`, `blocked`). `blocked` comes from the progress guard, a hook deny or a permission deny; `policy.decided` is emitted only by the progress guard. |
 | PermissionEngine | Session-scoped, deterministic tool authorization in `src/harness/permissions.py`: `PermissionCheck` → `allow`/`ask`/`deny` from rules (`deny > ask > allow`), the mode and session grants; fails closed; emits `permission.decided`. |
 | Permission mode | `permissions.mode`: `default` (no rule → allow), `read_only` (only `readOnlyHint` tools), `dont_ask` (every ask → deny), `bypass` (asks granted; deny rules and `always_ask` hold). |
@@ -102,6 +101,6 @@
 | ToolCallNormalizer | Stateless protocol folded by `ToolBroker` around every call (`normalize_request` before, `normalize_result` after). |
 | ToolDef | Provider-neutral, model-visible tool schema (`name`, `description`, `input_schema`) independent of any provider. |
 | ToolRegistry | Lazy registry that exposes tools from static lists, generic providers, browser providers, or MCP clients. |
-| ToolRoles | Contract in `src/contracts.py` telling the engine which exposed tool returns the environment snapshot (`is_observation`) and which tools act on that environment (`is_stateful`); `BrowserToolRoles` in `src/browser/roles.py`, `NullToolRoles` (no roles, no snapshot kept) by default. Reaches the engine as `EngineResources.tool_roles`. |
+| Kept snapshots | `BrowserState.snapshots`: per tool server, the output of its latest successful read-only (MCP `readOnlyHint`) call; a successful state-changing call of that server drops the entry. Decided by annotations, never by tool names; replaces the removed `ToolRoles`. |
 | Trace replay | Loading `events.jsonl` records to summarize terminal status and print compact action sequences for diagnostics or eval failures. |
 | Turn cap | `settings.loop.turn_cap` (default 50) upper bound on engine turns before the run is blocked; set via `AUTOBROWSER_LOOP__TURN_CAP`. |

@@ -162,7 +162,7 @@ python main.py --show-state --task "inspect page"
 ```
 
 Useful flags include `--show-state`, `--show-tools`, `--json`,
-`--hide-snapshot`, `--compress-tools`, `--model`, `--temperature`,
+`--compress-tools`, `--model`, `--temperature`,
 `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap` and
 `--permission-mode`. `--loop` remains accepted as a compatibility flag, but the
 CLI now uses the long-lived session loop by default.

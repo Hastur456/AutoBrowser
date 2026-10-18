@@ -129,8 +129,7 @@ Useful REPL commands:
 | `clear` | Clear dialogue history. |
 | `reset` | Reset the current session by clearing history and state. |
 | `browser` | Show browser/tool status. |
-| `snapshot` | Save a screenshot to the session workspace. |
-| `url` | Show the current page URL. |
+| `url` | Show the page URL the agent last saw. |
 | `help [command]` | Show command help. |
 | `exit` / `quit` | Exit the CLI. |
 
@@ -164,11 +163,11 @@ python main.py --task "open the target page"
 Show per-step state updates while debugging:
 
 ```powershell
-python main.py --show-state --hide-snapshot --task "inspect page"
+python main.py --show-state --task "inspect page"
 ```
 
 Useful flags include `--show-state`, `--show-tools`, `--json`,
-`--hide-snapshot`, `--compress-tools`, `--model`, `--temperature`,
+`--compress-tools`, `--model`, `--temperature`,
 `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap` and
 `--permission-mode`. `--loop` is still accepted for compatibility.
 

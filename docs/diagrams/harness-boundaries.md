@@ -23,7 +23,7 @@ flowchart LR
   SessionCtx --> Harness[BrowserHarness]
   SessionCtx --> Hooks[HookEngine]
   SessionCtx --> Permissions[PermissionEngine: rules, mode, grants]
-  SessionCtx --> Roles[ToolRoles: BrowserToolRoles]
+  SessionCtx --> PromptRes[Prompt resources: browser rules iff a browser server]
   Hooks --> HookHandlers[Hook handlers: builtin_hooks, browser.hooks]
   Hooks --> CommandHooks[CommandHook: external process]
   MCPRuntime --> Manager[MCPManager]
@@ -41,7 +41,6 @@ flowchart LR
   Resources --> LLM
   Resources --> Hooks
   Resources --> Permissions
-  Resources --> Roles
   Tools --> StaticTools[Static tools]
   Tools --> Providers[Generic providers]
   Tools --> ToolSource
@@ -52,7 +51,7 @@ flowchart LR
   TurnController --> ModelDriver[ModelDriver]
   TurnController --> ToolBroker[ToolBroker]
   TurnController --> ObsCompiler[ObservationCompiler]
-  ObsCompiler --> Roles
+  ObsCompiler --> Snapshots[snapshots per server, from readOnlyHint]
   ToolBroker --> Tools
   ToolBroker --> Normalizers
   TurnController --> Journal[Action journal]
@@ -86,10 +85,9 @@ session's approval grants across tasks, and `run_task` passes it through
 `PermissionEngine.from_settings()`: the code-default settings (no rules, `default` mode), never
 the personal config.
 
-Tool roles follow it too, without settings: `SessionContext.tool_roles` is a
-`BrowserToolRoles` (`src/browser/roles.py`) that `run_task` passes through
-`EngineResources.from_harness(..., tool_roles=...)`. The `ObservationCompiler` keeps the
-snapshot a tool with `is_observation` returns and drops it after a successful, non-read-only
-`is_stateful` call. Without roles, `EngineResources` gets `NullToolRoles` and keeps no
-snapshot. The engine imports nothing from `src/browser/`
+No tool name decides anything. The `ObservationCompiler` gets the server and the
+`readOnlyHint` of every call: a successful read-only call stores its output as that server's
+snapshot, a successful state-changing call of the server drops it, other servers are
+untouched. The session hands `ContextAssembler` its prompt resources (the browser rules iff a
+browser server is configured). The engine imports nothing from `src/browser/`
 (`tests/test_engine_boundaries.py`).

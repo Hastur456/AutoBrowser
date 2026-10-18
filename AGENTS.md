@@ -92,7 +92,7 @@ See `docs/decisions/2026-09-28-universal-mcp-manager.md`.
 - `src/harness/mcp_setup.py`: builds the session `MCPRuntime` from settings (default: Playwright MCP over CDP), fills `{cdp_port}`/`{cdp_endpoint}`, fails startup when the browser server is not ready.
 - `src/harness/mcp_tools.py`: `MCPToolSource`/`MCPTool` bridge; the browser server keeps unprefixed `browser_*` names.
 - `src/harness/normalization.py`: `ToolCallNormalizer` protocol and `SchemaArgsNormalizer`.
-- `src/browser/`: shared browser vocabulary only: `names.py` (canonical `browser.*` names), `errors.py`, `contracts.py`, and `normalization.py` (`BrowserToolNormalizer`). `provider.py`/`fake.py` remain as test scaffolding.
+- `src/browser/`: browser adapters that read text formats, never tool names: `pages.py` (page URL from the latest output and kept snapshots), `permissions.py` (permission resources), `memory.py` (memory scope and content policy), `hooks.py`, `errors.py`.
 
 `ToolBroker` folds every call through the registered normalizers (request before, result after).
 
@@ -213,12 +213,11 @@ REPL commands include:
 - `clear`: clear dialogue history.
 - `reset`: reset the current session by clearing history and state.
 - `browser`: show browser/tool status.
-- `snapshot`: save a screenshot to `workspace/screenshots/`.
-- `url`: show the current page URL.
+- `url`: show the page URL the agent last saw (read from session state, no tool call).
 - `help [command]`: show command help.
 - `exit` or `quit`: exit the CLI.
 
-Useful CLI flags include `--loop`, `--show-state`, `--hide-snapshot`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap`, and `--permission-mode`.
+Useful CLI flags include `--loop`, `--show-state`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap`, and `--permission-mode`.
 
 ## Coding Style & Naming Conventions
 
@@ -238,7 +237,7 @@ Prefer focused unit tests for loop decisions, policy decisions, state transition
 
 The MVP is moving away from deterministic, browser-specific rules towards a universal agent without hardcodes: the model decides how to use whatever tools the configured MCP servers expose. Do not add tool-, site- or page-structure-specific rules to the engine, guards, harness or memory policy. The prompts still carry older browser rules; they are revised separately — leave them unchanged unless asked.
 
-Tests, evals and prompts use the exposed tool names (`browser_navigate`, `browser_click`, …); there is no canonical `browser.*` vocabulary and `BrowserToolNormalizer` never translates names. Do not put Playwright MCP schema adaptation in executor or prompt code: add servers through `mcp_servers` and adapt calls with `ToolCallNormalizer`s.
+Tests, evals and prompts use the exposed tool names (`browser_navigate`, `browser_click`, …), but no production code decides by a name: snapshots follow `readOnlyHint` per server and arguments follow the tool schema (`docs/decisions/2026-10-19-name-free-tool-handling.md`). Do not put Playwright MCP schema adaptation in executor or prompt code: add servers through `mcp_servers` and adapt calls with `ToolCallNormalizer`s.
 
 ## Commit & Pull Request Guidelines
 

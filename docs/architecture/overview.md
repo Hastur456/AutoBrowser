@@ -188,10 +188,11 @@ fails startup if the browser server is not ready. `src/harness/mcp_tools.py`
 exposes catalog tools through `MCPToolSource`: the browser server keeps its
 unprefixed `browser_*` names; other servers use `server__tool`.
 
-`src/browser/` now holds only the shared browser vocabulary: canonical
-`browser.*` names (`names.py`), error codes (`errors.py`), typed contracts
-(`contracts.py`), and `BrowserToolNormalizer` (`normalization.py`).
-`BrowserProvider`/`FakeBrowserProvider` remain only as test scaffolding.
+`src/browser/` holds browser adapters that read text formats, never tool names:
+the page URL from the latest output and the kept snapshots (`pages.py`), permission
+resources (`permissions.py`), memory scope and policy (`memory.py`), hooks and error
+codes. Kept snapshots are per tool server and follow the MCP `readOnlyHint`
+([name-free tool handling ADR](../decisions/2026-10-19-name-free-tool-handling.md)).
 
 All tasks in one interactive session share a session identity derived from
 `SessionContext.session_id`, carried as `TaskRequest.session_id`. Each `TaskRecord`
@@ -248,9 +249,8 @@ The executor resolves the requested tool through `ToolRegistry` (via
 `ToolBroker`). Browser request and result normalization is delegated to
 stateless `ToolCallNormalizer`s ([diagram](../diagrams/browser-provider-boundary.md)):
 
-- `BrowserToolNormalizer` resolves canonical `browser.*` names to the tool the
-  browser server exposes;
-- `SchemaArgsNormalizer` removes arguments the tool schema disallows.
+- `SchemaArgsNormalizer` removes arguments the tool schema disallows, for every server
+  alike; no normalizer looks at tool names.
 
 A tool that reports `isError` raises `MCPToolExecutionError`, and the broker propagates any
 `error_code` into the `ToolResult`. Every executed call is recorded in the
