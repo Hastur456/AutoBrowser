@@ -373,8 +373,12 @@ class ObservationSettings(_Section):
 
 
 #: Memory keys that were removed but are still accepted (and ignored, with a warning) so an
-#: old ``.env``/``config.yaml`` keeps starting. ``max_tool_message_refs`` was never read.
-_REMOVED_MEMORY_KEYS = ("max_tool_message_refs",)
+#: old ``.env``/``config.yaml`` keeps starting, with the reason shown in the warning.
+_REMOVED_MEMORY_KEYS = {
+    "max_tool_message_refs": "it was never used",
+    "compressed_snapshot_summary_chars": "every tool now uses compressed_tool_result_chars",
+    "compressed_snapshot_error_chars": "every tool now uses compressed_tool_result_chars",
+}
 
 
 class MemorySettings(_Section):
@@ -388,15 +392,16 @@ class MemorySettings(_Section):
     @model_validator(mode="before")
     @classmethod
     def _drop_removed_keys(cls, data: Any) -> Any:
-        if isinstance(data, dict) and any(key in data for key in _REMOVED_MEMORY_KEYS):
-            data = {key: value for key, value in data.items() if key not in _REMOVED_MEMORY_KEYS}
+        if not isinstance(data, dict):
+            return data
+        for key in [key for key in data if key in _REMOVED_MEMORY_KEYS]:
             warnings.warn(
-                "memory.max_tool_message_refs was removed (it was never used); "
+                f"memory.{key} was removed ({_REMOVED_MEMORY_KEYS[key]}); "
                 "delete it from your .env / config file.",
                 FutureWarning,
                 stacklevel=2,
             )
-        return data
+        return {key: value for key, value in data.items() if key not in _REMOVED_MEMORY_KEYS}
 
     compact_tool_output_min_chars: Annotated[
         int,
@@ -415,26 +420,10 @@ class MemorySettings(_Section):
             ge=1,
             description=(
                 "With --compress-tools: characters of the summary or error kept in a "
-                "tool message."
+                "tool message, for every tool alike."
             ),
         ),
     ] = 500
-
-    compressed_snapshot_summary_chars: Annotated[
-        int,
-        Field(
-            ge=1,
-            description="With --compress-tools: characters of a snapshot summary kept.",
-        ),
-    ] = 300
-
-    compressed_snapshot_error_chars: Annotated[
-        int,
-        Field(
-            ge=1,
-            description="With --compress-tools: characters of a snapshot error kept.",
-        ),
-    ] = 400
 
     # -- L1 working context / L3 session -------------------------------------
 

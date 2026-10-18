@@ -753,6 +753,18 @@ def test_the_removed_max_tool_message_refs_is_ignored_with_a_warning(
     assert not hasattr(memory, "max_tool_message_refs")
 
 
+def test_the_removed_snapshot_compression_limits_are_ignored_with_a_warning(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_MEMORY__COMPRESSED_SNAPSHOT_SUMMARY_CHARS", "300")
+
+    with pytest.warns(FutureWarning, match="compressed_snapshot_summary_chars"):
+        memory = settings().memory
+
+    assert not hasattr(memory, "compressed_snapshot_summary_chars")
+
+
 def test_the_removed_latest_state_timeout_is_ignored_with_a_warning(
     settings: Any,
     monkeypatch: pytest.MonkeyPatch,

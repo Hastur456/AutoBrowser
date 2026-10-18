@@ -314,16 +314,14 @@ class MemoryManager:
         *,
         compress: bool = False,
     ) -> str:
-        """Build a tool-message body, optionally compacting raw browser artifacts."""
+        """Build a tool-message body; with ``compress`` every tool is cut to the same
+        ``compressed_tool_result_chars`` (no tool is special-cased)."""
 
         if not compress:
             return _raw_tool_message(result)
 
         settings = self._memory_settings()
         tool_name = str(result.get("name", "tool") or "tool").strip()
-        if tool_name == "browser_snapshot":
-            return _snapshot_tool_message(result, compact, settings)
-
         limit = settings.compressed_tool_result_chars
         status = str(result.get("status", "error") or "error")
         if status == "error":
@@ -408,29 +406,6 @@ def _safe_compact_value(value: Any, limit: int) -> str:
 
 def _raw_value(value: Any) -> str:
     return str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-
-
-def _snapshot_tool_message(
-    result: ToolResult,
-    compact: CompactToolObservation,
-    settings: MemorySettings,
-) -> str:
-    tool_name = str(result.get("name", "browser_snapshot") or "browser_snapshot")
-    status = str(result.get("status", "error") or "error")
-    if status == "error":
-        error = _safe_compact_value(
-            result.get("error", "") or "Snapshot failed.",
-            settings.compressed_snapshot_error_chars,
-        )
-        return "\n\n".join(part for part in [tool_name, "Tool failed.", error] if part)
-
-    summary = _safe_compact_value(
-        compact.get("summary"), settings.compressed_snapshot_summary_chars
-    )
-
-    parts = [tool_name, summary]
-
-    return "\n\n".join(part for part in parts if part)
 
 
 def _raw_tool_message(result: ToolResult) -> str:

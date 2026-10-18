@@ -129,10 +129,8 @@ memory:
   # same tool exists; shorter outputs are always kept.
   compact_tool_output_min_chars: 1000           # (default)
   # With --compress-tools: characters kept of a tool message's summary or error,
-  # of a snapshot summary and of a snapshot error.
+  # for every tool alike.
   compressed_tool_result_chars: 500             # (default)
-  compressed_snapshot_summary_chars: 300        # (default)
-  compressed_snapshot_error_chars: 400          # (default)
   # Ceiling on the characters of the conversation history; past it the oldest
   # tool outputs become a [cleared] placeholder. 0 disables the budget.
   history_budget_chars: 0                       # (default)
