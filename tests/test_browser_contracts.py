@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 from typing import get_args
 
 from src.browser import (
@@ -7,34 +8,12 @@ from src.browser import (
     BROWSER_ERROR_INVALID_REF,
     BrowserErrorCode,
 )
-from src.browser.names import (
-    SNAPSHOT_TOOL,
-    is_browser_snapshot_name,
-    is_browser_tool_name,
-)
-from src.browser.roles import BrowserToolRoles
 
 
-def test_browser_tool_names_are_the_exposed_names() -> None:
-    assert SNAPSHOT_TOOL == "browser_snapshot"
-    assert is_browser_tool_name("browser_missing")
-    assert not is_browser_tool_name("fs__read")
-    assert is_browser_snapshot_name("browser_snapshot")
-
-
-def test_browser_tool_roles_follow_the_exposed_names() -> None:
-    roles = BrowserToolRoles()
-
-    assert roles.is_observation("browser_snapshot")
-    assert not roles.is_observation("browser_click")
-    assert roles.is_stateful("browser_click")
-    assert roles.is_stateful("browser_snapshot")
-    assert not roles.is_stateful("fs__read")
-
-
-def test_the_old_dotted_vocabulary_is_gone() -> None:
-    assert not is_browser_tool_name("browser.click")
-    assert not is_browser_snapshot_name("browser.snapshot")
+def test_there_is_no_browser_tool_vocabulary_any_more() -> None:
+    # Browser tools are recognised by their server and annotations, never by name.
+    for module in ("src.browser.names", "src.browser.roles", "src.browser.normalization"):
+        assert importlib.util.find_spec(module) is None, module
 
 
 def test_browser_error_codes_export_shared_vocabulary() -> None:

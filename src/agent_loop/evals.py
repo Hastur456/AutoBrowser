@@ -22,7 +22,6 @@ from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.replay import TraceSummary, print_action_sequence, summarize_trace
 from src.agent_loop.skills import browser_agent_rules_resource
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
-from src.browser.names import is_browser_tool_name
 from src.browser.permissions import BrowserResourceResolver
 from src.config import PermissionsSettings
 from src.contracts import (
@@ -61,6 +60,10 @@ class _FakeBrowserTools:
         self._snapshots = list(snapshots)
         self._snapshot_index = 0
         self._tools = self._build_tools()
+        self._tool_names = frozenset(tool.name for tool in self._tools)
+        self._ref_tools = frozenset(
+            tool.name for tool in self._tools if "ref" in tool.input_schema.get("properties", {})
+        )
 
     async def get_tools(self) -> Sequence[Any]:
         return list(self._tools)
@@ -72,11 +75,8 @@ class _FakeBrowserTools:
         normalized_request = dict(request)
         args = dict(request.get("args") or {})
         requested_name = str(request.get("name", "") or "").strip()
-        if not is_browser_tool_name(requested_name):
-            normalized_request["args"] = args
-            return normalized_request
-
-        if requested_name in {"browser_click", "browser_hover", "browser_type"}:
+        # Only its own element tools (those whose schema takes a ``ref``) are adapted.
+        if requested_name in self._ref_tools:
             ref = self._ref_from_args(args)
             if ref:
                 args.setdefault("ref", ref)
@@ -90,7 +90,7 @@ class _FakeBrowserTools:
         tool_name = str(normalized_result.get("name", "") or "")
         if (
             normalized_result.get("status") != "error"
-            or not is_browser_tool_name(tool_name)
+            or tool_name not in self._tool_names
             or normalized_result.get("error_code")
         ):
             return normalized_result
