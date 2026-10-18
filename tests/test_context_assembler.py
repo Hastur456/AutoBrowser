@@ -12,13 +12,15 @@ class FakeTool:
     description: str = ""
 
 
+BROWSER = ContextAssembler(resources=[browser_agent_rules_resource()])
+
+
 def test_context_block_model_assembles_state_and_tools() -> None:
-    context = ContextAssembler().assemble(
+    context = BROWSER.assemble(
         {
             "task": "find a product",
             "plan": [{"id": 1, "status": "in_progress", "description": "Search"}],
             "observation": "Searchbox is visible.",
-            "snapshot": 'textbox "Search" [ref=e1]',
         },
         tools=[FakeTool("browser_snapshot", "Capture current page state")],
     )
@@ -40,7 +42,7 @@ def test_context_block_model_assembles_state_and_tools() -> None:
 
 def test_context_assembler_omits_empty_blocks() -> None:
     context = ContextAssembler().assemble(
-        {"task": "summarize notes", "observation": "", "snapshot": ""},
+        {"task": "summarize notes", "observation": ""},
         tools=[],
     )
 
@@ -49,11 +51,8 @@ def test_context_assembler_omits_empty_blocks() -> None:
     assert context.turn_prompt == "Task:\nsummarize notes"
 
 
-def test_browser_rules_appear_for_browser_tools_and_state() -> None:
-    context = ContextAssembler().assemble(
-        {"task": "summarize this page", "snapshot": "button [ref=e1]"},
-        tools=[FakeTool("browser_snapshot")],
-    )
+def test_browser_rules_come_from_the_session_resources() -> None:
+    context = BROWSER.assemble({"task": "summarize this page"}, tools=[FakeTool("anything")])
 
     assert "Browser Rules:" in context.system_prompt
     assert "source of truth" in context.system_prompt
@@ -61,40 +60,23 @@ def test_browser_rules_appear_for_browser_tools_and_state() -> None:
     assert "Browser Snapshot:" not in context.turn_prompt
 
 
-def test_browser_rules_appear_for_explicit_browser_task_without_tools() -> None:
+def test_without_resources_no_browser_text_is_added_whatever_the_tools_or_task() -> None:
+    # Tool names, state keys and task words never switch the browser rules on.
     context = ContextAssembler().assemble(
-        {"task": "open the product page and inspect a page"},
-        tools=[],
-    )
-
-    assert "Browser Rules:" in context.system_prompt
-
-
-def test_browser_rules_are_omitted_for_plain_non_browser_task() -> None:
-    context = ContextAssembler().assemble(
-        {"task": "summarize the provided notes"},
-        tools=[FakeTool("calculator")],
+        {"task": "open the product page and click buy", "snapshots": {"web": "button [ref=e1]"}},
+        tools=[FakeTool("browser_snapshot"), FakeTool("browser_click")],
     )
 
     assert "Browser Rules:" not in context.system_prompt
-    assert "Browser Snapshot:" not in context.turn_prompt
 
 
 def test_browser_rule_resource_is_local_and_deterministic() -> None:
     resource = browser_agent_rules_resource()
 
     assert resource.name == "browser-agent-rules"
+    assert resource.title == "Browser Rules"
     assert resource.path.name == "browser-agent-rules.md"
     assert resource.load().startswith("# Browser Agent Rules")
-
-
-def test_browser_rule_resource_declares_the_tools_it_is_about() -> None:
-    resource = browser_agent_rules_resource()
-
-    assert resource.applies_to_tool("browser_click")
-    assert resource.applies_to_tool(" browser_snapshot ")
-    assert not resource.applies_to_tool("fs__read")
-    assert not resource.applies_to_tool("")
 
 
 def test_context_assembler_sorts_by_priority_then_name_and_source() -> None:

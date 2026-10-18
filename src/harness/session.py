@@ -17,11 +17,13 @@ from src.agent_loop.events import (
     EventEmitter,
     JsonlEventSink,
 )
+from src.agent_loop.context import ContextAssembler
 from src.agent_loop.execution.approval import ApprovalJudge
 from src.agent_loop.execution.loop import Agent, AgentLoopResult, HumanInputCallback
 from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalLimits, GoalRunner
+from src.agent_loop.skills import PromptResource, browser_agent_rules_resource
 from src.config import get_settings
 from src.contracts import PermissionMode, TaskRequest
 from src.harness.hooks import HookEngine, NullHookEngine, registry_digest
@@ -482,6 +484,7 @@ class SessionContext:
         self.harness = harness_factory(
             llm=self.llm,
             tool_registry=self.tool_registry,
+            context_assembler=ContextAssembler(resources=self._prompt_resources()),
             telemetry=self.telemetry,
             event_emitter=self.event_emitter,
             compress_tools=self.config.compress_tools,
@@ -494,6 +497,14 @@ class SessionContext:
             payload={"session_id": self.session_id},
         )
         self.events.emit("session.started", self)
+
+    def _prompt_resources(self) -> list[PromptResource]:
+        """Prompt resources for this session: the browser rules iff a browser server is
+        configured (``browser_mcp_server``), so a session without one sees no browser text."""
+
+        if self.mcp is not None and self.mcp.browser_server:
+            return [browser_agent_rules_resource()]
+        return []
 
     def _initialize_memory(self, settings: Any) -> None:
         """Build the persistent memory store and its context renderer (or switch them off)."""

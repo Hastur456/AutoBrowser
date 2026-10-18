@@ -19,7 +19,7 @@ from src.agent_loop.prompts import (
     PLANNER_SYSTEM_PROMPT,
     PLANNER_USER_PROMPT,
 )
-from src.agent_loop.skills import browser_agent_rules_resource
+from src.agent_loop.skills import PromptResource
 from src.config import get_settings
 from src.harness.tools import tool_name
 
@@ -66,11 +66,20 @@ class ContextAssembler:
 
     This is the sanctioned prompt-assembly boundary for the engine-native loop:
     it knows the agent system prompt and the agent/planner prompts, so the engine
-    never imports prompt resources itself.
+    never imports prompt resources itself. ``resources`` are the prompt resources the
+    composition root chose for this session (the browser rules when a browser server is
+    configured); each is rendered as a system block on every turn. Nothing here inspects
+    tool names, state keys or task words to decide that.
     """
 
-    def __init__(self, system_prompt: str | None = None) -> None:
+    def __init__(
+        self,
+        system_prompt: str | None = None,
+        *,
+        resources: Sequence[PromptResource] = (),
+    ) -> None:
         self._system_prompt = system_prompt or AGENT_SYSTEM_PROMPT
+        self._resources = tuple(resources)
 
     def get_system_prompt(self) -> str:
         """Return the system prompt injected into durable message history."""
@@ -223,11 +232,10 @@ class ContextAssembler:
                     source="tool_registry",
                 )
             )
-        if _is_browser_relevant(state, tools):
-            resource = browser_agent_rules_resource()
+        for resource in self._resources:
             blocks.append(
                 ContextBlock(
-                    name="Browser Rules",
+                    name=resource.title,
                     role="system",
                     content=resource.load(),
                     priority=45,
@@ -288,26 +296,6 @@ def _format_tools(tools: Sequence[Any] | None) -> str:
         description = str(getattr(tool, "description", "") or "").strip()
         lines.append(f"- {name}: {description}" if description else f"- {name}")
     return "\n".join(sorted(lines))
-
-
-def _is_browser_relevant(
-    state: Mapping[str, Any],
-    tools: Sequence[Any] | None,
-) -> bool:
-    resource = browser_agent_rules_resource()
-    if any(resource.applies_to_tool(tool_name(tool)) for tool in tools or []):
-        return True
-    if any(
-        state.get(key)
-        for key in (
-            "snapshots",
-            "last_browser_action",
-            "ineffective_browser_action",
-        )
-    ):
-        return True
-    task = str(state.get("task", "")).lower()
-    return any(term in task for term in resource.trigger_terms)
 
 
 __all__ = [

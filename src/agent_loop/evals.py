@@ -15,10 +15,12 @@ import yaml
 from src.llm import ModelResponse
 from src.messages import Message
 
+from src.agent_loop.context import ContextAssembler
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.agent_loop.execution.loop import Agent
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.replay import TraceSummary, print_action_sequence, summarize_trace
+from src.agent_loop.skills import browser_agent_rules_resource
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
 from src.browser.names import is_browser_tool_name
 from src.browser.permissions import BrowserResourceResolver
@@ -381,6 +383,8 @@ async def run_scenario(scenario: EvalScenario, *, memory: Any | None = None) -> 
     llm = FakeChatModel(responses=scenario.model_responses)
     harness = BrowserHarness(
         llm=llm,
+        # A browser scenario: the same prompt resources a session with a browser server gets.
+        context_assembler=ContextAssembler(resources=[browser_agent_rules_resource()]),
         # Same schema normalizer the real session wires (see src/harness/mcp_setup.py).
         tool_registry=ToolRegistry(
             providers=[provider], normalizers=[SchemaArgsNormalizer(), provider]
