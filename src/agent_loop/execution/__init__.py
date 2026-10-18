@@ -27,14 +27,13 @@ from src.agent_loop.execution.guards import (
     tool_gate_updates,
     tool_request_update,
 )
-from src.agent_loop.execution.completion import native_latest_state_loader
 from src.agent_loop.execution.loop import (
+    Agent,
     AgentLoopEngine,
     AgentLoopResult,
     HumanInputCallback,
     TurnController,
     TurnResult,
-    native_task_runner,
 )
 from src.agent_loop.execution.observation import (
     ObservationCompiler,
@@ -48,6 +47,7 @@ from src.agent_loop.execution.state import (
 from src.agent_loop.execution.tools import ToolBroker
 
 __all__ = [
+    "Agent",
     "AgentLoopEngine",
     "AgentLoopResult",
     "BrowserState",
@@ -62,8 +62,6 @@ __all__ = [
     "compile_observation",
     "done_response",
     "guard_tool_request",
-    "native_latest_state_loader",
-    "native_task_runner",
     "progress_block_reason",
     "replan_response",
     "request_tracking_update",

@@ -95,7 +95,6 @@ def test_defaults_match_the_constants_they_replaced(settings: Any) -> None:
     # was: src/agent_loop/goals.py phase timeouts
     assert config.loop.task_timeout_seconds == 300.0
     assert config.loop.progress_timeout_seconds == 120.0
-    assert config.loop.latest_state_timeout_seconds == 15.0
 
     # was: src/browser/observation.py
     assert config.observation.max_content_preview_chars == 1200
@@ -594,7 +593,6 @@ def test_phase_timeouts_are_clamped_to_the_task_budget(
 
     assert config.loop.task_timeout_seconds == 5.0
     assert config.loop.progress_timeout_seconds == 5.0
-    assert config.loop.latest_state_timeout_seconds == 5.0
 
 
 def test_unknown_keys_are_rejected(settings: Any) -> None:
@@ -753,6 +751,20 @@ def test_the_removed_max_tool_message_refs_is_ignored_with_a_warning(
         memory = settings().memory
 
     assert not hasattr(memory, "max_tool_message_refs")
+
+
+def test_the_removed_latest_state_timeout_is_ignored_with_a_warning(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An old ``.env`` or ``config.yaml`` still naming the dead setting keeps starting."""
+
+    monkeypatch.setenv("AUTOBROWSER_LOOP__LATEST_STATE_TIMEOUT_SECONDS", "15")
+
+    with pytest.warns(FutureWarning, match="latest_state_timeout_seconds"):
+        loop = settings().loop
+
+    assert not hasattr(loop, "latest_state_timeout_seconds")
 
 
 def test_memory_rejects_negative_budgets(settings: Any) -> None:

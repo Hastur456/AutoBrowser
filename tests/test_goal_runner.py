@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -9,7 +8,11 @@ import pytest
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.agent_loop.execution.loop import AgentLoopResult
 from src.agent_loop.execution.state import LoopState
-from src.agent_loop.goals import GoalRunRequest, GoalRunner
+from src.agent_loop.goals import GoalLimits, GoalRunner
+from src.config import LoopSettings
+from src.contracts import TaskRequest
+
+LIMITS = GoalLimits(timeout_seconds=1.0, progress_timeout_seconds=1.0)
 
 
 def native_result(
@@ -29,69 +32,45 @@ def native_result(
     )
 
 
-def make_request() -> GoalRunRequest:
-    return GoalRunRequest(
+def make_request() -> TaskRequest:
+    return TaskRequest(
         task="inspect page",
         task_id="task-1",
-        goal_id="task-1",
-        thread_id="session-1",
-        config={"configurable": {"thread_id": "session-1"}},
+        session_id="session-1",
         state_overrides={"task_id": "task-1"},
+    )
+
+
+def make_runner(
+    task_runner: Any,
+    sink: InMemoryEventSink,
+    limits: GoalLimits = LIMITS,
+) -> GoalRunner:
+    return GoalRunner(
+        task_runner=task_runner,
+        events=EventEmitter(sink, session_id="session-1"),
+        limits=limits,
     )
 
 
 @pytest.mark.asyncio
 async def test_goal_runner_emits_events_calls_task_runner_and_returns_result() -> None:
     sink = InMemoryEventSink()
-    event_emitter = EventEmitter(sink, session_id="session-1")
-    calls: list[tuple[Any, str, Any, dict[str, Any]]] = []
-    state_calls: list[tuple[dict[str, Any], Any | None]] = []
-    harness = object()
-    session_config = object()
-    result = native_result(status="done", final_answer="Finished.")
-    latest_state = {"messages": ["checkpoint"], "final_answer": "Finished."}
+    calls: list[TaskRequest] = []
+    result = native_result(status="done", final_answer="Finished.", messages=["kept"])
+    request = make_request()
 
-    async def task_runner(
-        call_harness: Any,
-        task: str,
-        call_config: Any,
-        task_config: dict[str, Any],
-    ) -> AgentLoopResult:
-        calls.append((call_harness, task, call_config, task_config))
+    async def task_runner(call: TaskRequest) -> AgentLoopResult:
+        calls.append(call)
         return result
 
-    async def latest_state_loader(
-        task_config: dict[str, Any],
-        fallback: Any | None,
-    ) -> dict[str, object] | None:
-        state_calls.append((task_config, fallback))
-        return latest_state
+    goal_result = await make_runner(task_runner, sink).run(request)
 
-    runner = GoalRunner(
-        harness=harness,
-        session_config=session_config,
-        task_runner=task_runner,
-        event_emitter=event_emitter,
-        latest_state_loader=latest_state_loader,
-    )
-
-    goal_result = await runner.run(make_request())
-
-    assert goal_result.task == "inspect page"
-    assert goal_result.task_id == "task-1"
-    assert goal_result.goal_id == "task-1"
+    assert goal_result.request is request
     assert goal_result.result is result
-    assert goal_result.latest_state == latest_state
     assert goal_result.status == "completed"
-    assert calls == [
-        (
-            harness,
-            "inspect page",
-            session_config,
-            {"configurable": {"thread_id": "session-1"}},
-        )
-    ]
-    assert state_calls == [({"configurable": {"thread_id": "session-1"}}, result)]
+    assert calls == [request]
+    assert request.goal_id == request.task_id == "task-1"
     assert [record.type for record in sink.records] == ["goal.started", "goal.completed"]
     assert [record.goal_id for record in sink.records] == ["task-1", "task-1"]
     assert [record.task_id for record in sink.records] == ["task-1", "task-1"]
@@ -100,156 +79,58 @@ async def test_goal_runner_emits_events_calls_task_runner_and_returns_result() -
 
 
 @pytest.mark.asyncio
-async def test_goal_runner_emits_blocked_event_for_blocked_status() -> None:
+@pytest.mark.parametrize(
+    "status, goal_status, event",
+    [("blocked", "blocked", "goal.blocked"), ("cancelled", "cancelled", "goal.cancelled")],
+)
+async def test_goal_runner_emits_the_terminal_event_of_the_status(
+    status: str,
+    goal_status: str,
+    event: str,
+) -> None:
     sink = InMemoryEventSink()
-    event_emitter = EventEmitter(sink, session_id="session-1")
-    result = native_result(
-        status="blocked",
-        final_answer="Blocked: repeated recovery attempts",
-    )
+    result = native_result(status=status, final_answer="Stopped.")
 
-    async def task_runner(
-        _harness: Any,
-        _task: str,
-        _config: Any,
-        _task_config: dict[str, Any],
-    ) -> AgentLoopResult:
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
         return result
 
-    async def latest_state_loader(
-        _task_config: dict[str, Any],
-        fallback: Any | None,
-    ) -> dict[str, object] | None:
-        return dict(result.session_state)
+    goal_result = await make_runner(task_runner, sink).run(make_request())
 
-    runner = GoalRunner(
-        harness=object(),
-        session_config=SimpleNamespace(goal_timeout_seconds=1),
-        task_runner=task_runner,
-        event_emitter=event_emitter,
-        latest_state_loader=latest_state_loader,
-    )
-
-    goal_result = await runner.run(make_request())
-
-    assert goal_result.status == "blocked"
+    assert goal_result.status == goal_status
     assert goal_result.result is result
-    assert [record.type for record in sink.records] == ["goal.started", "goal.blocked"]
-    assert sink.records[1].payload == {"task": "inspect page", "result": result}
-
-
-@pytest.mark.asyncio
-async def test_goal_runner_emits_cancelled_event_for_cancelled_status() -> None:
-    sink = InMemoryEventSink()
-    event_emitter = EventEmitter(sink, session_id="session-1")
-    result = native_result(status="cancelled", final_answer="Cancelled by user.")
-
-    async def task_runner(
-        _harness: Any,
-        _task: str,
-        _config: Any,
-        _task_config: dict[str, Any],
-    ) -> AgentLoopResult:
-        return result
-
-    async def latest_state_loader(
-        _task_config: dict[str, Any],
-        fallback: Any | None,
-    ) -> dict[str, object] | None:
-        return dict(result.session_state)
-
-    runner = GoalRunner(
-        harness=object(),
-        session_config=SimpleNamespace(goal_timeout_seconds=1),
-        task_runner=task_runner,
-        event_emitter=event_emitter,
-        latest_state_loader=latest_state_loader,
-    )
-
-    goal_result = await runner.run(make_request())
-
-    assert goal_result.status == "cancelled"
-    assert goal_result.result is result
-    assert [record.type for record in sink.records] == ["goal.started", "goal.cancelled"]
+    assert [record.type for record in sink.records] == ["goal.started", event]
     assert sink.records[1].payload == {"task": "inspect page", "result": result}
 
 
 @pytest.mark.asyncio
 async def test_goal_runner_emits_failure_event_and_reraises_original_exception() -> None:
     sink = InMemoryEventSink()
-    event_emitter = EventEmitter(sink, session_id="session-1")
-    state_calls: list[tuple[dict[str, Any], Any | None]] = []
     error = RuntimeError("task failed")
-    latest_state = {"messages": ["checkpoint before failure"]}
 
-    async def task_runner(
-        _harness: Any,
-        _task: str,
-        _config: Any,
-        _task_config: dict[str, Any],
-    ) -> AgentLoopResult:
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
         raise error
 
-    async def latest_state_loader(
-        task_config: dict[str, Any],
-        fallback: Any | None,
-    ) -> dict[str, object] | None:
-        state_calls.append((task_config, fallback))
-        return latest_state
-
-    runner = GoalRunner(
-        harness=object(),
-        session_config=object(),
-        task_runner=task_runner,
-        event_emitter=event_emitter,
-        latest_state_loader=latest_state_loader,
-    )
-
     with pytest.raises(RuntimeError) as exc_info:
-        await runner.run(make_request())
+        await make_runner(task_runner, sink).run(make_request())
 
     assert exc_info.value is error
-    assert state_calls == [({"configurable": {"thread_id": "session-1"}}, None)]
     assert [record.type for record in sink.records] == ["goal.started", "goal.failed"]
     assert [record.goal_id for record in sink.records] == ["task-1", "task-1"]
-    assert [record.task_id for record in sink.records] == ["task-1", "task-1"]
     assert sink.records[1].payload == {"task": "inspect page", "error": error}
 
 
 @pytest.mark.asyncio
 async def test_goal_runner_times_out_and_emits_failure_event() -> None:
     sink = InMemoryEventSink()
-    event_emitter = EventEmitter(sink, session_id="session-1")
-    state_calls: list[tuple[dict[str, Any], Any | None]] = []
 
-    async def task_runner(
-        _harness: Any,
-        _task: str,
-        _config: Any,
-        _task_config: dict[str, Any],
-    ) -> AgentLoopResult:
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
         await asyncio.sleep(0.1)
         return native_result(status="done", final_answer="never reached")
 
-    async def latest_state_loader(
-        task_config: dict[str, Any],
-        fallback: Any | None,
-    ) -> dict[str, object] | None:
-        state_calls.append((task_config, fallback))
-        return {"decision": "tool_call", "observation": "waiting"}
-
-    runner = GoalRunner(
-        harness=object(),
-        session_config=SimpleNamespace(goal_timeout_seconds=0.01),
-        task_runner=task_runner,
-        event_emitter=event_emitter,
-        latest_state_loader=latest_state_loader,
-    )
-
+    limits = GoalLimits(timeout_seconds=0.01, progress_timeout_seconds=0.01)
     with pytest.raises(TimeoutError, match="timed out after 0.01"):
-        await runner.run(make_request())
+        await make_runner(task_runner, sink, limits).run(make_request())
 
-    assert state_calls == [({"configurable": {"thread_id": "session-1"}}, None)]
     assert [record.type for record in sink.records] == ["goal.started", "goal.failed"]
     assert sink.records[1].payload["task"] == "inspect page"
     assert isinstance(sink.records[1].payload["error"], TimeoutError)
@@ -258,16 +139,9 @@ async def test_goal_runner_times_out_and_emits_failure_event() -> None:
 @pytest.mark.asyncio
 async def test_goal_runner_watchdog_fails_when_events_stop() -> None:
     sink = InMemoryEventSink()
-    event_emitter = EventEmitter(sink, session_id="session-1")
-    state_calls: list[tuple[dict[str, Any], Any | None]] = []
     cancelled = False
 
-    async def task_runner(
-        _harness: Any,
-        _task: str,
-        _config: Any,
-        _task_config: dict[str, Any],
-    ) -> AgentLoopResult:
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
         nonlocal cancelled
         try:
             await asyncio.Event().wait()
@@ -276,29 +150,11 @@ async def test_goal_runner_watchdog_fails_when_events_stop() -> None:
             raise
         return native_result(status="done", final_answer="never reached")
 
-    async def latest_state_loader(
-        task_config: dict[str, Any],
-        fallback: Any | None,
-    ) -> dict[str, object] | None:
-        state_calls.append((task_config, fallback))
-        return {"decision": "tool_call", "observation": "stalled"}
-
-    runner = GoalRunner(
-        harness=object(),
-        session_config=SimpleNamespace(
-            goal_timeout_seconds=1,
-            goal_watchdog_seconds=0.01,
-        ),
-        task_runner=task_runner,
-        event_emitter=event_emitter,
-        latest_state_loader=latest_state_loader,
-    )
-
+    limits = GoalLimits(timeout_seconds=1.0, progress_timeout_seconds=0.01)
     with pytest.raises(TimeoutError, match="made no progress for 0.01"):
-        await runner.run(make_request())
+        await make_runner(task_runner, sink, limits).run(make_request())
 
     assert cancelled is True
-    assert state_calls == [({"configurable": {"thread_id": "session-1"}}, None)]
     assert [record.type for record in sink.records] == ["goal.started", "goal.failed"]
     assert isinstance(sink.records[1].payload["error"], TimeoutError)
 
@@ -306,114 +162,32 @@ async def test_goal_runner_watchdog_fails_when_events_stop() -> None:
 @pytest.mark.asyncio
 async def test_goal_runner_rejects_non_agent_loop_result() -> None:
     sink = InMemoryEventSink()
-    event_emitter = EventEmitter(sink, session_id="session-1")
-    state_calls: list[tuple[dict[str, Any], Any | None]] = []
 
-    async def task_runner(
-        _harness: Any,
-        _task: str,
-        _config: Any,
-        _task_config: dict[str, Any],
-    ) -> AgentLoopResult:
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
         return {"final_answer": "done"}  # type: ignore[return-value]
 
-    async def latest_state_loader(
-        task_config: dict[str, Any],
-        fallback: Any | None,
-    ) -> dict[str, object] | None:
-        state_calls.append((task_config, fallback))
-        return {"final_answer": "done"}
-
-    runner = GoalRunner(
-        harness=object(),
-        session_config=SimpleNamespace(goal_timeout_seconds=1),
-        task_runner=task_runner,
-        event_emitter=event_emitter,
-        latest_state_loader=latest_state_loader,
-    )
-
     with pytest.raises(RuntimeError, match="without a terminal goal state"):
-        await runner.run(make_request())
+        await make_runner(task_runner, sink).run(make_request())
 
-    assert state_calls == [
-        (
-            {"configurable": {"thread_id": "session-1"}},
-            {"final_answer": "done"},
-        )
-    ]
     assert [record.type for record in sink.records] == ["goal.started", "goal.failed"]
 
 
 @pytest.mark.asyncio
 async def test_goal_runner_rejects_non_terminal_status() -> None:
     sink = InMemoryEventSink()
-    event_emitter = EventEmitter(sink, session_id="session-1")
-    state_calls: list[tuple[dict[str, Any], Any | None]] = []
 
-    async def task_runner(
-        _harness: Any,
-        _task: str,
-        _config: Any,
-        _task_config: dict[str, Any],
-    ) -> AgentLoopResult:
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
         return native_result(status="continue", final_answer="")
 
-    async def latest_state_loader(
-        task_config: dict[str, Any],
-        fallback: Any | None,
-    ) -> dict[str, object] | None:
-        state_calls.append((task_config, fallback))
-        return {"observation": "still looping"}
-
-    runner = GoalRunner(
-        harness=object(),
-        session_config=SimpleNamespace(goal_timeout_seconds=1),
-        task_runner=task_runner,
-        event_emitter=event_emitter,
-        latest_state_loader=latest_state_loader,
-    )
-
     with pytest.raises(RuntimeError, match="without a terminal goal state"):
-        await runner.run(make_request())
+        await make_runner(task_runner, sink).run(make_request())
 
     assert [record.type for record in sink.records] == ["goal.started", "goal.failed"]
 
 
-@pytest.mark.asyncio
-async def test_goal_runner_uses_terminal_result_when_latest_state_loader_stalls() -> None:
-    sink = InMemoryEventSink()
-    event_emitter = EventEmitter(sink, session_id="session-1")
-    result = native_result(status="done", final_answer="Finished.")
-
-    async def task_runner(
-        _harness: Any,
-        _task: str,
-        _config: Any,
-        _task_config: dict[str, Any],
-    ) -> AgentLoopResult:
-        return result
-
-    async def latest_state_loader(
-        _task_config: dict[str, Any],
-        _fallback: Any | None,
-    ) -> dict[str, object] | None:
-        await asyncio.Event().wait()
-        return None
-
-    runner = GoalRunner(
-        harness=object(),
-        session_config=SimpleNamespace(
-            goal_timeout_seconds=1,
-            latest_state_timeout_seconds=0.01,
-        ),
-        task_runner=task_runner,
-        event_emitter=event_emitter,
-        latest_state_loader=latest_state_loader,
+def test_goal_limits_come_from_the_loop_settings() -> None:
+    limits = GoalLimits.from_settings(
+        LoopSettings(task_timeout_seconds=30.0, progress_timeout_seconds=10.0)
     )
 
-    goal_result = await runner.run(make_request())
-
-    assert goal_result.status == "completed"
-    assert goal_result.result is result
-    assert goal_result.latest_state == dict(result.session_state)
-    assert [record.type for record in sink.records] == ["goal.started", "goal.completed"]
+    assert limits == GoalLimits(timeout_seconds=30.0, progress_timeout_seconds=10.0)

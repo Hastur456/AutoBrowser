@@ -10,7 +10,7 @@ Ownership is split so the engine is a control-flow owner, not a wrapper:
 - :class:`AgentLoopEngine` owns the explicit ``while`` turn loop, the turn cap, plan
   (re)building, and the terminal :class:`AgentLoopResult`.
 - :class:`TurnController` owns exactly one turn — the ``agent`` step (terminal guard,
-  pending-tab activation, then a model turn whose action is classified) and, for a tool-call
+  then a model turn whose action is classified) and, for a tool-call
   decision, the ``policy -> execute -> observe`` sub-turn — returning a structured :class:`TurnResult` the engine acts on.
 - Completion decisions live in :class:`~src.agent_loop.execution.guards.CompletionController`
   and observation building in :class:`~src.agent_loop.execution.observation.ObservationCompiler`.
@@ -23,7 +23,7 @@ once per blocked turn (matching v1's ``policy -> agent`` edge that skips the obs
 Decoupling: this module imports **nothing** from ``src/agent/``. It reuses the already
 engine-native model/action layer (:mod:`src.agent_loop.model`, :mod:`src.agent_loop.actions`),
 the ported control logic in this package, the neutral contracts in :mod:`src.contracts`, and
-harness leaves (message history, tool registry, event metadata keys). The planner prompt is
+harness leaves (message history, tool registry). The planner prompt is
 reached through :meth:`ContextAssembler.plan_prompt` — the sanctioned prompt boundary.
 
 Event contract: only existing ``EventType`` literals are emitted (``model.requested`` /
@@ -77,15 +77,12 @@ from src.contracts import (
     PermissionCheck,
     PermissionVerdict,
     PlanStep,
+    TaskRequest,
     ToolRequest,
     ToolResult,
 )
 from src.harness.hooks import HookDecisionRecord, HookOutcome
 from src.harness.memory import ensure_message_history
-from src.harness.runtime import (
-    HARNESS_EVENT_METADATA_CONFIG_KEY,
-    HARNESS_STATE_OVERRIDES_CONFIG_KEY,
-)
 from src.harness.tools import tool_is_read_only, tool_name
 from src.messages import Message, user_message
 
@@ -929,7 +926,7 @@ class AgentLoopEngine:
     terminating as each :class:`TurnResult` directs, and returns the terminal
     :class:`AgentLoopResult`. Lifecycle concerns (goal events, watchdog, timeouts) stay in the
     enclosing :class:`~src.agent_loop.goals.GoalRunner`, which drives this engine through
-    :func:`native_task_runner`.
+    :class:`Agent`.
     """
 
     def __init__(
@@ -956,15 +953,13 @@ class AgentLoopEngine:
         session_id: str | None = None,
         state_overrides: Mapping[str, Any] | None = None,
         turn_cap: int | None = None,
-        event_context: Mapping[str, Any] | None = None,
     ) -> AgentLoopResult:
         """Run the loop to a terminal state and return the :class:`AgentLoopResult`."""
 
-        ctx = dict(event_context or {})
         self._event_ctx = {
-            "session_id": ctx.get("session_id", session_id),
-            "task_id": ctx.get("task_id", task_id),
-            "goal_id": ctx.get("goal_id", goal_id or task_id),
+            "session_id": session_id,
+            "task_id": task_id,
+            "goal_id": goal_id or task_id,
         }
         turn_cap = max(1, int(turn_cap or get_settings().loop.turn_cap))
 
@@ -1117,59 +1112,49 @@ class AgentLoopEngine:
         )
 
 
-def native_task_runner(
-    resources: EngineResources,
-    *,
-    human_input: HumanInputCallback | None = None,
-) -> Callable[[Any, str, Any, dict[str, Any]], Awaitable[AgentLoopResult]]:
-    """Build a ``TaskRunner`` (see :data:`src.agent_loop.goals.TaskRunner`) over ``resources``.
+class Agent:
+    """The assembled agent: its :class:`EngineResources` and the human-approval channel.
 
-    The returned coroutine matches ``(harness, task, session_config, task_config)`` and returns
-    an :class:`AgentLoopResult`. It reads the carried state overrides and event metadata the
-    harness stamped onto ``task_config`` and threads them into the engine so emitted events
-    carry the right ``session_id``/``task_id``/``goal_id`` and the ``GoalRunner`` watchdog
-    observes progress on the shared ``EventEmitter``.
+    Built once by the composition root (``SessionContext.build_agent``; evals build their
+    own over fake tools). Each :meth:`run` drives a fresh :class:`AgentLoopEngine` over one
+    :class:`~src.contracts.TaskRequest`; lifecycle concerns (goal events, watchdog,
+    timeouts) stay in the enclosing :class:`~src.agent_loop.goals.GoalRunner`, whose
+    ``TaskRunner`` shape :meth:`run` matches.
     """
 
-    async def _run(
-        harness: Any,
-        task: str,
-        session_config: Any,
-        task_config: dict[str, Any],
-    ) -> AgentLoopResult:
-        state_overrides = task_config.get(HARNESS_STATE_OVERRIDES_CONFIG_KEY) or {}
-        event_metadata = dict(task_config.get(HARNESS_EVENT_METADATA_CONFIG_KEY) or {})
-        turn_cap = int(
-            task_config.get("turn_cap")
-            or getattr(session_config, "turn_cap", None)
-            or get_settings().loop.turn_cap
-        )
-        compress_tools = bool(getattr(session_config, "compress_tools", False))
+    def __init__(
+        self,
+        resources: EngineResources,
+        *,
+        human_input: HumanInputCallback | None = None,
+    ) -> None:
+        self.resources = resources
+        self._human_input = human_input
+
+    async def run(self, request: TaskRequest) -> AgentLoopResult:
+        """Run one task to a terminal :class:`AgentLoopResult`."""
 
         engine = AgentLoopEngine(
-            resources,
-            compress_tools=compress_tools,
-            human_input=human_input,
+            self.resources,
+            compress_tools=request.compress_tools,
+            human_input=self._human_input,
         )
         return await engine.run(
-            task,
-            task_id=str(event_metadata.get("task_id", "")),
-            goal_id=str(event_metadata.get("goal_id", "")),
-            session_id=event_metadata.get("session_id"),
-            state_overrides=state_overrides,
-            turn_cap=turn_cap,
-            event_context=event_metadata,
+            request.task,
+            task_id=request.task_id,
+            goal_id=request.goal_id,
+            session_id=request.session_id,
+            state_overrides=request.state_overrides,
+            turn_cap=request.turn_cap,
         )
-
-    return _run
 
 
 __all__ = [
     "EVENT_SOURCE",
+    "Agent",
     "AgentLoopEngine",
     "AgentLoopResult",
     "HumanInputCallback",
     "TurnController",
     "TurnResult",
-    "native_task_runner",
 ]

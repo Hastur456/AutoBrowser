@@ -337,6 +337,28 @@ class MemoryContentPolicy(Protocol):
         """The reason ``text`` is refused, or ``None`` when it may be stored."""
 
 
+@dataclass(frozen=True)
+class TaskRequest:
+    """One task as the agent runs it: everything the engine needs, nothing else.
+
+    Built by the session for every user task and handed unchanged through
+    ``GoalRunner`` to ``Agent.run``. ``goal_id`` is ``task_id`` by construction.
+    """
+
+    task: str
+    task_id: str
+    session_id: str | None = None
+    #: Durable context carried from the previous task plus the task-local resets.
+    state_overrides: Mapping[str, Any] = field(default_factory=dict)
+    #: Turn budget; ``None`` keeps ``settings.loop.turn_cap``.
+    turn_cap: int | None = None
+    compress_tools: bool = False
+
+    @property
+    def goal_id(self) -> str:
+        return self.task_id
+
+
 def goal_status_from_completion(status: CompletionStatus) -> GoalStatus | None:
     """Map a loop completion status into a terminal goal status.
 
@@ -381,6 +403,7 @@ __all__ = [
     "PolicyDecision",
     "PolicyEvent",
     "RecoveryCounters",
+    "TaskRequest",
     "Tool",
     "ToolDef",
     "ToolRequest",

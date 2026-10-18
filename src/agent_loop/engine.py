@@ -9,19 +9,19 @@ imports (``from src.agent_loop.engine import AgentLoopEngine, AgentLoopResult``)
 from __future__ import annotations
 
 from src.agent_loop.execution.loop import (
+    Agent,
     AgentLoopEngine,
     AgentLoopResult,
     HumanInputCallback,
     TurnController,
     TurnResult,
-    native_task_runner,
 )
 
 __all__ = [
+    "Agent",
     "AgentLoopEngine",
     "AgentLoopResult",
     "HumanInputCallback",
     "TurnController",
     "TurnResult",
-    "native_task_runner",
 ]

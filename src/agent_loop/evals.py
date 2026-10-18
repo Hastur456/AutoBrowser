@@ -7,7 +7,6 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -16,7 +15,7 @@ import yaml
 from src.llm import ModelResponse
 from src.messages import Message
 
-from src.agent_loop.engine import native_task_runner
+from src.agent_loop.engine import Agent
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.replay import TraceSummary, print_action_sequence, summarize_trace
@@ -26,9 +25,16 @@ from src.browser.normalization import BrowserToolNormalizer
 from src.browser.permissions import BrowserResourceResolver
 from src.browser.roles import BrowserToolRoles
 from src.config import PermissionsSettings
-from src.contracts import ApprovalAnswer, PermissionVerdict, Tool, ToolRequest, ToolResult
+from src.contracts import (
+    ApprovalAnswer,
+    PermissionVerdict,
+    TaskRequest,
+    Tool,
+    ToolRequest,
+    ToolResult,
+)
 from src.harness.permissions import PermissionEngine
-from src.harness.runtime import HARNESS_EVENT_METADATA_CONFIG_KEY, BrowserHarness
+from src.harness.runtime import BrowserHarness
 from src.harness.tools import ToolRegistry
 
 _INVALID_REF_PATTERN = re.compile(
@@ -399,20 +405,15 @@ async def run_scenario(scenario: EvalScenario, *, memory: Any | None = None) -> 
         task_id=task_id,
         goal_id=task_id,
     )
-    runner = native_task_runner(resources, human_input=_scripted_human(scenario.human_answers))
-    task_config = {
-        HARNESS_EVENT_METADATA_CONFIG_KEY: {
-            "session_id": session_id,
-            "task_id": task_id,
-            "goal_id": task_id,
-        },
-    }
-    session_config = SimpleNamespace(
+    agent = Agent(resources, human_input=_scripted_human(scenario.human_answers))
+    request = TaskRequest(
+        task=scenario.task,
+        task_id=task_id,
+        session_id=session_id,
         turn_cap=scenario.turn_cap,
-        compress_tools=False,
     )
     try:
-        result = await runner(harness, scenario.task, session_config, task_config)
+        result = await agent.run(request)
     except Exception as exc:
         emitter.emit(
             "goal.failed",

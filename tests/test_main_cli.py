@@ -7,12 +7,14 @@ import pytest
 
 from src.agent_loop.execution.loop import AgentLoopResult
 from src.agent_loop.execution.state import LoopState
+from src.contracts import TaskRequest
 from src.cli import bootstrap
 from src.cli.output import format_state, print_tools
 from src.cli.parser import build_parser
 from src.cli.tasks import resolve_task
 from src.harness import chrome
 from src.harness.chrome import start_chrome_cdp
+from tests.session_fakes import install_fake_agent
 
 
 class FakeTool:
@@ -78,11 +80,8 @@ def native_result(final_answer: str = "", *, status: str = "done") -> AgentLoopR
 
 
 def install_runner(monkeypatch: pytest.MonkeyPatch, runner: Any) -> None:
-    """Inject a fake task runner in place of ``native_task_runner``."""
-    monkeypatch.setattr(
-        "src.harness.session.native_task_runner",
-        lambda _resources, **_kwargs: runner,
-    )
+    """Script the session's agent: every task request goes to ``runner``."""
+    install_fake_agent(monkeypatch, runner)
 
 
 def build_session_with(
@@ -211,13 +210,8 @@ async def test_run_agent_prints_final_answer(
 ) -> None:
     monkeypatch.chdir(tmp_path)
 
-    async def task_runner(
-        _harness: Any,
-        task: str,
-        _config: Any,
-        _task_config: dict[str, Any],
-    ) -> AgentLoopResult:
-        return native_result(final_answer=f"done: {task}")
+    async def task_runner(request: TaskRequest) -> AgentLoopResult:
+        return native_result(final_answer=f"done: {request.task}")
 
     install_runner(monkeypatch, task_runner)
     exit_session_after_initial_task(monkeypatch)
@@ -240,13 +234,8 @@ async def test_run_agent_keeps_session_alive_for_prompted_task(
     monkeypatch.chdir(tmp_path)
     prompts = iter(["second task", "quit"])
 
-    async def task_runner(
-        _harness: Any,
-        task: str,
-        _config: Any,
-        _task_config: dict[str, Any],
-    ) -> AgentLoopResult:
-        return native_result(final_answer=f"done: {task}")
+    async def task_runner(request: TaskRequest) -> AgentLoopResult:
+        return native_result(final_answer=f"done: {request.task}")
 
     install_runner(monkeypatch, task_runner)
     build_session_with(monkeypatch, input_fn=lambda _prompt="": next(prompts))
@@ -273,12 +262,7 @@ async def test_no_mcp_does_not_start_chrome_or_load_tools(
     def fail_mcp_runtime_factory(*args: Any, **kwargs: Any) -> FakeMCPRuntime:
         raise AssertionError("MCP should not load in --no-mcp mode")
 
-    async def task_runner(
-        _harness: Any,
-        _task: str,
-        _config: Any,
-        _task_config: dict[str, Any],
-    ) -> AgentLoopResult:
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
         return native_result(final_answer="done")
 
     install_runner(monkeypatch, task_runner)

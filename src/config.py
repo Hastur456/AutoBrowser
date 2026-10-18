@@ -244,8 +244,27 @@ class BrowserSettings(_Section):
         return Path(os.path.expandvars(str(value))).expanduser()
 
 
+#: Loop keys that were removed but are still accepted (and ignored, with a warning) so an
+#: old ``.env``/``config.yaml`` keeps starting. ``latest_state_timeout_seconds`` bounded the
+#: removed latest-state loader; the carried state now comes straight from the result.
+_REMOVED_LOOP_KEYS = ("latest_state_timeout_seconds",)
+
+
 class LoopSettings(_Section):
     """Bounds and phase timeouts for the engine-native agent loop."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_removed_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict) and any(key in data for key in _REMOVED_LOOP_KEYS):
+            data = {key: value for key, value in data.items() if key not in _REMOVED_LOOP_KEYS}
+            warnings.warn(
+                "loop.latest_state_timeout_seconds was removed (nothing waits for the carried "
+                "state any more); delete it from your .env / config file.",
+                FutureWarning,
+                stacklevel=2,
+            )
+        return data
 
     turn_cap: Annotated[
         int,
@@ -308,21 +327,12 @@ class LoopSettings(_Section):
         ),
     ] = 120.0
 
-    latest_state_timeout_seconds: Annotated[
-        float,
-        Field(
-            gt=0.0,
-            description="Budget for unwrapping the carried-forward session state.",
-        ),
-    ] = 15.0
-
     @model_validator(mode="after")
     def _clamp_phase_timeouts(self) -> "LoopSettings":
-        """Keep phase budgets from exceeding the total task budget."""
+        """Keep the stall budget from exceeding the total task budget."""
 
-        for phase in ("progress_timeout_seconds", "latest_state_timeout_seconds"):
-            if getattr(self, phase) > self.task_timeout_seconds:
-                object.__setattr__(self, phase, self.task_timeout_seconds)
+        if self.progress_timeout_seconds > self.task_timeout_seconds:
+            object.__setattr__(self, "progress_timeout_seconds", self.task_timeout_seconds)
         return self
 
 

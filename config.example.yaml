@@ -106,9 +106,6 @@ loop:
   # Silence in the event stream that means "stalled", in seconds. Clamped to
   # task_timeout_seconds, so a smaller task budget shortens it automatically.
   progress_timeout_seconds: 120.0               # (default)
-  # Budget for loading the latest carried-forward session state, in seconds.
-  # Clamped to task_timeout_seconds as well.
-  latest_state_timeout_seconds: 15.0            # (default)
 
 # ---------------------------------------------------------------------------
 # How much tool output reaches the model. Lower = cheaper prompts, higher = less

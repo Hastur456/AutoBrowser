@@ -8,18 +8,12 @@ from typing import Any
 import pytest
 
 from src.agent_loop.execution.loop import AgentLoopResult
-from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import BrowserState, LoopState
 from src.browser.roles import BrowserToolRoles
 from src.config import HooksSettings, PermissionRule, PermissionsSettings, Settings, get_settings
-from src.harness.runtime import (
-    HARNESS_EVENT_METADATA_CONFIG_KEY,
-    HARNESS_STATE_OVERRIDES_CONFIG_KEY,
-)
 from src.harness.session import (
     ArtifactRegistry,
     SESSION_STATE_KEYS,
-    SESSION_THREAD_PREFIX,
     SessionConfig,
     SessionContext,
     SessionEventBus,
@@ -28,9 +22,10 @@ from src.harness.session import (
     WorkspaceContext,
 )
 from src.harness.hooks import HookConfigError, HookEngine, NullHookEngine, registry_digest
-from src.contracts import PermissionCheck
+from src.contracts import PermissionCheck, TaskRequest
 from src.harness.permissions import PermissionEngine
 from src.harness.tools import ToolRegistry
+from tests.session_fakes import BuiltAgent, install_fake_agent
 
 
 @pytest.fixture(autouse=True)
@@ -123,12 +118,9 @@ def test_loop_state_carry_forward_matches_session_state_keys() -> None:
 def install_runner(
     monkeypatch: pytest.MonkeyPatch,
     runner: Any,
-) -> None:
-    """Inject a fake task runner in place of ``native_task_runner``."""
-    monkeypatch.setattr(
-        "src.harness.session.native_task_runner",
-        lambda _resources, **_kwargs: runner,
-    )
+) -> list[BuiltAgent]:
+    """Script the session's agent: every ``TaskRequest`` goes to ``runner``."""
+    return install_fake_agent(monkeypatch, runner)
 
 
 def make_config(**overrides: Any) -> SessionConfig:
@@ -360,14 +352,9 @@ async def test_session_runtime_reuses_context_and_records_task_history(
     monkeypatch.chdir(tmp_path)
     calls: list[Any] = []
 
-    async def task_runner(
-        harness: Any,
-        task: str,
-        config: SessionConfig,
-        task_config: dict[str, Any],
-    ) -> AgentLoopResult:
-        calls.append((harness, task, config, task_config))
-        return native_result(final_answer=f"done: {task}")
+    async def task_runner(request: TaskRequest) -> AgentLoopResult:
+        calls.append(request)
+        return native_result(final_answer=f"done: {request.task}")
 
     install_runner(monkeypatch, task_runner)
     runtime = make_runtime()
@@ -381,15 +368,11 @@ async def test_session_runtime_reuses_context_and_records_task_history(
     assert result.status == "done"
     assert result.final_answer == "done: inspect page"
     assert len(calls) == 1
-    assert calls[0][1] == "inspect page"
-    assert calls[0][3]["metadata"]["model"] == "test-model"
-    assert calls[0][3]["configurable"]["thread_id"] == (
-        f"{SESSION_THREAD_PREFIX}{runtime.context.session_id}"
-    )
-    event_metadata = calls[0][3][HARNESS_EVENT_METADATA_CONFIG_KEY]
-    assert event_metadata["session_id"] == runtime.context.session_id
-    assert event_metadata["task_id"] == runtime.context.tasks[0].task_id
-    assert event_metadata["goal_id"] == runtime.context.tasks[0].task_id
+    assert calls[0].task == "inspect page"
+    assert calls[0].session_id == runtime.context.session_id
+    assert calls[0].task_id == calls[0].goal_id == runtime.context.tasks[0].task_id
+    assert calls[0].turn_cap == 10
+    assert calls[0].compress_tools is False
     assert runtime.context.current_task is None
     assert runtime.context.metadata.task_count == 1
     assert runtime.context.tasks[0].task == "inspect page"
@@ -431,12 +414,7 @@ async def test_session_runtime_watchdog_failure_clears_active_task(
     get_settings.cache_clear()
     cancelled = False
 
-    async def task_runner(
-        _harness: Any,
-        _task: str,
-        _config: SessionConfig,
-        _task_config: dict[str, Any],
-    ) -> AgentLoopResult:
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
         nonlocal cancelled
         try:
             await asyncio.Event().wait()
@@ -472,16 +450,11 @@ async def test_session_runtime_carries_browser_state_between_tasks(
     tmp_path: Path,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    calls: list[tuple[str, dict[str, Any]]] = []
+    calls: list[TaskRequest] = []
 
-    async def task_runner(
-        _harness: Any,
-        task: str,
-        _config: SessionConfig,
-        task_config: dict[str, Any],
-    ) -> AgentLoopResult:
-        calls.append((task, task_config))
-        if task == "find products":
+    async def task_runner(request: TaskRequest) -> AgentLoopResult:
+        calls.append(request)
+        if request.task == "find products":
             return native_result(
                 final_answer="Found Keyboard A.",
                 messages=["prior product list"],
@@ -496,14 +469,9 @@ async def test_session_runtime_carries_browser_state_between_tasks(
     await runtime.run_task("find products")
     await runtime.run_task("open the first one")
 
-    first_config = calls[0][1]
-    second_config = calls[1][1]
-    assert first_config["configurable"]["thread_id"] == second_config["configurable"]["thread_id"]
-    assert first_config["configurable"]["thread_id"] == (
-        f"{SESSION_THREAD_PREFIX}{runtime.context.session_id}"
-    )
+    assert calls[0].session_id == calls[1].session_id == runtime.context.session_id
 
-    overrides = second_config[HARNESS_STATE_OVERRIDES_CONFIG_KEY]
+    overrides = calls[1].state_overrides
     assert overrides["messages"] == ["prior product list"]
     assert overrides["observation"] == "Visible results: first product is Keyboard A."
     assert overrides["snapshot"] == '- link "Keyboard A" ref=e10'
@@ -516,65 +484,13 @@ async def test_session_runtime_carries_browser_state_between_tasks(
 
 
 @pytest.mark.asyncio
-async def test_session_runtime_remembers_latest_harness_state_on_success(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    state_calls: list[tuple[dict[str, Any], Any | None]] = []
-    latest_state: dict[str, object] = {
-        "messages": ["checkpoint message"],
-        "observation": "Checkpoint observation.",
-        "snapshot": '- button "Continue" ref=e1',
-        "final_answer": "Checkpoint answer.",
-    }
-
-    async def task_runner(
-        _harness: Any,
-        _task: str,
-        _config: SessionConfig,
-        _task_config: dict[str, Any],
-    ) -> AgentLoopResult:
-        return native_result(final_answer="runner answer")
-
-    install_runner(monkeypatch, task_runner)
-
-    async def latest_state_loader(
-        task_config: dict[str, Any],
-        fallback: Any | None,
-    ) -> dict[str, object] | None:
-        state_calls.append((task_config, fallback))
-        return latest_state
-
-    monkeypatch.setattr(
-        "src.harness.session.native_latest_state_loader",
-        latest_state_loader,
-    )
-    runtime = make_runtime()
-
-    result = await runtime.run_task("inspect page")
-
-    assert result.final_answer == "runner answer"
-    assert dict(runtime.context.state) == latest_state
-    assert len(state_calls) == 1
-    assert state_calls[0][0]["configurable"]["thread_id"] == (
-        f"{SESSION_THREAD_PREFIX}{runtime.context.session_id}"
-    )
-
-
-@pytest.mark.asyncio
 async def test_session_runtime_remembers_result_session_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     monkeypatch.chdir(tmp_path)
 
-    async def task_runner(
-        _harness: Any,
-        _task: str,
-        _config: SessionConfig,
-        _task_config: dict[str, Any],
-    ) -> AgentLoopResult:
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
         return native_result(
             final_answer="Result answer.",
             messages=["result message"],
@@ -600,12 +516,7 @@ async def test_session_runtime_emits_goal_failed_and_preserves_exception_behavio
     monkeypatch.chdir(tmp_path)
     error = RuntimeError("task failed")
 
-    async def task_runner(
-        _harness: Any,
-        _task: str,
-        _config: SessionConfig,
-        _task_config: dict[str, Any],
-    ) -> AgentLoopResult:
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
         raise error
 
     install_runner(monkeypatch, task_runner)
@@ -656,16 +567,10 @@ async def test_session_loads_hooks_once_and_hands_them_to_the_engine(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     use_hooks(monkeypatch, DENY_ALL_HOOKS)
-    captured: list[Any] = []
-
     async def task_runner(*_args: Any) -> AgentLoopResult:
         return native_result(final_answer="done")
 
-    def runner_factory(resources: Any, **_kwargs: Any) -> Any:
-        captured.append(resources)
-        return task_runner
-
-    monkeypatch.setattr("src.harness.session.native_task_runner", runner_factory)
+    captured = install_runner(monkeypatch, task_runner)
     runtime = make_runtime()
 
     await runtime.run_task("first")
@@ -674,7 +579,8 @@ async def test_session_loads_hooks_once_and_hands_them_to_the_engine(
     hooks = runtime.context.hooks
     assert isinstance(hooks, HookEngine)
     assert hooks.has("pre_tool_use")
-    assert [resources.hooks for resources in captured] == [hooks, hooks]
+    # One agent for the whole session, built with the session's hook engine.
+    assert [agent.resources.hooks for agent in captured] == [hooks]
     assert runtime.context.session_dir is not None
     session_payload = json.loads((runtime.context.session_dir / "session.json").read_text())
     assert session_payload["hooks"] == {
@@ -690,22 +596,16 @@ async def test_disabled_hooks_give_the_engine_a_null_hook_engine(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     use_hooks(monkeypatch, HooksSettings(enabled=False, registry=DENY_ALL_HOOKS.registry))
-    captured: list[Any] = []
-
     async def task_runner(*_args: Any) -> AgentLoopResult:
         return native_result(final_answer="done")
 
-    def runner_factory(resources: Any, **_kwargs: Any) -> Any:
-        captured.append(resources)
-        return task_runner
-
-    monkeypatch.setattr("src.harness.session.native_task_runner", runner_factory)
+    captured = install_runner(monkeypatch, task_runner)
     runtime = make_runtime()
 
     await runtime.run_task("inspect page")
 
     assert isinstance(runtime.context.hooks, NullHookEngine)
-    assert isinstance(captured[0].hooks, NullHookEngine)
+    assert isinstance(captured[0].resources.hooks, NullHookEngine)
     assert runtime.context.session_dir is not None
     session_payload = json.loads((runtime.context.session_dir / "session.json").read_text())
     assert session_payload["hooks"]["enabled"] is False
@@ -820,16 +720,10 @@ async def test_session_builds_one_permission_engine_for_every_task(
         )
     )
     monkeypatch.setattr("src.harness.session.get_settings", lambda: settings)
-    captured: list[Any] = []
-
     async def task_runner(*_args: Any) -> AgentLoopResult:
         return native_result(final_answer="done")
 
-    def runner_factory(resources: Any, **_kwargs: Any) -> Any:
-        captured.append(resources)
-        return task_runner
-
-    monkeypatch.setattr("src.harness.session.native_task_runner", runner_factory)
+    captured = install_runner(monkeypatch, task_runner)
     runtime = make_runtime()
 
     await runtime.run_task("first")
@@ -846,13 +740,13 @@ async def test_session_builds_one_permission_engine_for_every_task(
     assert (upload.decision, upload.rule_id) == ("deny", "no-upload")
     drop = permissions.evaluate(PermissionCheck(tool="browser_drop", server="playwright"))
     assert drop.decision == "allow"
-    assert [resources.permissions for resources in captured] == [permissions, permissions]
+    assert [agent.resources.permissions for agent in captured] == [permissions]
     # A grant from one task is still there for the next one.
-    assert captured[1].permissions.grants == {("playwright", "browser_click", "ozon.ru")}
+    assert captured[0].resources.permissions.grants == {("playwright", "browser_click", "ozon.ru")}
     assert runtime.context.session_dir is not None
     session_payload = json.loads((runtime.context.session_dir / "session.json").read_text())
     assert session_payload["permissions"] == {"mode": "dont_ask", "approval_judge": "off"}
-    assert [resources.approval.mode for resources in captured] == ["off", "off"]
+    assert [agent.resources.approval.mode for agent in captured] == ["off"]
 
 
 @pytest.mark.asyncio
@@ -909,15 +803,8 @@ def use_memory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **fields: Any) -
     return root / "memory"
 
 
-def capture_resources(monkeypatch: pytest.MonkeyPatch, task_runner: Any) -> list[Any]:
-    captured: list[Any] = []
-
-    def runner_factory(resources: Any, **_kwargs: Any) -> Any:
-        captured.append(resources)
-        return task_runner
-
-    monkeypatch.setattr("src.harness.session.native_task_runner", runner_factory)
-    return captured
+def capture_resources(monkeypatch: pytest.MonkeyPatch, task_runner: Any) -> list[BuiltAgent]:
+    return install_runner(monkeypatch, task_runner)
 
 
 def write_entry(root: Path, rel: str, **meta: Any) -> None:
@@ -944,7 +831,7 @@ async def test_disabled_memory_gives_the_engine_a_null_memory(
     await runtime.run_task("inspect page")
 
     assert runtime.context.memory_store is None
-    assert isinstance(captured[0].memory, NullMemoryContext)
+    assert isinstance(captured[0].resources.memory, NullMemoryContext)
     assert [tool.name for tool in await runtime.context.tool_registry.get_all()] == []
     payload = json.loads((runtime.context.session_dir / "session.json").read_text())
     assert payload["memory"] == {"enabled": False, "root": "", "entries": 0, "tools": False}
@@ -967,8 +854,8 @@ async def test_enabled_memory_reaches_the_engine_and_registers_the_tools(
 
     await runtime.run_task("inspect page")
 
-    assert isinstance(captured[0].memory, MemoryContext)
-    assert captured[0].memory is runtime.context.memory
+    assert isinstance(captured[0].resources.memory, MemoryContext)
+    assert captured[0].resources.memory is runtime.context.memory
     names = [tool.name for tool in await runtime.context.tool_registry.get_all()]
     assert names == ["memory_view", "memory_write"]
     assert runtime.context.memory_store.task_id == runtime.context.tasks[0].task_id
@@ -1008,10 +895,9 @@ async def test_finished_tasks_are_digested_at_the_boundary_and_the_last_stays_wh
     use_memory(monkeypatch, tmp_path, keep_recent_tasks=1)
     calls: list[dict[str, Any]] = []
 
-    async def task_runner(
-        _harness: Any, task: str, _config: Any, task_config: dict[str, Any]
-    ) -> AgentLoopResult:
-        overrides = task_config[HARNESS_STATE_OVERRIDES_CONFIG_KEY]
+    async def task_runner(request: TaskRequest) -> AgentLoopResult:
+        task = request.task
+        overrides = dict(request.state_overrides)
         calls.append(overrides)
         messages = list(overrides.get("messages") or [system_message("system")])
         messages += [
@@ -1047,12 +933,9 @@ async def test_a_done_task_promotes_the_entries_it_loaded(
     write_entry(root, "sites/ozon.ru.md", description="Ozon", source="agent:old", status="unverified")
     seen: list[str] = []
 
-    async def task_runner(
-        _harness: Any, _task: str, _config: Any, task_config: dict[str, Any]
-    ) -> AgentLoopResult:
-        task_id = task_config[HARNESS_STATE_OVERRIDES_CONFIG_KEY]["task_id"]
-        state = {"task_id": task_id, "snapshot": "- Page URL: https://ozon.ru/"}
-        seen.append(captured[-1].memory.render(state))
+    async def task_runner(request: TaskRequest) -> AgentLoopResult:
+        state = {"task_id": request.task_id, "snapshot": "- Page URL: https://ozon.ru/"}
+        seen.append(captured[-1].resources.memory.render(state))
         return native_result(final_answer="done")
 
     captured = capture_resources(monkeypatch, task_runner)
@@ -1118,20 +1001,14 @@ async def test_session_runtime_hands_the_engine_browser_tool_roles(
     """The real session wiring must not fall back to NullToolRoles (no snapshot kept)."""
 
     monkeypatch.chdir(tmp_path)
-    seen: list[EngineResources] = []
-
     async def task_runner(*_args: Any) -> AgentLoopResult:
         return native_result(final_answer="done")
 
-    def capture(resources: EngineResources, **_kwargs: Any) -> Any:
-        seen.append(resources)
-        return task_runner
-
-    monkeypatch.setattr("src.harness.session.native_task_runner", capture)
+    seen = install_runner(monkeypatch, task_runner)
     runtime = make_runtime()
 
     await runtime.start()
     await runtime.run_task("inspect page")
 
     assert len(seen) == 1
-    assert isinstance(seen[0].tool_roles, BrowserToolRoles)
+    assert isinstance(seen[0].resources.tool_roles, BrowserToolRoles)
