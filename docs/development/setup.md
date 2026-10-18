@@ -2,8 +2,8 @@
 
 ## Requirements
 
-- Python 3.12
-- Dependencies from `requirements.txt`
+- [uv](https://docs.astral.sh/uv/) (it provides Python 3.12 and the dependencies from
+  `pyproject.toml` / `uv.lock`)
 - Ollama-compatible chat model for normal CLI runs
 - Chrome/Chromium and Playwright MCP tooling for browser-enabled runs
 
@@ -14,10 +14,14 @@ are local or generated state and should not be treated as source.
 ## Install
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+uv sync
 ```
+
+`uv sync` creates `.venv` from `uv.lock` (Python 3.12 is fetched if missing) and keeps it
+exactly in line with the lock, removing packages that are not declared. Run everything
+through `uv run`, no activation needed. `requirements.txt` is exported from the lock
+(`uv export --format requirements.txt --no-hashes --no-annotate --no-header --no-emit-project
+-o requirements.txt`) for a plain pip fallback.
 
 ## Configuration
 
@@ -77,42 +81,42 @@ processes. CLI flags such as `--chrome-path`, `--cdp-port`, `--model`, and
 Run the full test suite:
 
 ```powershell
-python -m pytest
+uv run pytest
 ```
 
 Run a targeted file:
 
 ```powershell
-python -m pytest tests\test_harness_session.py
+uv run pytest tests\test_harness_session.py
 ```
 
 Run prompt tests after changing agent, planner, or observer prompts:
 
 ```powershell
-python -m pytest tests\test_prompts.py
+uv run pytest tests\test_prompts.py
 ```
 
 Run MCP and tool-normalization tests after changing `src/mcp/`, `src/browser/`,
 `src/harness/mcp_*.py`, broker normalization, or MCP server configuration:
 
 ```powershell
-python -m pytest tests\test_browser_contracts.py tests\test_browser_normalization.py tests\test_mcp_manager.py tests\test_mcp_tools_bridge.py
+uv run pytest tests\test_browser_contracts.py tests\test_schema_args_normalizer.py tests\test_mcp_manager.py tests\test_mcp_tools_bridge.py
 ```
 
 Run Agent Loop contract and observability tests after changing `src/agent_loop/`
 or scripts that consume session traces:
 
 ```powershell
-python -m pytest tests\test_agent_loop_events.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py tests\test_messages.py
-python -m pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
-python -m pytest tests\test_context_assembler.py tests\test_goal_runner.py
+uv run pytest tests\test_agent_loop_events.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py tests\test_messages.py
+uv run pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
+uv run pytest tests\test_context_assembler.py tests\test_goal_runner.py
 ```
 
 Run harness and CLI boundary tests after changing session/runtime/tool wiring:
 
 ```powershell
-python -m pytest tests\test_harness_session.py tests\test_harness_runtime.py tests\test_harness_tools.py tests\test_harness_telemetry.py
-python -m pytest tests\test_main_cli.py
+uv run pytest tests\test_harness_session.py tests\test_harness_runtime.py tests\test_harness_tools.py tests\test_harness_telemetry.py
+uv run pytest tests\test_main_cli.py
 ```
 
 ## CLI Usage
@@ -120,7 +124,7 @@ python -m pytest tests\test_main_cli.py
 Start the interactive `cmd2` REPL:
 
 ```powershell
-python main.py
+uv run main.py
 ```
 
 The REPL exposes the base commands documented by `help`. Free-form input is
@@ -143,13 +147,13 @@ each new task.
 Run an initial task before entering the REPL:
 
 ```powershell
-python main.py --task "open the target page"
+uv run main.py --task "open the target page"
 ```
 
 Dry check without MCP browser tools:
 
 ```powershell
-python main.py --no-mcp
+uv run main.py --no-mcp
 ```
 
 `--no-mcp` keeps the REPL available but disables live browser access, including
@@ -158,7 +162,7 @@ navigation, snapshots, and current URL lookup.
 Debug state updates:
 
 ```powershell
-python main.py --show-state --task "inspect page"
+uv run main.py --show-state --task "inspect page"
 ```
 
 Useful flags include `--show-state`, `--show-tools`, `--json`,
@@ -182,26 +186,26 @@ context-mode switch (and its `legacy` rollback path) was removed.
 Run JSONL Golden Set scenarios through fresh `SessionRuntime` instances:
 
 ```powershell
-python scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
+uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
 ```
 
 Export persisted session task rows:
 
 ```powershell
-python scripts/export_sessions.py --out .autobrowser\exports\runs.jsonl
+uv run scripts/export_sessions.py --out .autobrowser\exports\runs.jsonl
 ```
 
 Inspect a durable event trace:
 
 ```powershell
-python scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
-python scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.jsonl
+uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
+uv run scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.jsonl
 ```
 
 Compare deterministic fake-browser eval scenarios with the baseline:
 
 ```powershell
-python scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
+uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
 ```
 
 ## Development Guidelines
@@ -239,7 +243,7 @@ When changing prompts:
 
 1. Update the relevant prompt file under `src/agent_loop/prompts.py`.
 2. Add or adjust assertions in `tests/test_prompts.py`.
-3. Run `python -m pytest tests\test_prompts.py`.
+3. Run `uv run pytest tests\test_prompts.py`.
 4. For behavior-sensitive browser changes, run at least one CLI trace with
    `--show-state` and inspect the tool sequence for loops.
 

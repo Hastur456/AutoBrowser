@@ -10,7 +10,7 @@
 # To use a different file instead (or a second machine-specific profile), point
 # the process at it explicitly:
 #
-#   AUTOBROWSER_CONFIG_FILE=config.local.yaml python main.py --task "inspect page"
+#   AUTOBROWSER_CONFIG_FILE=config.local.yaml uv run main.py --task "inspect page"
 #
 # That name must be a real environment variable. A line in .env will not work:
 # the path is resolved before settings are built, from the process environment

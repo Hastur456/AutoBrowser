@@ -297,19 +297,19 @@ guide: `docs/development/memory.md`; ADR: `docs/decisions/2026-10-02-layered-age
 ## Commands
 
 ```powershell
-python -m venv .venv; .\.venv\Scripts\Activate.ps1; python -m pip install -r requirements.txt
+uv sync                                       # .venv from uv.lock; run everything via `uv run`
 
-python -m pytest                              # full suite
-python -m pytest tests\test_harness_session.py  # engine + session lifecycle
-python -m pytest tests\test_prompts.py        # ALWAYS run after changing any prompt
+uv run pytest                                 # full suite
+uv run pytest tests\test_harness_session.py   # engine + session lifecycle
+uv run pytest tests\test_prompts.py           # ALWAYS run after changing any prompt
 
-python main.py                                # interactive REPL (browser + MCP)
-python main.py --no-mcp --task "inspect page" # dry run, no browser/MCP (dev checks)
-python main.py --show-state --task "..."      # debug state per step
+uv run main.py                                # interactive REPL (browser + MCP)
+uv run main.py --no-mcp --task "inspect page" # dry run, no browser/MCP (dev checks)
+uv run main.py --show-state --task "..."      # debug state per step
 
-python scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
-python scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
-python scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
+uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
+uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
+uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
 ```
 
 Focused test groups are grouped by area in `AGENTS.md` / `docs/development/setup.md`

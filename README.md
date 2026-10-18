@@ -26,8 +26,8 @@ the tools of the configured MCP servers (Playwright MCP by default).
 
 ## Requirements
 
-- Python 3.12
-- Dependencies from `requirements.txt`
+- [uv](https://docs.astral.sh/uv/) (it provides Python 3.12 and the dependencies from
+  `pyproject.toml` / `uv.lock`)
 - Node.js 18+ for `npx @playwright/mcp`
 - Chrome or Chromium for browser-enabled runs
 - An Ollama-compatible chat model for normal CLI execution
@@ -37,10 +37,14 @@ The default model is `gemma4:31b-cloud`. Override it with `--model`.
 ## Install
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+uv sync
 ```
+
+`uv sync` creates `.venv` from `uv.lock` (Python 3.12 is fetched if missing) and keeps it
+exactly in line with the lock, removing packages that are not declared. Run everything
+through `uv run`, no activation needed. `requirements.txt` is exported from the lock
+(`uv export --format requirements.txt --no-hashes --no-annotate --no-header --no-emit-project
+-o requirements.txt`) for a plain pip fallback.
 
 For browser-enabled runs, make sure `npx` can start Playwright MCP. The CLI uses
 `npx -y @playwright/mcp@latest` internally.
@@ -78,7 +82,7 @@ is mandatory and must exist.
 To use a specific configuration file:
 
 ```powershell
-$env:AUTOBROWSER_CONFIG_FILE="config.local.yaml"; python main.py
+$env:AUTOBROWSER_CONFIG_FILE="config.local.yaml"; uv run main.py
 ```
 
 That name has to be a real environment variable — a line in `.env` will not work, because the path is resolved before settings are built. Precedence, highest first: `Settings(...)` kwargs → the resolved YAML file, if present → `AUTOBROWSER_*` environment variables → `.env` → secret files → Pydantic defaults. The file is a partial profile: it only has to name the fields it should decide, and each of those outranks every source below, merging per field — naming `llm.model` there settles that field and leaves the rest of the
@@ -102,7 +106,7 @@ Each of these can also be overridden from the command line with `--chrome-path`,
 Start the interactive `cmd2` REPL:
 
 ```powershell
-python main.py
+uv run main.py
 ```
 
 The prompt accepts either explicit commands or free-form tasks:
@@ -136,7 +140,7 @@ Useful REPL commands:
 Use `--no-mcp` only for dry checks that do not need live browser access:
 
 ```powershell
-python main.py --no-mcp
+uv run main.py --no-mcp
 ```
 
 With `--no-mcp`, commands still work, but browser navigation and live website
@@ -157,13 +161,13 @@ thread.
 Run an initial task before entering the REPL:
 
 ```powershell
-python main.py --task "open the target page"
+uv run main.py --task "open the target page"
 ```
 
 Show per-step state updates while debugging:
 
 ```powershell
-python main.py --show-state --task "inspect page"
+uv run main.py --show-state --task "inspect page"
 ```
 
 Useful flags include `--show-state`, `--show-tools`, `--json`,
@@ -182,40 +186,40 @@ mode becomes `dont_ask`, so such calls are denied and the model continues.
 Run the full test suite:
 
 ```powershell
-python -m pytest
+uv run pytest
 ```
 
 Run a targeted test file:
 
 ```powershell
-python -m pytest tests\test_harness_session.py
+uv run pytest tests\test_harness_session.py
 ```
 
 Focused checks for recent harness/session work:
 
 ```powershell
-python -m pytest tests\test_harness_session.py tests\test_harness_runtime.py tests\test_harness_tools.py tests\test_harness_telemetry.py
-python -m pytest tests\test_main_cli.py
+uv run pytest tests\test_harness_session.py tests\test_harness_runtime.py tests\test_harness_tools.py tests\test_harness_telemetry.py
+uv run pytest tests\test_main_cli.py
 ```
 
 Focused checks for Agent Loop runtime contracts and observability:
 
 ```powershell
-python -m pytest tests\test_agent_loop_events.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py tests\test_messages.py
-python -m pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
-python -m pytest tests\test_context_assembler.py tests\test_goal_runner.py
+uv run pytest tests\test_agent_loop_events.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py tests\test_messages.py
+uv run pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
+uv run pytest tests\test_context_assembler.py tests\test_goal_runner.py
 ```
 
 Focused checks for browser provider work:
 
 ```powershell
-python -m pytest tests\test_browser_contracts.py tests\test_browser_normalization.py tests\test_mcp_manager.py tests\test_mcp_tools_bridge.py
+uv run pytest tests\test_browser_contracts.py tests\test_schema_args_normalizer.py tests\test_mcp_manager.py tests\test_mcp_tools_bridge.py
 ```
 
 After changing prompts, run:
 
 ```powershell
-python -m pytest tests\test_prompts.py
+uv run pytest tests\test_prompts.py
 ```
 
 ## Project Layout

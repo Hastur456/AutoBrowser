@@ -127,35 +127,39 @@ observation, and task completion.
 
 ## Build, Test, and Development Commands
 
-Create and activate a virtual environment, then install dependencies:
+Install dependencies with [uv](https://docs.astral.sh/uv/):
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+uv sync
 ```
+
+`uv sync` creates `.venv` from `uv.lock` (Python 3.12 is fetched if missing) and keeps it
+exactly in line with the lock, removing packages that are not declared. Run everything
+through `uv run`, no activation needed. `requirements.txt` is exported from the lock
+(`uv export --format requirements.txt --no-hashes --no-annotate --no-header --no-emit-project
+-o requirements.txt`) for a plain pip fallback.
 
 Run the test suite with:
 
 ```powershell
-python -m pytest
+uv run pytest
 ```
 
-Run targeted tests with `python -m pytest tests\path\to_test.py`.
+Run targeted tests with `uv run pytest tests\path\to_test.py`.
 
 Useful focused test commands:
 
 ```powershell
-python -m pytest tests\test_harness_session.py tests\test_harness_runtime.py
-python -m pytest tests\test_main_cli.py
-python -m pytest tests\test_prompts.py
-python -m pytest tests\test_browser_contracts.py tests\test_browser_normalization.py tests\test_mcp_manager.py tests\test_mcp_tools_bridge.py
-python -m pytest tests\test_agent_loop_events.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py tests\test_messages.py
-python -m pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
-python -m pytest tests\test_context_assembler.py tests\test_goal_runner.py
-python -m pytest tests\test_harness_hooks.py tests\test_agent_loop_hooks.py tests\test_browser_hooks.py tests\test_builtin_hooks.py tests\test_command_hooks.py tests\test_hook_scripts.py
-python -m pytest tests\test_harness_memory.py tests\test_memory_store.py tests\test_memory_tool.py tests\test_memory_consolidation.py tests\test_working_notes.py tests\test_browser_memory.py tests\test_memory_boundaries.py
-python scripts/run_evals.py --memory-seed tests\evals\memory_seed   # evals with and without seed memory
+uv run pytest tests\test_harness_session.py tests\test_harness_runtime.py
+uv run pytest tests\test_main_cli.py
+uv run pytest tests\test_prompts.py
+uv run pytest tests\test_browser_contracts.py tests\test_schema_args_normalizer.py tests\test_mcp_manager.py tests\test_mcp_tools_bridge.py
+uv run pytest tests\test_agent_loop_events.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py tests\test_messages.py
+uv run pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
+uv run pytest tests\test_context_assembler.py tests\test_goal_runner.py
+uv run pytest tests\test_harness_hooks.py tests\test_agent_loop_hooks.py tests\test_browser_hooks.py tests\test_builtin_hooks.py tests\test_command_hooks.py tests\test_hook_scripts.py
+uv run pytest tests\test_harness_memory.py tests\test_memory_store.py tests\test_memory_tool.py tests\test_memory_consolidation.py tests\test_working_notes.py tests\test_browser_memory.py tests\test_memory_boundaries.py
+uv run scripts/run_evals.py --memory-seed tests\evals\memory_seed   # evals with and without seed memory
 ```
 
 Check docs-only diffs with:
@@ -167,39 +171,39 @@ git diff --check -- docs
 Run the CLI without browser/MCP tools for dry checks:
 
 ```powershell
-python main.py --no-mcp --task "inspect page"
+uv run main.py --no-mcp --task "inspect page"
 ```
 
 Run the CLI with Playwright MCP tools enabled:
 
 ```powershell
-python main.py --task "open the target page"
+uv run main.py --task "open the target page"
 ```
 
 Run Golden Set JSONL scenarios:
 
 ```powershell
-python scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
+uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
 ```
 
 Export session rows and inspect traces:
 
 ```powershell
-python scripts/export_sessions.py --out .autobrowser\exports\runs.jsonl
-python scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
-python scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.jsonl
+uv run scripts/export_sessions.py --out .autobrowser\exports\runs.jsonl
+uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
+uv run scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.jsonl
 ```
 
 Run deterministic fake-browser eval baselines:
 
 ```powershell
-python scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
+uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
 ```
 
 Start the interactive REPL with:
 
 ```powershell
-python main.py
+uv run main.py
 ```
 
 REPL commands include:
