@@ -10,7 +10,7 @@ from typing import Any
 
 from src.providers.ollama import ollama_llm_factory
 
-from src.agent_loop.engine import HumanInputCallback
+from src.agent_loop.execution.loop import HumanInputCallback
 from src.cli.agent_cli import run_cli
 from src.cli.approval import ApprovalPrompt
 from src.cli.output import print_tools

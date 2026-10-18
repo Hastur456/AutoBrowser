@@ -15,8 +15,8 @@ import yaml
 from src.llm import ModelResponse
 from src.messages import Message
 
-from src.agent_loop.engine import Agent
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
+from src.agent_loop.execution.loop import Agent
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.replay import TraceSummary, print_action_sequence, summarize_trace
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
