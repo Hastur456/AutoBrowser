@@ -89,13 +89,16 @@ class Tool:
     ``input_schema`` is a JSON-Schema object, so any chat provider can advertise
     the tool without a framework-specific wrapper.
 
-    ``func`` is an async callable invoked as ``func(**args)``.
+    ``func`` is an async callable invoked as ``func(**args)``. ``annotations`` are the
+    MCP tool annotations (``readOnlyHint`` ...) when the tool declares any, the same
+    protocol metadata an ``MCPTool`` carries.
     """
 
     name: str
     func: Callable[..., Awaitable[Any]] = field(repr=False, compare=False)
     description: str = ""
     input_schema: dict[str, Any] = field(default_factory=dict)
+    annotations: dict[str, Any] | None = None
 
     def to_def(self) -> ToolDef:
         """Return the model-visible ``ToolDef`` schema for this tool."""
@@ -272,6 +275,17 @@ class PermissionResourceResolver(Protocol):
         """``{"domain": ..., "target": ..., "url": ...}``; ``{}`` (or a missing key) when unknown."""
 
 
+class MemoryRenderer(Protocol):
+    """Renders the persistent ``Memory`` context block for the current state.
+
+    The engine's only view of persistent memory; the store, its files and tools stay in
+    ``src/harness/``.
+    """
+
+    def render(self, state: Mapping[str, Any]) -> str:
+        """The block text; ``""`` when there is nothing to show."""
+
+
 @dataclass(frozen=True)
 class MemoryEntry:
     """One persistent memory file: harness-owned frontmatter plus a markdown body."""
@@ -309,6 +323,28 @@ class MemoryContentPolicy(Protocol):
         """The reason ``text`` is refused, or ``None`` when it may be stored."""
 
 
+@dataclass(frozen=True)
+class TaskRequest:
+    """One task as the agent runs it: everything the engine needs, nothing else.
+
+    Built by the session for every user task and handed unchanged through
+    ``GoalRunner`` to ``Agent.run``. ``goal_id`` is ``task_id`` by construction.
+    """
+
+    task: str
+    task_id: str
+    session_id: str | None = None
+    #: Durable context carried from the previous task plus the task-local resets.
+    state_overrides: Mapping[str, Any] = field(default_factory=dict)
+    #: Turn budget; ``None`` keeps ``settings.loop.turn_cap``.
+    turn_cap: int | None = None
+    compress_tools: bool = False
+
+    @property
+    def goal_id(self) -> str:
+        return self.task_id
+
+
 def goal_status_from_completion(status: CompletionStatus) -> GoalStatus | None:
     """Map a loop completion status into a terminal goal status.
 
@@ -340,6 +376,7 @@ __all__ = [
     "MemoryContentPolicy",
     "MemoryEntry",
     "MemoryKind",
+    "MemoryRenderer",
     "MemoryScopeResolver",
     "MemoryStatus",
     "PermissionCheck",
@@ -352,6 +389,7 @@ __all__ = [
     "PolicyDecision",
     "PolicyEvent",
     "RecoveryCounters",
+    "TaskRequest",
     "Tool",
     "ToolDef",
     "ToolRequest",

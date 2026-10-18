@@ -200,10 +200,10 @@ never carried across tasks.
   `memory.consolidated` / `memory.consolidation_failed` (reasons cut to
   `event_reason_chars`), plus the normal `tool.started` /
   `tool.finished` / `permission.decided` for `memory_view` / `memory_write`.
-- `python main.py --show-state --task "..."` shows the turn state; the `Memory` block is part
+- `uv run main.py --show-state --task "..."` shows the turn state; the `Memory` block is part
   of the per-turn user prompt.
 - Compare prompt sizes with and without memory on the scripted scenarios:
-  `python scripts/run_evals.py --memory-seed tests/evals/memory_seed`.
+  `uv run scripts/run_evals.py --memory-seed tests/evals/memory_seed`.
 
 ## Testing Rules
 

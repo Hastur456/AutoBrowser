@@ -2,19 +2,18 @@
 
 Ported from the legacy executor node. The dispatch behavior is preserved: empty-name
 short-circuit, per-normalizer ``normalize_request`` folding, name-map lookup via
-:meth:`ToolRegistry.get`, neutral ``invoke(args)`` dispatch, browser-aware unknown-tool
-result, broad ``except`` -> ``status="error"``, and ``normalize_result`` folding.
+:meth:`ToolRegistry.get`, neutral ``invoke(args)`` dispatch, an unknown-tool result listing
+the available names, broad ``except`` -> ``status="error"``, and ``normalize_result`` folding.
 
 Changes for the MCP Manager migration:
 
-* ``browser_providers`` (``BrowserProvider``) are replaced by stateless
-  :class:`~src.harness.normalization.ToolCallNormalizer` objects. They receive the current
-  ``{name: tool}`` map instead of owning a tool list — tools come from the MCP Manager.
-  Without explicit ``normalizers`` the broker uses ``ToolRegistry.get_normalizers()``
-  (as it previously fell back to ``get_browser_providers()``).
+* Stateless :class:`~src.harness.normalization.ToolCallNormalizer` objects adapt calls.
+  They receive the current ``{name: tool}`` map instead of owning a tool list — tools come
+  from the MCP Manager. Without explicit ``normalizers`` the broker uses
+  ``ToolRegistry.get_normalizers()``.
 * A failing tool whose exception carries ``error_code`` (all ``src.mcp.errors``, e.g.
   ``mcp_connection_lost`` / ``mcp_request_timeout``) keeps that code in the
-  :class:`ToolResult`, so the loop can tell "tool failed" from "browser server restarted".
+  :class:`ToolResult`, so the loop can tell "tool failed" from "tool server restarted".
 
 The broker is split into :meth:`ToolBroker.prepare` (normalize + resolve the tool and its
 server) and :meth:`ToolBroker.invoke` (call + ``normalize_result``) so lifecycle hooks can

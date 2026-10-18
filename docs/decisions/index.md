@@ -4,6 +4,24 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-10-19 Name-Free Tool Handling](2026-10-19-name-free-tool-handling.md): nothing
+  decides by a tool name. Kept snapshots are per server from `readOnlyHint`; arguments are
+  filtered by schema only; the session configures prompt resources; memory compresses every
+  tool alike; the CLI reads the page URL from state. `src/browser/names.py`, `ToolRoles` and
+  `BrowserToolNormalizer` are removed and `src/` is fenced against tool-name literals.
+  Supersedes the injected tool roles ADR on how roles are decided.
+- [2026-10-17 Explicit Agent Objects](2026-10-17-explicit-agent-objects.md): a `TaskRequest`
+  replaces the `task_config` dict plumbing, an `Agent` object replaces the `native_task_runner`
+  closure, `SessionContext.build_agent()` composes the production agent once per session,
+  `GoalRunner(task_runner, events, GoalLimits)` drops `harness`/`session_config`/`getattr`,
+  `EngineResources` fields are typed, and the graph-era shims (`native_latest_state_loader`,
+  `src/agent_loop/engine.py`, `loop.latest_state_timeout_seconds`) go.
+- [2026-10-17 Injected Tool Roles](2026-10-17-injected-tool-roles.md): the engine imports
+  nothing from `src/browser/`; which tool returns the snapshot and which tools act on the
+  environment comes from a `ToolRoles` object in `EngineResources` (`BrowserToolRoles` from the
+  session, `NullToolRoles` by default). The dead tab-activation path and the
+  `pending_browser_tab_*` fields are removed; `tests/test_engine_boundaries.py` fences the
+  engine. Refines the server-neutral progress journal ADR.
 - [2026-10-03 Merging Memory Consolidation](2026-10-03-merging-memory-consolidation.md):
   consolidation sees the full bodies of the visited sites' entries and merges into them; a
   consolidation rewrite keeps `uses`/`failures` (`create(keep_trust=True)`) so site entries

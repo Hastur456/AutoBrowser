@@ -8,13 +8,17 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class PromptResource:
-    """Metadata for a deterministic local prompt resource."""
+    """A deterministic local prompt resource rendered as one system context block.
+
+    Which resources a session uses is decided by its composition root (the browser rules
+    when a browser MCP server is configured), never by matching tool names or task words.
+    """
 
     name: str
+    #: Heading of the context block the resource is rendered under.
+    title: str
     path: Path
     description: str
-    trigger_terms: tuple[str, ...]
-    scopes: tuple[str, ...]
 
     def load(self) -> str:
         """Read the resource as UTF-8 text."""
@@ -27,6 +31,7 @@ def browser_agent_rules_resource() -> PromptResource:
 
     return PromptResource(
         name="browser-agent-rules",
+        title="Browser Rules",
         path=(
             Path(__file__).resolve().parents[2]
             / "docs"
@@ -34,17 +39,6 @@ def browser_agent_rules_resource() -> PromptResource:
             / "browser-agent-rules.md"
         ),
         description="Snapshot-driven browser interaction and extraction rules.",
-        trigger_terms=(
-            "open",
-            "browse",
-            "browser",
-            "click",
-            "extract",
-            "inspect a page",
-            "search a site",
-            "type",
-        ),
-        scopes=("browser", "search", "page-extraction"),
     )
 
 

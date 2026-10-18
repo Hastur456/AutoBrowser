@@ -1,28 +1,34 @@
 """Resource bundle for the engine-native execution loop.
 
 :class:`EngineResources` gathers exactly what :class:`~src.agent_loop.execution.loop.AgentExecutionLoop`
-needs to drive one goal — without a graph or a harness rewrite. It composes objects the
-harness already owns (tool registry, browser providers, prompt context, event emitter)
-plus the reasoning ``llm``, which the harness does **not** store on itself
-(``BrowserHarness.__init__`` passes ``llm`` straight into the graph builder), so it is
-supplied separately by the caller in ``SessionRuntime.run_task``.
+needs to drive one goal. It composes objects the harness already owns (tool registry and
+its normalizers, prompt context, event emitter), the session-scoped collaborators (hooks,
+permissions, approval judge, memory) and the reasoning ``llm``, which the
+caller (``SessionRuntime.run_task``) supplies explicitly.
 
-This module imports nothing from ``src/agent/``: it depends only on the harness and browser
-layers, matching the decoupling rule for the whole ``src/agent_loop/execution/`` package.
+Like the whole ``src/agent_loop/execution/`` package, this module imports nothing from
+``src/browser/``: server-specific behaviour arrives as the objects bundled here.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING
 
+from src.agent_loop.context import ContextAssembler
+from src.agent_loop.events import EventEmitter
 from src.agent_loop.execution.approval import ApprovalJudge
-from src.harness.hooks import NullHookEngine
+from src.contracts import MemoryRenderer
+from src.harness.hooks import HookEngine, NullHookEngine
 from src.harness.memory import NullMemoryContext
 from src.harness.normalization import ToolCallNormalizer
 from src.harness.permissions import PermissionEngine
 from src.harness.tools import ToolRegistry
+from src.llm import ChatModel
+
+if TYPE_CHECKING:
+    from src.harness.runtime import BrowserHarness
 
 
 @dataclass(frozen=True)
@@ -47,27 +53,27 @@ class EngineResources:
     tests never see the developer's memory files.
     """
 
-    llm: Any
+    llm: ChatModel
     tool_registry: ToolRegistry
     tool_normalizers: Sequence[ToolCallNormalizer]
-    context: Any
-    events: Any
-    hooks: Any = field(default_factory=NullHookEngine)
+    context: ContextAssembler
+    events: EventEmitter
+    hooks: HookEngine | NullHookEngine = field(default_factory=NullHookEngine)
     permissions: PermissionEngine = field(default_factory=PermissionEngine.from_settings)
     approval: ApprovalJudge = field(default_factory=ApprovalJudge)
-    memory: Any = field(default_factory=NullMemoryContext)
+    memory: MemoryRenderer = field(default_factory=NullMemoryContext)
 
     @classmethod
     def from_harness(
         cls,
-        harness: Any,
+        harness: BrowserHarness,
         *,
-        llm: Any,
-        events: Any | None = None,
-        hooks: Any | None = None,
+        llm: ChatModel,
+        events: EventEmitter | None = None,
+        hooks: HookEngine | NullHookEngine | None = None,
         permissions: PermissionEngine | None = None,
         approval: ApprovalJudge | None = None,
-        memory: Any | None = None,
+        memory: MemoryRenderer | None = None,
     ) -> EngineResources:
         """Compose resources from an initialized ``BrowserHarness`` plus the ``llm``.
 

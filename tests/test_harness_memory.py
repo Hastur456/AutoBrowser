@@ -244,11 +244,7 @@ def test_long_requests_and_answers_are_truncated() -> None:
 
 
 def test_compressed_tool_messages_are_cut_to_the_settings() -> None:
-    manager = _manager(
-        compressed_tool_result_chars=30,
-        compressed_snapshot_summary_chars=40,
-        compressed_snapshot_error_chars=50,
-    )
+    manager = _manager(compressed_tool_result_chars=30)
 
     def content(name: str, status: str, **result: str) -> str:
         return manager.tool_result_content(
@@ -260,10 +256,11 @@ def test_compressed_tool_messages_are_cut_to_the_settings() -> None:
 
     summary = content("tool_a", "success").split("\n\n")[-1]
     error = content("tool_a", "error", error="e" * 500).split("\n\n")[-1]
+    # No tool name is special-cased: a snapshot-named tool gets the same budget.
     snapshot = content("browser_snapshot", "success").split("\n\n")[-1]
     snapshot_error = content("browser_snapshot", "error", error="e" * 500).split("\n\n")[-1]
 
-    assert [len(summary), len(error), len(snapshot), len(snapshot_error)] == [30, 30, 40, 50]
+    assert [len(summary), len(error), len(snapshot), len(snapshot_error)] == [30, 30, 30, 30]
     assert all(text.endswith("[truncated]") for text in (summary, error, snapshot, snapshot_error))
     raw =manager.tool_result_content(
         {"name": "tool_a", "status": "success", "content": "c" * 500, "error": ""},

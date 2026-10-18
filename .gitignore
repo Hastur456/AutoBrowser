@@ -29,7 +29,6 @@ secrets.yaml
 *.swp
 *.swo
 .DS_Store
-ruff.toml
 
 # AI tools and agents local data
 .codex-lb/

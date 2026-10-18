@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from src.agent_loop.engine import AgentLoopEngine
+from src.agent_loop.execution.loop import AgentLoopEngine
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.agent_loop.execution.resources import EngineResources
 from src.browser.memory import BrowserMemoryPolicy, BrowserMemoryScope

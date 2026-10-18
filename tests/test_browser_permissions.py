@@ -42,9 +42,17 @@ await page.goto('https://evil.example.com/login');
 - [Snapshot](.playwright-mcp\\page-2026-10-01T17-37-30-455Z.yml)"""
 
 
+def loop_state(snapshot: str | None = None, **state: Any) -> dict[str, Any]:
+    """The mapping the engine hands resolvers: the browser server's kept snapshot."""
+
+    if snapshot is not None:
+        state["snapshots"] = {"playwright": snapshot}
+    return state
+
+
 def resolve(tool: str, args: dict[str, Any], **state: Any) -> dict[str, str]:
     check = PermissionCheck(tool=tool, server="playwright", args=args)
-    return dict(BrowserResourceResolver().resources(check, state))
+    return dict(BrowserResourceResolver().resources(check, loop_state(**state)))
 
 
 def engine(*rules: dict[str, Any], mode: str = "default") -> PermissionEngine:
@@ -56,7 +64,7 @@ def engine(*rules: dict[str, Any], mode: str = "default") -> PermissionEngine:
 
 def decide(perms: PermissionEngine, tool: str, args: dict[str, Any], **state: Any) -> str:
     check = PermissionCheck(tool=tool, server="playwright", args=args)
-    return perms.evaluate(check, state).decision
+    return perms.evaluate(check, loop_state(**state)).decision
 
 
 # --------------------------------------------------------------------------- helpers
@@ -201,12 +209,12 @@ def test_a_buy_click_asks_through_its_target() -> None:
 def test_a_session_grant_is_per_domain() -> None:
     perms = engine({"id": "clicks", "decision": "ask", "tool": "browser_click"})
     check = PermissionCheck(tool="browser_click", server="playwright", args={"target": "e2"})
-    verdict = perms.evaluate(check, {"snapshot": SNAPSHOT})
+    verdict = perms.evaluate(check, loop_state(snapshot=SNAPSHOT))
     assert verdict.grant_key == ("playwright", "browser_click", "ozon.ru")
     perms.grant(verdict.grant_key)
-    assert perms.evaluate(check, {"snapshot": SNAPSHOT}).decision == "allow"
+    assert perms.evaluate(check, loop_state(snapshot=SNAPSHOT)).decision == "allow"
     foreign = SNAPSHOT.replace("www.ozon.ru", "wildberries.ru")
-    assert perms.evaluate(check, {"snapshot": foreign}).decision == "ask"
+    assert perms.evaluate(check, loop_state(snapshot=foreign)).decision == "ask"
 
 
 # --------------------------------------------------------------------------- configured rules
@@ -251,9 +259,9 @@ def test_a_page_javascript_rule_always_asks(tool: str) -> None:
 def test_a_file_handoff_rule_asks_but_can_be_granted(tool: str) -> None:
     perms = engine(FILE_HANDOFF)
     check = PermissionCheck(tool=tool, server="playwright", args={"paths": ["C:/secret.txt"]})
-    verdict = perms.evaluate(check, {"snapshot": SNAPSHOT})
+    verdict = perms.evaluate(check, loop_state(snapshot=SNAPSHOT))
     assert (verdict.decision, verdict.rule_id) == ("ask", "file-handoff")
     assert "secret" not in verdict.reason
     perms.grant(verdict.grant_key)
-    assert perms.evaluate(check, {"snapshot": SNAPSHOT}).decision == "allow"
+    assert perms.evaluate(check, loop_state(snapshot=SNAPSHOT)).decision == "allow"
     assert decide(engine(FILE_HANDOFF, mode="bypass"), tool, {}) == "allow"

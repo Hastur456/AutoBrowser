@@ -1,10 +1,12 @@
 """Engine-native observation compilation, split into explicit responsibilities.
 
 - :class:`ToolResultNormalizer` — classify the latest raw ``ToolResult`` into neutral facts
-  (name, status, whether it is a browser tool / a snapshot) with no state mutation.
-- :class:`BrowserStateReducer` — keep the latest ``snapshot``; drop it after any other
-  successful browser tool (the page may have changed) unless the server annotated that tool
-  ``readOnlyHint``.
+  (name, status, the server it came from and whether the tool is read-only) with no state
+  mutation. Server and read-only come from the resolved call (``MCPTool.server`` and the
+  MCP ``readOnlyHint`` annotation), never from the tool name.
+- :class:`BrowserStateReducer` — per server, keep the output of its latest successful
+  read-only call in ``snapshots``; drop that server's entry after a successful call that
+  is not read-only (its environment may have changed). Other servers are untouched.
 - :class:`ProgressDetector` — success/failure accounting: ``consecutive_failures`` and
   ``error``.
 - :class:`ObservationCompiler` — orchestrate the above into the flat update dict, append the
@@ -27,7 +29,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.browser.names import TABS_TOOL, is_browser_snapshot_name, is_browser_tool_name
 from src.config import get_settings
 from src.contracts import CompactToolObservation, ToolResult
 from src.harness.memory import append_tool_message, tool_result_message_content
@@ -133,8 +134,10 @@ class NormalizedToolResult:
     status: Any
     content: str
     compact: CompactToolObservation
-    is_browser_tool: bool
-    is_snapshot: bool
+    #: The tool server of the call (``MCPTool.server``; ``""`` for local tools).
+    server: str = ""
+    #: The tool declared the MCP ``readOnlyHint`` annotation.
+    read_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -158,6 +161,9 @@ class ToolResultNormalizer:
         self,
         state: LoopState,
         compact_observation: CompactToolObservation | None = None,
+        *,
+        server: str = "",
+        read_only: bool = False,
     ) -> NormalizedToolResult:
         result = state.tool_result or {}
         request = state.tool_request or {}
@@ -170,38 +176,31 @@ class ToolResultNormalizer:
             status=status,
             content=str(result.get("content", "") or ""),
             compact=compact_observation or _fallback_compact_observation(result),
-            is_browser_tool=is_browser_tool_name(tool_name),
-            is_snapshot=is_browser_snapshot_name(tool_name) and status == "success",
+            server=str(server or ""),
+            read_only=read_only,
         )
 
 
 class BrowserStateReducer:
-    """Keep the latest snapshot.
+    """Keep, per tool server, the output of its latest successful read-only call.
 
-    ``read_only_tools`` are the exposed names of tools whose server declared the MCP
-    ``readOnlyHint`` annotation; they cannot change the page, so they keep the current
-    snapshot valid. Every other successful browser tool invalidates it.
+    A read-only tool cannot change its environment, so its output describes that
+    environment and stays valid until the same server runs a successful call that is not
+    read-only. Failed calls change nothing. Tools without annotations count as
+    state-changing, so a server that declares none never has a snapshot kept.
     """
 
-    def __init__(self, read_only_tools: frozenset[str] = frozenset()) -> None:
-        self._read_only_tools = frozenset(read_only_tools)
-
     def reduce(self, state: LoopState, norm: NormalizedToolResult) -> BrowserReduction:
-        updates: dict[str, Any] = {}
-
-        if norm.is_snapshot:
-            updates["snapshot"] = norm.content
-        elif (
-            norm.is_browser_tool
-            and norm.status == "success"
-            and norm.tool_name not in self._read_only_tools
-        ):
-            if norm.tool_name == TABS_TOOL:
-                updates["pending_browser_tab_index"] = 0
-                updates["pending_browser_tab_reason"] = ""
-            updates["snapshot"] = ""
-
-        return BrowserReduction(updates=updates)
+        if norm.status != "success":
+            return BrowserReduction()
+        snapshots = dict(state.browser.snapshots)
+        if norm.read_only:
+            snapshots[norm.server] = norm.content
+        elif norm.server in snapshots:
+            del snapshots[norm.server]
+        else:
+            return BrowserReduction()
+        return BrowserReduction(updates={"snapshots": snapshots})
 
 
 class ProgressDetector:
@@ -230,10 +229,9 @@ class ObservationCompiler:
         normalizer: ToolResultNormalizer | None = None,
         reducer: BrowserStateReducer | None = None,
         detector: ProgressDetector | None = None,
-        read_only_tools: frozenset[str] = frozenset(),
     ) -> None:
         self._normalizer = normalizer or ToolResultNormalizer()
-        self._reducer = reducer or BrowserStateReducer(read_only_tools)
+        self._reducer = reducer or BrowserStateReducer()
         self._detector = detector or ProgressDetector()
 
     def compile(
@@ -241,15 +239,21 @@ class ObservationCompiler:
         state: LoopState,
         compact_observation: CompactToolObservation | None = None,
         *,
+        server: str = "",
+        read_only: bool = False,
         compress_tool_output: bool = False,
     ) -> dict[str, Any]:
         """Translate the latest ``ToolResult`` into a plain observation update dict.
 
-        Does not touch ``plan``/``current_step``/``steps_without_plan_advance`` — plan
-        progression is model/loop-driven on the engine-native path.
+        ``server`` and ``read_only`` describe the call that produced the result (the
+        resolved tool's server and its ``readOnlyHint``). Does not touch
+        ``plan``/``current_step``/``steps_without_plan_advance`` — plan progression is
+        model/loop-driven on the engine-native path.
         """
 
-        norm = self._normalizer.normalize(state, compact_observation)
+        norm = self._normalizer.normalize(
+            state, compact_observation, server=server, read_only=read_only
+        )
 
         updates: dict[str, Any] = {
             "decision": "tool_call",
@@ -287,13 +291,17 @@ def compile_observation(
     state: LoopState,
     compact_observation: CompactToolObservation | None = None,
     *,
+    server: str = "",
+    read_only: bool = False,
     compress_tool_output: bool = False,
 ) -> dict[str, Any]:
-    """Backward-compatible thin wrapper over :class:`ObservationCompiler`."""
+    """Thin wrapper over :class:`ObservationCompiler`."""
 
     return ObservationCompiler().compile(
         state,
         compact_observation,
+        server=server,
+        read_only=read_only,
         compress_tool_output=compress_tool_output,
     )
 

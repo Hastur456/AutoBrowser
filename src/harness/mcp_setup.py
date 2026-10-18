@@ -19,7 +19,6 @@ from typing import Any
 
 from mcp.types import Implementation
 
-from src.browser.normalization import BrowserToolNormalizer
 from src.config import get_settings
 from src.harness.mcp_tools import MCPToolSource
 from src.harness.normalization import SchemaArgsNormalizer, ToolCallNormalizer
@@ -169,9 +168,8 @@ def build_mcp_runtime(
         manager=manager,
         tool_source=tool_source,
         browser_server=browser_server,
-        # Drop browser arguments the exposed tool's schema forbids before the
-        # schema-based arg filter runs.
-        normalizers=[BrowserToolNormalizer(), SchemaArgsNormalizer()],
+        # Drop arguments the exposed tool's schema forbids, for every server alike.
+        normalizers=[SchemaArgsNormalizer()],
     )
 
 

@@ -40,13 +40,23 @@ def page_url(text: Any) -> str:
     return match.group(1) if match else ""
 
 
+def snapshot_texts(state: Mapping[str, Any]) -> list[str]:
+    """The kept read-only outputs of every server (``state["snapshots"]``), as text."""
+
+    snapshots = state.get("snapshots") or {}
+    if not isinstance(snapshots, Mapping):
+        return []
+    return [str(text) for text in snapshots.values() if str(text or "").strip()]
+
+
 def current_page_url(state: Mapping[str, Any]) -> str:
-    """The page the browser is on: the latest tool output's ``Page URL``, then the snapshot's."""
+    """The page the browser is on: the latest tool output's ``Page URL``, then a kept
+    snapshot's. Recognised by the ``- Page URL:`` line, never by a tool or server name."""
 
     result = state.get("tool_result") or {}
     for text in (
         result.get("content") if isinstance(result, Mapping) else "",
-        state.get("snapshot"),
+        *snapshot_texts(state),
     ):
         url = page_url(text)
         if url:
@@ -54,4 +64,4 @@ def current_page_url(state: Mapping[str, Any]) -> str:
     return ""
 
 
-__all__ = ["current_page_url", "page_url", "url_domain"]
+__all__ = ["current_page_url", "page_url", "snapshot_texts", "url_domain"]

@@ -10,7 +10,7 @@
 # To use a different file instead (or a second machine-specific profile), point
 # the process at it explicitly:
 #
-#   AUTOBROWSER_CONFIG_FILE=config.local.yaml python main.py --task "inspect page"
+#   AUTOBROWSER_CONFIG_FILE=config.local.yaml uv run main.py --task "inspect page"
 #
 # That name must be a real environment variable. A line in .env will not work:
 # the path is resolved before settings are built, from the process environment
@@ -106,9 +106,6 @@ loop:
   # Silence in the event stream that means "stalled", in seconds. Clamped to
   # task_timeout_seconds, so a smaller task budget shortens it automatically.
   progress_timeout_seconds: 120.0               # (default)
-  # Budget for loading the latest carried-forward session state, in seconds.
-  # Clamped to task_timeout_seconds as well.
-  latest_state_timeout_seconds: 15.0            # (default)
 
 # ---------------------------------------------------------------------------
 # How much tool output reaches the model. Lower = cheaper prompts, higher = less
@@ -132,10 +129,8 @@ memory:
   # same tool exists; shorter outputs are always kept.
   compact_tool_output_min_chars: 1000           # (default)
   # With --compress-tools: characters kept of a tool message's summary or error,
-  # of a snapshot summary and of a snapshot error.
+  # for every tool alike.
   compressed_tool_result_chars: 500             # (default)
-  compressed_snapshot_summary_chars: 300        # (default)
-  compressed_snapshot_error_chars: 400          # (default)
   # Ceiling on the characters of the conversation history; past it the oldest
   # tool outputs become a [cleared] placeholder. 0 disables the budget.
   history_budget_chars: 0                       # (default)

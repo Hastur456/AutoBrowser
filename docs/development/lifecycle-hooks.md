@@ -392,7 +392,7 @@ hooks:
       command: python scripts/hooks/grounded_urls.py
 ```
 
-4. Check that it starts: `python main.py --no-mcp --task "inspect page"`. A broken
+4. Check that it starts: `uv run main.py --no-mcp --task "inspect page"`. A broken
    registry fails startup. A broken script fails on its first event, and
    `hook.decided` records the error.
 
@@ -521,7 +521,7 @@ for experiments or a batch profile with `approve_tools`:
 
 ```powershell
 $env:AUTOBROWSER_CONFIG_FILE = "config.local.yaml"
-python main.py
+uv run main.py
 Remove-Item Env:AUTOBROWSER_CONFIG_FILE   # back to config.yaml
 ```
 
@@ -542,7 +542,7 @@ To ship a new built-in handler with AutoBrowser rather than keep it in a persona
   with `hook_id`, `event`, `tool`, `server`, `decision`, `reason`, `modified`,
   `duration_ms`, `error` (`"timeout"` or `"<ExcType>: message"`) and `skipped`. Arguments
   and results are never included.
-- `python scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl` replays a
+- `uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl` replays a
   run, hooks included.
 - `session.json` shows whether hooks were enabled and the registry SHA-256.
 - A registry error fails at startup with `HookConfigError` naming the hook `id`.
@@ -595,7 +595,7 @@ async def test_checkout_asks() -> None:
 Existing suites to run after changing hook code:
 
 ```powershell
-python -m pytest tests\test_harness_hooks.py tests\test_agent_loop_hooks.py tests\test_browser_hooks.py tests\test_builtin_hooks.py tests\test_command_hooks.py tests\test_hook_scripts.py
+uv run pytest tests\test_harness_hooks.py tests\test_agent_loop_hooks.py tests\test_browser_hooks.py tests\test_builtin_hooks.py tests\test_command_hooks.py tests\test_hook_scripts.py
 ```
 
 ## Related

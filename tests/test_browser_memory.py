@@ -15,11 +15,11 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_current_page_url_prefers_the_latest_tool_output() -> None:
     state = {
         "tool_result": {"content": "### Page\n- Page URL: https://www.ozon.ru/search/?text=x"},
-        "snapshot": "- Page URL: https://example.com/",
+        "snapshots": {"playwright": "- Page URL: https://example.com/"},
     }
 
     assert current_page_url(state) == "https://www.ozon.ru/search/?text=x"
-    assert current_page_url({"snapshot": "- Page URL: https://example.com/"}) == "https://example.com/"
+    assert current_page_url({"snapshots": {"playwright": "- Page URL: https://example.com/"}}) == "https://example.com/"
     assert current_page_url({}) == ""
 
 
@@ -33,9 +33,9 @@ def test_the_permission_module_still_exports_the_helpers() -> None:
 @pytest.mark.parametrize(
     "state, scope",
     [
-        ({"snapshot": "- Page URL: https://www.OZON.ru/product/1"}, "ozon.ru"),
-        ({"snapshot": "- Page URL: https://seller.ozon.ru/"}, "seller.ozon.ru"),
-        ({"snapshot": "- Page URL: about:blank"}, ""),
+        ({"snapshots": {"playwright": "- Page URL: https://www.OZON.ru/product/1"}}, "ozon.ru"),
+        ({"snapshots": {"playwright": "- Page URL: https://seller.ozon.ru/"}}, "seller.ozon.ru"),
+        ({"snapshots": {"playwright": "- Page URL: about:blank"}}, ""),
         ({}, ""),
     ],
 )

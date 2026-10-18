@@ -75,7 +75,7 @@ async def test_seed_memory_does_not_change_any_eval_outcome() -> None:
 
 
 def test_the_seed_memory_renders_the_wildcard_procedure_everywhere() -> None:
-    text = seed_memory().render({"snapshot": "- Page URL: https://example.com/"})
+    text = seed_memory().render({"snapshots": {"playwright": "- Page URL: https://example.com/"}})
 
     assert "- procedures/search.md [user]" in text
     assert "- sites/ozon.ru.md [user]" in text

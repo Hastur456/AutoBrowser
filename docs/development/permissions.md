@@ -231,7 +231,7 @@ Every evaluated call emits `permission.decided` — `tool`, `server`, `decision`
 `approval.resolved` (`decision`, `by: hook|human|grant`, `scope: once|session`).
 
 ```powershell
-python scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
+uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
 ```
 
 prints non-`allow` decisions under the action they gate:

@@ -39,8 +39,7 @@ class AgentState(TypedDict, total=False):
     policy_decision: PolicyDecision
 
     observation: str
-    snapshot: str
-    browser: dict[str, Any]
+    snapshots: dict[str, str]
     messages: list[Message]
 
     last_tool: str
@@ -55,8 +54,6 @@ class AgentState(TypedDict, total=False):
     last_browser_action: ToolRequest
     ineffective_browser_action: ToolRequest
     ineffective_browser_actions: list[ToolRequest]
-    pending_browser_tab_index: int
-    pending_browser_tab_reason: str
 
     final_answer: str
     error: str

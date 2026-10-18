@@ -15,7 +15,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from src.browser.names import TABS_TOOL
 from src.config import get_settings
 from src.contracts import PolicyDecision, ToolRequest
 from src.harness.memory import (
@@ -23,7 +22,6 @@ from src.harness.memory import (
     append_final_ai_response,
     append_tool_message,
     ensure_message_history,
-    with_tool_call_id,
 )
 
 from src.agent_loop.execution.progress import ineffective_repeat_reason
@@ -253,32 +251,6 @@ def _tool_gate_updates(
     return updates
 
 
-def _pending_tab_activation_request(state: LoopState) -> ToolRequest | None:
-    """Select a tab recorded in ``browser.pending_browser_tab_index`` (if any).
-
-    Nothing in the native loop sets the pending tab any more (server-specific tab-text
-    parsing was removed); a value carried over in session state is still honoured once.
-    """
-
-    tab_index = int(state.browser.pending_browser_tab_index or 0)
-    if tab_index <= 0:
-        return None
-
-    reason = str(state.browser.pending_browser_tab_reason or "").strip()
-    if not reason:
-        reason = (
-            f"Switch to browser tab {tab_index} that was opened by the last "
-            "browser action before taking a snapshot."
-        )
-    return with_tool_call_id(
-        {
-            "name": TABS_TOOL,
-            "args": {"action": "select", "index": tab_index},
-            "reason": reason,
-        }
-    )
-
-
 def _guard_tool_request(state: LoopState, request: ToolRequest) -> dict[str, Any] | None:
     if (
         _repeat_tracking_key(state.last_tool, state.last_args)
@@ -357,7 +329,6 @@ done_response = _done_response
 complete_plan_update = _complete_plan_update
 replan_response = _replan_response
 terminal_guard = _terminal_guard
-pending_tab_activation_request = _pending_tab_activation_request
 progress_block_reason = _progress_block_reason
 tool_block_updates = _tool_block_updates
 tool_gate_updates = _tool_gate_updates
@@ -373,7 +344,6 @@ __all__ = [
     "complete_plan_update",
     "done_response",
     "guard_tool_request",
-    "pending_tab_activation_request",
     "progress_block_reason",
     "repeat_tracking_key",
     "replan_response",

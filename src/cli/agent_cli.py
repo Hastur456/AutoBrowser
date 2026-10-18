@@ -4,30 +4,23 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
-import inspect
-import re
 import sys
 import threading
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import cmd2
 from cmd2 import Cmd2ArgumentParser, with_argparser
 
-from src.browser.names import SNAPSHOT_TOOL
+from src.browser.pages import current_page_url
 from src.cli.output import format_mcp_status
 from src.cli.approval import ApprovalPrompt
 from src.harness.session import SessionContext, SessionRuntime, TaskRecord
 from src.harness.tools import ToolRegistry
 from src.mcp import ConnectionState
-
-_URL_PATTERN = re.compile(r"https?://[^\s\"'<>`)\]]+")
-
 
 @dataclass(frozen=True)
 class CommandSpec:
@@ -48,8 +41,7 @@ COMMANDS: tuple[CommandSpec, ...] = (
     CommandSpec("Memory", "history", "history [N]", "Show the last N dialogue messages."),
     CommandSpec("Memory", "clear", "clear", "Clear dialogue history."),
     CommandSpec("Browser", "browser", "browser", "Show browser/tool status."),
-    CommandSpec("Browser", "snapshot", "snapshot", "Save a screenshot to workspace/screenshots."),
-    CommandSpec("Browser", "url", "url", "Show the current page URL."),
+    CommandSpec("Browser", "url", "url", "Show the page URL the agent last saw."),
     CommandSpec("MCP", "mcp", "mcp [reconnect N]", "Show MCP servers or restart server N."),
     CommandSpec("Service", "help", "help [command]", "Show command help."),
     CommandSpec("Service", "exit", "exit / quit", "Exit the CLI."),
@@ -294,24 +286,10 @@ class AgentCli(cmd2.Cmd):
         for line in format_mcp_status(mcp.status()):
             self.poutput(line)
 
-    def do_snapshot(self, _: str) -> None:
-        """Save a screenshot of the current page to workspace/screenshots."""
-
-        try:
-            path = self._runtime_loop.run(self._take_snapshot())
-        except Exception as exc:
-            self.perror(f"Snapshot failed: {exc}")
-            return
-        self.poutput(self._ok(f"Saved screenshot: {path}"))
-
     def do_url(self, _: str) -> None:
-        """Show the current page URL."""
+        """Show the page URL the agent last saw (no tool is called)."""
 
-        try:
-            url = self._runtime_loop.run(self._current_url())
-        except Exception as exc:
-            self.perror(f"URL lookup failed: {exc}")
-            return
+        url = current_page_url(dict(self.runtime.context.state))
         self.poutput(url or "Current URL is unavailable.")
 
     def do_status(self, _: str) -> None:
@@ -338,97 +316,6 @@ class AgentCli(cmd2.Cmd):
     async def _reset_session(self) -> None:
         await self.runtime.close()
         self.runtime.context = SessionContext(self.runtime.config)
-
-    async def _take_snapshot(self) -> Path:
-        await self.runtime.start()
-        workspace = self.runtime.context.workspace
-        if workspace is None:
-            raise RuntimeError("Session workspace is not initialized.")
-
-        path = workspace.screenshots / f"snapshot-{datetime.now():%Y%m%d-%H%M%S}.png"
-        tool = await self._get_tool("browser_take_screenshot", "browser_screenshot")
-        result = await self._call_tool_raw(tool, {"filename": str(path)})
-
-        if not path.exists():
-            # the server saved the file elsewhere (or not at all): use the returned image
-            if self._image_bytes(result) is None:
-                result = await self._call_tool_raw(tool, {})
-            await self._write_tool_image_result(path, result)
-
-        self.runtime.context.artifacts.register("snapshot", path, kind="screenshot")
-        self.runtime.context.persist()
-        return path
-
-    async def _current_url(self) -> str | None:
-        # Read-only: the snapshot's "Page URL:" line, never page JavaScript.
-        await self.runtime.start()
-        snapshot = await self._get_optional_tool(SNAPSHOT_TOOL)
-        if snapshot is None:
-            return None
-        text = self._result_text(await self._call_tool(snapshot, {}))
-        return self._extract_url(text)
-
-    async def _get_tool(self, *names: str) -> Any:
-        tool = await self._get_optional_tool(*names)
-        if tool is None:
-            raise RuntimeError(f"Required browser tool is unavailable: {'/'.join(names)}")
-        return tool
-
-    async def _get_optional_tool(self, *names: str) -> Any | None:
-        registry = self.runtime.context.tool_registry
-        if registry is None:
-            return None
-        tools = await registry.get_by_name()
-        for name in names:
-            if name in tools:
-                return tools[name]
-        return None
-
-    async def _call_tool(self, tool: Any, payload: dict[str, Any]) -> Any:
-        invoke = getattr(tool, "invoke", None)
-        if callable(invoke):
-            result = invoke(payload)
-            if inspect.isawaitable(result):
-                return await result
-            return result
-
-        if callable(tool):
-            result = tool(**payload)
-            if inspect.isawaitable(result):
-                return await result
-            return result
-
-        raise TypeError(f"Tool {tool!r} is not invocable.")
-
-    async def _call_tool_raw(self, tool: Any, payload: dict[str, Any]) -> Any:
-        """Call a tool keeping binary content (MCP tools return ``CallToolResult``)."""
-
-        invoke_raw = getattr(tool, "invoke_raw", None)
-        if not callable(invoke_raw):
-            return await self._call_tool(tool, payload)
-        result = await invoke_raw(payload)
-        if getattr(result, "isError", False):
-            raise RuntimeError(self._result_text(result) or "Tool reported an error.")
-        return result
-
-    async def _write_tool_image_result(self, path: Path, result: Any) -> None:
-        data = self._image_bytes(result)
-        if data is None:
-            raise RuntimeError("Screenshot tool did not create a file or return image bytes.")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-
-    def _image_bytes(self, result: Any) -> bytes | None:
-        if isinstance(result, bytes):
-            return result
-        data = getattr(result, "data", None)
-        if isinstance(data, bytes):
-            return data
-        for block in getattr(result, "content", None) or []:
-            # MCP ImageContent: base64 ``data`` + ``mimeType``
-            if getattr(block, "type", None) == "image" and isinstance(getattr(block, "data", None), str):
-                return base64.b64decode(block.data)
-        return None
 
     def _start_background_task(self, task_text: str) -> None:
         self._task_done.clear()
@@ -537,34 +424,6 @@ class AgentCli(cmd2.Cmd):
         except Exception:
             return "unavailable"
         return str(len(tools))
-
-    def _result_text(self, result: Any) -> str:
-        if isinstance(result, str):
-            return result
-        content = getattr(result, "content", None)
-        if isinstance(content, str):
-            return content
-        if isinstance(content, Iterable):
-            parts: list[str] = []
-            for item in content:
-                text = getattr(item, "text", None)
-                if text:
-                    parts.append(str(text))
-            if parts:
-                return "\n".join(parts)
-        return str(result)
-
-    def _extract_url(self, text: str) -> str | None:
-        """First URL in a page snapshot (its ``Page URL:`` line first)."""
-
-        for line in text.splitlines():
-            stripped = line.strip().lstrip("-* ").strip()
-            if stripped.lower().startswith(("url:", "page url:")):
-                match = _URL_PATTERN.search(stripped)
-                if match:
-                    return match.group(0)
-        match = _URL_PATTERN.search(text)
-        return match.group(0) if match else None
 
     def _format_dt(self, value: datetime | None) -> str:
         return value.isoformat(timespec="seconds") if value else "-"

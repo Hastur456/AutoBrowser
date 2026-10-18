@@ -31,7 +31,7 @@ engine-native execution loop. The CLI entry point is `main.py`. Core code lives 
 
 - `src/agent_loop/execution/`: the engine-native control loop — `AgentLoopEngine`,
   `TurnController`, the frozen `LoopState`, completion/observation/guards/policy
-  helpers, `EngineResources`, and `native_task_runner`.
+  helpers, `EngineResources`, and the `Agent` that runs one `TaskRequest`.
 - `src/agent_loop/`: runtime-facing action contracts, model action parsing, eventing, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary around the engine.
 - `src/contracts.py`: provider-neutral typed tool/plan/observation contracts and loop thresholds (no imports from the loop, harness, or browser layers).
 - `src/state.py`: type-only `AgentState` TypedDict kept for browser-layer annotation.
@@ -92,7 +92,7 @@ See `docs/decisions/2026-09-28-universal-mcp-manager.md`.
 - `src/harness/mcp_setup.py`: builds the session `MCPRuntime` from settings (default: Playwright MCP over CDP), fills `{cdp_port}`/`{cdp_endpoint}`, fails startup when the browser server is not ready.
 - `src/harness/mcp_tools.py`: `MCPToolSource`/`MCPTool` bridge; the browser server keeps unprefixed `browser_*` names.
 - `src/harness/normalization.py`: `ToolCallNormalizer` protocol and `SchemaArgsNormalizer`.
-- `src/browser/`: shared browser vocabulary only: `names.py` (canonical `browser.*` names), `errors.py`, `contracts.py`, and `normalization.py` (`BrowserToolNormalizer`). `provider.py`/`fake.py` remain as test scaffolding.
+- `src/browser/`: browser adapters that read text formats, never tool names: `pages.py` (page URL from the latest output and kept snapshots), `permissions.py` (permission resources), `memory.py` (memory scope and content policy), `hooks.py`, `errors.py`.
 
 `ToolBroker` folds every call through the registered normalizers (request before, result after).
 
@@ -102,7 +102,7 @@ Use canonical `browser.*` names in provider-neutral tests when helpful. The Play
 
 AutoBrowser is a long-lived interactive session, not a single-shot task runner. `SessionRuntime` owns the process lifecycle and delegates session-owned state to `SessionContext`.
 
-All tasks in one interactive session share a session identity derived from `SessionContext.session_id`, passed into each task config as `configurable.thread_id`. Each user request still gets its own `TaskRecord.task_id` for task history and message attribution, and `goal_id == task_id`.
+All tasks in one interactive session share a session identity derived from `SessionContext.session_id`, carried as `TaskRequest.session_id`. Each user request still gets its own `TaskRecord.task_id` for task history and message attribution, and `goal_id == task_id`.
 
 After each task, `SessionRuntime` remembers the latest loop state in `SessionContext.state` (from the terminal `AgentLoopResult.session_state`). The next task carries forward only session-useful context:
 
@@ -117,10 +117,9 @@ Before a new task starts, task-local fields must be reset so stale completion or
 - `tool_request`, `tool_result`, `policy_decision`, and `policy_event`;
 - `error`, retry counters, replan counters, repeat counters, and ineffective-action counters.
 
-`BrowserHarness` owns the internal state-override channel
-(`HARNESS_STATE_OVERRIDES_CONFIG_KEY`) used to inject carried session state into
-the next `AgentLoopEngine.run` call. Strip harness-internal config before the
-engine sees the task config.
+The carried state reaches the next run as `TaskRequest.state_overrides`; there is no
+task-config dict and no harness-internal key. The production agent is composed once per
+session by `SessionContext.build_agent()`.
 
 Preserve this boundary: the session layer manages lifecycle and context handoff,
 while the engine-native loop still owns planning, reasoning, tool execution,
@@ -128,35 +127,39 @@ observation, and task completion.
 
 ## Build, Test, and Development Commands
 
-Create and activate a virtual environment, then install dependencies:
+Install dependencies with [uv](https://docs.astral.sh/uv/):
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+uv sync
 ```
+
+`uv sync` creates `.venv` from `uv.lock` (Python 3.12 is fetched if missing) and keeps it
+exactly in line with the lock, removing packages that are not declared. Run everything
+through `uv run`, no activation needed. `requirements.txt` is exported from the lock
+(`uv export --format requirements.txt --no-hashes --no-annotate --no-header --no-emit-project
+-o requirements.txt`) for a plain pip fallback.
 
 Run the test suite with:
 
 ```powershell
-python -m pytest
+uv run pytest
 ```
 
-Run targeted tests with `python -m pytest tests\path\to_test.py`.
+Run targeted tests with `uv run pytest tests\path\to_test.py`.
 
 Useful focused test commands:
 
 ```powershell
-python -m pytest tests\test_harness_session.py tests\test_harness_runtime.py
-python -m pytest tests\test_main_cli.py
-python -m pytest tests\test_prompts.py
-python -m pytest tests\test_browser_contracts.py tests\test_browser_normalization.py tests\test_mcp_manager.py tests\test_mcp_tools_bridge.py
-python -m pytest tests\test_agent_loop_events.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py tests\test_messages.py
-python -m pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
-python -m pytest tests\test_context_assembler.py tests\test_goal_runner.py
-python -m pytest tests\test_harness_hooks.py tests\test_agent_loop_hooks.py tests\test_browser_hooks.py tests\test_builtin_hooks.py tests\test_command_hooks.py tests\test_hook_scripts.py
-python -m pytest tests\test_harness_memory.py tests\test_memory_store.py tests\test_memory_tool.py tests\test_memory_consolidation.py tests\test_working_notes.py tests\test_browser_memory.py tests\test_memory_boundaries.py
-python scripts/run_evals.py --memory-seed tests\evals\memory_seed   # evals with and without seed memory
+uv run pytest tests\test_harness_session.py tests\test_harness_runtime.py
+uv run pytest tests\test_main_cli.py
+uv run pytest tests\test_prompts.py
+uv run pytest tests\test_browser_contracts.py tests\test_schema_args_normalizer.py tests\test_mcp_manager.py tests\test_mcp_tools_bridge.py
+uv run pytest tests\test_agent_loop_events.py tests\test_agent_loop_replay.py tests\test_agent_loop_metrics.py tests\test_messages.py
+uv run pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tests\test_agent_loop_evals.py
+uv run pytest tests\test_context_assembler.py tests\test_goal_runner.py
+uv run pytest tests\test_harness_hooks.py tests\test_agent_loop_hooks.py tests\test_browser_hooks.py tests\test_builtin_hooks.py tests\test_command_hooks.py tests\test_hook_scripts.py
+uv run pytest tests\test_harness_memory.py tests\test_memory_store.py tests\test_memory_tool.py tests\test_memory_consolidation.py tests\test_working_notes.py tests\test_browser_memory.py tests\test_memory_boundaries.py
+uv run scripts/run_evals.py --memory-seed tests\evals\memory_seed   # evals with and without seed memory
 ```
 
 Check docs-only diffs with:
@@ -168,39 +171,39 @@ git diff --check -- docs
 Run the CLI without browser/MCP tools for dry checks:
 
 ```powershell
-python main.py --no-mcp --task "inspect page"
+uv run main.py --no-mcp --task "inspect page"
 ```
 
 Run the CLI with Playwright MCP tools enabled:
 
 ```powershell
-python main.py --task "open the target page"
+uv run main.py --task "open the target page"
 ```
 
 Run Golden Set JSONL scenarios:
 
 ```powershell
-python scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
+uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
 ```
 
 Export session rows and inspect traces:
 
 ```powershell
-python scripts/export_sessions.py --out .autobrowser\exports\runs.jsonl
-python scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
-python scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.jsonl
+uv run scripts/export_sessions.py --out .autobrowser\exports\runs.jsonl
+uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
+uv run scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.jsonl
 ```
 
 Run deterministic fake-browser eval baselines:
 
 ```powershell
-python scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
+uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
 ```
 
 Start the interactive REPL with:
 
 ```powershell
-python main.py
+uv run main.py
 ```
 
 REPL commands include:
@@ -214,12 +217,11 @@ REPL commands include:
 - `clear`: clear dialogue history.
 - `reset`: reset the current session by clearing history and state.
 - `browser`: show browser/tool status.
-- `snapshot`: save a screenshot to `workspace/screenshots/`.
-- `url`: show the current page URL.
+- `url`: show the page URL the agent last saw (read from session state, no tool call).
 - `help [command]`: show command help.
 - `exit` or `quit`: exit the CLI.
 
-Useful CLI flags include `--loop`, `--show-state`, `--hide-snapshot`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap`, and `--permission-mode`.
+Useful CLI flags include `--loop`, `--show-state`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap`, and `--permission-mode`.
 
 ## Coding Style & Naming Conventions
 
@@ -239,7 +241,7 @@ Prefer focused unit tests for loop decisions, policy decisions, state transition
 
 The MVP is moving away from deterministic, browser-specific rules towards a universal agent without hardcodes: the model decides how to use whatever tools the configured MCP servers expose. Do not add tool-, site- or page-structure-specific rules to the engine, guards, harness or memory policy. The prompts still carry older browser rules; they are revised separately — leave them unchanged unless asked.
 
-Tests, evals and prompts use the exposed tool names (`browser_navigate`, `browser_click`, …); there is no canonical `browser.*` vocabulary and `BrowserToolNormalizer` never translates names. Do not put Playwright MCP schema adaptation in executor or prompt code: add servers through `mcp_servers` and adapt calls with `ToolCallNormalizer`s.
+Tests, evals and prompts use the exposed tool names (`browser_navigate`, `browser_click`, …), but no production code decides by a name: snapshots follow `readOnlyHint` per server and arguments follow the tool schema (`docs/decisions/2026-10-19-name-free-tool-handling.md`). Do not put Playwright MCP schema adaptation in executor or prompt code: add servers through `mcp_servers` and adapt calls with `ToolCallNormalizer`s.
 
 ## Commit & Pull Request Guidelines
 

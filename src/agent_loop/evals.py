@@ -7,7 +7,6 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -16,18 +15,26 @@ import yaml
 from src.llm import ModelResponse
 from src.messages import Message
 
-from src.agent_loop.engine import native_task_runner
+from src.agent_loop.context import ContextAssembler
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
+from src.agent_loop.execution.loop import Agent
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.replay import TraceSummary, print_action_sequence, summarize_trace
+from src.agent_loop.skills import browser_agent_rules_resource
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
-from src.browser.names import is_browser_tool_name
-from src.browser.normalization import BrowserToolNormalizer
 from src.browser.permissions import BrowserResourceResolver
 from src.config import PermissionsSettings
-from src.contracts import ApprovalAnswer, PermissionVerdict, Tool, ToolRequest, ToolResult
+from src.contracts import (
+    ApprovalAnswer,
+    PermissionVerdict,
+    TaskRequest,
+    Tool,
+    ToolRequest,
+    ToolResult,
+)
 from src.harness.permissions import PermissionEngine
-from src.harness.runtime import HARNESS_EVENT_METADATA_CONFIG_KEY, BrowserHarness
+from src.harness.normalization import SchemaArgsNormalizer
+from src.harness.runtime import BrowserHarness
 from src.harness.tools import ToolRegistry
 
 _INVALID_REF_PATTERN = re.compile(
@@ -53,6 +60,10 @@ class _FakeBrowserTools:
         self._snapshots = list(snapshots)
         self._snapshot_index = 0
         self._tools = self._build_tools()
+        self._tool_names = frozenset(tool.name for tool in self._tools)
+        self._ref_tools = frozenset(
+            tool.name for tool in self._tools if "ref" in tool.input_schema.get("properties", {})
+        )
 
     async def get_tools(self) -> Sequence[Any]:
         return list(self._tools)
@@ -64,11 +75,8 @@ class _FakeBrowserTools:
         normalized_request = dict(request)
         args = dict(request.get("args") or {})
         requested_name = str(request.get("name", "") or "").strip()
-        if not is_browser_tool_name(requested_name):
-            normalized_request["args"] = args
-            return normalized_request
-
-        if requested_name in {"browser_click", "browser_hover", "browser_type"}:
+        # Only its own element tools (those whose schema takes a ``ref``) are adapted.
+        if requested_name in self._ref_tools:
             ref = self._ref_from_args(args)
             if ref:
                 args.setdefault("ref", ref)
@@ -82,7 +90,7 @@ class _FakeBrowserTools:
         tool_name = str(normalized_result.get("name", "") or "")
         if (
             normalized_result.get("status") != "error"
-            or not is_browser_tool_name(tool_name)
+            or tool_name not in self._tool_names
             or normalized_result.get("error_code")
         ):
             return normalized_result
@@ -147,7 +155,8 @@ class _FakeBrowserTools:
 
         return [
             self._tool(browser_navigate, {"url": {"type": "string"}}, required=("url",)),
-            self._tool(browser_snapshot, {"depth": {"type": "integer"}}),
+            # Read-only like the real Playwright snapshot tool: its output is the kept snapshot.
+            self._tool(browser_snapshot, {"depth": {"type": "integer"}}, read_only=True),
             self._tool(
                 browser_click,
                 {
@@ -179,6 +188,7 @@ class _FakeBrowserTools:
         properties: dict[str, Any],
         *,
         required: Sequence[str] = (),
+        read_only: bool = False,
     ) -> Tool:
         """Wrap one async fake-browser function into a neutral ``Tool``."""
 
@@ -191,6 +201,7 @@ class _FakeBrowserTools:
                 **({"required": list(required)} if required else {}),
             },
             func=func,
+            annotations={"readOnlyHint": True} if read_only else None,
         )
 
     def _current_snapshot(self) -> str:
@@ -372,10 +383,11 @@ async def run_scenario(scenario: EvalScenario, *, memory: Any | None = None) -> 
     llm = FakeChatModel(responses=scenario.model_responses)
     harness = BrowserHarness(
         llm=llm,
-        # Same browser normalizer the real session wires for the browser MCP server
-        # (see src/harness/mcp_setup.py).
+        # A browser scenario: the same prompt resources a session with a browser server gets.
+        context_assembler=ContextAssembler(resources=[browser_agent_rules_resource()]),
+        # Same schema normalizer the real session wires (see src/harness/mcp_setup.py).
         tool_registry=ToolRegistry(
-            providers=[provider], normalizers=[BrowserToolNormalizer(), provider]
+            providers=[provider], normalizers=[SchemaArgsNormalizer(), provider]
         ),
         event_emitter=emitter,
     )
@@ -397,20 +409,15 @@ async def run_scenario(scenario: EvalScenario, *, memory: Any | None = None) -> 
         task_id=task_id,
         goal_id=task_id,
     )
-    runner = native_task_runner(resources, human_input=_scripted_human(scenario.human_answers))
-    task_config = {
-        HARNESS_EVENT_METADATA_CONFIG_KEY: {
-            "session_id": session_id,
-            "task_id": task_id,
-            "goal_id": task_id,
-        },
-    }
-    session_config = SimpleNamespace(
+    agent = Agent(resources, human_input=_scripted_human(scenario.human_answers))
+    request = TaskRequest(
+        task=scenario.task,
+        task_id=task_id,
+        session_id=session_id,
         turn_cap=scenario.turn_cap,
-        compress_tools=False,
     )
     try:
-        result = await runner(harness, scenario.task, session_config, task_config)
+        result = await agent.run(request)
     except Exception as exc:
         emitter.emit(
             "goal.failed",

@@ -4,27 +4,28 @@ from __future__ import annotations
 
 import contextlib
 import json
-from collections.abc import Awaitable, Callable, Iterator, Mapping, MutableMapping
+from collections.abc import Awaitable, Callable, Iterator, MutableMapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from src.agent_loop.engine import HumanInputCallback, native_task_runner
 from src.agent_loop.events import (
     AgentTraceSink,
     CompositeEventSink,
     EventEmitter,
     JsonlEventSink,
 )
-from src.agent_loop.execution.completion import native_latest_state_loader
+from src.agent_loop.context import ContextAssembler
 from src.agent_loop.execution.approval import ApprovalJudge
+from src.agent_loop.execution.loop import Agent, AgentLoopResult, HumanInputCallback
 from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
-from src.agent_loop.goals import GoalRunRequest, GoalRunner
+from src.agent_loop.goals import GoalLimits, GoalRunner
+from src.agent_loop.skills import PromptResource, browser_agent_rules_resource
 from src.config import get_settings
-from src.contracts import PermissionMode
+from src.contracts import PermissionMode, TaskRequest
 from src.harness.hooks import HookEngine, NullHookEngine, registry_digest
 from src.browser.memory import BrowserMemoryPolicy, BrowserMemoryScope
 from src.browser.permissions import BrowserResourceResolver
@@ -34,11 +35,7 @@ from src.harness.memory import MemoryManager, NullMemoryContext
 from src.harness.memory_consolidation import MemoryConsolidator
 from src.harness.memory_store import MemoryContext, MemoryStore
 from src.harness.memory_tool import memory_tools
-from src.harness.runtime import (
-    HARNESS_EVENT_METADATA_CONFIG_KEY,
-    HARNESS_STATE_OVERRIDES_CONFIG_KEY,
-    BrowserHarness,
-)
+from src.harness.runtime import BrowserHarness
 from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolRegistry
 
@@ -57,21 +54,17 @@ INTERACTIVE_MESSAGE = "Interactive mode. Type 'quit' or 'exit' to quit.\n"
 TASK_PROMPT = "Task> "
 
 EXIT_MESSAGE = "\nExiting."
-SESSION_THREAD_PREFIX = "session-"
 
 SESSION_STATE_KEYS = (
     "messages",
     "observation",
-    "snapshot",
-    "browser",
+    "snapshots",
     "last_tool",
     "last_args",
     "last_tool_request",
     "last_browser_action",
     "ineffective_browser_action",
     "ineffective_browser_actions",
-    "pending_browser_tab_index",
-    "pending_browser_tab_reason",
 )
 
 TASK_BOUNDARY_RESETS: dict[str, Any] = {
@@ -101,7 +94,6 @@ class SessionConfig:
     temperature: float
     no_mcp: bool
     show_state: bool
-    hide_snapshot: bool
     show_tools: bool
     as_json: bool
     compress_tools: bool
@@ -123,7 +115,6 @@ class SessionConfig:
             temperature=args.temperature,
             no_mcp=args.no_mcp,
             show_state=args.show_state,
-            hide_snapshot=args.hide_snapshot,
             show_tools=args.show_tools,
             as_json=args.json,
             compress_tools=args.compress_tools,
@@ -135,26 +126,6 @@ class SessionConfig:
             turn_cap=args.turn_cap,
             permission_mode=getattr(args, "permission_mode", None),
         )
-
-    def task_config(self) -> dict[str, Any]:
-        """Return the task-run configuration shared by tasks in this session."""
-
-        return {
-            "turn_cap": self.turn_cap,
-            "run_name": "AutoBrowser CLI task",
-            "metadata": {
-                "model": self.model,
-                "temperature": self.temperature,
-                "show_state": self.show_state,
-                "hide_snapshot": self.hide_snapshot,
-                "compress_tools": self.compress_tools,
-                "agent_loop": self.agent_loop,
-            },
-            "tags": [
-                "autobrowser",
-                "cli",
-            ],
-        }
 
 
 class SessionState(MutableMapping[str, object]):
@@ -511,6 +482,7 @@ class SessionContext:
         self.harness = harness_factory(
             llm=self.llm,
             tool_registry=self.tool_registry,
+            context_assembler=ContextAssembler(resources=self._prompt_resources()),
             telemetry=self.telemetry,
             event_emitter=self.event_emitter,
             compress_tools=self.config.compress_tools,
@@ -523,6 +495,14 @@ class SessionContext:
             payload={"session_id": self.session_id},
         )
         self.events.emit("session.started", self)
+
+    def _prompt_resources(self) -> list[PromptResource]:
+        """Prompt resources for this session: the browser rules iff a browser server is
+        configured (``browser_mcp_server``), so a session without one sees no browser text."""
+
+        if self.mcp is not None and self.mcp.browser_server:
+            return [browser_agent_rules_resource()]
+        return []
 
     def _initialize_memory(self, settings: Any) -> None:
         """Build the persistent memory store and its context renderer (or switch them off)."""
@@ -624,6 +604,28 @@ class SessionContext:
             "memory": self._memory_snapshot(),
         }
 
+    def build_agent(self, *, human_input: HumanInputCallback | None = None) -> Agent:
+        """Assemble the session's agent: the one place the production agent is composed.
+
+        The harness contributes the tool registry (and its normalizers), the prompt context
+        and the event emitter; the session contributes the model and every session-scoped
+        collaborator: hooks, permissions, the approval judge and memory. Call after
+        :meth:`initialize`.
+        """
+
+        if self.harness is None or self.llm is None:
+            raise RuntimeError("SessionContext.build_agent() needs an initialized session.")
+        resources = EngineResources.from_harness(
+            self.harness,
+            llm=self.llm,
+            events=self.event_emitter,
+            hooks=self.hooks,
+            permissions=self.permissions,
+            approval=self.approval,
+            memory=self.memory,
+        )
+        return Agent(resources, human_input=human_input)
+
     def _memory_snapshot(self) -> dict[str, Any]:
         store = self.memory_store
         if store is None:
@@ -724,6 +726,8 @@ class SessionRuntime:
         self._output = output_fn
         #: Answers permission ``ask`` verdicts; ``None`` denies them (headless runs).
         self._human_input = human_input
+        #: Built once in :meth:`start` by :meth:`SessionContext.build_agent`.
+        self.agent: Agent | None = None
 
     @property
     def harness(self) -> BrowserHarness:
@@ -747,84 +751,49 @@ class SessionRuntime:
             print_tools=self._print_tools,
             harness_factory=self._harness_factory,
         )
+        self.agent = self.context.build_agent(human_input=self._human_input)
         if self.context.permissions.mode == "bypass":
             self._output(
                 "WARNING: permission mode 'bypass' grants every approval; only deny rules "
                 "and always-ask rules still hold."
             )
 
-    async def run_task(self, task: str) -> Any:
-        """Run one user task through the existing agent implementation."""
+    async def run_task(self, task: str) -> AgentLoopResult:
+        """Run one user task through the session's agent."""
 
         await self.start()
+        if self.agent is None:
+            raise RuntimeError("SessionRuntime.start() did not build the agent.")
         task_id = f"task-{uuid4().hex}"
         record = self.context.reset_task(task, task_id=task_id)
-        task_config = self.config.task_config()
-        configurable = dict(task_config.get("configurable") or {})
-        configurable["thread_id"] = self._session_thread_id()
-        task_config["configurable"] = configurable
-        event_metadata = dict(task_config.get(HARNESS_EVENT_METADATA_CONFIG_KEY) or {})
-        event_metadata.update(
-            {
-                "session_id": self.context.session_id,
-                "task_id": task_id,
-                "goal_id": task_id,
-            }
-        )
-        task_config[HARNESS_EVENT_METADATA_CONFIG_KEY] = event_metadata
-        task_config[HARNESS_STATE_OVERRIDES_CONFIG_KEY] = _task_state_overrides(
-            self.context.state,
-            task_id=task_id,
-        )
-        request = GoalRunRequest(
+        request = TaskRequest(
             task=task,
             task_id=task_id,
-            goal_id=task_id,
-            thread_id=self._session_thread_id(),
-            config=task_config,
-            state_overrides=task_config[HARNESS_STATE_OVERRIDES_CONFIG_KEY],
-        )
-        latest_state: dict[str, object] | None = None
-
-        async def load_latest_state(
-            config: Mapping[str, Any],
-            fallback: Any | None,
-        ) -> dict[str, object] | None:
-            nonlocal latest_state
-            latest_state = await native_latest_state_loader(config, fallback)
-            return latest_state
-
-        resources = EngineResources.from_harness(
-            self.harness,
-            llm=self.context.llm,
-            events=self.context.event_emitter,
-            hooks=self.context.hooks,
-            permissions=self.context.permissions,
-            approval=self.context.approval,
-            memory=self.context.memory,
+            session_id=self.context.session_id,
+            state_overrides=_task_state_overrides(self.context.state, task_id=task_id),
+            turn_cap=self.config.turn_cap,
+            compress_tools=self.config.compress_tools,
         )
         runner = GoalRunner(
-            harness=self.harness,
-            session_config=self.config,
-            task_runner=native_task_runner(resources, human_input=self._human_input),
-            event_emitter=self.context.event_emitter,
-            latest_state_loader=load_latest_state,
+            task_runner=self.agent.run,
+            events=self.context.event_emitter,
+            limits=GoalLimits.from_settings(get_settings().loop),
         )
         try:
             goal_result = await runner.run(request)
         except Exception as exc:
-            if latest_state is not None:
-                self.context.state.replace(latest_state)
             self._forget_memory(task_id)
             self.context.fail_task(record, exc)
             raise
-        if goal_result.latest_state is not None:
-            self.context.state.replace(dict(goal_result.latest_state))
-        await self._update_memory(task, task_id, goal_result.status, goal_result.result)
-        self.context.finish_task(record, goal_result.result)
-        return goal_result.result
+        result = goal_result.result
+        self.context.state.replace(dict(result.session_state))
+        await self._update_memory(task, task_id, goal_result.status, result)
+        self.context.finish_task(record, result)
+        return result
 
-    async def _update_memory(self, task: str, task_id: str, status: str, result: Any) -> None:
+    async def _update_memory(
+        self, task: str, task_id: str, status: str, result: AgentLoopResult
+    ) -> None:
         """After ``goal_end``: staged trust for the entries the task loaded, then the opt-in
         consolidation of a completed task. Memory never fails a task."""
 
@@ -841,13 +810,12 @@ class SessionRuntime:
             )
         settings = get_settings().memory
         if outcome == "done" and settings.consolidate_on_goal_end and self.context.llm is not None:
-            state = getattr(result, "state", None)
-            history = list(getattr(state, "action_history", None) or [])
+            state = result.state
+            history = list(state.action_history)
             domains: set[str] = set()
             if isinstance(self.context.memory, MemoryContext):
                 domains = set(self.context.memory.visited(task_id))
-            if state is not None:
-                domains.add(BrowserMemoryScope().scope(state.snapshot_mapping()))
+            domains.add(BrowserMemoryScope().scope(state.snapshot_mapping()))
             consolidator = MemoryConsolidator(
                 self.context.llm,
                 store,
@@ -857,7 +825,7 @@ class SessionRuntime:
             await consolidator.consolidate(
                 task_id=task_id,
                 task=task,
-                final_answer=str(getattr(result, "final_answer", "") or ""),
+                final_answer=str(result.final_answer or ""),
                 action_history=render_action_history(history, len(history)),
                 domains=domains,
             )
@@ -869,9 +837,6 @@ class SessionRuntime:
             store.record_outcome(task_id, "cancelled")  # drops what the task loaded
         if isinstance(self.context.memory, MemoryContext):
             self.context.memory.forget(task_id)
-
-    def _session_thread_id(self) -> str:
-        return f"{SESSION_THREAD_PREFIX}{self.context.session_id}"
 
     async def run_forever(self, *, initial_task: str | None = None) -> int:
         """Run tasks sequentially until the user exits the session."""
@@ -898,18 +863,16 @@ class SessionRuntime:
             self._print_result(await self.run_task(task))
             self._output()
 
-    def _print_result(self, result: Any) -> None:
+    def _print_result(self, result: AgentLoopResult) -> None:
         """Print a task's final answer to the interactive loop output."""
 
-        answer = getattr(result, "final_answer", None)
-        if not answer and isinstance(result, Mapping):
-            answer = result.get("final_answer")
-        if answer:
-            self._output(answer)
+        if result.final_answer:
+            self._output(result.final_answer)
 
     async def close(self) -> None:
         """Release process-lifetime external resources."""
 
+        self.agent = None
         await self.context.close()
 
 
@@ -924,7 +887,6 @@ __all__ = [
     "SessionMetadata",
     "SessionRuntime",
     "SessionState",
-    "SESSION_THREAD_PREFIX",
     "TaskRecord",
     "WorkspaceContext",
     "default_mcp_runtime_factory",

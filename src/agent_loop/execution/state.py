@@ -29,30 +29,28 @@ from src.messages import Message
 # Flat update keys that live on the nested BrowserState rather than LoopState.
 BROWSER_STATE_FIELDS = frozenset(
     {
-        "snapshot",
+        "snapshots",
         "last_browser_action",
         "ineffective_browser_action",
         "ineffective_browser_actions",
-        "pending_browser_tab_index",
-        "pending_browser_tab_reason",
     }
 )
 
 
 @dataclass(frozen=True)
 class BrowserState:
-    """Browser context owned by the execution loop.
+    """Environment context owned by the execution loop.
 
-    Mirrors the flat browser-scoped fields of the legacy ``AgentState`` so the
-    ported observation/guard logic keeps identical semantics.
+    ``snapshots`` maps a tool server to the output of its latest successful read-only
+    call (MCP ``readOnlyHint``); a successful call of that server that is not read-only
+    drops the entry, because its environment may have changed. Server-neutral: no tool
+    name decides anything, and one server's calls never touch another server's entry.
     """
 
-    snapshot: str = ""
+    snapshots: dict[str, str] = field(default_factory=dict)
     last_browser_action: ToolRequest = field(default_factory=dict)
     ineffective_browser_action: ToolRequest = field(default_factory=dict)
     ineffective_browser_actions: list[ToolRequest] = field(default_factory=list)
-    pending_browser_tab_index: int = 0
-    pending_browser_tab_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -122,29 +120,29 @@ class LoopState:
             return self
 
         loop_updates: dict[str, Any] = {}
-        browser_updates: dict[str, Any] = {}
+        nested_updates: dict[str, Any] = {}
         for key, value in updates.items():
             if key in BROWSER_STATE_FIELDS:
-                browser_updates[key] = value
+                nested_updates[key] = value
             elif key in _LOOP_STATE_FIELDS:
                 loop_updates[key] = value
             else:
                 raise ValueError(f"Unknown LoopState update key: {key!r}")
 
-        if browser_updates:
-            loop_updates["browser"] = replace(self.browser, **browser_updates)
+        if nested_updates:
+            loop_updates["browser"] = replace(self.browser, **nested_updates)
         return replace(self, **loop_updates)
 
     def snapshot_mapping(self) -> dict[str, Any]:
         """Minimal mapping fed to normalizers and permission resource resolvers.
 
-        Both read state via ``.get(...)`` (``snapshot``, and ``tool_result`` — the latest
+        Both read state via ``.get(...)`` (``snapshots``, and ``tool_result`` — the latest
         tool output — for the permission resolver), so a plain dict keeps them unchanged
         while the loop uses the typed dataclass.
         """
 
         return {
-            "snapshot": self.browser.snapshot,
+            "snapshots": dict(self.browser.snapshots),
             "tool_result": dict(self.tool_result or {}),
             "error": self.error,
             "last_tool": self.last_tool,
@@ -154,8 +152,6 @@ class LoopState:
             "ineffective_browser_actions": [
                 dict(action) for action in self.browser.ineffective_browser_actions
             ],
-            "pending_browser_tab_index": self.browser.pending_browser_tab_index,
-            "pending_browser_tab_reason": self.browser.pending_browser_tab_reason,
         }
 
     def to_session_state(self) -> dict[str, Any]:
@@ -168,8 +164,7 @@ class LoopState:
         return {
             "messages": list(self.messages),
             "observation": self.observation,
-            "snapshot": self.browser.snapshot,
-            "browser": {"snapshot": self.browser.snapshot},
+            "snapshots": dict(self.browser.snapshots),
             "last_tool": self.last_tool,
             "last_args": dict(self.last_args),
             "last_tool_request": dict(self.last_tool_request),
@@ -178,8 +173,6 @@ class LoopState:
             "ineffective_browser_actions": [
                 dict(action) for action in self.browser.ineffective_browser_actions
             ],
-            "pending_browser_tab_index": self.browser.pending_browser_tab_index,
-            "pending_browser_tab_reason": self.browser.pending_browser_tab_reason,
         }
 
     @classmethod
@@ -189,26 +182,20 @@ class LoopState:
     ) -> LoopState:
         """Build an initial ``LoopState`` from carried-forward session state.
 
-        Accepts the flat SESSION_STATE_KEYS dict (plus ``task``/``task_id``). A nested
-        ``browser`` mapping is unpacked into the flat browser keys when the flat keys
-        are absent. Unrecognized keys (e.g. task-local resets that are not LoopState
-        fields) are ignored, so the same dict the harness carries can be passed
-        verbatim.
+        Accepts the flat SESSION_STATE_KEYS dict (plus ``task``/``task_id``).
+        Unrecognized keys (e.g. task-local resets that are not LoopState fields) are
+        ignored, so the same dict the harness carries can be passed verbatim.
         """
 
         state = cls()
         if not overrides:
             return state
 
-        data = dict(overrides)
-        browser = data.pop("browser", None)
-        if isinstance(browser, Mapping) and "snapshot" not in data and "snapshot" in browser:
-            data["snapshot"] = browser["snapshot"]
-
         known = {
             key: value
-            for key, value in data.items()
-            if key in BROWSER_STATE_FIELDS or key in _LOOP_STATE_FIELDS
+            for key, value in overrides.items()
+            # ``browser`` is the nested dataclass, never a flat carried key.
+            if key in BROWSER_STATE_FIELDS or (key in _LOOP_STATE_FIELDS and key != "browser")
         }
         return state.apply(known)
 

@@ -14,6 +14,7 @@ from src.cli.bootstrap import build_session, effective_permission_mode, is_inter
 from src.cli.parser import build_parser
 from src.config import PermissionsSettings, Settings
 from src.contracts import PermissionVerdict
+from tests.session_fakes import install_fake_agent
 
 REQUEST = {"name": "browser_click", "args": {"element": "Купить", "target": "e2"}}
 GRANTABLE = PermissionVerdict(
@@ -180,20 +181,13 @@ async def test_the_session_uses_the_mode_and_the_human_callback(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     use_permissions(monkeypatch, PermissionsSettings())
-    captured: list[dict[str, Any]] = []
+    async def run(_request: Any) -> Any:
+        from src.agent_loop.execution.loop import AgentLoopResult
+        from src.agent_loop.execution.state import LoopState
 
-    def runner_factory(resources: Any, **kwargs: Any) -> Any:
-        captured.append(kwargs)
+        return AgentLoopResult("done", "ok", {}, LoopState())
 
-        async def run(*_args: Any) -> Any:
-            from src.agent_loop.execution.loop import AgentLoopResult
-            from src.agent_loop.execution.state import LoopState
-
-            return AgentLoopResult("done", "ok", {}, LoopState())
-
-        return run
-
-    monkeypatch.setattr("src.harness.session.native_task_runner", runner_factory)
+    built = install_fake_agent(monkeypatch, run)
     approvals = ApprovalPrompt()
     out: list[str] = []
     session = build_session(
@@ -209,7 +203,8 @@ async def test_the_session_uses_the_mode_and_the_human_callback(
         await session.close()
 
     assert session.context.permissions.mode == "bypass"
-    assert [kwargs["human_input"] for kwargs in captured] == [approvals, approvals]
+    # One agent per session, and it carries the CLI's approval prompt.
+    assert [agent.human_input for agent in built] == [approvals]
     assert sum("permission mode 'bypass'" in line for line in out) == 1
 
 

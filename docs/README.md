@@ -59,10 +59,17 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   supersedes the browser provider boundary.
 - [Server-Neutral Progress Journal ADR](decisions/2026-09-28-server-neutral-progress-journal.md):
   action journal, `Action History`, repeat blocking and honest completion.
+- [Injected Tool Roles ADR](decisions/2026-10-17-injected-tool-roles.md): the engine
+  imports nothing from `src/browser/`; superseded on roles by the next record.
+- [Name-Free Tool Handling ADR](decisions/2026-10-19-name-free-tool-handling.md): no logic
+  keyed on tool names; snapshots per server from `readOnlyHint`.
 - [MCP Manager Migration](development/2026-09-24-mcp-manager-migration.md):
   migration guide from browser providers to the MCP Manager (Russian).
 - [Agent Loop Progress Recovery](development/2026-09-26-agent-loop-progress-recovery.md):
   post-migration plan for progress detection and completion (Russian).
+- [Explicit Agent Objects Plan](development/2026-10-17-explicit-agent-objects-plan.md):
+  browser-neutral engine via injected tool roles, dead-code removal, typed
+  layer objects (Russian).
 - [Browser Provider Boundary ADR](decisions/2026-07-26-browser-provider-boundary.md):
   superseded record for the former Playwright adapter boundary.
 - [Task Memory Isolation ADR](decisions/2026-07-24-task-memory-isolation-and-session-persistence.md):

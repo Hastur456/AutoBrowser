@@ -95,7 +95,6 @@ async def test_run_batch_from_args_passes_session_factory_and_batch_options(
     assert calls["session_args"][0].cdp_port == 9555
     assert args.temperature == 0.0
     assert args.show_state is False
-    assert args.hide_snapshot is False
     assert args.show_tools is False
     assert args.json is False
     assert args.compress_tools is False

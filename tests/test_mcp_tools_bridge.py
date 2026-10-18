@@ -10,8 +10,8 @@ from typing import Any
 from mcp import types
 
 from src.agent_loop.execution.tools import ToolBroker
-from src.browser.normalization import BrowserToolNormalizer
 from src.harness.mcp_tools import MCPToolSource, call_tool_result_to_text
+from src.harness.normalization import SchemaArgsNormalizer
 from src.harness.tools import tool_is_read_only
 from src.mcp import MCPManager
 
@@ -79,7 +79,7 @@ def test_exposure_prefixed_and_unprefixed() -> None:
 def test_broker_success_tool_error_and_connection_lost_codes() -> None:
     async def scenario() -> None:
         async with MCPManager({"fake": fake(stateful=True)}) as manager:
-            broker = ToolBroker(_Registry(MCPToolSource(manager)), normalizers=[BrowserToolNormalizer()])
+            broker = ToolBroker(_Registry(MCPToolSource(manager)), normalizers=[SchemaArgsNormalizer()])
 
             ok = await broker.execute({"name": "fake__echo", "args": {"text": "hi"}}, {})
             assert ok == {"name": "fake__echo", "status": "success", "content": "hi", "error": ""}

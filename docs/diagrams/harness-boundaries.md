@@ -23,6 +23,7 @@ flowchart LR
   SessionCtx --> Harness[BrowserHarness]
   SessionCtx --> Hooks[HookEngine]
   SessionCtx --> Permissions[PermissionEngine: rules, mode, grants]
+  SessionCtx --> PromptRes[Prompt resources: browser rules iff a browser server]
   Hooks --> HookHandlers[Hook handlers: builtin_hooks, browser.hooks]
   Hooks --> CommandHooks[CommandHook: external process]
   MCPRuntime --> Manager[MCPManager]
@@ -50,6 +51,7 @@ flowchart LR
   TurnController --> ModelDriver[ModelDriver]
   TurnController --> ToolBroker[ToolBroker]
   TurnController --> ObsCompiler[ObservationCompiler]
+  ObsCompiler --> Snapshots[snapshots per server, from readOnlyHint]
   ToolBroker --> Tools
   ToolBroker --> Normalizers
   TurnController --> Journal[Action journal]
@@ -82,3 +84,10 @@ session's approval grants across tasks, and `run_task` passes it through
 `EngineResources.from_harness(..., permissions=...)`. Without it, `EngineResources` gets a
 `PermissionEngine.from_settings()`: the code-default settings (no rules, `default` mode), never
 the personal config.
+
+No tool name decides anything. The `ObservationCompiler` gets the server and the
+`readOnlyHint` of every call: a successful read-only call stores its output as that server's
+snapshot, a successful state-changing call of the server drops it, other servers are
+untouched. The session hands `ContextAssembler` its prompt resources (the browser rules iff a
+browser server is configured). The engine imports nothing from `src/browser/`
+(`tests/test_engine_boundaries.py`).

@@ -10,10 +10,9 @@ from typing import Any
 import pytest
 
 from src.agent_loop.execution.tools import PreparedToolCall, ToolBroker
-from src.browser.names import is_browser_tool_name
-from src.browser.normalization import BrowserToolNormalizer
 from src.contracts import Tool, ToolRequest, ToolResult
 from src.harness.mcp_tools import MCPToolSource
+from src.harness.normalization import SchemaArgsNormalizer
 from src.harness.tools import ToolRegistry
 from src.mcp import MCPManager
 
@@ -54,11 +53,7 @@ class _FakeBrowserType:
         normalized_request = dict(request)
         args = dict(request.get("args") or {})
         requested_name = str(request.get("name", "") or "").strip()
-        if not is_browser_tool_name(requested_name):
-            normalized_request["args"] = args
-            return normalized_request
-
-        if requested_name == "browser_type":
+        if requested_name == "browser_type":  # its own tool
             ref = str(args.get("ref", "") or "").strip()
             if ref:
                 args.setdefault("target", ref)
@@ -72,7 +67,7 @@ class _FakeBrowserType:
 
 def _fake_browser_broker() -> ToolBroker:
     provider = _FakeBrowserType()
-    registry = ToolRegistry(providers=[provider], normalizers=[BrowserToolNormalizer(), provider])
+    registry = ToolRegistry(providers=[provider], normalizers=[SchemaArgsNormalizer(), provider])
     return ToolBroker(registry)
 
 

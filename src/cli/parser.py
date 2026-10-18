@@ -44,11 +44,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print state updates after each graph node runs.",
     )
     parser.add_argument(
-        "--hide-snapshot",
-        action="store_true",
-        help="Redact browser snapshots from printed state updates.",
-    )
-    parser.add_argument(
         "--show-tools",
         action="store_true",
         help="Print MCP tool names after loading them.",
