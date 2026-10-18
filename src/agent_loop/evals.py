@@ -21,7 +21,6 @@ from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.replay import TraceSummary, print_action_sequence, summarize_trace
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
 from src.browser.names import is_browser_tool_name
-from src.browser.normalization import BrowserToolNormalizer
 from src.browser.permissions import BrowserResourceResolver
 from src.browser.roles import BrowserToolRoles
 from src.config import PermissionsSettings
@@ -34,6 +33,7 @@ from src.contracts import (
     ToolResult,
 )
 from src.harness.permissions import PermissionEngine
+from src.harness.normalization import SchemaArgsNormalizer
 from src.harness.runtime import BrowserHarness
 from src.harness.tools import ToolRegistry
 
@@ -379,10 +379,9 @@ async def run_scenario(scenario: EvalScenario, *, memory: Any | None = None) -> 
     llm = FakeChatModel(responses=scenario.model_responses)
     harness = BrowserHarness(
         llm=llm,
-        # Same browser normalizer the real session wires for the browser MCP server
-        # (see src/harness/mcp_setup.py).
+        # Same schema normalizer the real session wires (see src/harness/mcp_setup.py).
         tool_registry=ToolRegistry(
-            providers=[provider], normalizers=[BrowserToolNormalizer(), provider]
+            providers=[provider], normalizers=[SchemaArgsNormalizer(), provider]
         ),
         event_emitter=emitter,
     )

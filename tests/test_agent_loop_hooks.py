@@ -27,7 +27,6 @@ from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import LoopState
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
 from src.browser.names import is_browser_tool_name
-from src.browser.normalization import BrowserToolNormalizer
 from src.browser.roles import BrowserToolRoles
 from src.config import HooksSettings, PermissionRule, PermissionsSettings
 from src.contracts import (
@@ -41,6 +40,7 @@ from src.contracts import (
 from src.harness.builtin_hooks import approve_tools
 from src.harness.hooks import HookEngine, NullHookEngine, RegisteredHook
 from src.harness.mcp_tools import MCPToolSource
+from src.harness.normalization import SchemaArgsNormalizer
 from src.harness.permissions import PermissionEngine
 from src.harness.runtime import BrowserHarness
 from src.harness.tools import ToolRegistry
@@ -328,7 +328,7 @@ async def run_engine(
         else:
             provider = _FakeBrowserTools(snapshots or ['- textbox "Search" ref=e8'])
             registry = ToolRegistry(
-                providers=[provider], normalizers=[BrowserToolNormalizer(), provider]
+                providers=[provider], normalizers=[SchemaArgsNormalizer(), provider]
             )
     llm = CountingModel(responses)
     harness = BrowserHarness(llm=llm, tool_registry=registry, event_emitter=emitter)

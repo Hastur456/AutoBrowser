@@ -11,9 +11,9 @@ import pytest
 
 from src.agent_loop.execution.tools import PreparedToolCall, ToolBroker
 from src.browser.names import is_browser_tool_name
-from src.browser.normalization import BrowserToolNormalizer
 from src.contracts import Tool, ToolRequest, ToolResult
 from src.harness.mcp_tools import MCPToolSource
+from src.harness.normalization import SchemaArgsNormalizer
 from src.harness.tools import ToolRegistry
 from src.mcp import MCPManager
 
@@ -72,7 +72,7 @@ class _FakeBrowserType:
 
 def _fake_browser_broker() -> ToolBroker:
     provider = _FakeBrowserType()
-    registry = ToolRegistry(providers=[provider], normalizers=[BrowserToolNormalizer(), provider])
+    registry = ToolRegistry(providers=[provider], normalizers=[SchemaArgsNormalizer(), provider])
     return ToolBroker(registry)
 
 
