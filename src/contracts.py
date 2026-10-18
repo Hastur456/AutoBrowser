@@ -89,13 +89,16 @@ class Tool:
     ``input_schema`` is a JSON-Schema object, so any chat provider can advertise
     the tool without a framework-specific wrapper.
 
-    ``func`` is an async callable invoked as ``func(**args)``.
+    ``func`` is an async callable invoked as ``func(**args)``. ``annotations`` are the
+    MCP tool annotations (``readOnlyHint`` ...) when the tool declares any, the same
+    protocol metadata an ``MCPTool`` carries.
     """
 
     name: str
     func: Callable[..., Awaitable[Any]] = field(repr=False, compare=False)
     description: str = ""
     input_schema: dict[str, Any] = field(default_factory=dict)
+    annotations: dict[str, Any] | None = None
 
     def to_def(self) -> ToolDef:
         """Return the model-visible ``ToolDef`` schema for this tool."""
@@ -283,23 +286,6 @@ class MemoryRenderer(Protocol):
         """The block text; ``""`` when there is nothing to show."""
 
 
-class ToolRoles(Protocol):
-    """What the engine may assume about a tool, decided outside the engine.
-
-    The engine compares tool names exactly as exposed and never derives a role from a
-    name; a server-specific implementation (the browser one lives in ``src/browser/``)
-    answers instead. Read-only tools are not a role: they come from the MCP
-    ``readOnlyHint`` annotation.
-    """
-
-    def is_observation(self, name: str) -> bool:
-        """A successful call returns the current environment state (the kept snapshot)."""
-
-    def is_stateful(self, name: str) -> bool:
-        """The tool acts on that environment: a successful call that is not read-only
-        invalidates the kept snapshot."""
-
-
 @dataclass(frozen=True)
 class MemoryEntry:
     """One persistent memory file: harness-owned frontmatter plus a markdown body."""
@@ -408,6 +394,5 @@ __all__ = [
     "ToolDef",
     "ToolRequest",
     "ToolResult",
-    "ToolRoles",
     "ToolStatus",
 ]

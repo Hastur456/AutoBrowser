@@ -8,7 +8,7 @@ a security boundary — the real browser boundaries are profile isolation and Pl
 
 * ``domain`` — the host a call acts on: its ``url`` argument when it has one (a navigation or
   a new tab goes there), otherwise the ``- Page URL:`` line of the latest tool output, then
-  of the current snapshot (Playwright MCP prints it in both). Lowercase, no ``www.``/port,
+  of a kept snapshot (Playwright MCP prints it in both). Lowercase, no ``www.``/port,
   IDN as punycode (:func:`src.config.normalize_domain`). ``data:``/``about:`` pages and an
   unparsable URL give no domain, which permission rules treat fail-closed.
 * ``url`` — the full address behind ``domain`` (the ``url`` argument or the page URL),
@@ -26,7 +26,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from src.browser.pages import current_page_url, page_url, url_domain
+from src.browser.pages import current_page_url, page_url, snapshot_texts, url_domain
 from src.contracts import PermissionCheck
 
 _ATTRIBUTE = re.compile(r"\s*\[[^\]]*\]")
@@ -43,6 +43,16 @@ def snapshot_element(snapshot: Any, ref: Any) -> str:
         if marker in line:
             text = _ATTRIBUTE.sub("", line).strip().removeprefix("-").strip()
             return text.removesuffix(":").strip()
+    return ""
+
+
+def _element(snapshots: list[str], ref: Any) -> str:
+    """The element line of ``ref`` in whichever kept snapshot lists it."""
+
+    for snapshot in snapshots:
+        element = snapshot_element(snapshot, ref)
+        if element:
+            return element
     return ""
 
 
@@ -71,13 +81,13 @@ class BrowserResourceResolver:
 
     @staticmethod
     def _target(check: PermissionCheck, state: Mapping[str, Any]) -> str:
-        snapshot = state.get("snapshot")
+        snapshots = snapshot_texts(state)
         parts = [str(check.args.get("element", "") or "").strip()]
-        parts.append(snapshot_element(snapshot, check.args.get("target") or check.args.get("ref")))
+        parts.append(_element(snapshots, check.args.get("target") or check.args.get("ref")))
         for field in check.args.get("fields") or []:
             if isinstance(field, Mapping):
                 parts.append(str(field.get("name", "") or "").strip())
-                parts.append(snapshot_element(snapshot, field.get("target") or field.get("ref")))
+                parts.append(_element(snapshots, field.get("target") or field.get("ref")))
         return "\n".join(part for part in parts if part)
 
 

@@ -3,7 +3,7 @@
 :class:`EngineResources` gathers exactly what :class:`~src.agent_loop.execution.loop.AgentExecutionLoop`
 needs to drive one goal. It composes objects the harness already owns (tool registry and
 its normalizers, prompt context, event emitter), the session-scoped collaborators (hooks,
-permissions, approval judge, memory, tool roles) and the reasoning ``llm``, which the
+permissions, approval judge, memory) and the reasoning ``llm``, which the
 caller (``SessionRuntime.run_task``) supplies explicitly.
 
 Like the whole ``src/agent_loop/execution/`` package, this module imports nothing from
@@ -19,12 +19,12 @@ from typing import TYPE_CHECKING
 from src.agent_loop.context import ContextAssembler
 from src.agent_loop.events import EventEmitter
 from src.agent_loop.execution.approval import ApprovalJudge
-from src.contracts import MemoryRenderer, ToolRoles
+from src.contracts import MemoryRenderer
 from src.harness.hooks import HookEngine, NullHookEngine
 from src.harness.memory import NullMemoryContext
 from src.harness.normalization import ToolCallNormalizer
 from src.harness.permissions import PermissionEngine
-from src.harness.tools import NullToolRoles, ToolRegistry
+from src.harness.tools import ToolRegistry
 from src.llm import ChatModel
 
 if TYPE_CHECKING:
@@ -50,9 +50,7 @@ class EngineResources:
     call to human approval); the default judges nothing. ``memory`` renders the persistent
     ``Memory`` context block (``render(state) -> str``, the session's ``MemoryContext``);
     the default renders nothing, so evals and
-    tests never see the developer's memory files. ``tool_roles`` tells the observation
-    compiler which tool returns the environment snapshot and which tools act on it; the
-    default :class:`~src.harness.tools.NullToolRoles` assigns none, so no snapshot is kept.
+    tests never see the developer's memory files.
     """
 
     llm: ChatModel
@@ -64,7 +62,6 @@ class EngineResources:
     permissions: PermissionEngine = field(default_factory=PermissionEngine.from_settings)
     approval: ApprovalJudge = field(default_factory=ApprovalJudge)
     memory: MemoryRenderer = field(default_factory=NullMemoryContext)
-    tool_roles: ToolRoles = field(default_factory=NullToolRoles)
 
     @classmethod
     def from_harness(
@@ -77,7 +74,6 @@ class EngineResources:
         permissions: PermissionEngine | None = None,
         approval: ApprovalJudge | None = None,
         memory: MemoryRenderer | None = None,
-        tool_roles: ToolRoles | None = None,
     ) -> EngineResources:
         """Compose resources from an initialized ``BrowserHarness`` plus the ``llm``.
 
@@ -89,8 +85,6 @@ class EngineResources:
         too (``SessionContext.permissions``); without it the default engine applies. So is
         ``approval`` (``SessionContext.approval``); without it nothing is judged. So is
         ``memory`` (``SessionContext.memory``); without it no ``Memory`` block is rendered.
-        So are ``tool_roles`` (``SessionContext.tool_roles``); without them no snapshot is
-        kept.
         """
 
         tool_registry = harness.tools
@@ -105,7 +99,6 @@ class EngineResources:
             permissions=permissions if permissions is not None else PermissionEngine.from_settings(),
             approval=approval if approval is not None else ApprovalJudge(),
             memory=memory if memory is not None else NullMemoryContext(),
-            tool_roles=tool_roles if tool_roles is not None else NullToolRoles(),
         )
 
 

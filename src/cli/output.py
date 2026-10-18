@@ -21,16 +21,16 @@ SNAPSHOT_REDACTION = "[browser_snapshot hidden]"
 def _redact_snapshot_value(value: Any, *, parent_key: str = "") -> Any:
     """Return a terminal-safe copy with browser snapshots removed."""
 
-    if parent_key == "snapshot":
+    if parent_key in {"snapshot", "snapshots"}:
         return SNAPSHOT_REDACTION
 
     if isinstance(value, dict):
         redacted: dict[Any, Any] = {}
         is_snapshot_result = str(value.get("name", "") or "") == "browser_snapshot"
-        has_snapshot_field = bool(str(value.get("snapshot", "") or "").strip())
+        has_snapshot_field = bool(value.get("snapshots") or str(value.get("snapshot", "") or "").strip())
         for key, item in value.items():
             key_text = str(key)
-            if key_text == "snapshot":
+            if key_text in {"snapshot", "snapshots"}:
                 redacted[key] = SNAPSHOT_REDACTION
             elif key_text == "content" and is_snapshot_result:
                 redacted[key] = SNAPSHOT_REDACTION

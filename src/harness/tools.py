@@ -67,20 +67,6 @@ def tool_is_read_only(tool: Any) -> bool:
     return value is True
 
 
-class NullToolRoles:
-    """:class:`~src.contracts.ToolRoles` that assigns no roles.
-
-    Without a server-specific implementation the engine keeps no snapshot and has none to
-    invalidate, which is safe for any tool server.
-    """
-
-    def is_observation(self, name: str) -> bool:
-        return False
-
-    def is_stateful(self, name: str) -> bool:
-        return False
-
-
 def to_tool_def(tool: Any) -> ToolDef:
     """Extract the model-visible ``ToolDef`` schema from a registered tool.
 
@@ -199,7 +185,6 @@ class ToolRegistry:
 __all__ = [
     "LiveToolSource",
     "MCPToolClient",
-    "NullToolRoles",
     "ToolCollection",
     "ToolLoader",
     "ToolLoadResult",

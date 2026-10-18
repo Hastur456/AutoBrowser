@@ -23,11 +23,10 @@ from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalLimits, GoalRunner
 from src.config import get_settings
-from src.contracts import PermissionMode, TaskRequest, ToolRoles
+from src.contracts import PermissionMode, TaskRequest
 from src.harness.hooks import HookEngine, NullHookEngine, registry_digest
 from src.browser.memory import BrowserMemoryPolicy, BrowserMemoryScope
 from src.browser.permissions import BrowserResourceResolver
-from src.browser.roles import BrowserToolRoles
 from src.harness.permissions import PermissionEngine
 from src.harness.mcp_setup import MCPRuntime, build_mcp_runtime
 from src.harness.memory import MemoryManager, NullMemoryContext
@@ -57,8 +56,7 @@ EXIT_MESSAGE = "\nExiting."
 SESSION_STATE_KEYS = (
     "messages",
     "observation",
-    "snapshot",
-    "browser",
+    "snapshots",
     "last_tool",
     "last_args",
     "last_tool_request",
@@ -388,9 +386,6 @@ class SessionContext:
     memory_store: MemoryStore | None = None
     #: Renders the ``Memory`` context block for the engine (``EngineResources.memory``).
     memory: MemoryContext | NullMemoryContext = field(default_factory=NullMemoryContext)
-    #: Which browser tool returns the page snapshot and which ones act on the page
-    #: (``EngineResources.tool_roles``).
-    tool_roles: ToolRoles = field(default_factory=BrowserToolRoles)
     chrome_process: Any | None = None
     initialized: bool = False
 
@@ -605,8 +600,8 @@ class SessionContext:
 
         The harness contributes the tool registry (and its normalizers), the prompt context
         and the event emitter; the session contributes the model and every session-scoped
-        collaborator: hooks, permissions, the approval judge, memory and the browser tool
-        roles. Call after :meth:`initialize`.
+        collaborator: hooks, permissions, the approval judge and memory. Call after
+        :meth:`initialize`.
         """
 
         if self.harness is None or self.llm is None:
@@ -619,7 +614,6 @@ class SessionContext:
             permissions=self.permissions,
             approval=self.approval,
             memory=self.memory,
-            tool_roles=self.tool_roles,
         )
         return Agent(resources, human_input=human_input)
 

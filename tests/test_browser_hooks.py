@@ -307,6 +307,6 @@ async def test_browser_hooks_in_the_loop_see_normalized_names_and_keep_snapshots
     finished = [r.payload["tool_result"]["name"] for r in records if r.type == "tool.finished"]
     assert finished == ["browser_snapshot"]
     assert "URL policy: only these domains are allowed: ozon.ru." in tool_messages(result)[0]
-    assert result.state.browser.snapshot == page
+    assert result.state.browser.snapshots == {"": page}
     assert len(harness_messages(result)) == 1
     assert "untrusted data" in harness_messages(result)[0]

@@ -39,8 +39,7 @@ class AgentState(TypedDict, total=False):
     policy_decision: PolicyDecision
 
     observation: str
-    snapshot: str
-    browser: dict[str, Any]
+    snapshots: dict[str, str]
     messages: list[Message]
 
     last_tool: str

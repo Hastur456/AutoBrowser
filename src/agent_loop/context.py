@@ -300,8 +300,7 @@ def _is_browser_relevant(
     if any(
         state.get(key)
         for key in (
-            "snapshot",
-            "browser",
+            "snapshots",
             "last_browser_action",
             "ineffective_browser_action",
         )

@@ -57,7 +57,7 @@ def entry_file(**meta: Any) -> str:
 
 
 def page(url: str) -> dict[str, Any]:
-    return {"snapshot": f"- Page URL: {url}\n- button \"Search\"", "task_id": "task-1"}
+    return {"snapshots": {"playwright": f"- Page URL: {url}\n- button \"Search\""}, "task_id": "task-1"}
 
 
 # --------------------------------------------------------------------------- reading

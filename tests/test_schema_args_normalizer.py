@@ -22,7 +22,7 @@ def test_is_a_tool_call_normalizer() -> None:
 def test_args_pass_through_unchanged() -> None:
     tools = {"browser_click": tool("browser_click", {"selector": {}})}
     request = {"name": "browser_click", "args": {"selector": "#go", "extra": 1}}
-    out = SchemaArgsNormalizer().normalize_request(request, {"snapshot": "..."}, tools)
+    out = SchemaArgsNormalizer().normalize_request(request, {"snapshots": {"playwright": "..."}}, tools)
     assert out == {"name": "browser_click", "args": {"selector": "#go", "extra": 1}}
 
 

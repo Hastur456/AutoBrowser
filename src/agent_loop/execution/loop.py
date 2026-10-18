@@ -83,7 +83,7 @@ from src.contracts import (
 )
 from src.harness.hooks import HookDecisionRecord, HookOutcome
 from src.harness.memory import ensure_message_history
-from src.harness.tools import tool_is_read_only, tool_name
+from src.harness.tools import tool_is_read_only
 from src.messages import Message, user_message
 
 #: Asked when a call needs approval: ``(request, reason, verdict) -> once | session | deny``.
@@ -334,12 +334,7 @@ class TurnController:
             resources.llm,
             tool_registry=resources.tool_registry,
         )
-        self._observation = ObservationCompiler(
-            tool_roles=resources.tool_roles,
-            read_only_tools=frozenset(
-                tool_name(tool) for tool in tools if tool_is_read_only(tool)
-            ),
-        )
+        self._observation = ObservationCompiler()
 
     async def run_turn(self, state: LoopState) -> TurnResult:
         """Run one turn and describe what the engine should do next."""
@@ -431,7 +426,9 @@ class TurnController:
             self._event_ctx,
             final_answer=str(update.get("final_answer", "") or ""),
             evidence=tuple(
-                text for text in (state.observation, state.browser.snapshot) if str(text or "")
+                text
+                for text in (state.observation, *state.browser.snapshots.values())
+                if str(text or "")
             ),
             stop_hook_active=state.stop_blocks > 0,
         )
@@ -628,12 +625,14 @@ class TurnController:
         state = state.apply({"tool_result": result})
         observation_update = self._observation.compile(
             state,
+            server=prepared.server,
+            read_only=prepared.tool is not None and tool_is_read_only(prepared.tool),
             compress_tool_output=self._compress_tools,
         )
         state = state.apply(observation_update)
         self._emit(
             "observation.compiled",
-            {"observation": state.observation, "has_snapshot": bool(state.browser.snapshot)},
+            {"observation": state.observation, "has_snapshot": bool(state.browser.snapshots)},
         )
 
         if str(state.decision or "") == "done":

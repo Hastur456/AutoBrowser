@@ -22,7 +22,6 @@ from src.agent_loop.replay import TraceSummary, print_action_sequence, summarize
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
 from src.browser.names import is_browser_tool_name
 from src.browser.permissions import BrowserResourceResolver
-from src.browser.roles import BrowserToolRoles
 from src.config import PermissionsSettings
 from src.contracts import (
     ApprovalAnswer,
@@ -154,7 +153,8 @@ class _FakeBrowserTools:
 
         return [
             self._tool(browser_navigate, {"url": {"type": "string"}}, required=("url",)),
-            self._tool(browser_snapshot, {"depth": {"type": "integer"}}),
+            # Read-only like the real Playwright snapshot tool: its output is the kept snapshot.
+            self._tool(browser_snapshot, {"depth": {"type": "integer"}}, read_only=True),
             self._tool(
                 browser_click,
                 {
@@ -186,6 +186,7 @@ class _FakeBrowserTools:
         properties: dict[str, Any],
         *,
         required: Sequence[str] = (),
+        read_only: bool = False,
     ) -> Tool:
         """Wrap one async fake-browser function into a neutral ``Tool``."""
 
@@ -198,6 +199,7 @@ class _FakeBrowserTools:
                 **({"required": list(required)} if required else {}),
             },
             func=func,
+            annotations={"readOnlyHint": True} if read_only else None,
         )
 
     def _current_snapshot(self) -> str:
@@ -395,7 +397,6 @@ async def run_scenario(scenario: EvalScenario, *, memory: Any | None = None) -> 
             resolver=BrowserResourceResolver(),
         ),
         memory=memory,
-        tool_roles=BrowserToolRoles(),
     )
     emitter.emit(
         "goal.started",
