@@ -128,7 +128,6 @@ def make_config(**overrides: Any) -> SessionConfig:
         "temperature": 0.1,
         "no_mcp": True,
         "show_state": False,
-        "hide_snapshot": False,
         "show_tools": False,
         "as_json": False,
         "compress_tools": False,

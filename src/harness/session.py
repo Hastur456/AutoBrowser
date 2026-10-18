@@ -94,7 +94,6 @@ class SessionConfig:
     temperature: float
     no_mcp: bool
     show_state: bool
-    hide_snapshot: bool
     show_tools: bool
     as_json: bool
     compress_tools: bool
@@ -116,7 +115,6 @@ class SessionConfig:
             temperature=args.temperature,
             no_mcp=args.no_mcp,
             show_state=args.show_state,
-            hide_snapshot=args.hide_snapshot,
             show_tools=args.show_tools,
             as_json=args.json,
             compress_tools=args.compress_tools,

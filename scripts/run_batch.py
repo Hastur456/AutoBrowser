@@ -153,7 +153,6 @@ def _add_session_defaults(parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(
         temperature=settings.llm.temperature,
         show_state=False,
-        hide_snapshot=False,
         show_tools=False,
         json=False,
         compress_tools=False,

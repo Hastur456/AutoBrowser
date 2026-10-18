@@ -52,7 +52,6 @@ def make_args(**overrides: Any) -> argparse.Namespace:
         "model": "fake-model",
         "temperature": 0,
         "show_state": False,
-        "hide_snapshot": False,
         "show_tools": False,
         "json": False,
         "no_mcp": True,
@@ -116,7 +115,6 @@ def test_parser_accepts_cli_flags() -> None:
             "explicit task",
             "--loop",
             "--show-state",
-            "--hide-snapshot",
             "--show-tools",
             "--json",
             "--no-mcp",
@@ -138,7 +136,6 @@ def test_parser_accepts_cli_flags() -> None:
     assert args.task_text == "explicit task"
     assert args.loop is True
     assert args.show_state is True
-    assert args.hide_snapshot is True
     assert args.show_tools is True
     assert args.json is True
     assert args.no_mcp is True
