@@ -133,7 +133,9 @@ class ApprovalBroker:
         """Tickets waiting for an answer, oldest first."""
 
         with self._lock:
-            return tuple(item.ticket for item in self._pending.values())
+            return tuple(
+                item.ticket for item in self._pending.values() if not item.future.done()
+            )
 
     def answer(self, ticket_id: str, answer: ApprovalAnswer, *, via: ApprovalVia) -> bool:
         """Answer a pending ticket from any thread; ``False`` when it is not answerable.

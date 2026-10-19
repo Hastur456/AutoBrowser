@@ -202,6 +202,8 @@ async def test_the_stream_carries_the_task_and_reset_starts_a_new_session(
     assert view.session_id != old_id
     assert controller.task_views() == []
     reset = await asyncio.wait_for(anext(stream), timeout=2)
+    while reset.kind == "event":  # the old session's tail (session.closed, memory.*)
+        reset = await asyncio.wait_for(anext(stream), timeout=2)
     assert reset.kind == "reset"
     assert reset.cursor.session_id == view.session_id
     await stream.aclose()

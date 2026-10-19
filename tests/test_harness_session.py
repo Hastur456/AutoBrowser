@@ -1062,7 +1062,8 @@ async def test_extra_event_sinks_receive_the_session_events(
 
     await runtime.run_task("inspect page")
 
-    assert [record.type for record in sink.records] == [
+    # memory.* events depend on the memory settings; the lifecycle ones do not.
+    assert [r.type for r in sink.records if not r.type.startswith("memory.")] == [
         "session.started",
         "goal.started",
         "goal.completed",

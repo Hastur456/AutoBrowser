@@ -731,7 +731,8 @@ async def test_hook_decided_is_emitted_once_per_handler_in_the_loop_stream() -> 
         tools=EchoTool().tools(),
     )
 
-    turn = [r.type for r in records if r.type not in {"model.requested", "model.responded"}]
+    cadence = {"model.requested", "model.responded", "plan.updated", "turn.started"}
+    turn = [r.type for r in records if r.type not in cadence]
     assert turn == [
         "action.proposed",
         "hook.decided",
@@ -905,7 +906,7 @@ async def test_permission_request_allow_runs_the_tool_without_the_human() -> Non
     (event,) = seen
     assert event.tool == "purchase_item" and event.args == {"sku": "1"}
     assert "requires human approval" in event.reason
-    turn = [r.type for r in records if r.type not in {"model.requested", "model.responded"}]
+    turn = [r.type for r in records if r.type not in {"model.requested", "model.responded", "plan.updated", "turn.started"}]
     assert turn[:6] == [
         "action.proposed",
         "permission.decided",
