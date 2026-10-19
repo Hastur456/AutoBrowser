@@ -217,3 +217,29 @@ def test_plain_loop_stops_waiting_when_the_outcome_is_lost(runtime: RuntimeLoop)
 
     assert frontend.run() == 1
     assert written[-1] == "[warn]  задача завершилась, но итог не дошёл до ленты"
+
+
+def test_leftover_events_of_another_task_do_not_end_the_next_one(runtime: RuntimeLoop) -> None:
+    controller = ScriptedController()
+    written: list[str] = []
+    replies = iter(["1", "/exit"])
+    frontend = PlainFrontend(
+        controller, runtime, settings=SETTINGS, caps=plain_caps(), initial_task="t",
+        write=written.append, read=lambda _prompt: next(replies),
+    )
+    # An outcome of an earlier, interrupted task is still queued.
+    frontend._events.put(FeedItem(kind="outcome", event_type="goal.cancelled", task_id="t0", status="cancelled"))
+
+    assert frontend.run() == 0
+    assert "[cancelled]" not in written
+    assert "[done]  2 turns, 0:05" in written
+
+
+def test_ticket_lines_are_sanitized() -> None:
+    hostile = ApprovalTicket(
+        ticket_id="k", task_id="t", tool="cl" + chr(0x1B) + "[2Jick", server="srv", domain="a" + chr(0x202E) + "b",
+        reason="r", rule_id="x" + chr(0x07), source="rule", args_preview="", allow_session=True,
+        created_at=T0, deadline=T0,
+    )
+
+    assert format_ticket(hostile)[0] == "[ask]   srv/click on ab (rule x)"

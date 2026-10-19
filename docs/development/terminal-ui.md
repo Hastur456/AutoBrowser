@@ -65,6 +65,10 @@ uv run main.py --theme light            # тема dark | light | mono
 
 Новая задача во время выполнения отклоняется с подсказкой.
 
+История ввода хранится между запусками в `<storage.root_dir>/input_history`
+(`ui.input_history`, размер — `ui.input_history_size`). Это обычный текст: всё введённое,
+включая пароли, сохраняется как есть. Отключить: `ui.input_history: false`.
+
 ## Slash-команды
 
 `/help`, `/status`, `/tasks`, `/cancel`, `/mcp [reconnect <имя>]`, `/history [N]`, `/memory`,

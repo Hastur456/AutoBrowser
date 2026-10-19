@@ -91,9 +91,11 @@ def format_item(item: FeedItem, state: PlainState, settings: UiSettings) -> list
 
 
 def format_ticket(ticket: ApprovalTicket) -> list[str]:
-    target = f"{ticket.server}/{ticket.tool}" if ticket.server else ticket.tool
-    where = f" on {ticket.domain}" if ticket.domain else ""
-    rule = f" (rule {ticket.rule_id})" if ticket.rule_id else ""
+    tool, server = sanitize_text(ticket.tool), sanitize_text(ticket.server)
+    domain, rule_id = sanitize_text(ticket.domain), sanitize_text(ticket.rule_id)
+    target = f"{server}/{tool}" if server else tool
+    where = f" on {domain}" if domain else ""
+    rule = f" (rule {rule_id})" if rule_id else ""
     lines = [_tag("ask", f"{target}{where}{rule}")]
     if ticket.reason:
         lines.append(" " * (_TAG_WIDTH + 1) + sanitize_text(ticket.reason))
@@ -218,9 +220,19 @@ class PlainFrontend:
     def _run_task(self, text: str) -> bool:
         """Submit ``text`` and print its feed until the outcome; ``True`` when it completed."""
 
+        # Leftovers of an earlier task (an interrupted wait) must not end this one.
+        self._drain()
+        # Short timeouts keep Ctrl+C responsive: blocking waits are not interruptible on
+        # Windows.
+        tick = 1.0 / self._settings.refresh_hz
         submitted = self._runtime.submit(self._controller.submit(text))
         try:
-            submitted.result()
+            while True:
+                try:
+                    task = submitted.result(timeout=tick)
+                    break
+                except TimeoutError:
+                    continue
         except KeyboardInterrupt:
             # Ctrl+C while the session starts (Chrome, MCP): cancel the start and wait for
             # its cleanup instead of leaving it running under a closing session.
@@ -230,30 +242,30 @@ class PlainFrontend:
         except BaseException as exc:  # noqa: BLE001 - shown to the user, the loop goes on
             self._emit(_tag("failed", f"{type(exc).__name__}: {exc}"))
             return False
-        # A short timeout keeps Ctrl+C responsive: a blocking ``Queue.get`` is not
-        # interruptible on Windows.
-        tick = 1.0 / self._settings.refresh_hz
         checks_every = max(int(self._settings.status_interval_seconds * self._settings.refresh_hz), 1)
         idle_ticks = 0
+        idle_checks = 0
         while True:
             try:
                 value = self._events.get(timeout=tick)
             except queue.Empty:
                 idle_ticks += 1
-                if idle_ticks % checks_every == 0 and self._settled():
-                    # The outcome was lost (stream gap, dead forwarder): don't wait forever.
-                    lost = (
-                        "задача завершилась, но итог не дошёл до ленты"
-                        if self.locale == "ru"
-                        else "the task ended but its outcome never reached the feed"
-                    )
-                    self._emit(_tag("warn", lost))
-                    return False
-                continue
+                if idle_ticks % checks_every:
+                    continue
+                if not self._settled():
+                    idle_checks = 0
+                    continue
+                # Twice in a row, so an outcome still on its way is not raced.
+                idle_checks += 1
+                if idle_checks < 2:
+                    continue
+                return self._lost_outcome(task.task_id)
             except KeyboardInterrupt:
                 self._runtime.submit(self._controller.cancel()).result()
                 continue
-            idle_ticks = 0
+            idle_ticks = idle_checks = 0
+            if _task_of(value) not in {task.task_id, ""}:
+                continue
             if isinstance(value, ApprovalTicket):
                 self._ask(value)
                 continue
@@ -263,6 +275,26 @@ class PlainFrontend:
                 self._emit(line)
             if value.kind == "outcome":
                 return value.status == "completed"
+
+    def _lost_outcome(self, task_id: str) -> bool:
+        """The task ended but its outcome never reached the feed: report the recorded one."""
+
+        views = self._runtime.submit(_call(self._controller.task_views)).result()
+        status = next((view.status for view in views if view.task_id == task_id), "")
+        lost = (
+            "задача завершилась, но итог не дошёл до ленты"
+            if self.locale == "ru"
+            else "the task ended but its outcome never reached the feed"
+        )
+        self._emit(_tag("warn", f"{lost} ({status})" if status else lost))
+        return status == "completed"
+
+    def _drain(self) -> None:
+        while True:
+            try:
+                self._events.get_nowait()
+            except queue.Empty:
+                return
 
     def _ask(self, ticket: ApprovalTicket) -> None:
         for line in format_ticket(ticket):
@@ -315,6 +347,14 @@ class PlainFrontend:
     def _emit(self, line: str) -> None:
         with self._lock:
             self._write(line)
+
+
+def _task_of(value: FeedItem | ApprovalTicket | ApprovalResolution) -> str:
+    """The task an item belongs to; ``""`` when it does not say (resolutions)."""
+
+    if isinstance(value, (FeedItem, ApprovalTicket)):
+        return value.task_id
+    return ""
 
 
 def _tag(tag: str, text: str) -> str:

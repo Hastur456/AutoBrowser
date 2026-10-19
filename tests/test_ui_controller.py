@@ -320,3 +320,58 @@ async def test_a_cancel_during_memory_consolidation_closes_the_task_record(
     assert view.status == "completed" and view.finished_at is not None
     assert runtime.context.current_task is None
     await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_submit_caller_stops_the_start_but_not_more(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0))
+    controller, runtime, _, _ = build()
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def slow_start() -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(runtime, "start", slow_start)
+    caller = asyncio.create_task(controller.submit("task"))
+    await started.wait()
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+
+    assert stopped.is_set() and controller.busy is False
+
+
+@pytest.mark.asyncio
+async def test_shutdown_gives_up_on_a_task_that_ignores_cancellation(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    release = asyncio.Event()
+
+    async def stubborn(_request: TaskRequest) -> AgentLoopResult:
+        while not release.is_set():
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                continue
+        return native_result(final_answer="late")
+
+    install_fake_agent(monkeypatch, stubborn)
+    controller, runtime, _, _ = build()
+    await controller.submit("stubborn")
+    loop = asyncio.get_running_loop()
+
+    began = loop.time()
+    await controller.shutdown(0.2)
+
+    assert loop.time() - began < 1.0
+    assert "did not stop within 0.2s" in caplog.text
+    release.set()
+    await controller.wait()
+    await runtime.close()

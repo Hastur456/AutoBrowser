@@ -85,12 +85,21 @@ class SessionController:
 
         if self.busy:
             raise TaskBusyError("A task is already running.")
-        # Starting can take long (Chrome, MCP); keep it cancellable like the task itself.
-        self._starting = asyncio.current_task()
+        # Starting can take long (Chrome, MCP): run it as its own task so ``cancel()`` stops
+        # the start alone, never the caller's task around ``submit``.
+        starting = asyncio.ensure_future(self.start())
+        self._starting = starting
         try:
-            await self.start()
+            await asyncio.shield(starting)
+        except asyncio.CancelledError:
+            # The caller was cancelled: don't leave the start running behind it.
+            starting.cancel()
+            await asyncio.wait({starting})
+            raise
         finally:
             self._starting = None
+        if starting.cancelled():
+            raise asyncio.CancelledError
         known = len(self._runtime.context.tasks)
         self._task = asyncio.create_task(self._runtime.run_task(text))
         self._task.add_done_callback(_log_task_failure)
@@ -142,10 +151,20 @@ class SessionController:
         """Cancel whatever runs and wait for it, at most ``timeout_seconds``, so the session
         is never closed under a running start or task."""
 
-        try:
-            await asyncio.wait_for(self.cancel(), timeout_seconds)
-        except TimeoutError:
-            logger.warning("Task did not stop within %.1fs of the shutdown", timeout_seconds)
+        running = [
+            task
+            for task in (self._starting, self._task)
+            if task is not None and not task.done()
+        ]
+        for task in running:
+            task.cancel()
+        if not running:
+            return
+        _done, pending = await asyncio.wait(running, timeout=timeout_seconds)
+        if pending:
+            logger.warning(
+                "%d task(s) did not stop within %.1fs of the shutdown", len(pending), timeout_seconds
+            )
 
     async def reconnect(self, server: str) -> ServerView:
         """Restart one MCP server and return its new state."""

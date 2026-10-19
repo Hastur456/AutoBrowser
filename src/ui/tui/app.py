@@ -120,6 +120,8 @@ class TuiApp:
             mouse_support=False,
             color_depth=_COLOR_DEPTHS[self._theme.color],
             min_redraw_interval=1.0 / settings.refresh_hz,
+            # Windows has no SIGWINCH; prompt_toolkit polls and redraws its area (B3).
+            terminal_size_polling_interval=settings.size_poll_seconds,
             refresh_interval=1.0 / settings.refresh_hz,
             erase_when_done=False,
             input=input,
@@ -207,13 +209,12 @@ class TuiApp:
         self._stream_future = self._bridge.spawn(self._forward_stream)
         pump_task = asyncio.ensure_future(self._pump.run())
         status_task = asyncio.ensure_future(self._poll_status())
-        size_task = asyncio.ensure_future(self._watch_size())
         if self._initial_task:
             loop.call_soon(self._submit_text, self._initial_task)
         try:
             return await self._app.run_async()
         finally:
-            for task in (pump_task, status_task, size_task):
+            for task in (pump_task, status_task):
                 task.cancel()
             await self._shutdown()
 
@@ -221,8 +222,7 @@ class TuiApp:
         if self._unsubscribe is not None:
             unsubscribe, self._unsubscribe = self._unsubscribe, None
             await self._bridge.call(unsubscribe)
-        if self._busy():
-            await self._bridge.run(self._controller.cancel)
+        # A running task is stopped by the caller's bounded ``SessionController.shutdown``.
         if self._stream_future is not None:
             self._stream_future.cancel()
 
@@ -281,28 +281,27 @@ class TuiApp:
         if loop is not None:
             loop.call_soon_threadsafe(ring)
 
-    async def _watch_size(self) -> None:
-        """Windows has no SIGWINCH: poll the size and redraw the live zone from scratch on a
-        change, so no line of an older, differently wrapped frame is left behind (B3)."""
-
-        size = self._app.output.get_size()
-        while True:
-            await asyncio.sleep(self._settings.size_poll_seconds)
-            current = self._app.output.get_size()
-            if current != size:
-                size = current
-                self._app.renderer.erase(leave_alternate_screen=False)
-                self.invalidate()
-
     async def _poll_status(self) -> None:
         """MCP states produce no events, so the status line polls the session view."""
 
+        idle_polls = 0
         while True:
             await asyncio.sleep(self._settings.status_interval_seconds)
             try:
                 self._view = await self._bridge.call(self._controller.session_view)
             except Exception:  # noqa: BLE001 - a status poll never takes the UI down
+                _LOG.debug("status poll failed", exc_info=True)
                 continue
+            # The transcript says a task runs but the session says none does: its outcome
+            # was lost (dead forwarder). Two polls in a row, so an outcome still on its way
+            # is not raced.
+            if self.transcript.task is not None and not self._view.busy:
+                idle_polls += 1
+                if idle_polls >= 2:
+                    self._pump.post(TaskSettled())
+                    idle_polls = 0
+            else:
+                idle_polls = 0
             self.invalidate()
 
     # -- Input ----------------------------------------------------------------------------
@@ -330,6 +329,7 @@ class TuiApp:
         """Runs on the runtime thread; ``submit`` returns once the task is tracked."""
 
         if future.cancelled():
+            self._pump.post(Notice("отменено" if self.locale == "ru" else "cancelled"))
             return
         error = future.exception()
         if error is not None:
@@ -541,14 +541,16 @@ class TuiApp:
             if again:
                 event.app.exit(result=self._exit_code)
                 return
-            self._last_interrupt = now
             if self._busy():
+                self._last_interrupt = now
                 self._cancel()
                 return
             buffer = event.current_buffer
             if buffer.text:
+                # Clearing the draft does not arm the exit.
                 buffer.reset()
                 return
+            self._last_interrupt = now
             hint = "нажмите Ctrl+C ещё раз для выхода" if self.locale == "ru" else "press Ctrl+C again to exit"
             self._pump.post(Notice(hint))
 

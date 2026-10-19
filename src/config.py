@@ -1245,7 +1245,13 @@ class UiSettings(_Section):
     markdown: Annotated[bool, Field(description="Render the final answer as markdown.")] = True
 
     input_history: Annotated[
-        bool, Field(description="Keep the input history in a file between runs.")
+        bool,
+        Field(
+            description=(
+                "Keep the input history in <storage.root_dir>/input_history between runs. "
+                "It is plain text: whatever was typed, secrets included, is stored as is."
+            )
+        ),
     ] = True
 
     input_history_size: Annotated[
