@@ -364,3 +364,17 @@ def test_streamable_http_transport(monkeypatch: pytest.MonkeyPatch) -> None:
     finally:
         process.terminate()
         process.wait(timeout=10)
+
+
+def test_stdio_server_stderr_goes_to_the_errlog(tmp_path: Path) -> None:
+    log_path = tmp_path / "stderr.log"
+
+    async def scenario() -> None:
+        with log_path.open("a", encoding="utf-8", buffering=1) as errlog:
+            config = fake(env={"FAKE_SERVER_STDERR": "fake server says hello"})
+            async with MCPManager({"fake": config}, errlog=errlog) as manager:
+                assert manager.status()["fake"].state is ConnectionState.READY
+
+    run(scenario())
+
+    assert "fake server says hello" in log_path.read_text(encoding="utf-8")

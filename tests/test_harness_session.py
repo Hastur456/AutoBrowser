@@ -154,7 +154,7 @@ async def noop_wait(_port: int, _timeout: float) -> None:
     return None
 
 
-def no_mcp_runtime(_port: int) -> FakeMCPRuntime:
+def no_mcp_runtime(_port: int, _errlog: Any) -> FakeMCPRuntime:
     return FakeMCPRuntime([])
 
 
@@ -240,7 +240,7 @@ async def test_session_context_lifecycle_initializes_tracks_tasks_and_closes(
     events: list[str] = []
     runtime = FakeMCPRuntime()
 
-    def mcp_runtime_factory(_port: int) -> FakeMCPRuntime:
+    def mcp_runtime_factory(_port: int, _errlog: Any) -> FakeMCPRuntime:
         return runtime
 
     context.events.subscribe("session.started", lambda name, _payload: events.append(name))

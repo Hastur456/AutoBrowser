@@ -21,6 +21,7 @@ from src.harness.session import (
     MCPRuntimeFactory,
     SessionConfig,
     SessionRuntime,
+    ToolPrinter,
     default_mcp_runtime_factory,
 )
 
@@ -56,7 +57,7 @@ def build_session(
     start_chrome: Callable[[str, str, int], Any] = start_chrome_cdp,
     wait_for_cdp_port: Callable[[int, float], Awaitable[None]] = wait_for_port,
     mcp_runtime_factory: MCPRuntimeFactory = default_mcp_runtime_factory,
-    tool_printer: Callable[[list[Any]], None] | None = print_tools,
+    tool_printer: ToolPrinter | None = print_tools,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[..., None] = print,
     human_input: HumanInputCallback | None = None,

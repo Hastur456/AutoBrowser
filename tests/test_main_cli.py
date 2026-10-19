@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -170,6 +171,15 @@ def test_print_tools(capsys) -> None:
     assert "- browser_snapshot" in output
 
 
+def test_print_tools_writes_through_the_output_function(capsys) -> None:
+    lines: list[str] = []
+
+    print_tools([FakeTool("browser_navigate")], lines.append)
+
+    assert lines == ["MCP tools:", "- browser_navigate"]
+    assert capsys.readouterr().out == ""
+
+
 def test_resolve_task_prefers_positional() -> None:
     args = make_args(task=["open", "site"], task_text="ignored")
 
@@ -185,9 +195,12 @@ def test_start_chrome_skips_when_port_open(monkeypatch) -> None:
 def test_start_chrome_launches_when_port_closed(monkeypatch) -> None:
     calls: list[list[str]] = []
 
+    streams: list[dict[str, Any]] = []
+
     class FakePopen:
-        def __init__(self, command: list[str]) -> None:
+        def __init__(self, command: list[str], **kwargs: Any) -> None:
             calls.append(command)
+            streams.append(kwargs)
 
     monkeypatch.setattr(chrome, "is_port_open", lambda port: False)
     monkeypatch.setattr(chrome.subprocess, "Popen", FakePopen)
@@ -198,6 +211,9 @@ def test_start_chrome_launches_when_port_closed(monkeypatch) -> None:
     assert calls[0][0] == "chrome.exe"
     assert "--remote-debugging-port=9333" in calls[0]
     assert "--user-data-dir=profile" in calls[0]
+    # Chrome's own output never reaches the terminal.
+    assert streams[0]["stdout"] == chrome.subprocess.DEVNULL
+    assert streams[0]["stderr"] == chrome.subprocess.DEVNULL
 
 
 @pytest.mark.asyncio
@@ -291,11 +307,12 @@ async def test_mcp_mode_starts_chrome_and_passes_tools(
     async def fake_wait(port: int, timeout: float) -> None:
         events.append(("wait", port, timeout))
 
-    def fake_mcp_runtime_factory(port: int) -> FakeMCPRuntime:
+    def fake_mcp_runtime_factory(port: int, errlog: Any) -> FakeMCPRuntime:
         events.append(("load", port))
+        events.append(("errlog", Path(errlog.name).name))
         return FakeMCPRuntime(tools)
 
-    def fake_print_tools(loaded: list[Any]) -> None:
+    def fake_print_tools(loaded: list[Any], output_fn: Any) -> None:
         events.append(("print_tools", loaded))
 
     session = bootstrap.build_session(
@@ -311,6 +328,7 @@ async def test_mcp_mode_starts_chrome_and_passes_tools(
     assert ("start", "chrome.exe", "profile", 9555) in events
     assert ("wait", 9555, 1) in events
     assert ("load", 9555) in events
+    assert ("errlog", "stderr.log") in events
     assert any(event[0] == "print_tools" for event in events)
     registry = session.context.tool_registry
     assert registry is not None

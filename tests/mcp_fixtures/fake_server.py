@@ -97,4 +97,7 @@ def greet(who: str) -> str:
 
 
 if __name__ == "__main__":
+    # A line on stderr at startup, for the tests that redirect a server's stderr.
+    if stderr_line := os.environ.get("FAKE_SERVER_STDERR"):
+        print(stderr_line, file=sys.stderr, flush=True)
     server.run(os.environ.get("FAKE_SERVER_TRANSPORT", "stdio"))  # or "streamable-http"

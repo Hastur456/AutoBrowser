@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable, Iterator, MutableMapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 from uuid import uuid4
 
 from src.agent_loop.events import (
@@ -43,12 +43,21 @@ from src.harness.tools import ToolRegistry
 
 LLMFactory = Callable[..., Any]
 HarnessFactory = Callable[..., BrowserHarness]
-MCPRuntimeFactory = Callable[[int], MCPRuntime]
+#: ``factory(cdp_port, errlog)``: ``errlog`` is the session's child-process stderr log.
+MCPRuntimeFactory = Callable[[int, TextIO], MCPRuntime]
+#: ``print_tools(tools, output_fn)`` writes the loaded tool list through ``output_fn``.
+ToolPrinter = Callable[[list[Any], Callable[[str], None]], None]
 EventHandler = Callable[[str, object | None], None]
 
 EXIT_COMMANDS = {"quit", "exit"}
 
 SERVER_CONNECTED_MESSAGE = "=== Server connected ==="
+
+CONNECTING_MESSAGE = "Подключение к серверу..."
+
+#: File in the session directory that receives the stderr of stdio MCP servers, so no
+#: child process writes into a terminal the CLI or the terminal UI owns.
+CHILD_STDERR_LOG_NAME = "stderr.log"
 
 INTERACTIVE_MESSAGE = "Interactive mode. Type 'quit' or 'exit' to quit.\n"
 
@@ -262,10 +271,10 @@ class WorkspaceContext:
             path.mkdir(parents=True, exist_ok=True)
 
 
-def default_mcp_runtime_factory(cdp_port: int) -> MCPRuntime:
+def default_mcp_runtime_factory(cdp_port: int, errlog: TextIO) -> MCPRuntime:
     """Build the session's MCP runtime from settings (``mcp_servers``)."""
 
-    return build_mcp_runtime(cdp_port=cdp_port)
+    return build_mcp_runtime(cdp_port=cdp_port, errlog=errlog)
 
 
 def _json_safe(value: Any) -> Any:
@@ -388,6 +397,8 @@ class SessionContext:
     #: Renders the ``Memory`` context block for the engine (``EngineResources.memory``).
     memory: MemoryContext | NullMemoryContext = field(default_factory=NullMemoryContext)
     chrome_process: Any | None = None
+    #: Open while MCP runs: the stderr log of the stdio servers (:data:`CHILD_STDERR_LOG_NAME`).
+    child_stderr: TextIO | None = None
     initialized: bool = False
 
     async def initialize(
@@ -398,7 +409,7 @@ class SessionContext:
         wait_for_port: Callable[[int, float], Awaitable[None]],
         mcp_runtime_factory: MCPRuntimeFactory,
         output_fn: Callable[..., None],
-        print_tools: Callable[[list[Any]], None] | None,
+        print_tools: ToolPrinter | None,
         harness_factory: HarnessFactory,
     ) -> None:
         """Initialize session-owned runtime resources once."""
@@ -459,15 +470,21 @@ class SessionContext:
                     self.config.user_data_dir,
                     self.config.cdp_port,
                 )
+                if self.chrome_process is not None:
+                    output_fn(CONNECTING_MESSAGE)
                 await wait_for_port(self.config.cdp_port, self.config.cdp_timeout)
                 output_fn(SERVER_CONNECTED_MESSAGE)
-                mcp = mcp_runtime_factory(self.config.cdp_port)
+                self.child_stderr = (self.session_dir / CHILD_STDERR_LOG_NAME).open(
+                    "a", encoding="utf-8", buffering=1
+                )
+                mcp = mcp_runtime_factory(self.config.cdp_port, self.child_stderr)
                 await mcp.start()  # raises if the browser server cannot start
             except BaseException:
                 if mcp is not None:
                     with contextlib.suppress(Exception):
                         await mcp.close()
                 self._close_chrome_process()
+                self._close_child_stderr()
                 raise
             self.mcp = mcp
             # The MCP tool source is live: rediscovery (list_changed) and servers going
@@ -478,7 +495,7 @@ class SessionContext:
                 normalizers=mcp.normalizers,
             )
             if self.config.show_tools and print_tools is not None:
-                print_tools(list(await self.tool_registry.get_all()))
+                print_tools(list(await self.tool_registry.get_all()), output_fn)
 
         self.harness = harness_factory(
             llm=self.llm,
@@ -669,6 +686,7 @@ class SessionContext:
         self.mcp = None
         if mcp is not None:
             await mcp.close()
+        self._close_child_stderr()
         self._close_chrome_process()
         self.event_emitter.emit(
             "session.closed",
@@ -683,6 +701,13 @@ class SessionContext:
         self.initialized = False
         self.persist()
         self.events.emit("session.closed", self)
+
+    def _close_child_stderr(self) -> None:
+        stream = self.child_stderr
+        self.child_stderr = None
+        if stream is not None:
+            with contextlib.suppress(OSError):
+                stream.close()
 
     def _close_chrome_process(self) -> None:
         process = self.chrome_process
@@ -718,7 +743,7 @@ class SessionRuntime:
         start_chrome_cdp: Callable[[str, str, int], Any],
         wait_for_port: Callable[[int, float], Awaitable[None]],
         mcp_runtime_factory: MCPRuntimeFactory = default_mcp_runtime_factory,
-        print_tools: Callable[[list[Any]], None] | None = None,
+        print_tools: ToolPrinter | None = None,
         harness_factory: HarnessFactory = BrowserHarness,
         input_fn: Callable[[str], str] = input,
         output_fn: Callable[..., None] = print,
@@ -893,6 +918,7 @@ class SessionRuntime:
 __all__ = [
     "Artifact",
     "ArtifactRegistry",
+    "CHILD_STDERR_LOG_NAME",
     "EXIT_COMMANDS",
     "MCPRuntimeFactory",
     "SessionConfig",
@@ -902,6 +928,7 @@ __all__ = [
     "SessionRuntime",
     "SessionState",
     "TaskRecord",
+    "ToolPrinter",
     "WorkspaceContext",
     "default_mcp_runtime_factory",
 ]
