@@ -4,6 +4,18 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-10-19 Autonomous Test Pipeline](2026-10-19-autonomous-test-pipeline.md) (Proposed,
+  Russian): one `scripts/ci.py` entry point with `gate` (hermetic, Windows + Linux: unit,
+  scripted evals against baseline v2, cassette replay of recorded model/tool responses, TUI
+  tests, paired A/B offline bench) and `nightly` (real model + Playwright MCP on a local fixture
+  site, golden set with generic graders, live latency/token benchmarks against a rolling
+  history) profiles; exit codes and a one-line verdict; baselines change only by an explicit
+  command; `ModelUsage` on `ModelResponse`; a `pipeline` settings section.
+- [2026-10-19 No Langfuse; Neutral OTLP Export Deferred](2026-10-19-langfuse-observability.md)
+  (Proposed, Russian): Langfuse is not added — the hermetic gate needs no service and events,
+  usage and local history cover the verdict; a Langfuse-specific SDK sink is rejected; an
+  off-by-default `OtlpEventSink` (any OTLP backend, Langfuse included) is recorded as a
+  deferred option with explicit revisit triggers.
 - [2026-10-19 Terminal UI over a Shared SessionController](2026-10-19-session-controller-and-local-web-ui.md)
   (Proposed, Russian): a Claude-Code-style inline TUI on prompt_toolkit + rich (frozen blocks
   in the scrollback, a bounded live zone, in-stream approvals, slash commands, status line) over
