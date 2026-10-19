@@ -199,6 +199,10 @@ def _first_task(events: list[EventRecord]) -> str:
 def _final_answer(event: EventRecord | None) -> str:
     if event is None:
         return ""
+    final_answer = event.payload.get("final_answer")
+    if final_answer:
+        return str(final_answer)
+    # Traces written before ``goal.*`` carried structured fields nest it in ``result``.
     result = event.payload.get("result")
     if isinstance(result, dict):
         final_answer = result.get("final_answer")
@@ -207,7 +211,7 @@ def _final_answer(event: EventRecord | None) -> str:
         for value in result.values():
             if isinstance(value, dict) and value.get("final_answer"):
                 return str(value["final_answer"])
-    error = event.payload.get("error")
+    error = event.payload.get("error") or event.payload.get("reason")
     return str(error) if error else ""
 
 

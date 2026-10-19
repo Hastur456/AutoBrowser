@@ -8,7 +8,7 @@ import pytest
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.agent_loop.execution.loop import AgentLoopResult
 from src.agent_loop.execution.state import LoopState
-from src.agent_loop.goals import GoalLimits, GoalRunner
+from src.agent_loop.goals import CANCELLED_REASON, GoalLimits, GoalRunner
 from src.config import LoopSettings
 from src.contracts import TaskRequest
 
@@ -75,7 +75,38 @@ async def test_goal_runner_emits_events_calls_task_runner_and_returns_result() -
     assert [record.goal_id for record in sink.records] == ["task-1", "task-1"]
     assert [record.task_id for record in sink.records] == ["task-1", "task-1"]
     assert sink.records[0].payload == {"task": "inspect page"}
-    assert sink.records[1].payload == {"task": "inspect page", "result": result}
+    assert sink.records[1].payload == {
+        "task": "inspect page",
+        "status": "completed",
+        "final_answer": "Finished.",
+        "turns": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_goal_runner_terminal_payload_carries_no_session_state() -> None:
+    sink = InMemoryEventSink()
+    result = AgentLoopResult(
+        status="done",
+        final_answer="Finished.",
+        session_state=LoopState(messages=["secret history"]).to_session_state(),
+        state=LoopState(),
+        turns=3,
+    )
+
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
+        return result
+
+    await make_runner(task_runner, sink).run(make_request())
+
+    payload = sink.records[-1].to_json_dict()["payload"]
+    assert payload == {
+        "task": "inspect page",
+        "status": "completed",
+        "final_answer": "Finished.",
+        "turns": 3,
+    }
+    assert "secret history" not in str(payload)
 
 
 @pytest.mark.asyncio
@@ -99,7 +130,12 @@ async def test_goal_runner_emits_the_terminal_event_of_the_status(
     assert goal_result.status == goal_status
     assert goal_result.result is result
     assert [record.type for record in sink.records] == ["goal.started", event]
-    assert sink.records[1].payload == {"task": "inspect page", "result": result}
+    assert sink.records[1].payload == {
+        "task": "inspect page",
+        "status": goal_status,
+        "final_answer": "Stopped.",
+        "turns": 0,
+    }
 
 
 @pytest.mark.asyncio
@@ -116,7 +152,35 @@ async def test_goal_runner_emits_failure_event_and_reraises_original_exception()
     assert exc_info.value is error
     assert [record.type for record in sink.records] == ["goal.started", "goal.failed"]
     assert [record.goal_id for record in sink.records] == ["task-1", "task-1"]
-    assert sink.records[1].payload == {"task": "inspect page", "error": error}
+    assert sink.records[1].payload == {"task": "inspect page", "status": "failed", "error": error}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("progress_timeout", [1.0, 0.5])
+async def test_goal_runner_emits_cancelled_event_and_reraises_cancellation(
+    progress_timeout: float,
+) -> None:
+    sink = InMemoryEventSink()
+    started = asyncio.Event()
+
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
+        started.set()
+        await asyncio.Event().wait()
+        return native_result(status="done", final_answer="never reached")
+
+    limits = GoalLimits(timeout_seconds=1.0, progress_timeout_seconds=progress_timeout)
+    goal = asyncio.create_task(make_runner(task_runner, sink, limits).run(make_request()))
+    await started.wait()
+    goal.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await goal
+
+    assert [record.type for record in sink.records] == ["goal.started", "goal.cancelled"]
+    assert sink.records[1].payload == {
+        "task": "inspect page",
+        "status": "cancelled",
+        "reason": CANCELLED_REASON,
+    }
 
 
 @pytest.mark.asyncio

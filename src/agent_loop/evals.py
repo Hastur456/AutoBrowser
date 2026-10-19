@@ -422,7 +422,7 @@ async def run_scenario(scenario: EvalScenario, *, memory: Any | None = None) -> 
         emitter.emit(
             "goal.failed",
             source="agent_loop.evals",
-            payload={"task": scenario.task, "error": exc},
+            payload={"task": scenario.task, "status": "failed", "error": exc},
             task_id=task_id,
             goal_id=task_id,
         )
@@ -433,11 +433,16 @@ async def run_scenario(scenario: EvalScenario, *, memory: Any | None = None) -> 
             "final_answer": str(result.final_answer or ""),
             "decision": str(result.status or ""),
         }
-        terminal = "goal.blocked" if result.status == "blocked" else "goal.completed"
+        terminal = "blocked" if result.status == "blocked" else "completed"
         emitter.emit(
-            terminal,
+            f"goal.{terminal}",
             source="agent_loop.evals",
-            payload={"task": scenario.task, "result": final_state},
+            payload={
+                "task": scenario.task,
+                "status": terminal,
+                "final_answer": final_state["final_answer"],
+                "turns": result.turns,
+            },
             task_id=task_id,
             goal_id=task_id,
         )

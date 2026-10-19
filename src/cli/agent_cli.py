@@ -396,6 +396,8 @@ class AgentCli(cmd2.Cmd):
     def _task_status(self, record: TaskRecord) -> str:
         if record.finished_at is None:
             return self._style("running", "yellow")
+        if isinstance(record.result, asyncio.CancelledError):
+            return self._style("cancelled", "yellow")
         if isinstance(record.result, BaseException):
             return self._style("failed", "red")
         return self._style("done", "green")

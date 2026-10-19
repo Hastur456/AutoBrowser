@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 from collections.abc import Awaitable, Callable, Iterator, MutableMapping
@@ -565,6 +566,16 @@ class SessionContext:
     def fail_task(self, record: TaskRecord, exception: BaseException) -> None:
         """Mark a tracked task as failed while preserving the exception."""
 
+        self._close_task(record, exception)
+        self.events.emit("task.failed", record)
+
+    def cancel_task(self, record: TaskRecord, exception: asyncio.CancelledError) -> None:
+        """Mark a tracked task as cancelled; its result is the cancellation itself."""
+
+        self._close_task(record, exception)
+        self.events.emit("task.cancelled", record)
+
+    def _close_task(self, record: TaskRecord, exception: BaseException) -> None:
         now = datetime.now(UTC)
         record.result = exception
         record.finished_at = now
@@ -572,7 +583,6 @@ class SessionContext:
         self.metadata.task_count += 1
         self.metadata.last_activity = now
         self.persist()
-        self.events.emit("task.failed", record)
 
     def snapshot(self) -> dict[str, Any]:
         """Return a durable, JSON-compatible view of the session."""
@@ -781,6 +791,10 @@ class SessionRuntime:
         )
         try:
             goal_result = await runner.run(request)
+        except asyncio.CancelledError as exc:
+            self._forget_memory(task_id)
+            self.context.cancel_task(record, exc)
+            raise
         except Exception as exc:
             self._forget_memory(task_id)
             self.context.fail_task(record, exc)

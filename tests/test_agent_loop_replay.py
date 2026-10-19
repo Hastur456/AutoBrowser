@@ -266,3 +266,39 @@ def test_permission_decisions_appear_in_the_action_sequence() -> None:
         "   approval: allow by grant (session)\n"
         "goal.completed: ok"
     )
+
+
+def test_replay_reads_the_structured_goal_payload() -> None:
+    raw_events = [
+        {"type": "goal.started", "source": "test", "payload": {"task": "open"}},
+        {
+            "type": "goal.completed",
+            "source": "test",
+            "payload": {"task": "open", "status": "completed", "final_answer": "ok", "turns": 1},
+        },
+    ]
+    events = [load_events_from_dict(event) for event in raw_events]
+
+    summary = summarize_trace(events)
+
+    assert summary.terminal_status == "completed"
+    assert summary.final_answer == "ok"
+    assert print_action_sequence(events) == "goal.started: open\ngoal.completed: ok"
+
+
+def test_replay_shows_the_reason_of_a_cancelled_goal() -> None:
+    raw_events = [
+        {"type": "goal.started", "source": "test", "payload": {"task": "open"}},
+        {
+            "type": "goal.cancelled",
+            "source": "test",
+            "payload": {"task": "open", "status": "cancelled", "reason": "Stopped."},
+        },
+    ]
+    events = [load_events_from_dict(event) for event in raw_events]
+
+    summary = summarize_trace(events)
+
+    assert summary.terminal_status == "cancelled"
+    assert summary.final_answer == "Stopped."
+    assert summary.trace_complete is True

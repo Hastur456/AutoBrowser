@@ -163,3 +163,27 @@ def test_a_permission_deny_counts_as_a_policy_block() -> None:
 
     assert metrics.policy_block_count == 1
     assert metrics.approval_request_count == 1
+
+
+def test_final_answer_comes_from_the_structured_goal_payload() -> None:
+    start = datetime(2026, 10, 19, tzinfo=UTC)
+    events = [
+        _event("goal.started", start, {"task": "open page"}),
+        _event(
+            "goal.completed",
+            start,
+            {"task": "open page", "status": "completed", "final_answer": "ok", "turns": 2},
+        ),
+    ]
+
+    assert extract_event_metrics(events).final_answer == "ok"
+
+
+def test_final_answer_still_reads_a_legacy_result_payload() -> None:
+    start = datetime(2026, 10, 19, tzinfo=UTC)
+    events = [
+        _event("goal.started", start, {"task": "open page"}),
+        _event("goal.completed", start, {"task": "open page", "result": {"final_answer": "old"}}),
+    ]
+
+    assert extract_event_metrics(events).final_answer == "old"

@@ -312,12 +312,13 @@ def _project_agent_trace_record(record: EventRecord) -> dict[str, Any] | None:
         for key in ("hook_id", "event", "decision", "reason", "tool", "error", "skipped"):
             _set_if_present(projected, key, _compact_text(record.payload.get(key)))
         return projected
-    if record.type == "goal.completed":
+    if record.type in {"goal.completed", "goal.failed", "goal.blocked", "goal.cancelled"}:
         _set_if_present(projected, "task", _compact_text(record.payload.get("task")))
-        _set_if_present(projected, "final_answer", _compact_goal_result(record.payload.get("result")))
-        return projected
-    if record.type in {"goal.failed", "goal.blocked", "goal.cancelled"}:
-        _set_if_present(projected, "task", _compact_text(record.payload.get("task")))
+        _set_if_present(projected, "status", _compact_text(record.payload.get("status")))
+        _set_if_present(projected, "final_answer", _compact_goal_answer(record.payload))
+        turns = record.payload.get("turns")
+        if isinstance(turns, int) and not isinstance(turns, bool):
+            projected["turns"] = turns
         _set_if_present(projected, "reason", _compact_text(record.payload.get("reason")))
         _set_if_present(projected, "error", _compact_text(record.payload.get("error")))
         return projected
@@ -351,12 +352,15 @@ def _project_tool_result_event(
     return projected
 
 
-def _compact_goal_result(value: Any) -> str | None:
-    if isinstance(value, dict):
-        final_answer = _compact_text(value.get("final_answer"))
-        if final_answer:
-            return final_answer
-    return _compact_text(value)
+def _compact_goal_answer(payload: dict[str, Any]) -> str | None:
+    final_answer = _compact_text(payload.get("final_answer"))
+    if final_answer:
+        return final_answer
+    # ``goal.*`` emitted before the structured payload nested the answer in ``result``.
+    result = payload.get("result")
+    if isinstance(result, dict):
+        return _compact_text(result.get("final_answer"))
+    return None
 
 
 def _compact_mapping(value: Any) -> dict[str, Any] | None:

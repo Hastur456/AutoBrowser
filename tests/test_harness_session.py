@@ -444,6 +444,48 @@ async def test_session_runtime_watchdog_failure_clears_active_task(
 
 
 @pytest.mark.asyncio
+async def test_session_runtime_cancellation_closes_the_task_record(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    started = asyncio.Event()
+
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
+        started.set()
+        await asyncio.Event().wait()
+        return native_result(final_answer="never reached")
+
+    install_runner(monkeypatch, task_runner)
+    runtime = make_runtime()
+    bus_events: list[str] = []
+    runtime.context.events.subscribe(
+        "task.cancelled", lambda name, _payload: bus_events.append(name)
+    )
+
+    task = asyncio.create_task(runtime.run_task("inspect page"))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    record = runtime.context.tasks[0]
+    assert record.finished_at is not None
+    assert isinstance(record.result, asyncio.CancelledError)
+    assert runtime.context.current_task is None
+    assert runtime.context.metadata.task_count == 1
+    assert bus_events == ["task.cancelled"]
+    assert runtime.context.session_dir is not None
+    typed_events = read_typed_events(runtime.context.session_dir)
+    assert [event["type"] for event in typed_events] == [
+        "session.started",
+        "goal.started",
+        "goal.cancelled",
+    ]
+    assert typed_events[-1]["payload"]["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_session_runtime_carries_browser_state_between_tasks(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -16,6 +16,9 @@ if TYPE_CHECKING:
     from src.agent_loop.execution.loop import AgentLoopResult
 
 
+#: Reason carried by the ``goal.cancelled`` event of a goal cancelled from outside.
+CANCELLED_REASON = "The task was cancelled before it finished."
+
 #: Runs one task to a terminal result; ``Agent.run`` is the production one.
 TaskRunner = Callable[[TaskRequest], Awaitable["AgentLoopResult"]]
 
@@ -76,8 +79,17 @@ class GoalRunner:
         self._emit("goal.started", request, {"task": request.task})
         try:
             result = await self._run_with_watchdog(request)
+        except asyncio.CancelledError:
+            # Not an ``Exception``: without this the cancelled goal would leave no terminal
+            # event behind. The cancellation still propagates to the caller.
+            self._emit(
+                "goal.cancelled",
+                request,
+                {"task": request.task, "status": "cancelled", "reason": CANCELLED_REASON},
+            )
+            raise
         except Exception as exc:
-            self._emit("goal.failed", request, {"task": request.task, "error": exc})
+            self._emit("goal.failed", request, _failed_payload(request, exc))
             raise
 
         status = _goal_status_from_result(result)
@@ -85,10 +97,19 @@ class GoalRunner:
             nonterminal_error = RuntimeError(
                 "Goal runner finished without a terminal goal state."
             )
-            self._emit("goal.failed", request, {"task": request.task, "error": nonterminal_error})
+            self._emit("goal.failed", request, _failed_payload(request, nonterminal_error))
             raise nonterminal_error
 
-        self._emit(_goal_event_type(status), request, {"task": request.task, "result": result})
+        self._emit(
+            _goal_event_type(status),
+            request,
+            {
+                "task": request.task,
+                "status": status,
+                "final_answer": str(result.final_answer or ""),
+                "turns": result.turns,
+            },
+        )
         return GoalRunResult(request=request, result=result, status=status)
 
     def _emit(self, event_type: str, request: TaskRequest, payload: dict[str, Any]) -> None:
@@ -154,6 +175,10 @@ class GoalRunner:
                 )
 
 
+def _failed_payload(request: TaskRequest, error: BaseException) -> dict[str, Any]:
+    return {"task": request.task, "status": "failed", "error": error}
+
+
 def _goal_status_from_result(result: Any) -> GoalStatus | None:
     """Derive a terminal goal status from a native ``AgentLoopResult``.
 
@@ -194,6 +219,7 @@ async def _cancel_pending(task: asyncio.Task[Any]) -> None:
 
 
 __all__ = [
+    "CANCELLED_REASON",
     "GoalLimits",
     "GoalRunResult",
     "GoalRunner",
