@@ -1032,3 +1032,76 @@ async def test_consolidation_after_a_done_task(
     assert (root / "sites" / "ozon.ru.md").exists() is written
     types = [event["type"] for event in read_typed_events(runtime.context.session_dir)]
     assert ("memory.consolidated" if written else "memory.consolidation_failed") in types
+
+
+# --------------------------------------------------------------------------- event sinks, reset
+
+
+@pytest.mark.asyncio
+async def test_extra_event_sinks_receive_the_session_events(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from src.agent_loop.events import InMemoryEventSink
+
+    monkeypatch.chdir(tmp_path)
+
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
+        return native_result(final_answer="done")
+
+    install_runner(monkeypatch, task_runner)
+    sink = InMemoryEventSink()
+    runtime = SessionRuntime(
+        make_config(),
+        llm_factory=llm_factory,
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        mcp_runtime_factory=no_mcp_runtime,
+        event_sinks=[sink],
+    )
+
+    await runtime.run_task("inspect page")
+
+    assert [record.type for record in sink.records] == [
+        "session.started",
+        "goal.started",
+        "goal.completed",
+    ]
+    assert {record.session_id for record in sink.records} == {runtime.context.session_id}
+
+
+@pytest.mark.asyncio
+async def test_reset_replaces_the_session_and_keeps_the_extra_sinks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from src.agent_loop.events import InMemoryEventSink
+
+    monkeypatch.chdir(tmp_path)
+
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
+        return native_result(final_answer="done", messages=["kept"])
+
+    install_runner(monkeypatch, task_runner)
+    sink = InMemoryEventSink()
+    runtime = SessionRuntime(
+        make_config(),
+        llm_factory=llm_factory,
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        mcp_runtime_factory=no_mcp_runtime,
+        event_sinks=[sink],
+    )
+    await runtime.run_task("first")
+    old_id = runtime.context.session_id
+
+    context = await runtime.reset()
+
+    assert context is runtime.context
+    assert context.session_id != old_id
+    assert context.initialized is False
+    assert context.tasks == []
+    assert runtime.agent is None
+    await runtime.run_task("second")
+    assert sink.records[-1].session_id == context.session_id
+    assert "session.closed" in [record.type for record in sink.records]

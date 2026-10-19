@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from collections.abc import Awaitable, Callable, Iterator, MutableMapping
+from collections.abc import Awaitable, Callable, Iterator, MutableMapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +16,7 @@ from src.agent_loop.events import (
     AgentTraceSink,
     CompositeEventSink,
     EventEmitter,
+    EventSink,
     JsonlEventSink,
 )
 from src.agent_loop.context import ContextAssembler
@@ -306,13 +307,16 @@ def _write_json(path: Path, payload: Any) -> None:
     tmp_path.replace(path)
 
 
-def _build_session_event_sink(session_dir: Path) -> CompositeEventSink:
-    """Build the session's durable event sinks and projections."""
+def _build_session_event_sink(
+    session_dir: Path, extra_sinks: Sequence[EventSink] = ()
+) -> CompositeEventSink:
+    """Build the session's durable event sinks and projections, then the extra ones."""
 
     return CompositeEventSink(
         [
             JsonlEventSink(session_dir / "events.jsonl"),
             AgentTraceSink(session_dir / "agent_trace.jsonl"),
+            *extra_sinks,
         ]
     )
 
@@ -368,6 +372,9 @@ class SessionContext:
 
     config: SessionConfig
     session_id: str = field(default_factory=lambda: uuid4().hex)
+    #: Sinks that receive every session event after the durable files (e.g. the in-process
+    #: ``EventBroadcaster`` a UI subscribes to).
+    event_sinks: tuple[EventSink, ...] = ()
     session_dir: Path | None = None
     workspace: WorkspaceContext | None = None
     artifacts: ArtifactRegistry = field(default_factory=ArtifactRegistry)
@@ -443,7 +450,7 @@ class SessionContext:
         self.session_dir = get_settings().storage.session_dir(self.session_id).resolve()
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.event_emitter = EventEmitter(
-            _build_session_event_sink(self.session_dir),
+            _build_session_event_sink(self.session_dir, self.event_sinks),
             session_id=self.session_id,
         )
         self.workspace = WorkspaceContext(
@@ -748,9 +755,11 @@ class SessionRuntime:
         input_fn: Callable[[str], str] = input,
         output_fn: Callable[..., None] = print,
         human_input: HumanInputCallback | None = None,
+        event_sinks: Sequence[EventSink] = (),
     ) -> None:
         self.config = config
-        self.context = SessionContext(config)
+        self._event_sinks = tuple(event_sinks)
+        self.context = SessionContext(config, event_sinks=self._event_sinks)
         self._llm_factory = llm_factory
         self._start_chrome_cdp = start_chrome_cdp
         self._wait_for_port = wait_for_port
@@ -792,6 +801,21 @@ class SessionRuntime:
                 "WARNING: permission mode 'bypass' grants every approval; only deny rules "
                 "and always-ask rules still hold."
             )
+
+    async def reset(self) -> SessionContext:
+        """Close the session and replace it with a fresh, not yet started one.
+
+        The new context gets a new session id, no history and no tasks; it starts lazily
+        with the next task (or :meth:`start`). The extra event sinks carry over, so a
+        subscribed UI sees the new session's events. Refuses while a task is running.
+        """
+
+        if self.context.current_task is not None:
+            raise RuntimeError("Cannot reset the session while a task is running.")
+        await self.close()
+        self.agent = None
+        self.context = SessionContext(self.config, event_sinks=self._event_sinks)
+        return self.context
 
     async def run_task(self, task: str) -> AgentLoopResult:
         """Run one user task through the session's agent."""

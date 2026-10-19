@@ -19,7 +19,7 @@ from src.browser.pages import current_page_url
 from src.cli.output import format_mcp_status
 from src.cli.approval import ApprovalPrompt
 from src.config import get_settings
-from src.harness.session import SessionContext, SessionRuntime, TaskRecord
+from src.harness.session import SessionRuntime, TaskRecord
 from src.harness.tools import ToolRegistry
 from src.mcp import ConnectionState
 
@@ -228,7 +228,7 @@ class AgentCli(cmd2.Cmd):
             self.perror("Cannot reset while a task is running. Use 'cancel' first.")
             return
 
-        self._runtime_loop.run(self._reset_session())
+        self._runtime_loop.run(self.runtime.reset())
         self.poutput(self._ok("Session reset."))
 
     @with_argparser(history_parser)
@@ -313,10 +313,6 @@ class AgentCli(cmd2.Cmd):
         """Exit the CLI."""
 
         return self._exit()
-
-    async def _reset_session(self) -> None:
-        await self.runtime.close()
-        self.runtime.context = SessionContext(self.runtime.config)
 
     def _start_background_task(self, task_text: str) -> None:
         self._task_done.clear()
