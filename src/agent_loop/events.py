@@ -25,6 +25,8 @@ EventType = Literal[
     "permission.decided",
     "approval.requested",
     "approval.resolved",
+    # A human (or the timeout) answered an approval ticket (src/harness/approvals.py).
+    "approval.answered",
     "tool.started",
     "tool.finished",
     "observation.compiled",

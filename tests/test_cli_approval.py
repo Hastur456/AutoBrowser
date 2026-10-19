@@ -271,3 +271,23 @@ def test_the_approval_timeout_is_the_configured_share_of_the_progress_timeout(
     monkeypatch.setattr("src.cli.approval.get_settings", lambda: settings)
 
     assert approval_timeout_seconds() == 50.0
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_is_an_adapter_over_a_shared_broker() -> None:
+    from src.harness.approvals import ApprovalBroker
+
+    broker = ApprovalBroker(PermissionsSettings(), progress_timeout_seconds=10.0)
+    resolutions: list[Any] = []
+    broker.subscribe(resolutions.append)
+    out: list[str] = []
+    prompt = ApprovalPrompt(output=out.append, broker=broker)
+
+    # The engine calls the broker directly; the prompt still sees and answers the ticket.
+    task = asyncio.create_task(broker(REQUEST, GRANTABLE.reason, GRANTABLE))
+    await asyncio.to_thread(lambda: [threading.Event().wait(0.005) for _ in iter(lambda: prompt.pending, True)])
+    assert prompt.answer("y") is True
+    assert await task == "once"
+    assert out[0].startswith("Approval needed (rule buy): browser_click on ozon.ru")
+    assert resolutions[-1].via == "classic"
+    prompt.close()

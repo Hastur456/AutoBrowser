@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal, Protocol, TypedDict
 
 AgentDecision = Literal["tool_call", "replan", "done"]
@@ -48,6 +49,8 @@ ApprovalJudgeMode = Literal["off", "model", "classifier", "both"]
 #: A human's answer to an approval prompt: run this call, run it and remember the grant for
 #: the session, or refuse.
 ApprovalAnswer = Literal["once", "session", "deny"]
+#: Who answered an approval: a front end, or nobody in time (``timeout`` is a deny).
+ApprovalVia = Literal["tui", "plain", "classic", "web", "timeout"]
 #: What a persistent memory file describes: one site (``sites/<domain>.md``) or a
 #: reusable procedure (``procedures/<name>.md``).
 MemoryKind = Literal["site", "procedure"]
@@ -257,6 +260,39 @@ class PermissionVerdict:
     grant_key: tuple[str, str, str] | None = None
 
 
+@dataclass(frozen=True)
+class ApprovalTicket:
+    """One approval waiting for a human, as every front end shows it.
+
+    ``args_preview`` is the redacted, truncated JSON of the call's arguments: a ticket never
+    carries raw arguments. ``allow_session`` says whether "for this session" is a valid
+    answer (the verdict has a grant key and is not ``always_ask``).
+    """
+
+    ticket_id: str
+    task_id: str
+    tool: str
+    server: str
+    domain: str
+    reason: str
+    rule_id: str
+    source: str
+    args_preview: str
+    allow_session: bool
+    created_at: datetime
+    deadline: datetime
+
+
+@dataclass(frozen=True)
+class ApprovalResolution:
+    """How an :class:`ApprovalTicket` ended."""
+
+    ticket_id: str
+    answer: ApprovalAnswer
+    via: ApprovalVia
+    resolved_at: datetime
+
+
 class PermissionResourceResolver(Protocol):
     """Resolves the resources permission rules match on (``domain``, ``target``).
 
@@ -364,6 +400,9 @@ __all__ = [
     "AgentDecision",
     "ApprovalAnswer",
     "ApprovalJudgeMode",
+    "ApprovalResolution",
+    "ApprovalTicket",
+    "ApprovalVia",
     "CompactToolObservation",
     "CompletionStatus",
     "GoalStatus",
