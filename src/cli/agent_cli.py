@@ -18,6 +18,7 @@ from cmd2 import Cmd2ArgumentParser, with_argparser
 from src.browser.pages import current_page_url
 from src.cli.output import format_mcp_status
 from src.cli.approval import ApprovalPrompt
+from src.config import get_settings
 from src.harness.session import SessionContext, SessionRuntime, TaskRecord
 from src.harness.tools import ToolRegistry
 from src.mcp import ConnectionState
@@ -83,7 +84,7 @@ class RuntimeLoop:
     def stop(self) -> None:
         if not self._loop.is_closed():
             self._loop.call_soon_threadsafe(self._loop.stop)
-            self._thread.join(timeout=5)
+            self._thread.join(timeout=get_settings().ui.shutdown_timeout_seconds)
 
     def _run(self) -> None:
         asyncio.set_event_loop(self._loop)
@@ -351,7 +352,7 @@ class AgentCli(cmd2.Cmd):
         if self._is_task_running():
             self.do_cancel("")
             self.poutput("Waiting for running task to stop...")
-            self._task_done.wait(timeout=5)
+            self._task_done.wait(timeout=get_settings().ui.shutdown_timeout_seconds)
         self.close_runtime()
         self.poutput("Bye.")
         return True
@@ -366,7 +367,7 @@ class AgentCli(cmd2.Cmd):
             future = self._task_future
             if future is not None:
                 future.cancel()
-            self._task_done.wait(timeout=5)
+            self._task_done.wait(timeout=get_settings().ui.shutdown_timeout_seconds)
         self._runtime_loop.run(self.runtime.close())
         self._runtime_loop.stop()
 

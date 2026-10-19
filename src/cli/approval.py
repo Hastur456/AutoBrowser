@@ -25,7 +25,6 @@ from src.contracts import ApprovalAnswer, PermissionVerdict, ToolRequest
 _ONCE = {"y", "yes", "once", "o", "д", "да"}
 _SESSION = {"s", "session", "с", "сессия"}
 _DENY = {"n", "no", "deny", "н", "нет"}
-_ARGS_PREVIEW_CHARS = 300
 
 
 @dataclass
@@ -38,7 +37,8 @@ class _Pending:
 def approval_timeout_seconds() -> float:
     """How long a human may think: well inside the goal watchdog's progress timeout."""
 
-    return get_settings().loop.progress_timeout_seconds * 0.8
+    settings = get_settings()
+    return settings.loop.progress_timeout_seconds * settings.permissions.approval_timeout_ratio
 
 
 def _args_preview(request: ToolRequest) -> str:
@@ -46,8 +46,9 @@ def _args_preview(request: ToolRequest) -> str:
         text = json.dumps(request.get("args") or {}, ensure_ascii=False, sort_keys=True, default=str)
     except (TypeError, ValueError):
         text = str(request.get("args"))
-    if len(text) > _ARGS_PREVIEW_CHARS:
-        text = text[: _ARGS_PREVIEW_CHARS - 3] + "..."
+    limit = get_settings().permissions.approval_args_preview_chars
+    if len(text) > limit:
+        text = text[: limit - 3] + "..."
     return text
 
 

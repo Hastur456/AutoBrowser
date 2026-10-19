@@ -119,6 +119,13 @@ def test_defaults_match_the_constants_they_replaced(settings: Any) -> None:
     assert config.storage.sessions_dir == Path(".autobrowser") / "sessions"
     assert config.storage.batches_dir == Path(".autobrowser") / "batches"
 
+    # was: src/cli/approval.py _ARGS_PREVIEW_CHARS and the 0.8 timeout factor
+    assert config.permissions.approval_args_preview_chars == 300
+    assert config.permissions.approval_timeout_ratio == 0.8
+
+    # was: the timeout=5 literals of src/cli/agent_cli.py
+    assert config.ui.shutdown_timeout_seconds == 5.0
+
 
 def test_storage_derives_per_session_paths(settings: Any) -> None:
     storage = settings().storage
@@ -705,6 +712,68 @@ def test_the_example_config_file_reproduces_the_defaults(
         assert getattr(loaded, section) == getattr(defaults, section), (
             f"{section} in config.example.yaml no longer matches the code defaults"
         )
+
+
+# --------------------------------------------------------------------------
+# The ui section
+# --------------------------------------------------------------------------
+
+
+def test_ui_defaults(settings: Any) -> None:
+    ui = settings().ui
+
+    assert ui.frontend == "auto"
+    assert ui.screen == "inline"
+    assert ui.theme == "dark"
+    assert ui.color == "auto"
+    assert ui.glyphs == "auto"
+    assert ui.locale == "ru"
+    assert ui.detail == "compact"
+    assert ui.live_max_lines == 12
+    assert ui.refresh_hz == 10.0
+    assert ui.log_file == Path("logs/autobrowser.log")
+    assert ui.event_buffer_size == 2000
+    assert ui.subscriber_queue_size == 1000
+
+
+def test_ui_env_names_resolve(settings: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AUTOBROWSER_UI__FRONTEND", "plain")
+    monkeypatch.setenv("AUTOBROWSER_UI__COLOR", "256")
+    monkeypatch.setenv("AUTOBROWSER_UI__LIVE_MAX_LINES", "20")
+
+    ui = settings().ui
+
+    assert (ui.frontend, ui.color, ui.live_max_lines) == ("plain", "256", 20)
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("live_max_lines", 3),
+        ("live_max_lines", 61),
+        ("refresh_hz", 0.5),
+        ("preview_chars", 39),
+        ("frontend", "web"),
+        ("screen", "fullscreen"),
+    ],
+)
+def test_ui_bounds_are_enforced(settings: Any, field: str, value: Any) -> None:
+    with pytest.raises(ValueError):
+        settings(ui={field: value})
+
+
+def test_ui_log_file_resolves_under_the_storage_root(settings: Any, tmp_path: Path) -> None:
+    config = settings(storage={"root_dir": tmp_path / "root"})
+
+    assert config.ui.resolved_log_file(config.storage) == tmp_path / "root" / "logs" / "autobrowser.log"
+    absolute = settings(ui={"log_file": tmp_path / "x.log"})
+    assert absolute.ui.resolved_log_file(absolute.storage) == tmp_path / "x.log"
+
+
+@pytest.mark.parametrize("ratio", [0.0, 1.0])
+def test_the_approval_timeout_ratio_stays_inside_the_watchdog(settings: Any, ratio: float) -> None:
+    with pytest.raises(ValueError):
+        settings(permissions={"approval_timeout_ratio": ratio})
 
 
 # --------------------------------------------------------------------------

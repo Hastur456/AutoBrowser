@@ -1073,6 +1073,28 @@ class PermissionsSettings(_Section):
         ),
     ] = frozenset({"", "false", "no", "none", "null", "0"})
 
+    approval_timeout_ratio: Annotated[
+        float,
+        Field(
+            gt=0.0,
+            lt=1.0,
+            description=(
+                "Share of loop.progress_timeout_seconds a human may take to answer an "
+                "approval; no answer in time is a deny. Below 1 so the goal watchdog, which "
+                "sees no events while the human thinks, never fires first."
+            ),
+        ),
+    ] = 0.8
+
+    approval_args_preview_chars: Annotated[
+        int,
+        Field(
+            ge=20,
+            le=20_000,
+            description="Characters of the call's JSON arguments shown in an approval question.",
+        ),
+    ] = 300
+
     @field_validator("approval_judge", mode="before")
     @classmethod
     def _yaml_off(cls, value: Any) -> Any:
@@ -1088,6 +1110,221 @@ class PermissionsSettings(_Section):
                 raise ValueError(f"duplicate permission rule id {rule.id!r}")
             seen.add(rule.id)
         return value
+
+
+UiFrontend = Literal["auto", "tui", "plain", "classic"]
+UiScreen = Literal["inline"]
+UiTheme = Literal["dark", "light", "mono"]
+UiColor = Literal["auto", "truecolor", "256", "16", "none"]
+UiGlyphs = Literal["auto", "unicode", "ascii"]
+UiDensity = Literal["comfortable", "compact"]
+UiDetail = Literal["compact", "verbose"]
+UiSyncOutput = Literal["auto", "on", "off"]
+UiLocale = Literal["ru", "en"]
+UiPrintFormat = Literal["text", "json", "stream-json"]
+
+
+class UiSettings(_Section):
+    """Interactive front ends: the terminal UI, the plain fallback and print mode.
+
+    Read by ``src/ui/`` and the CLI; the harness reads only the event stream buffer sizes.
+    """
+
+    frontend: Annotated[
+        UiFrontend,
+        Field(
+            description=(
+                "auto: the terminal UI when the terminal supports it (full or degraded), "
+                "else plain; tui; plain: line-by-line output; classic: the cmd2 REPL."
+            ),
+        ),
+    ] = "auto"
+
+    screen: Annotated[
+        UiScreen,
+        Field(description="inline: the transcript flows into the terminal scrollback."),
+    ] = "inline"
+
+    theme: Annotated[UiTheme, Field(description="Colour palette.")] = "dark"
+
+    color: Annotated[
+        UiColor,
+        Field(
+            description=(
+                "Colour depth override; auto detects it. NO_COLOR in the environment "
+                "means none."
+            ),
+        ),
+    ] = "auto"
+
+    glyphs: Annotated[
+        UiGlyphs,
+        Field(description="Glyph set; auto picks unicode when the output can encode it."),
+    ] = "auto"
+
+    banner: Annotated[bool, Field(description="Show the welcome banner at startup.")] = True
+
+    density: Annotated[
+        UiDensity,
+        Field(description="comfortable leaves an empty line between blocks; compact does not."),
+    ] = "comfortable"
+
+    detail: Annotated[
+        UiDetail,
+        Field(description="compact: collapsed tool calls; verbose: expanded ones."),
+    ] = "compact"
+
+    preview_lines: Annotated[
+        int,
+        Field(
+            ge=0,
+            le=50,
+            description="Lines of a tool result shown in verbose detail before a 'more' line.",
+        ),
+    ] = 3
+
+    preview_chars: Annotated[
+        int,
+        Field(
+            ge=40,
+            le=20_000,
+            description="Characters of tool arguments and results shown in a preview.",
+        ),
+    ] = 400
+
+    live_max_lines: Annotated[
+        int,
+        Field(
+            ge=4,
+            le=60,
+            description="Height limit of the live zone, without the input field and status line.",
+        ),
+    ] = 12
+
+    refresh_hz: Annotated[
+        float,
+        Field(
+            ge=1.0,
+            le=30.0,
+            description="Redraws of the live zone and spinner frames per second.",
+        ),
+    ] = 10.0
+
+    sync_output: Annotated[
+        UiSyncOutput,
+        Field(description="Synchronized output (DEC 2026) around each frame; auto detects it."),
+    ] = "auto"
+
+    escape_timeout_ms: Annotated[
+        int,
+        Field(
+            ge=0,
+            le=1000,
+            description="How long a lone Esc waits for the rest of an escape sequence.",
+        ),
+    ] = 50
+
+    double_press_seconds: Annotated[
+        float,
+        Field(
+            ge=0.2,
+            le=3.0,
+            description="Window in which a second Ctrl+C / Ctrl+D counts as a repeat.",
+        ),
+    ] = 0.8
+
+    size_poll_seconds: Annotated[
+        float,
+        Field(
+            ge=0.1,
+            le=5.0,
+            description="Terminal size polling interval (Windows has no SIGWINCH).",
+        ),
+    ] = 0.5
+
+    markdown: Annotated[bool, Field(description="Render the final answer as markdown.")] = True
+
+    input_history: Annotated[
+        bool, Field(description="Keep the input history in a file between runs.")
+    ] = True
+
+    input_history_size: Annotated[
+        int,
+        Field(ge=0, le=100_000, description="Entries kept in the input history."),
+    ] = 1000
+
+    approval_bell: Annotated[
+        bool,
+        Field(description="Ring the bell and set the window title when an approval is asked."),
+    ] = False
+
+    locale: Annotated[UiLocale, Field(description="Language of the interface strings.")] = "ru"
+
+    print_format: Annotated[
+        UiPrintFormat,
+        Field(description="Default output format of print mode (-p)."),
+    ] = "text"
+
+    log_file: Annotated[
+        Path,
+        Field(
+            description=(
+                "Log of logging records, warnings and child-process stderr while the "
+                "terminal UI or print mode owns the terminal. A relative path resolves "
+                "against storage.root_dir."
+            ),
+        ),
+    ] = Path("logs/autobrowser.log")
+
+    event_buffer_size: Annotated[
+        int,
+        Field(
+            ge=100,
+            le=100_000,
+            description="Redacted events the session event stream keeps for late subscribers.",
+        ),
+    ] = 2000
+
+    subscriber_queue_size: Annotated[
+        int,
+        Field(
+            ge=10,
+            le=100_000,
+            description="Events queued for one slow subscriber before it gets a gap marker.",
+        ),
+    ] = 1000
+
+    status_interval_seconds: Annotated[
+        float,
+        Field(
+            ge=0.2,
+            le=60.0,
+            description="How often the status line polls the session (MCP states emit no events).",
+        ),
+    ] = 1.0
+
+    shutdown_timeout_seconds: Annotated[
+        float,
+        Field(
+            ge=0.5,
+            le=60.0,
+            description="How long stopping a task, the session loop or a client may take.",
+        ),
+    ] = 5.0
+
+    @field_validator("log_file", mode="after")
+    @classmethod
+    def _expand_log_file(cls, value: Path) -> Path:
+        """Expand ``%VAR%``/``$VAR`` and ``~`` in the configured log path."""
+
+        return Path(os.path.expandvars(str(value))).expanduser()
+
+    def resolved_log_file(self, storage: StorageSettings) -> Path:
+        """The log path; a relative one is placed under the storage root."""
+
+        if self.log_file.is_absolute():
+            return self.log_file
+        return storage.root_dir / self.log_file
 
 
 def _resolve_config_path() -> Path | None:
@@ -1183,6 +1420,7 @@ class Settings(BaseSettings):
     flags: FlagsSettings = Field(default_factory=FlagsSettings)
     hooks: HooksSettings = Field(default_factory=HooksSettings)
     permissions: PermissionsSettings = Field(default_factory=PermissionsSettings)
+    ui: UiSettings = Field(default_factory=UiSettings)
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
     #: Name of the ``mcp_servers`` entry that provides browser tools (exposed unprefixed).
     #: ``None`` falls back to ``"playwright"`` when such an entry exists.
@@ -1262,6 +1500,7 @@ __all__ = [
     "Settings",
     "StorageSettings",
     "TOOL_HOOK_EVENTS",
+    "UiSettings",
     "get_settings",
     "normalize_domain",
     "reload_settings",

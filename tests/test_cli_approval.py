@@ -240,3 +240,34 @@ def test_the_cmd2_shell_routes_the_next_line_to_a_pending_approval() -> None:
         assert future.result(timeout=5) == "session"
     finally:
         cli._runtime_loop.stop()
+
+
+# --------------------------------------------------------------------------- settings
+
+
+def test_the_args_preview_is_clipped_to_the_configured_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = Settings(permissions=PermissionsSettings(approval_args_preview_chars=20))
+    monkeypatch.setattr("src.cli.approval.get_settings", lambda: settings)
+    request = {"name": "browser_type", "args": {"text": "x" * 100}}
+
+    text = approval_question(request, GRANTABLE.reason, GRANTABLE)
+
+    args_line = next(line for line in text.splitlines() if line.strip().startswith("args:"))
+    assert args_line.strip() == "args: " + '{"text": "xxxxxxx...'
+
+
+def test_the_approval_timeout_is_the_configured_share_of_the_progress_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.cli.approval import approval_timeout_seconds
+    from src.config import LoopSettings
+
+    settings = Settings(
+        loop=LoopSettings(progress_timeout_seconds=100.0),
+        permissions=PermissionsSettings(approval_timeout_ratio=0.5),
+    )
+    monkeypatch.setattr("src.cli.approval.get_settings", lambda: settings)
+
+    assert approval_timeout_seconds() == 50.0
