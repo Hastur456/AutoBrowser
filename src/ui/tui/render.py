@@ -637,7 +637,7 @@ def _fact(ctx: RenderContext, label: str, value: str) -> Text:
 
 def _browser_segment(ctx: RenderContext, view: SessionView) -> str:
     if not view.servers:
-        return view.browser or ctx.strings("browser_off")
+        return view.browser or ctx.strings("no_browser")
     parts = []
     for server in view.servers:
         mark = ctx.theme.glyphs.call if server.state == "ready" else ctx.theme.glyphs.fail
