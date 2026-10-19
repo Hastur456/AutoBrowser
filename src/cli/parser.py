@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 
 from src.config import get_settings
+from src.version import PACKAGE_NAME, package_version
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -18,6 +19,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         description="Run the AutoBrowser browser agent from the command line."
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"{PACKAGE_NAME} {package_version() or 'unknown'}",
     )
     parser.add_argument("task", nargs="*", help="Task for the browser agent.")
     parser.add_argument("--task", "-t", dest="task_text", help="Task for the agent.")

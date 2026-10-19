@@ -15,7 +15,6 @@ import contextlib
 import logging
 import os
 from collections.abc import AsyncIterator, Callable, Mapping
-from importlib import metadata
 from typing import TYPE_CHECKING, Any
 
 from src.contracts import (
@@ -31,14 +30,12 @@ from src.harness.session import SessionContext, SessionRuntime, TaskRecord
 from src.mcp import ConnectionState
 from src.messages import Message
 from src.ui.views import ServerView, SessionView, TaskStatus, TaskView
+from src.version import package_version
 
 if TYPE_CHECKING:
     from src.harness.session import AgentLoopResult
 
 logger = logging.getLogger(__name__)
-
-#: Distribution name whose installed version the banner shows.
-PACKAGE_NAME = "autobrowser"
 
 _TASK_STATUSES: frozenset[str] = frozenset(
     {"running", "completed", "blocked", "cancelled", "failed"}
@@ -195,7 +192,7 @@ class SessionController:
         current = context.tasks[-1] if self.busy and context.tasks else None
         return SessionView(
             session_id=context.session_id,
-            version=_package_version(),
+            version=package_version(),
             model=config.model,
             provider="",
             workspace=str(workspace) if workspace is not None else os.getcwd(),
@@ -318,13 +315,6 @@ def _message_view(message: Any) -> dict[str, object]:
     return {"role": "", "content": str(message)}
 
 
-def _package_version() -> str:
-    try:
-        return metadata.version(PACKAGE_NAME)
-    except metadata.PackageNotFoundError:
-        return ""
-
-
 def _log_task_failure(task: asyncio.Task[Any]) -> None:
     if task.cancelled():
         return
@@ -333,4 +323,4 @@ def _log_task_failure(task: asyncio.Task[Any]) -> None:
         logger.info("Task ended with %s: %s", type(error).__name__, error)
 
 
-__all__ = ["PACKAGE_NAME", "SessionController", "TaskBusyError"]
+__all__ = ["SessionController", "TaskBusyError"]

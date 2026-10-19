@@ -134,7 +134,25 @@ dependencies = [
 # the repo root on sys.path by itself.
 pythonpath = ["."]
 
+[project.scripts]
+autobrowser = "src.cli.entry:main"
+
+[build-system]
+# The range covers the uv in use, so uv builds with its bundled backend (no download).
+requires = ["uv_build>=0.12.21,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# The import package is the top-level ``src`` (no rename yet, see
+# docs/decisions/2026-10-19-autobrowser-command-and-home-directory.md): install it only into
+# isolated environments (``uv tool install``, ``pipx``).
+module-name = "src"
+module-root = ""
+# Local tool state that can sit inside the package directory.
+source-exclude = ["**/.pytest_cache"]
+wheel-exclude = ["**/.pytest_cache"]
+
 [tool.uv]
-# An application run as `uv run main.py`, not an installable package: there is no
-# `autobrowser` module to build, so uv only syncs dependencies.
-package = false
+# Installable: ``uv tool install --editable .`` puts an ``autobrowser`` command on PATH;
+# ``uv run autobrowser`` and ``uv run main.py`` keep working in the checkout.
+package = true
