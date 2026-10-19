@@ -1,0 +1,4 @@
+# Neutral settings profile for tests/ui/test_windows_conpty.py: only what the smoke test pins.
+ui:
+  locale: ru
+  banner: true

@@ -120,6 +120,34 @@ def build_parser() -> argparse.ArgumentParser:
             f"Default: {settings.permissions.mode}"
         ),
     )
+    front_end = parser.add_mutually_exclusive_group()
+    front_end.add_argument(
+        "--classic",
+        action="store_true",
+        help="Use the cmd2 shell instead of the terminal UI (ui.frontend=classic).",
+    )
+    front_end.add_argument(
+        "--plain",
+        action="store_true",
+        help="Line-by-line output without the terminal UI (ui.frontend=plain).",
+    )
+    parser.add_argument(
+        "--ascii",
+        action="store_true",
+        help="ASCII glyphs only (ui.glyphs=ascii).",
+    )
+    parser.add_argument(
+        "--no-color",
+        dest="no_color",
+        action="store_true",
+        help="No colours (ui.color=none); NO_COLOR in the environment does the same.",
+    )
+    parser.add_argument(
+        "--theme",
+        choices=("dark", "light", "mono"),
+        default=None,
+        help=f"Colour theme for this run. Default: {settings.ui.theme}",
+    )
     parser.add_argument(
         "--turn-cap",
         type=int,

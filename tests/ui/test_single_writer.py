@@ -12,7 +12,7 @@ import pytest
 
 from src.config import UiSettings
 from src.ui import launch
-from src.ui.logging_setup import resolve_log_file, terminal_quiet
+from src.ui.logging_setup import terminal_quiet
 from src.ui.tui.terminal import TerminalCaps
 
 
@@ -51,10 +51,16 @@ def test_logging_warnings_and_thread_errors_go_to_the_log_file(
     assert (sys.excepthook, threading.excepthook) == hooks
 
 
-def test_relative_log_file_is_resolved_against_the_base(tmp_path: Path) -> None:
-    assert resolve_log_file(Path("logs/a.log"), tmp_path) == tmp_path / "logs" / "a.log"
-    absolute = tmp_path / "x.log"
-    assert resolve_log_file(absolute, Path("elsewhere")) == absolute
+def test_session_output_is_relayed_to_the_attached_front_end() -> None:
+    relay = launch.OutputRelay()
+    relay("before", "attach")  # goes to the log, never to the terminal
+    shown: list[str] = []
+    detach = relay.attach(shown.append)
+    relay("Подключение", "к серверу")
+    detach()
+    relay("after")
+
+    assert shown == ["Подключение к серверу"]
 
 
 def test_a_tui_that_cannot_start_falls_back_to_plain(
@@ -68,6 +74,9 @@ def test_a_tui_that_cannot_start_falls_back_to_plain(
 
     class FakePlain:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def notice(self, _text: str) -> None:
             pass
 
         def run(self) -> int:

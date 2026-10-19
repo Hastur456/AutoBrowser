@@ -21,12 +21,6 @@ _LOG = logging.getLogger("autobrowser.ui")
 _FORMAT = "%(asctime)s %(levelname)s %(name)s [%(threadName)s] %(message)s"
 
 
-def resolve_log_file(log_file: Path, base_dir: Path) -> Path:
-    """``ui.log_file`` made absolute: a relative path is relative to ``base_dir``."""
-
-    return log_file if log_file.is_absolute() else base_dir / log_file
-
-
 @contextmanager
 def terminal_quiet(log_file: Path) -> Iterator[Path]:
     """Route logging, warnings and uncaught exceptions to ``log_file`` for the block."""
@@ -75,4 +69,4 @@ def terminal_quiet(log_file: Path) -> Iterator[Path]:
         root.setLevel(saved_level)
 
 
-__all__ = ["resolve_log_file", "terminal_quiet"]
+__all__ = ["terminal_quiet"]

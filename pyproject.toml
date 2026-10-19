@@ -142,6 +142,12 @@ autobrowser = "src.cli.entry:main"
 requires = ["uv_build>=0.12.21,<0.13"]
 build-backend = "uv_build"
 
+[dependency-groups]
+dev = [
+    "pyte>=0.8.2",
+    "pywinpty>=3.1.0 ; sys_platform == 'win32'",
+]
+
 [tool.uv.build-backend]
 # The import package is the top-level ``src`` (no rename yet, see
 # docs/decisions/2026-10-19-autobrowser-command-and-home-directory.md): install it only into

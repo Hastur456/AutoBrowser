@@ -108,6 +108,18 @@ _STRINGS: dict[str, dict[str, str]] = {
 }
 
 
+#: ``SessionView.browser`` states of the controller, shown in the locale; other text as is.
+_BROWSER_STATES: dict[str, dict[str, str]] = {
+    "ru": {
+        "disabled": "выкл.",
+        "not started": "не запущен",
+        "no browser server": "нет браузерного сервера",
+        "unknown": "неизвестно",
+        "on": "вкл.",
+    },
+    "en": {"disabled": "off", "not started": "not started"},
+}
+
 #: Plural forms per locale: ru ``(1, 2-4, 5+)``, en ``(1, other)``.
 _PLURALS: dict[str, dict[str, tuple[str, ...]]] = {
     "ru": {"turns": ("ход", "хода", "ходов"), "calls": ("вызов", "вызова", "вызовов")},
@@ -121,6 +133,7 @@ class Strings:
     def __init__(self, locale: Locale, *, ascii_only: bool = False) -> None:
         self._table = _STRINGS[locale]
         self._plurals = _PLURALS[locale]
+        self._browser_states = _BROWSER_STATES[locale]
         self._ascii = ascii_only
 
     def __call__(self, key: str, **values: object) -> str:
@@ -129,6 +142,11 @@ class Strings:
             text = text.replace("…", "...").replace("—", "-").replace("–", "-")
             text = text.replace("↑↓", "up/down")
         return text
+
+    def browser_state(self, state: str) -> str:
+        """The controller's browser state in the locale; unknown states unchanged."""
+
+        return self._browser_states.get(state, state)
 
     def count(self, key: str, n: int) -> str:
         """``n`` with the plural form of ``key`` (``"4 вызова"``, ``"1 turn"``)."""

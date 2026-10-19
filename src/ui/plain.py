@@ -169,6 +169,11 @@ class PlainFrontend:
     def locale(self) -> str:
         return self._settings.locale
 
+    def notice(self, text: str) -> None:
+        """Show a session message as one line; safe from any thread."""
+
+        self._emit(text)
+
     # -- Loop -------------------------------------------------------------------------------
 
     def run(self) -> int:

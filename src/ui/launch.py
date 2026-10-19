@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Mapping
+import threading
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from src.config import UiSettings
@@ -20,6 +21,38 @@ from src.ui.tui.ports import ControllerPort, RuntimePort
 from src.ui.tui.terminal import TerminalCaps, TerminalStreams, detect_terminal, process_env
 
 _LOG = logging.getLogger("autobrowser.ui")
+
+
+class OutputRelay:
+    """The session's ``output_fn``: forwards messages to whichever front end is attached.
+
+    The session is built before the front end exists; until one attaches (and after it
+    detaches) messages go to the log, never to the terminal.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._target: Callable[[str], None] | None = None
+
+    def attach(self, target: Callable[[str], None]) -> Callable[[], None]:
+        with self._lock:
+            self._target = target
+
+        def detach() -> None:
+            with self._lock:
+                if self._target is target:
+                    self._target = None
+
+        return detach
+
+    def __call__(self, *values: object, **_print_kwargs: object) -> None:
+        text = " ".join(str(value) for value in values)
+        with self._lock:
+            target = self._target
+        if target is None:
+            _LOG.info("%s", text)
+        else:
+            target(text)
 
 
 def detect(
@@ -39,10 +72,15 @@ def run_frontend(
     initial_task: str | None = None,
     history_path: Path | None = None,
     caps: TerminalCaps | None = None,
+    output: OutputRelay | None = None,
 ) -> int:
-    """Run the interactive front end until the user leaves; returns the exit code."""
+    """Run the interactive front end until the user leaves; returns the exit code.
+
+    ``output`` is the session's ``output_fn``; its messages become front-end notices.
+    """
 
     caps = caps or detect(settings)
+    relay = output or OutputRelay()
     with terminal_quiet(log_file):
         if caps.level != "plain":
             try:
@@ -60,10 +98,19 @@ def run_frontend(
                 _LOG.warning("terminal UI unavailable, using plain mode", exc_info=exc)
                 print(f"[plain] terminal UI unavailable ({type(exc).__name__}: {exc}); see {log_file}")
             else:
-                return asyncio.run(app.run_async())
-        return PlainFrontend(
+                detach = relay.attach(app.notice)
+                try:
+                    return asyncio.run(app.run_async())
+                finally:
+                    detach()
+        plain = PlainFrontend(
             controller, runtime, settings=settings, caps=caps, initial_task=initial_task
-        ).run()
+        )
+        detach = relay.attach(plain.notice)
+        try:
+            return plain.run()
+        finally:
+            detach()
 
 
-__all__ = ["detect", "run_frontend"]
+__all__ = ["OutputRelay", "detect", "run_frontend"]

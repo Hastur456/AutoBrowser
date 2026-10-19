@@ -339,3 +339,17 @@ def test_english_locale() -> None:
 
     assert "✓ Done · 6 turns · 2 calls · 1:12" in text
     assert "  Plan" in text
+
+
+def test_browser_state_of_the_controller_is_localized() -> None:
+    terminal = caps(80)
+    theme = Theme.resolve(SETTINGS, terminal)
+    view = SessionView(session_id="abcd1234", model="m", browser="disabled", permission_mode="default")
+
+    status = render_status(view, Transcript(), width=80, caps=terminal, theme=theme, settings=SETTINGS, now=T0)
+    banner = render_banner(view, width=80, caps=terminal, theme=theme, settings=SETTINGS)
+
+    assert "браузер выкл." in status and "disabled" not in status
+    assert "браузер    выкл." in banner
+    odd = SessionView(session_id="abcd1234", model="m", browser="connecting")
+    assert "connecting" in render_status(odd, Transcript(), width=80, caps=terminal, theme=theme, settings=SETTINGS, now=T0)

@@ -153,6 +153,11 @@ class TuiApp:
     def application(self) -> Application[int]:
         return self._app
 
+    def notice(self, text: str) -> None:
+        """Show a session message as a notice; safe from any thread once running."""
+
+        self._pump.post(Notice(text))
+
     # -- Screen (the pump's port) ---------------------------------------------------------
 
     def print_above(self, text: str) -> None:

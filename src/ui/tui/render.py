@@ -527,7 +527,7 @@ def render_status(
     ctx = RenderContext(width=width, caps=caps, theme=theme, settings=settings)
     s = ctx.strings
     task = transcript.task
-    browser = _browser_segment(ctx, view)
+    browser = _browser_segment(ctx, view, labeled=True)
     turn = ""
     if task is not None:
         cap = f"/{view.turn_cap}" if view.turn_cap else ""
@@ -635,9 +635,15 @@ def _fact(ctx: RenderContext, label: str, value: str) -> Text:
     return text
 
 
-def _browser_segment(ctx: RenderContext, view: SessionView) -> str:
+def _browser_segment(ctx: RenderContext, view: SessionView, *, labeled: bool = False) -> str:
+    """The servers with their state marks; without servers, the browser state (labeled in
+    the status line, where nothing else says what it is)."""
+
     if not view.servers:
-        return view.browser or ctx.strings("no_browser")
+        if not view.browser:
+            return ctx.strings("no_browser")
+        state = ctx.strings.browser_state(view.browser)
+        return f"{ctx.strings('browser')} {state}" if labeled else state
     parts = []
     for server in view.servers:
         mark = ctx.theme.glyphs.call if server.state == "ready" else ctx.theme.glyphs.fail
