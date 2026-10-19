@@ -63,6 +63,8 @@ class SessionController:
         if output_fn is not None:
             runtime.set_output_fn(output_fn)
         self._task: asyncio.Task[AgentLoopResult] | None = None
+        #: The ``submit`` call while it starts the session (Chrome, MCP), before the task.
+        self._starting: asyncio.Task[Any] | None = None
         self._attached: SessionContext | None = None
 
     # ------------------------------------------------------------------ commands
@@ -83,7 +85,12 @@ class SessionController:
 
         if self.busy:
             raise TaskBusyError("A task is already running.")
-        await self.start()
+        # Starting can take long (Chrome, MCP); keep it cancellable like the task itself.
+        self._starting = asyncio.current_task()
+        try:
+            await self.start()
+        finally:
+            self._starting = None
         known = len(self._runtime.context.tasks)
         self._task = asyncio.create_task(self._runtime.run_task(text))
         self._task.add_done_callback(_log_task_failure)
@@ -114,8 +121,15 @@ class SessionController:
         return views[-1] if views else None
 
     async def cancel(self) -> bool:
-        """Cancel the running task; ``False`` when none runs."""
+        """Cancel the running task, or a ``submit`` still starting the session; ``False``
+        when neither runs."""
 
+        starting = self._starting
+        if starting is not None and not starting.done():
+            starting.cancel()
+            # The session start cleans up after itself (Chrome, MCP) on cancellation.
+            await asyncio.wait({starting})
+            return True
         task = self._task
         if task is None or task.done():
             return False
@@ -123,6 +137,15 @@ class SessionController:
         with contextlib.suppress(BaseException):
             await task
         return True
+
+    async def shutdown(self, timeout_seconds: float) -> None:
+        """Cancel whatever runs and wait for it, at most ``timeout_seconds``, so the session
+        is never closed under a running start or task."""
+
+        try:
+            await asyncio.wait_for(self.cancel(), timeout_seconds)
+        except TimeoutError:
+            logger.warning("Task did not stop within %.1fs of the shutdown", timeout_seconds)
 
     async def reconnect(self, server: str) -> ServerView:
         """Restart one MCP server and return its new state."""
@@ -181,9 +204,10 @@ class SessionController:
 
     @property
     def busy(self) -> bool:
-        """A task is running."""
+        """A task is running, or ``submit`` is still starting the session for one."""
 
-        return self._task is not None and not self._task.done()
+        starting = self._starting is not None and not self._starting.done()
+        return starting or (self._task is not None and not self._task.done())
 
     def session_view(self) -> SessionView:
         context = self._runtime.context

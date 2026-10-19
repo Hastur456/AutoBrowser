@@ -96,12 +96,15 @@ class ScriptedController:
         self.listeners: list[Callable[[object], None]] = []
         self.answers: list[tuple[str, str, str]] = []
         self.submitted: list[str] = []
+        self.playing = False
+        self.lose_outcome = False
 
     def session_view(self) -> SessionView:
-        return SessionView(session_id="abcdef123456", version="0.1.0", model="fake")
+        return SessionView(session_id="abcdef123456", version="0.1.0", model="fake", busy=self.playing)
 
     async def submit(self, text: str) -> TaskView:
         self.submitted.append(text)
+        self.playing = True
         asyncio.get_running_loop().create_task(self._play())
         return TaskView(index=1, task_id="t1", task=text, status="running")
 
@@ -114,7 +117,9 @@ class ScriptedController:
             listener(ticket())
         while not self.answers:
             await asyncio.sleep(0.01)
-        self._event(3, "goal.completed", {"status": "completed", "final_answer": "ok", "turns": 2}, 5)
+        if not self.lose_outcome:
+            self._event(3, "goal.completed", {"status": "completed", "final_answer": "ok", "turns": 2}, 5)
+        self.playing = False
 
     def _event(self, sequence: int, event_type: str, payload: dict[str, object], at: float) -> None:
         assert self.queue is not None
@@ -193,3 +198,22 @@ def test_plain_loop_ends_on_eof(runtime: RuntimeLoop) -> None:
     )
 
     assert frontend.run() == 0
+
+
+def test_plain_loop_stops_waiting_when_the_outcome_is_lost(runtime: RuntimeLoop) -> None:
+    controller = ScriptedController()
+    controller.lose_outcome = True
+    written: list[str] = []
+    replies = iter(["1", "/exit"])
+    frontend = PlainFrontend(
+        controller,
+        runtime,
+        settings=UiSettings(status_interval_seconds=0.2),
+        caps=plain_caps(),
+        initial_task="t",
+        write=written.append,
+        read=lambda _prompt: next(replies),
+    )
+
+    assert frontend.run() == 1
+    assert written[-1] == "[warn]  задача завершилась, но итог не дошёл до ленты"

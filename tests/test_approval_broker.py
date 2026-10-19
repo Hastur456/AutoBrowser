@@ -170,3 +170,22 @@ async def test_a_failing_listener_does_not_break_the_approval() -> None:
 
     assert await task == "once"
     assert unsubscribe_seen == []
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_wait_still_resolves_the_ticket_for_every_front_end() -> None:
+    broker, sink = make_broker()
+    seen: list[Any] = []
+    broker.subscribe(seen.append)
+
+    waiting = asyncio.create_task(broker(REQUEST, GRANTABLE.reason, GRANTABLE))
+    await wait_for_ticket(broker)
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+
+    assert isinstance(seen[-1], ApprovalResolution)
+    assert (seen[-1].answer, seen[-1].via) == ("deny", "cancelled")
+    assert sink.records[-1].type == "approval.answered"
+    assert sink.records[-1].payload["via"] == "cancelled"
+    assert broker.pending() == ()

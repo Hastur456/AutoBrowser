@@ -875,8 +875,17 @@ class SessionRuntime:
             raise
         result = goal_result.result
         self.context.state.replace(dict(result.session_state))
-        await self._update_memory(task, task_id, goal_result.status, result)
-        self.context.finish_task(record, result, status=goal_result.status, turns=result.turns)
+        try:
+            await self._update_memory(task, task_id, goal_result.status, result)
+        except BaseException:
+            self._forget_memory(task_id)
+            raise
+        finally:
+            # The goal already ended: a cancellation during memory consolidation must not
+            # leave the record running (it would block ``reset()`` for good).
+            self.context.finish_task(
+                record, result, status=goal_result.status, turns=result.turns
+            )
         return result
 
     async def _update_memory(

@@ -50,7 +50,9 @@ ApprovalJudgeMode = Literal["off", "model", "classifier", "both"]
 #: the session, or refuse.
 ApprovalAnswer = Literal["once", "session", "deny"]
 #: Who answered an approval: a front end, or nobody in time (``timeout`` is a deny).
-ApprovalVia = Literal["tui", "plain", "classic", "web", "timeout"]
+#: Who answered an approval; ``timeout`` and ``cancelled`` (the task stopped while waiting)
+#: are always a ``deny``.
+ApprovalVia = Literal["tui", "plain", "classic", "web", "timeout", "cancelled"]
 #: What a persistent memory file describes: one site (``sites/<domain>.md``) or a
 #: reusable procedure (``procedures/<name>.md``).
 MemoryKind = Literal["site", "procedure"]

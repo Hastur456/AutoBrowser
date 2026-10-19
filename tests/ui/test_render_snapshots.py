@@ -266,12 +266,67 @@ def test_live_zone_card_spinner_and_height_limit() -> None:
     assert "▌   2. Да, для browser_click на www.ozon.ru до конца сессии" in lines
     assert lines[-1] == "⠋ Думаю… · ход 4/50 · 00:37 · esc — прервать"
 
+    # The card is never cut, even when it alone is taller than the live zone.
     small = UiSettings(live_max_lines=4)
     clipped = render_live(
         transcript, width=80, caps=terminal, theme=theme, settings=small, now=T0, turn_cap=50
     ).splitlines()
-    assert len(clipped) == 4
-    assert clipped[0] == "  … ещё 8 строк"  # 10 card lines + spinner - 3 shown
+    assert clipped[0].startswith("▌ Нужно подтверждение")
+    assert len(clipped) == 11  # 10 card lines + the spinner
+
+
+def test_the_plan_gives_way_to_an_approval_card() -> None:
+    terminal = caps(80)
+    theme = Theme.resolve(SETTINGS, terminal)
+    ev = Stream()
+    transcript = Transcript()
+    for message in [
+        ev("goal.started", {"task": "t"}),
+        ev("plan.updated", {"steps": [f"шаг {n}" for n in range(8)]}),
+        ApprovalShown(Ticket()),
+    ]:
+        transcript, _ = reduce(transcript, message)  # type: ignore[arg-type]
+
+    lines = render_live(
+        transcript, width=80, caps=terminal, theme=theme, settings=UiSettings(live_max_lines=14), now=T0
+    ).splitlines()
+
+    assert len(lines) == 14
+    assert lines[0] == "  … ещё 7 строк"  # plan header + 8 steps = 9 lines, 2 shown
+    assert lines[3].startswith("▌ Нужно подтверждение")
+
+
+def test_the_card_shows_hostile_ticket_text_inert_and_on_one_line() -> None:
+    terminal = caps(80, level="full", color="16")
+    theme = Theme.resolve(SETTINGS, terminal)
+    esc, csi, rlo, newline = chr(0x1B), chr(0x9B), chr(0x202E), chr(10)
+    hostile = Ticket(
+        reason=f"ok{esc}[8mhidden{newline}second{rlo}evil",
+        args_preview='{"a": "' + csi + '2J"}',
+    )
+    transcript, _ = reduce(Transcript(), ApprovalShown(hostile))
+
+    live = render_live(transcript, width=80, caps=terminal, theme=theme, settings=SETTINGS, now=T0)
+
+    plain = ANSI.sub("", live)
+    assert "Причина: okhidden secondevil" in plain
+    assert f"{esc}[8m" not in live and rlo not in live and csi not in live
+    assert len(plain.splitlines()) == 10
+
+
+def test_a_card_closed_by_a_cancellation_does_not_claim_a_refusal() -> None:
+    terminal = caps(80)
+    theme = Theme.resolve(SETTINGS, terminal)
+    transcript, _ = reduce(Transcript(), ApprovalShown(Ticket()))
+    _, frozen = reduce(transcript, ApprovalClosed(Resolution(answer="deny", via="cancelled")))
+    unanswered = Block("b9", "approval", state="frozen", ticket=Ticket())
+
+    cancelled = render_block(frozen[0], width=80, caps=terminal, theme=theme, settings=SETTINGS)
+    no_resolution = render_block(unanswered, width=80, caps=terminal, theme=theme, settings=SETTINGS)
+
+    assert cancelled.startswith("  ⎿ ⊘ задача прервана до ответа")
+    assert no_resolution == "  ⎿ ⊘ задача прервана до ответа"
+    assert "отклонено" not in cancelled
 
 
 def session_view() -> SessionView:

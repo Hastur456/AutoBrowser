@@ -15,9 +15,9 @@ thinks; no answer in time is a ``deny``.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 
+from src.agent_loop.goals import GoalLimits
 from src.config import get_settings
 from src.contracts import (
     ApprovalAnswer,
@@ -32,24 +32,6 @@ from src.harness.approvals import ApprovalBroker
 _ONCE = {"y", "yes", "once", "o", "д", "да"}
 _SESSION = {"s", "session", "с", "сессия"}
 _DENY = {"n", "no", "deny", "н", "нет"}
-
-
-def approval_timeout_seconds() -> float:
-    """How long a human may think: well inside the goal watchdog's progress timeout."""
-
-    settings = get_settings()
-    return settings.loop.progress_timeout_seconds * settings.permissions.approval_timeout_ratio
-
-
-def _args_preview(request: ToolRequest) -> str:
-    try:
-        text = json.dumps(request.get("args") or {}, ensure_ascii=False, sort_keys=True, default=str)
-    except (TypeError, ValueError):
-        text = str(request.get("args"))
-    limit = get_settings().permissions.approval_args_preview_chars
-    if len(text) > limit:
-        text = text[: limit - 3] + "..."
-    return text
 
 
 def _question(
@@ -79,20 +61,6 @@ def _question(
         f"  {reason}\n"
         f"  args: {args_preview}\n"
         f"  {'   '.join(choices)}"
-    )
-
-
-def approval_question(request: ToolRequest, reason: str, verdict: PermissionVerdict) -> str:
-    """Terminal text of one approval question (arguments are shown, never persisted)."""
-
-    return _question(
-        tool=str(request.get("name") or ""),
-        domain=verdict.grant_key[2] if verdict.grant_key else "",
-        reason=reason,
-        args_preview=_args_preview(request),
-        allow_session=verdict.grant_key is not None and not verdict.always_ask,
-        rule_id=verdict.rule_id,
-        source=verdict.source,
     )
 
 
@@ -130,7 +98,10 @@ class ApprovalPrompt:
             settings = get_settings()
             broker = ApprovalBroker(
                 settings.permissions,
-                progress_timeout_seconds=settings.loop.progress_timeout_seconds,
+                # The goal watchdog's own bound: min(progress, task timeout).
+                progress_timeout_seconds=GoalLimits.from_settings(
+                    settings.loop
+                ).progress_timeout_seconds,
                 timeout_seconds=timeout_seconds,
             )
         self.broker = broker
@@ -196,4 +167,4 @@ class ApprovalPrompt:
             self._output(f"No answer in {self.broker.timeout_seconds:g}s: denied.")
 
 
-__all__ = ["ApprovalPrompt", "approval_question", "approval_timeout_seconds", "ticket_question"]
+__all__ = ["ApprovalPrompt", "ticket_question"]

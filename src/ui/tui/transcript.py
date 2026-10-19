@@ -112,6 +112,12 @@ class StreamReset:
 
 
 @dataclass(frozen=True)
+class TaskSettled:
+    """The session reports no running task, but no outcome reached the feed (a stream gap
+    or a dead forwarder): freeze what is live and stop the spinner."""
+
+
+@dataclass(frozen=True)
 class ApprovalShown:
     ticket: ApprovalTicketView
 
@@ -133,6 +139,7 @@ UiMessage = (
     | CommandOutput
     | StreamGap
     | StreamReset
+    | TaskSettled
     | ApprovalShown
     | ApprovalClosed
     | KeyAction
@@ -215,6 +222,11 @@ def reduce(transcript: Transcript, message: UiMessage) -> tuple[Transcript, list
         return _freeze_new(transcript, "notice", level="warn", missed=message.missed)
     if isinstance(message, StreamReset):
         return replace(transcript, last_sequence=0), []
+    if isinstance(message, TaskSettled):
+        if transcript.task is None:
+            return transcript, []
+        settled, frozen = _freeze_kinds(transcript, [], ("call", "approval", "plan"))
+        return replace(settled, task=None), frozen
     if isinstance(message, ApprovalShown):
         transcript, block = _new_block(
             transcript, "approval", task_id=message.ticket.task_id, ticket=message.ticket
@@ -425,6 +437,7 @@ __all__ = [
     "StreamGap",
     "StreamReset",
     "TaskProgress",
+    "TaskSettled",
     "Transcript",
     "UiMessage",
     "UserSubmitted",

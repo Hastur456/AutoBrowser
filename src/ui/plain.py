@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import queue
 import threading
 from collections.abc import Callable, Mapping
@@ -24,6 +25,8 @@ from src.ui.tui.ports import ControllerPort, RuntimeBridge, RuntimePort
 from src.ui.tui.terminal import TerminalCaps
 from src.ui.tui.transcript import CommandOutput, Notice, Transcript
 from src.ui.views import FeedItem, SessionView
+
+_LOG = logging.getLogger("autobrowser.ui")
 
 PROMPT = "autobrowser> "
 #: Width of the ``[tag]`` column, so the text after it lines up.
@@ -215,22 +218,42 @@ class PlainFrontend:
     def _run_task(self, text: str) -> bool:
         """Submit ``text`` and print its feed until the outcome; ``True`` when it completed."""
 
+        submitted = self._runtime.submit(self._controller.submit(text))
         try:
-            self._runtime.submit(self._controller.submit(text)).result()
-        except Exception as exc:  # noqa: BLE001 - shown to the user, the loop goes on
+            submitted.result()
+        except KeyboardInterrupt:
+            # Ctrl+C while the session starts (Chrome, MCP): cancel the start and wait for
+            # its cleanup instead of leaving it running under a closing session.
+            self._runtime.submit(self._controller.cancel()).result()
+            self._emit(_tag("cancelled", ""))
+            return False
+        except BaseException as exc:  # noqa: BLE001 - shown to the user, the loop goes on
             self._emit(_tag("failed", f"{type(exc).__name__}: {exc}"))
             return False
         # A short timeout keeps Ctrl+C responsive: a blocking ``Queue.get`` is not
         # interruptible on Windows.
         tick = 1.0 / self._settings.refresh_hz
+        checks_every = max(int(self._settings.status_interval_seconds * self._settings.refresh_hz), 1)
+        idle_ticks = 0
         while True:
             try:
                 value = self._events.get(timeout=tick)
             except queue.Empty:
+                idle_ticks += 1
+                if idle_ticks % checks_every == 0 and self._settled():
+                    # The outcome was lost (stream gap, dead forwarder): don't wait forever.
+                    lost = (
+                        "задача завершилась, но итог не дошёл до ленты"
+                        if self.locale == "ru"
+                        else "the task ended but its outcome never reached the feed"
+                    )
+                    self._emit(_tag("warn", lost))
+                    return False
                 continue
             except KeyboardInterrupt:
                 self._runtime.submit(self._controller.cancel()).result()
                 continue
+            idle_ticks = 0
             if isinstance(value, ApprovalTicket):
                 self._ask(value)
                 continue
@@ -269,13 +292,25 @@ class PlainFrontend:
                 self._emit(message.text)
         return result
 
+    def _settled(self) -> bool:
+        """No task runs and nothing is left in the queue to show."""
+
+        view = self._runtime.submit(_call(self._controller.session_view)).result()
+        return not view.busy and self._events.empty()
+
     async def _forward_stream(self) -> None:
-        async for item in self._controller.subscribe():
-            if item.kind != "event" or item.record is None:
-                continue
-            feed = project_event(item.record)
-            if feed is not None:
-                self._events.put(feed)
+        try:
+            async for item in self._controller.subscribe():
+                if item.kind != "event" or item.record is None:
+                    continue
+                feed = project_event(item.record)
+                if feed is not None:
+                    self._events.put(feed)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the loop notices the silence and moves on
+            _LOG.exception("event stream forwarder failed")
+            self._emit(_tag("error", f"{type(exc).__name__}: {exc}"))
 
     def _emit(self, line: str) -> None:
         with self._lock:

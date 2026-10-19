@@ -1120,8 +1120,8 @@ UiGlyphs = Literal["auto", "unicode", "ascii"]
 UiDensity = Literal["comfortable", "compact"]
 UiDetail = Literal["compact", "verbose"]
 UiSyncOutput = Literal["auto", "on", "off"]
-UiLocale = Literal["ru", "en"]
 UiPrintFormat = Literal["text", "json", "stream-json"]
+UiLocale = Literal["ru", "en"]
 
 
 class UiSettings(_Section):
@@ -1262,7 +1262,12 @@ class UiSettings(_Section):
 
     print_format: Annotated[
         UiPrintFormat,
-        Field(description="Default output format of print mode (-p)."),
+        Field(
+            description=(
+                "Default output format of print mode (-p). Reserved: print mode is step 7 of "
+                "the terminal UI plan and does not exist yet, so this has no effect."
+            )
+        ),
     ] = "text"
 
     log_file: Annotated[

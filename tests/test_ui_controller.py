@@ -252,3 +252,71 @@ def test_the_runtime_loop_runs_coroutines_on_its_own_thread() -> None:
         assert loop.submit(asyncio.sleep(0, result=7)).result(timeout=2) == 7
     finally:
         loop.stop()
+
+
+@pytest.mark.asyncio
+async def test_cancel_reaches_a_submit_that_is_still_starting_the_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0))
+    controller, runtime, _, _ = build()
+    started = asyncio.Event()
+
+    async def slow_start() -> None:
+        started.set()
+        await asyncio.Event().wait()  # Chrome / MCP that never come up
+
+    monkeypatch.setattr(runtime, "start", slow_start)
+    submit = asyncio.create_task(controller.submit("task"))
+    await started.wait()
+
+    assert controller.busy is True
+    assert await controller.cancel() is True
+    with pytest.raises(asyncio.CancelledError):
+        await submit
+    assert controller.busy is False
+    assert controller.task_views() == []
+
+
+@pytest.mark.asyncio
+async def test_shutdown_waits_for_the_task_within_its_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    stopped = asyncio.Event()
+
+    async def run(_request: TaskRequest) -> AgentLoopResult:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+        return native_result(final_answer="never")
+
+    install_fake_agent(monkeypatch, run)
+    controller, runtime, _, _ = build()
+    await controller.submit("long")
+
+    await controller.shutdown(5.0)
+
+    assert stopped.is_set() and controller.busy is False
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_during_memory_consolidation_closes_the_task_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0, native_result(final_answer="ok")))
+    controller, runtime, _, _ = build()
+    consolidating = asyncio.Event()
+
+    async def slow_memory(*_args: Any) -> None:
+        consolidating.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(runtime, "_update_memory", slow_memory)
+    await controller.submit("task")
+    await consolidating.wait()
+
+    assert await controller.cancel() is True
+    (view,) = controller.task_views()
+    assert view.status == "completed" and view.finished_at is not None
+    assert runtime.context.current_task is None
+    await runtime.close()

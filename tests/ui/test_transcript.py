@@ -12,6 +12,7 @@ from src.ui.tui.transcript import (
     Notice,
     StreamGap,
     StreamReset,
+    TaskSettled,
     Transcript,
     UserSubmitted,
     approval_choices,
@@ -213,3 +214,14 @@ def test_an_outcome_closes_a_pending_card_and_unknown_events_are_quiet() -> None
     transcript, frozen = run([feed("outcome", status="cancelled")], transcript)
     assert [b.kind for b in frozen] == ["approval", "outcome"]
     assert transcript.live == ()
+
+
+def test_task_settled_ends_a_task_whose_outcome_was_lost() -> None:
+    feed = Feed()
+    transcript, _ = run([feed("goal_started"), feed("plan", steps=("a",)), feed("call", tool="x")])
+
+    settled, frozen = run([TaskSettled()], transcript)
+
+    assert settled.task is None and settled.live == ()
+    assert sorted(b.kind for b in frozen) == ["call", "plan"]
+    assert run([TaskSettled()], settled) == (settled, [])

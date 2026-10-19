@@ -30,6 +30,10 @@ from src.harness.session import (
 )
 
 
+#: The TUI input history under the storage root (``ui.input_history``).
+INPUT_HISTORY_FILE = "input_history"
+
+
 def is_interactive(args: argparse.Namespace) -> bool:
     """Can a human answer approval prompts? ``args.interactive`` (batch: ``False``) or a TTY."""
 
@@ -174,9 +178,12 @@ def run_frontend_cli(args: argparse.Namespace, ui: UiSettings) -> int:
             settings=ui,
             log_file=ui.resolved_log_file(settings.storage),
             initial_task=resolve_initial_task(args),
+            history_path=settings.storage.root_dir / INPUT_HISTORY_FILE,
             output=relay,
         )
     finally:
+        # Never close the session under a running start or task (MCP/Chrome would leak).
+        runtime.run(controller.shutdown(ui.shutdown_timeout_seconds))
         runtime.run(session.close())
         runtime.stop()
 

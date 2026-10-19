@@ -314,7 +314,7 @@ ui:
   input_history_size: 1000                      # (default) (0..100000)
   approval_bell: false                          # (default) bell + window title on approval
   locale: ru                                    # (default) ru | en
-  print_format: text                            # (default) text | json | stream-json
+  print_format: text                            # (default) text | json | stream-json; reserved
   log_file: logs/autobrowser.log                # (default) relative = under storage.root_dir
   event_buffer_size: 2000                       # (default) events kept for late subscribers
   subscriber_queue_size: 1000                   # (default) queue before a gap marker

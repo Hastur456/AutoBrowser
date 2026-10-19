@@ -114,11 +114,22 @@ class ApprovalBroker:
             )
         except TimeoutError:
             answer, via = "deny", "timeout"
+        except asyncio.CancelledError:
+            # The task was cancelled while waiting: close the ticket for every front end
+            # (and pair approval.requested in the trace), then let the cancellation go on.
+            self._resolve(ticket, "deny", "cancelled")
+            raise
         finally:
             with self._lock:
                 self._pending.pop(ticket.ticket_id, None)
             if not pending.future.done():
                 pending.future.cancel()
+        self._resolve(ticket, answer, via)
+        return answer
+
+    def _resolve(self, ticket: ApprovalTicket, answer: ApprovalAnswer, via: ApprovalVia) -> None:
+        with self._lock:
+            self._pending.pop(ticket.ticket_id, None)
         resolution = ApprovalResolution(
             ticket_id=ticket.ticket_id,
             answer=answer,
@@ -127,7 +138,6 @@ class ApprovalBroker:
         )
         self._emit_answered(ticket, resolution)
         self._notify(resolution)
-        return answer
 
     def pending(self) -> tuple[ApprovalTicket, ...]:
         """Tickets waiting for an answer, oldest first."""

@@ -27,6 +27,7 @@ from rich.table import Table
 from rich.text import Text
 
 from src.config import UiSettings
+from src.ui.feed import sanitize_text
 from src.ui.tui.strings import Strings
 from src.ui.tui.terminal import TerminalCaps
 from src.ui.tui.theme import ASCII_GLYPHS, Theme
@@ -97,21 +98,30 @@ def render_live(
     """
 
     ctx = RenderContext(width=width, caps=caps, theme=theme, settings=settings)
-    parts: list[str] = []
+    # An approval card is never cut: the human must see what they approve. The plan and
+    # the current call give up their oldest lines first.
+    others: list[str] = []
+    card: list[str] = []
     for block in transcript.live:
         if block.kind == "plan" and not transcript.show_plan:
             continue
-        parts.append(_to_text(ctx, _block_renderables(ctx, block, now)))
+        text = _to_text(ctx, _block_renderables(ctx, block, now))
+        if not text:
+            continue
+        (card if block.kind == "approval" else others).extend(text.split("\n"))
+    spinner: list[str] = []
     if transcript.task is not None:
-        parts.append(_to_text(ctx, [spinner_line(ctx, transcript.task, now, turn_cap)]))
-    lines = "\n".join(part for part in parts if part).split("\n") if parts else []
-    limit = settings.live_max_lines
-    if len(lines) > limit:
-        hidden = len(lines) - limit + 1
-        more = Text(f"{INDENT}{ctx.theme.glyphs.ellipsis} ", style=theme.style("muted"))
-        more.append(ctx.strings("more_lines", n=hidden), style=theme.style("muted"))
-        lines = [_to_text(ctx, [more]), *lines[hidden:]]
-    return "\n".join(lines)
+        spinner = [_to_text(ctx, [spinner_line(ctx, transcript.task, now, turn_cap)])]
+    room = max(settings.live_max_lines - len(card) - len(spinner), 0)
+    if len(others) > room:
+        hidden = len(others) - room + 1 if room else len(others)
+        kept = others[hidden:] if room else []
+        if room:
+            more = Text(f"{INDENT}{ctx.theme.glyphs.ellipsis} ", style=theme.style("muted"))
+            more.append(ctx.strings("more_lines", n=hidden), style=theme.style("muted"))
+            kept = [_to_text(ctx, [more]), *kept]
+        others = kept
+    return "\n".join([*others, *card, *spinner])
 
 
 def _block_renderables(
@@ -359,6 +369,10 @@ def _approval(ctx: RenderContext, block: Block, now: datetime | None) -> list[Re
     theme, glyphs, s = ctx.theme, ctx.theme.glyphs, ctx.strings
     bar = Text(f"{glyphs.bar} ", style=theme.style("warn"))
     rows: list[RenderableType] = []
+    # The human decides on this card: the reason may come from the model or the classifier,
+    # i.e. from text a page can influence, so nothing in it may move or hide characters.
+    tool, server, domain = _one_line(ticket.tool), _one_line(ticket.server), _one_line(ticket.domain)
+    rule, reason, args = _one_line(ticket.rule_id), _one_line(ticket.reason), _one_line(ticket.args_preview)
 
     def row(*parts: tuple[str, str]) -> None:
         line = bar.copy()
@@ -367,8 +381,8 @@ def _approval(ctx: RenderContext, block: Block, now: datetime | None) -> list[Re
         rows.append(_fitted(line, ctx))
 
     title = s("approval_title")
-    if ticket.rule_id:
-        title = f"{title} · {s('rule')} {ticket.rule_id}"
+    if rule:
+        title = f"{title} · {s('rule')} {rule}"
     head = bar.copy()
     head.append(title, style=theme.style("warn"))
     if now is not None:
@@ -379,26 +393,30 @@ def _approval(ctx: RenderContext, block: Block, now: datetime | None) -> list[Re
             head.append(" " * pad)
             head.append(timer, style=theme.style("muted"))
     rows.append(_fitted(head, ctx))
-    target = f"{ticket.server} · {ticket.tool}" if ticket.server else ticket.tool
-    if ticket.domain:
-        row((target, "tool"), (f"  {s('on_domain')} ", "muted"), (ticket.domain, "link"))
+    target = f"{server} · {tool}" if server else tool
+    if domain:
+        row((target, "tool"), (f"  {s('on_domain')} ", "muted"), (domain, "link"))
     else:
         row((target, "tool"))
-    if ticket.args_preview:
-        row((ticket.args_preview, "text"))
-    if ticket.reason:
-        row((f"{s('reason')}: ", "muted"), (ticket.reason, "text"))
+    if args:
+        row((args, "text"))
+    if reason:
+        row((f"{s('reason')}: ", "muted"), (reason, "text"))
     rows.append(bar.copy())
     for index, choice in enumerate(approval_choices(block)):
         selected = index == block.choice
         line = bar.copy()
         line.append(f"{glyphs.pointer if selected else ' '} ", style=theme.style("accent"))
-        label = f"{index + 1}. {_choice_label(ctx, choice, ticket.tool, ticket.domain)}"
+        label = f"{index + 1}. {_choice_label(ctx, choice, tool, domain)}"
         line.append(label, style=theme.selected() if selected else theme.style("text"))
         rows.append(_fitted(line, ctx))
     rows.append(bar.copy())
     row((s("approval_hint"), "muted"))
     return rows
+
+
+def _one_line(value: str) -> str:
+    return " ".join(sanitize_text(value).split())
 
 
 def _choice_label(ctx: RenderContext, choice: str, tool: str, domain: str) -> str:
@@ -414,8 +432,11 @@ def _choice_label(ctx: RenderContext, choice: str, tool: str, domain: str) -> st
 def _approval_summary(ctx: RenderContext, block: Block) -> Text:
     resolution, ticket = block.resolution, block.ticket
     answer = resolution.answer if resolution is not None else "deny"
-    via = resolution.via if resolution is not None else ""
-    if via == "timeout":
+    via = resolution.via if resolution is not None else "cancelled"
+    if via == "cancelled":
+        # Nobody refused: the task stopped while the card was open.
+        key, glyph, role = "answered_cancelled", ctx.theme.glyphs.skip, "warn"
+    elif via == "timeout":
         key, glyph, role = "answered_timeout", ctx.theme.glyphs.fail, "error"
     elif answer == "deny":
         key, glyph, role = "answered_deny", ctx.theme.glyphs.fail, "error"
@@ -424,7 +445,7 @@ def _approval_summary(ctx: RenderContext, block: Block) -> Text:
         glyph, role = ctx.theme.glyphs.ok, "ok"
     body = Text(f"{glyph} ", style=ctx.theme.style(role))
     body.append(ctx.strings(key), style=ctx.theme.style(role))
-    if via and via != "timeout":
+    if via not in {"timeout", "cancelled"}:
         body.append(f" ({via})", style=ctx.theme.style("muted"))
     if resolution is not None and ticket is not None:
         seconds = max((resolution.resolved_at - ticket.created_at).total_seconds(), 0.0)

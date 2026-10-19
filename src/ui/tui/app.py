@@ -11,6 +11,7 @@ blocks are printed above the app with ``run_in_terminal``, the live zone is redr
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from concurrent.futures import Future
 from datetime import UTC, datetime
@@ -54,12 +55,15 @@ from src.ui.tui.transcript import (
     Notice,
     StreamGap,
     StreamReset,
+    TaskSettled,
     Transcript,
     UiMessage,
     UserSubmitted,
     approval_choices,
 )
 from src.ui.views import SessionView
+
+_LOG = logging.getLogger("autobrowser.ui")
 
 _COLOR_DEPTHS = {
     "none": ColorDepth.DEPTH_1_BIT,
@@ -203,12 +207,13 @@ class TuiApp:
         self._stream_future = self._bridge.spawn(self._forward_stream)
         pump_task = asyncio.ensure_future(self._pump.run())
         status_task = asyncio.ensure_future(self._poll_status())
+        size_task = asyncio.ensure_future(self._watch_size())
         if self._initial_task:
             loop.call_soon(self._submit_text, self._initial_task)
         try:
             return await self._app.run_async()
         finally:
-            for task in (pump_task, status_task):
+            for task in (pump_task, status_task, size_task):
                 task.cancel()
             await self._shutdown()
 
@@ -225,13 +230,28 @@ class TuiApp:
         """Runs on the runtime loop: stream items → feed items → the pump."""
 
         last = 0
-        async for item in self._controller.subscribe():
-            message = _stream_message(item, last)
-            sequence = _cursor_sequence(item)
-            if sequence:
-                last = sequence
-            if message is not None:
-                self._pump.post(message)
+        try:
+            async for item in self._controller.subscribe():
+                message = _stream_message(item, last)
+                sequence = _cursor_sequence(item)
+                if sequence:
+                    last = sequence
+                if message is not None:
+                    self._pump.post(message)
+                if isinstance(message, StreamGap):
+                    self._settle_if_idle()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the UI must survive a broken stream
+            _LOG.exception("event stream forwarder failed")
+            self._pump.post(Notice(f"{type(exc).__name__}: {exc}", "error"))
+            self._settle_if_idle()
+
+    def _settle_if_idle(self) -> None:
+        """Runs on the runtime loop: an outcome may have been lost, so ask the session."""
+
+        if not self._controller.session_view().busy:
+            self._pump.post(TaskSettled())
 
     def _on_approval(self, value: object) -> None:
         """Runs on the runtime loop (the broker's listener)."""
@@ -260,6 +280,19 @@ class TuiApp:
         loop = self._app.loop
         if loop is not None:
             loop.call_soon_threadsafe(ring)
+
+    async def _watch_size(self) -> None:
+        """Windows has no SIGWINCH: poll the size and redraw the live zone from scratch on a
+        change, so no line of an older, differently wrapped frame is left behind (B3)."""
+
+        size = self._app.output.get_size()
+        while True:
+            await asyncio.sleep(self._settings.size_poll_seconds)
+            current = self._app.output.get_size()
+            if current != size:
+                size = current
+                self._app.renderer.erase(leave_alternate_screen=False)
+                self.invalidate()
 
     async def _poll_status(self) -> None:
         """MCP states produce no events, so the status line polls the session view."""
@@ -498,6 +531,17 @@ class TuiApp:
 
         @kb.add("c-c")
         def _(event: KeyPressEvent) -> None:
+            now = event.app.loop.time() if event.app.loop else 0.0
+            again = (
+                self._last_interrupt is not None
+                and now - self._last_interrupt <= self._settings.double_press_seconds
+            )
+            # A second press always leaves, even while a task (or the session start) is
+            # still running: the shutdown cancels it before the session closes.
+            if again:
+                event.app.exit(result=self._exit_code)
+                return
+            self._last_interrupt = now
             if self._busy():
                 self._cancel()
                 return
@@ -505,11 +549,6 @@ class TuiApp:
             if buffer.text:
                 buffer.reset()
                 return
-            now = event.app.loop.time() if event.app.loop else 0.0
-            if self._last_interrupt is not None and now - self._last_interrupt <= self._settings.double_press_seconds:
-                event.app.exit(result=self._exit_code)
-                return
-            self._last_interrupt = now
             hint = "нажмите Ctrl+C ещё раз для выхода" if self.locale == "ru" else "press Ctrl+C again to exit"
             self._pump.post(Notice(hint))
 
@@ -550,10 +589,20 @@ def _cursor_sequence(item: StreamItemView) -> int:
 
 
 def _history(settings: UiSettings, path: Path | None) -> History:
-    if not settings.input_history or path is None:
+    """The input history: a file kept to ``ui.input_history_size`` entries, or memory only."""
+
+    size = settings.input_history_size
+    if not settings.input_history or path is None or size == 0:
         return InMemoryHistory()
     path.parent.mkdir(parents=True, exist_ok=True)
-    return FileHistory(str(path))
+    history = FileHistory(str(path))
+    entries = list(history.load_history_strings())  # newest first
+    if len(entries) > size:
+        path.write_text("", encoding="utf-8")
+        for entry in reversed(entries[:size]):
+            history.store_string(entry)
+        history = FileHistory(str(path))
+    return history
 
 
 
