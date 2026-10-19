@@ -1002,8 +1002,12 @@ class AgentLoopEngine:
                 final_status = "blocked"
                 break
 
+            self._emit("turn.started", {"turn": turn, "current_step": state.current_step})
+            plan_before = state.plan
             result = await turn_controller.run_turn(state)
             state = result.state
+            if state.plan != plan_before:
+                self._emit_plan(state)
             if result.status is not None:
                 final_status = result.status
                 break
@@ -1084,7 +1088,7 @@ class AgentLoopEngine:
 
         data = _json_object(_message_content(response))
         plan = _normalize_steps(data.get("steps"), state.task or "Complete the task.")
-        return state.apply(
+        state = state.apply(
             {
                 "plan": plan,
                 "current_step": 0,
@@ -1093,6 +1097,20 @@ class AgentLoopEngine:
                 "error": "",
                 "messages": messages,
             }
+        )
+        self._emit_plan(state)
+        return state
+
+    def _emit_plan(self, state: LoopState) -> None:
+        """Publish the plan's content: every (re)plan and every change of step status."""
+
+        self._emit(
+            "plan.updated",
+            {
+                "steps": [dict(step) for step in state.plan],
+                "current_step": state.current_step,
+                "replan_count": int(state.replan_count or 0),
+            },
         )
 
     def _history(self, state: LoopState) -> list[Message]:

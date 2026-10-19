@@ -15,6 +15,9 @@ EventType = Literal[
     "session.started",
     "session.closed",
     "goal.started",
+    # The plan's content (each (re)plan and step-status change) and the start of a turn.
+    "plan.updated",
+    "turn.started",
     "model.requested",
     "model.responded",
     "action.proposed",
@@ -48,6 +51,7 @@ SENSITIVE_KEY_MARKERS = (
 REDACTED_VALUE = "[REDACTED]"
 AGENT_TRACE_EVENT_TYPES = {
     "goal.started",
+    "plan.updated",
     "model.responded",
     "action.proposed",
     "policy.decided",
@@ -283,6 +287,21 @@ def _project_agent_trace_record(record: EventRecord) -> dict[str, Any] | None:
         return projected
     if record.type == "model.responded":
         _set_if_present(projected, "node", _compact_text(record.payload.get("node")))
+        return projected
+    if record.type == "plan.updated":
+        steps = record.payload.get("steps")
+        if isinstance(steps, list):
+            projected["steps"] = [
+                {
+                    "description": _compact_text(step.get("description")) or "",
+                    "status": _compact_text(step.get("status")) or "",
+                }
+                for step in steps
+                if isinstance(step, dict)
+            ]
+        replan_count = record.payload.get("replan_count")
+        if isinstance(replan_count, int) and not isinstance(replan_count, bool):
+            projected["replan_count"] = replan_count
         return projected
     if record.type == "action.proposed":
         return _project_tool_request_event(projected, record.payload.get("tool_request"))
