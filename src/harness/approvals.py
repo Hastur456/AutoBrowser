@@ -19,7 +19,7 @@ import json
 import logging
 import threading
 from collections.abc import Callable
-from concurrent.futures import Future
+from concurrent.futures import Future, InvalidStateError
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -150,7 +150,7 @@ class ApprovalBroker:
                 return False
             try:
                 pending.future.set_result((answer, via))
-            except Exception:  # cancelled concurrently by the timeout
+            except InvalidStateError:  # cancelled concurrently by the timeout
                 return False
         return True
 

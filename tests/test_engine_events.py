@@ -10,7 +10,12 @@ from typing import Any
 import pytest
 
 from src.agent_loop.evals import FakeChatModel
-from src.agent_loop.events import AgentTraceSink, EventEmitter, EventRecord, InMemoryEventSink
+from src.agent_loop.events import (
+    AgentTraceSink,
+    EventEmitter,
+    EventRecord,
+    InMemoryEventSink,
+)
 from src.agent_loop.execution.loop import AgentLoopEngine, AgentLoopResult
 from src.agent_loop.execution.resources import EngineResources
 from src.harness.hooks import NullHookEngine

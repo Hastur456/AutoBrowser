@@ -180,6 +180,11 @@ class TaskRecord:
     task_id: str = field(default_factory=lambda: f"task-{uuid4().hex}")
     finished_at: datetime | None = None
     result: Any | None = None
+    #: ``running`` until closed, then the goal status (``completed``/``blocked``/
+    #: ``cancelled``) or ``failed``.
+    status: str = "running"
+    #: Agent turns of a finished task; ``None`` while running or after a failure.
+    turns: int | None = None
 
 
 @dataclass
@@ -575,11 +580,20 @@ class SessionContext:
         self.events.emit("task.started", record)
         return record
 
-    def finish_task(self, record: TaskRecord, result: Any) -> None:
-        """Mark a tracked task as completed."""
+    def finish_task(
+        self,
+        record: TaskRecord,
+        result: Any,
+        *,
+        status: str = "completed",
+        turns: int | None = None,
+    ) -> None:
+        """Mark a tracked task as finished with its terminal goal ``status``."""
 
         now = datetime.now(UTC)
         record.result = result
+        record.status = status
+        record.turns = turns
         record.finished_at = now
         self.current_task = None
         self.metadata.task_count += 1
@@ -590,12 +604,14 @@ class SessionContext:
     def fail_task(self, record: TaskRecord, exception: BaseException) -> None:
         """Mark a tracked task as failed while preserving the exception."""
 
+        record.status = "failed"
         self._close_task(record, exception)
         self.events.emit("task.failed", record)
 
     def cancel_task(self, record: TaskRecord, exception: asyncio.CancelledError) -> None:
         """Mark a tracked task as cancelled; its result is the cancellation itself."""
 
+        record.status = "cancelled"
         self._close_task(record, exception)
         self.events.emit("task.cancelled", record)
 
@@ -773,6 +789,15 @@ class SessionRuntime:
         #: Built once in :meth:`start` by :meth:`SessionContext.build_agent`.
         self.agent: Agent | None = None
 
+    def set_output_fn(self, output_fn: Callable[..., None]) -> None:
+        """Route session messages (startup notices, the tool list) to ``output_fn``.
+
+        A front end that owns the terminal turns them into its own notices; takes effect for
+        everything written after the call (the session starts lazily).
+        """
+
+        self._output = output_fn
+
     @property
     def harness(self) -> BrowserHarness:
         """Return the initialized harness."""
@@ -851,7 +876,7 @@ class SessionRuntime:
         result = goal_result.result
         self.context.state.replace(dict(result.session_state))
         await self._update_memory(task, task_id, goal_result.status, result)
-        self.context.finish_task(record, result)
+        self.context.finish_task(record, result, status=goal_result.status, turns=result.turns)
         return result
 
     async def _update_memory(
