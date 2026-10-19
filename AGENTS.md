@@ -40,7 +40,8 @@ engine-native execution loop. The CLI entry point is `main.py`. Core code lives 
   defaults live in `src/config.py` (`settings.llm`).
 - `src/providers/`: provider adapters (e.g. `ollama.py`) that implement `ChatModel` by mapping neutral `Message`/`ToolDef` objects to a backend wire format.
 - `src/browser/`: provider-neutral browser contracts, canonical browser names, backend adapters, shared browser errors, and fake browser tools for tests.
-- `src/cli/`: `cmd2` interactive CLI, command catalog, output formatting, parser, and bootstrap wiring.
+- `src/cli/`: the `autobrowser` entry point (`entry.py`), parser, bootstrap wiring that picks the front end, and the `cmd2` shell kept as `--classic`.
+- `src/ui/`: front ends over the session — `SessionController`, `RuntimeLoop`, the event feed projection, the inline terminal UI (`src/ui/tui/`), plain line mode and the launcher. Guide: `docs/development/terminal-ui.md`.
 - `src/harness/`: session runtime and runtime infrastructure bundled into `EngineResources` for the engine.
 - `src/mcp/`: Playwright MCP process/session lifecycle helpers and provider loading.
 - `docs/`: architecture, development setup, decisions, diagrams, research notes, and glossary.
@@ -200,13 +201,19 @@ Run deterministic fake-browser eval baselines:
 uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
 ```
 
-Start the interactive REPL with:
+Start the interactive terminal UI with:
 
 ```powershell
-uv run main.py
+uv run main.py            # terminal UI; plain mode without a capable terminal
+uv run main.py --classic  # the cmd2 shell described below
 ```
 
-REPL commands include:
+The terminal UI takes free-form tasks and slash commands (`/help`, `/status`, `/tasks`,
+`/cancel`, `/mcp [reconnect <name>]`, `/history [N]`, `/memory`, `/permissions`, `/detail`,
+`/theme`, `/doctor`, `/reset`, `/clear`, `/exit`); keys and terminals are listed in
+`docs/development/terminal-ui.md`.
+
+`--classic` (cmd2) commands include:
 
 - `run <text>` or free-form input: run a new browser-agent task.
 - `tasks`: show task history for the current session.
@@ -221,7 +228,8 @@ REPL commands include:
 - `help [command]`: show command help.
 - `exit` or `quit`: exit the CLI.
 
-Useful CLI flags include `--loop`, `--show-state`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap`, and `--permission-mode`.
+Useful CLI flags include `--loop`, `--show-state`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap`, `--permission-mode`, and the front-end flags `--classic`,
+`--plain`, `--ascii`, `--no-color`, `--theme`.
 
 ## Coding Style & Naming Conventions
 

@@ -30,7 +30,9 @@ Get-Content -LiteralPath path\to\file.md -Encoding UTF8
 AutoBrowser is a Python 3.12 browser automation agent that turns a
 natural-language task into a plan → reason → policy → execute → observe loop.
 Browser interaction goes through the tools of the configured MCP servers (Playwright
-MCP by default). It runs as a long-lived interactive `cmd2` REPL (`main.py`) over
+MCP by default). It runs as a long-lived interactive session (`main.py`, the
+`autobrowser` console script) — a Claude-Code-style inline terminal UI by default,
+plain line mode without a capable terminal, the old `cmd2` shell with `--classic` — over
 an Ollama-compatible chat model (default `gemma4:31b-cloud`). Control flow is
 **engine-native** — there is no compiled graph. The explicit `AgentLoopEngine`
 owns the loop; see `docs/decisions/2026-08-31-native-agent-loop-engine.md` for
@@ -175,8 +177,8 @@ Every tunable lives in `src/config.py` — a pydantic-settings root read at call
 never imports it back). See
 `docs/decisions/2026-09-16-typed-settings-module.md` and the `.env.example` template.
 
-Names are `AUTOBROWSER_<SECTION>__<FIELD>` over ten sections (`llm`, `browser`, `loop`,
-`observation`, `memory`, `events`, `storage`, `flags`, `hooks`, `permissions`). Env outranks `.env` outranks the code
+Names are `AUTOBROWSER_<SECTION>__<FIELD>` over eleven sections (`llm`, `browser`, `loop`,
+`observation`, `memory`, `events`, `storage`, `flags`, `hooks`, `permissions`, `ui`). Env outranks `.env` outranks the code
 defaults; an empty value means "not set"; sections are `frozen` with `extra="forbid"`.
 `AUTOBROWSER_LLM__API_KEY` is passed to the provider as an explicit `Authorization: Bearer`
 header — the vendor `OLLAMA_API_KEY` is no longer read. Adding a setting means updating
@@ -194,6 +196,24 @@ names itself (the root is `extra="ignore"`). `config.example.yaml` is the templa
 `docs/decisions/2026-09-16-opt-in-yaml-settings-file.md` records the original opt-in design,
 superseded on the activation question by
 `docs/decisions/2026-09-26-default-yaml-settings-file.md`.
+
+## Terminal UI
+
+Front ends are clients of the session, never part of it
+(`docs/decisions/2026-10-19-session-controller-and-local-web-ui.md`; guide:
+`docs/development/terminal-ui.md`).
+
+- `src/ui/controller.py` — `SessionController`, the UI-neutral facade over `SessionRuntime`
+  (submit/cancel/reset/reconnect/answer, `SessionView`/`TaskView` read models from
+  `src/ui/views.py`). Its coroutines run on `src/ui/runtime_loop.RuntimeLoop`.
+- The session feeds front ends through `EventBroadcaster` (`src/harness/event_stream.py`, an
+  extra session event sink) and `ApprovalBroker` (`src/harness/approvals.py`, the
+  `HumanInputCallback`); `src/cli/bootstrap.run_frontend_cli` composes them.
+- `src/ui/feed.py` projects redacted records to `FeedItem`s by event type and sanitizes every
+  displayed string; `src/ui/tui/` holds pure transcript/render code plus `TuiApp` and the
+  `RenderPump`, the only terminal writer; `src/ui/plain.py` is the line front end.
+- `src/agent_loop/**` and `src/harness/**` never import `src.ui`/`src.cli`; `src/ui/**`
+  never imports `src.agent_loop.execution`. UI tunables live in `settings.ui`.
 
 ## Lifecycle Hooks
 
@@ -303,7 +323,8 @@ uv run pytest                                 # full suite
 uv run pytest tests\test_harness_session.py   # engine + session lifecycle
 uv run pytest tests\test_prompts.py           # ALWAYS run after changing any prompt
 
-uv run main.py                                # interactive REPL (browser + MCP)
+uv run main.py                                # terminal UI (browser + MCP); --classic = cmd2
+uv run pytest tests/ui tests/test_ui_feed.py   # terminal UI: render snapshots, keys, ConPTY
 uv run main.py --no-mcp --task "inspect page" # dry run, no browser/MCP (dev checks)
 uv run main.py --show-state --task "..."      # debug state per step
 

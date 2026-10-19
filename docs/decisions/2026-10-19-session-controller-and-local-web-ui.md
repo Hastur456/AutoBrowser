@@ -1,6 +1,6 @@
 # ADR-2026-10-19: Терминальный UI в стиле Claude Code над общим SessionController
 
-Status: Proposed
+Status: Accepted (2026-10-19, implemented by steps 1-5 and 8-17 of the rollout plan; see docs/development/terminal-ui.md)
 Date: 2026-10-19
 
 > Файл назван по первой редакции, где главным клиентом был локальный веб-UI. Решение

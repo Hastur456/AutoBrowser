@@ -17,7 +17,7 @@ This directory contains Architecture Decision Records (ADRs).
   off-by-default `OtlpEventSink` (any OTLP backend, Langfuse included) is recorded as a
   deferred option with explicit revisit triggers.
 - [2026-10-19 Terminal UI over a Shared SessionController](2026-10-19-session-controller-and-local-web-ui.md)
-  (Proposed, Russian): a Claude-Code-style inline TUI on prompt_toolkit + rich (frozen blocks
+  (Accepted, Russian): a Claude-Code-style inline TUI on prompt_toolkit + rich (frozen blocks
   in the scrollback, a bounded live zone, in-stream approvals, slash commands, status line) over
   a UI-neutral `SessionController` in `src/ui/`, a session-scoped `EventBroadcaster` sink and
   `ApprovalBroker`. Single-writer render rules, `full/degraded/plain` terminal levels, a themed
