@@ -200,6 +200,31 @@ async def _reset(host: CommandHost, _args: str) -> CommandResult:
     return CommandResult(messages=(StreamReset(), Notice(text)))
 
 
+async def _url(host: CommandHost, _args: str) -> CommandResult:
+    url = sanitize_text(await host.bridge.call(host.controller.current_url))
+    if not url:
+        text = "адрес страницы пока неизвестен" if host.locale == "ru" else "the page URL is not known yet"
+        return CommandResult(messages=(Notice(text),))
+    return CommandResult(messages=(CommandOutput("URL", (url,)),))
+
+
+async def _replay(host: CommandHost, args: str) -> CommandResult:
+    target = args.strip()
+    try:
+        lines = await host.bridge.call(lambda: host.controller.replay(target))
+    except (LookupError, FileNotFoundError) as exc:
+        return CommandResult(messages=(Notice(str(exc).strip("'\""), "warn"),))
+    title = "Ход задачи" if host.locale == "ru" else "Replay"
+    return CommandResult(messages=(CommandOutput(title, tuple(sanitize_text(line) for line in lines)),))
+
+
+def _replay_targets(host: CommandHost, prefix: str) -> Sequence[str]:
+    """Task numbers of this session (from the cached view)."""
+
+    count = host.view.task_count if host.view is not None else 0
+    return [str(n) for n in range(1, count + 1) if str(n).startswith(prefix.strip())]
+
+
 async def _permissions(host: CommandHost, _args: str) -> CommandResult:
     view = await host.bridge.call(host.controller.session_view)
     ru = host.locale == "ru"
@@ -290,6 +315,14 @@ COMMANDS: tuple[SlashCommand, ...] = (
     ),
     SlashCommand("history", "/history [N]", {"ru": "история диалога", "en": "dialogue history"}, _history),
     SlashCommand("memory", "/memory", {"ru": "записи памяти", "en": "memory entries"}, _memory),
+    SlashCommand("url", "/url", {"ru": "адрес текущей страницы", "en": "current page URL"}, _url),
+    SlashCommand(
+        "replay",
+        "/replay [№ | id сессии]",
+        {"ru": "ход задачи (последней, №, другой сессии)", "en": "action sequence of a task or session"},
+        _replay,
+        complete_args=_replay_targets,
+    ),
     SlashCommand("permissions", "/permissions", {"ru": "режим разрешений", "en": "permission mode"}, _permissions),
     SlashCommand(
         "detail",

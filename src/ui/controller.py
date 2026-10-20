@@ -26,7 +26,11 @@ from src.contracts import (
 from src.harness.approvals import ApprovalBroker, ApprovalListener
 from src.harness.event_stream import EventBroadcaster, StreamCursor, StreamItem
 from src.harness.hooks import HookEngine
+from src.agent_loop.replay import load_events, print_action_sequence, summarize_trace
+from src.browser.pages import current_page_url, page_url
+from src.config import get_settings
 from src.harness.session import SessionContext, SessionRuntime, TaskRecord
+from src.harness.session_store import EVENTS_FILE_NAME, find_session
 from src.mcp import ConnectionState
 from src.messages import Message
 from src.ui.views import ServerView, SessionView, TaskStatus, TaskView
@@ -276,6 +280,40 @@ class SessionController:
         state["messages"] = []
         self._runtime.context.persist()
         return count
+
+    def current_url(self) -> str:
+        """The page the agent last saw, read from the carried state by its ``Page URL``
+        text format (no tool is called); ``""`` when unknown."""
+
+        state = dict(self._runtime.context.state)
+        return page_url(state.get("observation")) or current_page_url(state)
+
+    def replay(self, target: str = "") -> list[str]:
+        """The action sequence of a task: the last one (``""``), the ``N``-th of this
+        session, or a whole stored session by id or prefix."""
+
+        target = target.strip()
+        if target and not target.isdigit():
+            session = find_session(get_settings().storage.sessions_dir, target)
+            trace = session.path / EVENTS_FILE_NAME
+            if not trace.is_file():
+                raise FileNotFoundError(f"Session {session.session_id[:12]} has no events yet.")
+            events = load_events(trace)
+            return [f"{session.session_id[:12]} · {summarize_trace(events).terminal_status}",
+                    *print_action_sequence(events).splitlines()]
+        tasks = self._runtime.context.tasks
+        if not tasks:
+            raise LookupError("This session has no tasks yet.")
+        index = int(target) if target else len(tasks)
+        if not 1 <= index <= len(tasks):
+            raise LookupError(f"Task numbers run from 1 to {len(tasks)}.")
+        record = tasks[index - 1]
+        session_dir = self._runtime.context.session_dir
+        trace = session_dir / EVENTS_FILE_NAME if session_dir is not None else None
+        if trace is None or not trace.is_file():
+            raise FileNotFoundError("This session has no events yet.")
+        events = [event for event in load_events(trace) if event.task_id == record.task_id]
+        return [f"#{index} · {record.status}", *print_action_sequence(events).splitlines()]
 
     def memory_entries(self) -> list[MemoryEntry]:
         store = self._runtime.context.memory_store

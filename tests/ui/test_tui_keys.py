@@ -94,6 +94,14 @@ class FakeController:
     def memory_entries(self) -> list[object]:
         return []
 
+    def current_url(self) -> str:
+        return "https://shop.test/cart"
+
+    def replay(self, target: str = "") -> list[str]:
+        if target == "9":
+            raise LookupError("Task numbers run from 1 to 1.")
+        return ["#1 · completed", "goal.started: go", "1. any_tool {}"]
+
     async def _items(self) -> AsyncIterator[Item]:
         self.queue = asyncio.Queue()
         while True:
@@ -283,4 +291,17 @@ async def test_ctrl_o_and_ctrl_t_toggle_views(runtime: RuntimeLoop) -> None:
     await until(lambda: h.app.transcript.detail == "verbose")
     h.send("\x14")  # Ctrl+T
     await until(lambda: h.app.transcript.show_plan is False)
+    assert await stop(h, task, pipe) == 0
+
+
+@pytest.mark.asyncio
+async def test_url_and_replay_commands(runtime: RuntimeLoop) -> None:
+    h, task, pipe = await start(runtime)
+
+    h.send("/url\r")
+    await until(lambda: "https://shop.test/cart" in h.out.getvalue())
+    h.send("/replay\r")
+    await until(lambda: "1. any_tool {}" in h.out.getvalue())
+    h.send("/replay 9\r")
+    await until(lambda: "Task numbers run from 1 to 1." in h.out.getvalue())
     assert await stop(h, task, pipe) == 0

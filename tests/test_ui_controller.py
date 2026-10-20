@@ -375,3 +375,32 @@ async def test_shutdown_gives_up_on_a_task_that_ignores_cancellation(
     release.set()
     await controller.wait()
     await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_current_url_and_replay_read_the_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run(request: TaskRequest) -> AgentLoopResult:
+        return native_result(
+            final_answer="ok",
+            observation="- Page URL: https://shop.test/cart\n- Page Title: Cart",
+        )
+
+    install_fake_agent(monkeypatch, run)
+    controller, runtime, _, _ = build()
+
+    assert controller.current_url() == ""
+    with pytest.raises(LookupError, match="no tasks"):
+        controller.replay()
+    await controller.run("первая")
+    await controller.run("вторая")
+
+    assert controller.current_url() == "https://shop.test/cart"
+    last = controller.replay()
+    first = controller.replay("1")
+    assert last[0] == "#2 · completed" and "goal.started: вторая" in last[1]
+    assert first[0] == "#1 · completed" and "goal.started: первая" in first[1]
+    with pytest.raises(LookupError, match="from 1 to 2"):
+        controller.replay("5")
+    other = controller.replay(runtime.context.session_id[:10])
+    assert other[0].startswith(runtime.context.session_id[:12])
+    await runtime.close()
