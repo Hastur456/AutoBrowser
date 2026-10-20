@@ -150,11 +150,18 @@ def home_dir() -> Path:
     return Path.home() / HOME_DIR_NAME
 
 
+def active_config_file() -> Path | None:
+    """The YAML settings file in use, if any (raises ``FileNotFoundError`` when
+    ``AUTOBROWSER_CONFIG_FILE`` names a missing file)."""
+
+    return _resolve_config_path()
+
+
 def config_base_dir() -> Path:
     """The directory of the active YAML config file, else the home: where command hooks
     run and their relative script paths start."""
 
-    path = _resolve_config_path()
+    path = active_config_file()
     return path.parent if path is not None else home_dir()
 
 
@@ -1365,10 +1372,7 @@ class UiSettings(_Section):
     print_format: Annotated[
         UiPrintFormat,
         Field(
-            description=(
-                "Default output format of print mode (-p). Reserved: print mode is step 7 of "
-                "the terminal UI plan and does not exist yet, so this has no effect."
-            )
+            description="Default output format of print mode (-p); --output-format overrides it."
         ),
     ] = "text"
 
@@ -1409,6 +1413,11 @@ class UiSettings(_Section):
             description="How often the status line polls the session (MCP states emit no events).",
         ),
     ] = 1.0
+
+    doctor_probe_timeout_seconds: Annotated[
+        float,
+        Field(gt=0.0, le=120.0, description="Timeout of each external check of autobrowser doctor."),
+    ] = 10.0
 
     resume_list_size: Annotated[
         int,
@@ -1624,6 +1633,7 @@ __all__ = [
     "StorageSettings",
     "TOOL_HOOK_EVENTS",
     "UiSettings",
+    "active_config_file",
     "config_base_dir",
     "env_files",
     "get_settings",

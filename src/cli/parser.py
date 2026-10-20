@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 
+from src.cli.subcommands import SUBCOMMANDS, session_id_completer
 from src.config import get_settings
 from src.version import PACKAGE_NAME, package_version
 
@@ -25,7 +26,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="version",
         version=f"{PACKAGE_NAME} {package_version() or 'unknown'}",
     )
-    parser.add_argument("task", nargs="*", help="Task for the browser agent.")
+    task = parser.add_argument(
+        "task",
+        nargs="*",
+        help=(
+            "Task for the browser agent, or a subcommand: "
+            + ", ".join(SUBCOMMANDS)
+            + " (see autobrowser <subcommand> --help)."
+        ),
+    )
+    task.completer = _first_word_completer  # type: ignore[attr-defined]  # argcomplete
     parser.add_argument("--task", "-t", dest="task_text", help="Task for the agent.")
     parser.add_argument(
         "--loop",
@@ -120,6 +130,28 @@ def build_parser() -> argparse.ArgumentParser:
             f"Default: {settings.permissions.mode}"
         ),
     )
+    parser.add_argument(
+        "-p",
+        "--print",
+        dest="print_mode",
+        action="store_true",
+        help=(
+            "Print mode: run the task without the terminal UI and print only the result "
+            "(task from the arguments or stdin). Exit 0 done, 1 failed, 2 usage, 3 blocked, "
+            "130 interrupted."
+        ),
+    )
+    parser.add_argument(
+        "--output-format",
+        choices=("text", "json", "stream-json"),
+        default=None,
+        help=f"Print mode output. Default: ui.print_format ({settings.ui.print_format}).",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print mode: show the task's progress on stderr.",
+    )
     session = parser.add_mutually_exclusive_group()
     session.add_argument(
         "-c",
@@ -128,7 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Continue the most recent session with its dialogue (state.json).",
     )
-    session.add_argument(
+    resume = session.add_argument(
         "-r",
         "--resume",
         nargs="?",
@@ -137,6 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="SESSION_ID",
         help="Continue a stored session by id or id prefix; without one, pick from a list.",
     )
+    resume.completer = session_id_completer  # type: ignore[attr-defined]  # argcomplete
     front_end = parser.add_mutually_exclusive_group()
     front_end.add_argument(
         "--classic",
@@ -172,6 +205,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Maximum agent turns (turn cap). Default: {settings.loop.turn_cap}",
     )
     return parser
+
+
+def _first_word_completer(prefix: str, parsed_args: argparse.Namespace, **_kwargs: object) -> list[str]:
+    """Offer the subcommands for the first word only; a task is free text."""
+
+    if getattr(parsed_args, "task", None):
+        return []
+    return [word for word in SUBCOMMANDS if word.startswith(prefix)]
 
 
 __all__ = ["build_parser"]
