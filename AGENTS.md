@@ -228,8 +228,12 @@ The terminal UI takes free-form tasks and slash commands (`/help`, `/status`, `/
 - `help [command]`: show command help.
 - `exit` or `quit`: exit the CLI.
 
-Useful CLI flags include `--loop`, `--show-state`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap`, `--permission-mode`, and the front-end flags `--classic`,
-`--plain`, `--ascii`, `--no-color`, `--theme`.
+Useful CLI flags include `--loop`, `--show-state`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap`, `--permission-mode`, the front-end flags `--classic`,
+`--plain`, `--ascii`, `--no-color`, `--theme`, session flags `--continue`/`-c` and
+`--resume [id]`/`-r`, and print mode `-p` with `--output-format text|json|stream-json` and
+`--verbose`. Subcommands: `autobrowser doctor`, `sessions [--all]`, `replay <id|path>`,
+`completion <shell>`. Runtime data lives in the AutoBrowser home (`AUTOBROWSER_HOME`, else
+`~/.autobrowser`); see `docs/development/terminal-ui.md`.
 
 ## Coding Style & Naming Conventions
 

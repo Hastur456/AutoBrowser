@@ -335,6 +335,9 @@ uv run pytest tests\test_prompts.py           # ALWAYS run after changing any pr
 uv run main.py                                # terminal UI (browser + MCP); --classic = cmd2
 uv run pytest tests/ui tests/test_ui_feed.py   # terminal UI: render snapshots, keys, ConPTY
 uv run main.py --no-mcp --task "inspect page" # dry run, no browser/MCP (dev checks)
+uv run main.py --continue                     # resume the latest session (state.json)
+uv run main.py -p "task" --output-format json # print mode: result only, exit 0/1/2/3/130
+uv run main.py doctor                         # paths, config source, node/npx, Chrome, terminal
 uv run main.py --show-state --task "..."      # debug state per step
 
 uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error

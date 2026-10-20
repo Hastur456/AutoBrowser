@@ -1,8 +1,9 @@
 # ADR-2026-10-19: Команда `autobrowser` и домашний каталог AutoBrowser
 
-Status: Proposed
+Status: Accepted (2026-10-20: packaging, the home directory, print mode, subcommands and
+--continue/--resume are implemented; see docs/development/terminal-ui.md)
 Date: 2026-10-19
-Supersedes (после принятия): [ADR-2026-09-26: Default YAML Settings File](2026-09-26-default-yaml-settings-file.md)
+Supersedes: [ADR-2026-09-26: Default YAML Settings File](2026-09-26-default-yaml-settings-file.md)
 — в части места файла по умолчанию
 
 ## Context

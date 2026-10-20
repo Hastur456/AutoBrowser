@@ -24,7 +24,7 @@ This directory contains Architecture Decision Records (ADRs).
   palette with 256/16-colour and ASCII fallbacks, a new `ui` settings section, structured
   `goal.*` payloads and `goal.cancelled`. Web UI deferred. The file keeps its first-draft name.
 - [2026-10-19 The `autobrowser` Command and Home Directory](2026-10-19-autobrowser-command-and-home-directory.md)
-  (Proposed, Russian): `uv_build` packaging with an `autobrowser` console script (`uv tool
+  (Accepted, Russian): `uv_build` packaging with an `autobrowser` console script (`uv tool
   install`, `pipx`, `uv run`). `AUTOBROWSER_HOME` (default `~/.autobrowser`) replaces cwd- and
   repo-relative lookups for `config.yaml`, `.env` and `storage.root_dir`, keeping legacy repo
   paths as a fallback. Claude-style CLI (`-p`, `--output-format`, `--continue/--resume`,

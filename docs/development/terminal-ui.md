@@ -1,6 +1,6 @@
 # Терминальный UI: руководство
 
-Статус: действует с 2026-10-19 (шаги 11–17 плана из
+Статус: действует с 2026-10-19, дополнено 2026-10-20 (шаги 1–18 плана из
 [дизайна терминального UI](2026-10-19-gui-redesign-design.md)).
 
 `autobrowser` и `uv run main.py` открывают inline-TUI в стиле Claude Code. Когда терминал не
@@ -16,11 +16,80 @@ uv run main.py --plain                  # принудительно постр�
 uv run main.py --classic                # прежняя cmd2-оболочка
 uv run main.py --ascii --no-color       # ASCII-глифы, без цветов
 uv run main.py --theme light            # тема dark | light | mono
+uv run main.py --continue               # продолжить последнюю сессию с её диалогом
+uv run main.py --resume                 # выбрать сессию из списка (или --resume <id>)
+uv run main.py -p "задача"              # print-режим: только результат в stdout
+uv run main.py doctor                   # пути, конфигурация, Node.js, Chrome, терминал
 ```
+
+После `uv tool install --editable .` то же самое доступно командой `autobrowser`.
 
 Флаги переопределяют поля секции `ui` только на один запуск. Постоянные настройки задаются в
 `config.yaml` (`ui:`) или через `AUTOBROWSER_UI__<ПОЛЕ>` (см. `config.example.yaml`).
 `NO_COLOR` в окружении отключает цвета.
+
+## Домашний каталог
+
+Всё хранится в домашнем каталоге AutoBrowser: `AUTOBROWSER_HOME`, иначе `~/.autobrowser`
+(на Windows `%USERPROFILE%\.autobrowser`).
+
+| Что | Где |
+|---|---|
+| Конфигурация | `AUTOBROWSER_CONFIG_FILE` → `<home>/config.yaml` → `config.yaml` в корне чекаута (наследие) |
+| `.env` | `.env` в корне чекаута (наследие), поверх него `<home>/.env`; текущий каталог не читается |
+| Сессии, память, журнал | `<home>/sessions/`, `<home>/memory/`, `<home>/logs/autobrowser.log` (`storage.root_dir`) |
+| История ввода | `<home>/input_history` |
+| Командные хуки | запускаются в каталоге файла конфигурации, где объявлены |
+
+Относительный `storage.root_dir` отсчитывается от домашнего каталога. Прежнее значение
+`.autobrowser` означает сам домашний каталог: при запуске выводится предупреждение,
+строку можно удалить из конфигурации. Старые данные в `<чекаут>/.autobrowser` не переносятся
+автоматически: `autobrowser doctor` показывает их и подсказывает, что делать. Варианты —
+перенести `sessions/` и `memory/` в домашний каталог или задать `storage.root_dir`
+абсолютным путём.
+
+## Продолжение сессий
+
+После каждой задачи в `<session>/state.json` сохраняется то, что наследует следующая задача:
+диалог, последнее наблюдение, сохранённые снимки страниц, данные последнего действия
+(`storage.persist_state`, по умолчанию включено). Файл хранится как есть, без
+редактирования секретов, — как и содержимое страниц, которое видел агент.
+
+- `--continue` (`-c`) продолжает самую свежую сессию, у которой есть `state.json`.
+- `--resume <id>` (`-r`) принимает id или его уникальный префикс; без id показывает
+  `ui.resume_list_size` последних сессий и спрашивает номер.
+- Продолженная сессия сохраняет id, историю задач (`/tasks`) и нумерацию событий;
+  браузер и MCP запускаются заново при первой задаче.
+- `autobrowser sessions [--all]` — список сессий; `resume` отмечает те, что можно продолжить.
+
+## Print-режим
+
+`autobrowser -p "задача"` (или задача из stdin: `echo "задача" | autobrowser -p`) выполняет
+одну задачу без интерфейса и печатает только результат:
+
+| `--output-format` | stdout |
+|---|---|
+| `text` (по умолчанию, `ui.print_format`) | финальный ответ |
+| `json` | `{"status", "final_answer", "turns", "session_id", "task_id"}` (+ `error`) |
+| `stream-json` | JSON-строки элементов ленты (редактированы), затем `{"type": "result", ...}` |
+
+Ход задачи пишется в stderr только с `--verbose`. Подтверждения отклоняются (`dont_ask`),
+если не задан `--permission-mode`. Коды возврата: `0` — готово, `1` — ошибка, `2` — неверные
+аргументы, `3` — остановлено (blocked), `130` — прервано.
+
+## Подкоманды и дополнение
+
+- `autobrowser doctor` — версия, домашний каталог, файл конфигурации и его источник, `.env`,
+  хранилище, сессии, журнал, старые данные, `node`/`npx`, Chrome, порт CDP, MCP-серверы,
+  возможности терминала. Код возврата `1` при критической проблеме.
+- `autobrowser sessions [--all]`, `autobrowser replay <id|префикс|папка|events.jsonl>`.
+- `autobrowser completion <bash|zsh|fish|tcsh|powershell>` печатает скрипт дополнения
+  (argcomplete). Дополняются флаги, подкоманды и id сессий для `--resume`.
+  - PowerShell: `autobrowser completion powershell | Out-String | Invoke-Expression`
+    в `$PROFILE`;
+  - bash: `eval "$(autobrowser completion bash)"` в `~/.bashrc`, zsh — то же в `~/.zshrc`;
+  - в cmd дополнения нет.
+- Задачу, совпадающую с именем подкоманды, передают через `--task` или после `--`.
 
 ## Как устроено
 
@@ -72,8 +141,11 @@ uv run main.py --theme light            # тема dark | light | mono
 ## Slash-команды
 
 `/help`, `/status`, `/tasks`, `/cancel`, `/mcp [reconnect <имя>]`, `/history [N]`, `/memory`,
-`/permissions`, `/detail compact|verbose`, `/theme dark|light|mono`, `/doctor`, `/reset`,
-`/clear`, `/exit`. Те же команды работают в plain-режиме.
+`/url`, `/replay [№ | id сессии]`, `/permissions`, `/detail compact|verbose`,
+`/theme dark|light|mono`, `/doctor`, `/reset`, `/clear`, `/exit`. Те же команды работают в
+plain-режиме. `/url` показывает адрес страницы, которую агент видел последней (без вызова
+инструмента); `/replay` — ход последней задачи, задачи с номером из `/tasks` или другой
+сохранённой сессии.
 
 `/doctor` показывает, как был определён терминал: хост, уровень, глубину цвета, Unicode и
 DEC 2026. Эти данные пригодятся в отчёте о визуальном баге.
@@ -123,10 +195,8 @@ uv run pytest tests\ui\test_windows_conpty.py   # настоящая ConPTY + py
 
 ## Что ещё не сделано
 
-- Print-режим `-p` и подкоманды `doctor`, `sessions`, `replay`, `completion` (шаг 7), а также
-  домашний каталог `AUTOBROWSER_HOME` (шаг 6). Пока относительный `ui.log_file` отсчитывается
-  от `storage.root_dir`.
-- `/replay`, `/url` и markdown-таблицы в итоговом блоке (часть шага 16).
-- `--continue` / `--resume` (шаг 18), fullscreen-режим (шаг 19), удаление cmd2 (шаг 20).
-- CI-workflow для Windows и Linux. Проект пайплайна —
+- Markdown-таблицы в итоговом блоке.
+- Fullscreen-режим (шаг 19), удаление cmd2 (шаг 20), переименование пакета `src` →
+  `autobrowser` (шаг 21), веб-UI (шаг 22).
+- CI-workflow для Windows и Linux — отложен до появления CI. Проект пайплайна —
   [автономный пайплайн тестирования](2026-10-19-autonomous-test-pipeline-design.md).
