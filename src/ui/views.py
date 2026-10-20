@@ -83,6 +83,18 @@ class FeedItem:
 
 
 @dataclass(frozen=True)
+class TaskOutcome:
+    """How one task run ended, as print mode reports it."""
+
+    task_id: str
+    status: OutcomeStatus
+    final_answer: str = ""
+    turns: int | None = None
+    #: ``Type: message`` of the exception a failed task raised.
+    error: str = ""
+
+
+@dataclass(frozen=True)
 class ServerView:
     """One configured MCP server as ``/mcp`` and the banner show it."""
 
@@ -138,6 +150,7 @@ __all__ = [
     "OutcomeStatus",
     "ServerView",
     "SessionView",
+    "TaskOutcome",
     "TaskStatus",
     "TaskView",
 ]

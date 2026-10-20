@@ -344,8 +344,8 @@ hooks:
   # Timeout of a hook without its own timeout_seconds. Must stay below
   # loop.progress_timeout_seconds.
   default_timeout_seconds: 10.0                 # (default)
-  # Command hooks run in this file's directory; stderr kept in an error (0..20000)
-  # and the wait for a timed-out process tree (0..60 s).
+  # Command hooks run in the repository checkout; stderr kept in an error (0..20000)
+  # and the wait for a timed-out process tree (0 < s <= 60).
   command_stderr_tail_chars: 300                # (default)
   command_kill_wait_seconds: 2.0                # (default)
   # Hooks, run sequentially in this order per event. Example:

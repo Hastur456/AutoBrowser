@@ -16,7 +16,11 @@ from src.contracts import TaskRequest
 from src.harness.session import SessionRuntime
 from src.harness.session_store import (
     STATE_FILE_NAME,
+    SessionInUseError,
     SessionNotFoundError,
+    acquire_lock,
+    release_lock,
+    session_in_use,
     find_session,
     last_event_sequence,
     latest_resumable,
@@ -143,7 +147,8 @@ async def test_a_resumed_session_continues_the_dialogue_ids_tasks_and_event_numb
 
     carried = requests[1].state_overrides
     assert [m.content for m in carried["messages"]][-2:] == ["первая задача", "answer 1"]
-    assert carried["observation"] == "page 1"
+    # Only the dialogue survives a restart: page state described a browser that is gone.
+    assert "observation" not in carried or carried["observation"] in ("", None)
     assert requests[1].session_id == session_id
     assert second.context.event_emitter.sequence > sequence
     records = [json.loads(line) for line in (session_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -177,6 +182,7 @@ def _store(sessions: Path, name: str, *, resumable: bool = True) -> Path:
     folder = sessions / name
     folder.mkdir(parents=True)
     (folder / "session.json").write_text(json.dumps({"session_id": name, "metadata": {}}), encoding="utf-8")
+    (folder / "tasks.json").write_text(json.dumps([{"task": "t", "status": "completed"}]), encoding="utf-8")
     if resumable:
         save_state(folder, name, {"messages": []})
     return folder
@@ -212,3 +218,65 @@ def test_resolve_resume_by_continue_id_prefix_and_picker(tmp_path: Path) -> None
 def test_nothing_to_continue_is_an_error(tmp_path: Path) -> None:
     with pytest.raises(ResumeError, match="No session to continue"):
         resolve_resume(ns(continue_session=True), interactive=True, sessions_dir=tmp_path / "none")
+
+
+def test_a_session_without_tasks_is_not_resumable_and_leaves_no_record(tmp_path: Path) -> None:
+    sessions = tmp_path / "sessions"
+    empty = sessions / "0000empty"
+    empty.mkdir(parents=True)
+    (empty / "session.json").write_text(json.dumps({"session_id": "0000empty", "metadata": {}}), encoding="utf-8")
+    save_state(empty, "0000empty", {"messages": []})
+    real = _store(sessions, "1111real")
+
+    assert [s.session_id for s in list_sessions(sessions) if s.resumable] == ["1111real"]
+    assert resolve_resume(ns(continue_session=True), interactive=False, sessions_dir=sessions) == real
+
+
+@pytest.mark.asyncio
+async def test_a_never_started_session_writes_nothing_on_close() -> None:
+    session = runtime()
+
+    await session.close()
+
+    assert session.context.session_dir is None
+    assert list_sessions(get_settings().storage.sessions_dir) == []
+
+
+def test_a_damaged_state_file_or_a_session_open_elsewhere_is_a_clean_error(tmp_path: Path) -> None:
+    sessions = tmp_path / "sessions"
+    broken = _store(sessions, "brokenstate")
+    (broken / STATE_FILE_NAME).write_text("{not json", encoding="utf-8")
+    with pytest.raises(ResumeError, match="cannot be resumed"):
+        resolve_resume(ns(resume="broken"), interactive=False, sessions_dir=sessions)
+
+    busy = _store(sessions, "busysession")
+    acquire_lock(busy)
+    try:
+        # This process holds it: another process asking would be refused.
+        assert session_in_use(busy) is not None
+    finally:
+        release_lock(busy)
+    assert session_in_use(busy) is None
+    (busy / ".lock").write_text("999999999", encoding="utf-8")  # a crashed holder
+    assert session_in_use(busy) is None
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_session_refuses_a_second_live_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_fake_agent(monkeypatch, lambda _request: _done())
+    first = runtime()
+    await first.run_task("task")
+    session_dir = first.context.session_dir
+    assert session_dir is not None
+    await first.close()
+    assert session_in_use(session_dir) is None
+
+    # Another live pid holds the lock (the parent of this test process stands in for it).
+    import os
+
+    (session_dir / ".lock").write_text(str(os.getppid()), encoding="utf-8")
+    second = runtime(resume_from=session_dir)
+    with pytest.raises(SessionInUseError):
+        await second.start()

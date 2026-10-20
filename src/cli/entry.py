@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Sequence
 
 from src.cli.bootstrap import run_agent_cli
 from src.cli.parser import build_parser
-from src.cli.subcommands import SUBCOMMANDS, run_subcommand
+from src.cli.subcommands import SUBCOMMANDS, build_subcommand_parser, run_subcommand
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -18,22 +19,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
 
     arguments = list(sys.argv[1:] if argv is None else argv)
+    _autocomplete()
     if arguments and arguments[0] in SUBCOMMANDS:
         return run_subcommand(arguments)
     parser = build_parser()
-    _autocomplete(parser)
     args = parser.parse_args(arguments)
     return run_agent_cli(args)
 
 
-def _autocomplete(parser: object) -> None:
-    """Answer a shell completion request (only when argcomplete's env vars are set)."""
+def _autocomplete() -> None:
+    """Answer a shell completion request and exit (only under argcomplete's env vars).
 
-    try:
-        import argcomplete
-    except ImportError:  # pragma: no cover - argcomplete is a runtime dependency
+    During completion the program gets no argv, so the line being completed
+    (``COMP_LINE``) decides which parser answers: a subcommand's or the main one.
+    """
+
+    if "_ARGCOMPLETE" not in os.environ:
         return
-    argcomplete.autocomplete(parser)  # type: ignore[arg-type]
+    import argcomplete
+
+    words = os.environ.get("COMP_LINE", "").split()
+    parser = build_subcommand_parser() if len(words) > 1 and words[1] in SUBCOMMANDS else build_parser()
+    argcomplete.autocomplete(parser)
 
 
 __all__ = ["main"]

@@ -196,8 +196,9 @@ names it explicitly (mandatory once set — a missing file fails startup); with 
 `<home>/config.yaml` loads if present, else `config.yaml` at the repo root (the legacy
 checkout profile) — fixed paths, not a working-directory scan, and silent when absent.
 `config.yaml`/`config.local.yaml` are git-ignored, so the root file still works as a personal
-default profile. Command hooks run in the directory of the config file that declares them
-(`config_base_dir()`), else the home. Precedence is init kwargs > YAML > env > `.env` >
+default profile. Command hooks still run in the checkout (`ROOT_PATH`): a hook may come from
+env, `.env` or code, so "the file that declares it" is not knowable, and the shipped
+`scripts/hooks/` live there. Precedence is init kwargs > YAML > env > `.env` >
 secret files, and pydantic-settings merges deeply, so the file decides exactly the fields it
 names while everything else still resolves below it: a partial profile, not a full config, and
 one that beats `AUTOBROWSER_*` for the fields it sets. The file source rejects unknown section

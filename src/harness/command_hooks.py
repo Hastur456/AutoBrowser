@@ -37,7 +37,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from src.config import HooksSettings, config_base_dir
+from src.config import ROOT_PATH, HooksSettings
 from src.contracts import HookEvent, HookEventName, HookResult
 
 #: Exit code that blocks, as in Claude Code and Codex.
@@ -64,8 +64,9 @@ class CommandHook:
         settings: HooksSettings | None = None,
     ) -> None:
         self.command = command
-        #: The directory of the config file that declares the hook, else the home.
-        self.cwd = cwd if cwd is not None else config_base_dir()
+        #: The checkout: the shipped ``scripts/hooks/`` and relative script paths start
+        #: there wherever the config file lives (a hook may also come from env or code).
+        self.cwd = cwd if cwd is not None else ROOT_PATH
         self._settings = settings or HooksSettings()
 
     async def __call__(self, event: HookEvent) -> HookResult | None:

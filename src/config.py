@@ -157,14 +157,6 @@ def active_config_file() -> Path | None:
     return _resolve_config_path()
 
 
-def config_base_dir() -> Path:
-    """The directory of the active YAML config file, else the home: where command hooks
-    run and their relative script paths start."""
-
-    path = active_config_file()
-    return path.parent if path is not None else home_dir()
-
-
 def env_files() -> tuple[Path, ...]:
     """``.env`` files in load order; a later file wins, missing ones are skipped."""
 
@@ -1634,7 +1626,6 @@ __all__ = [
     "TOOL_HOOK_EVENTS",
     "UiSettings",
     "active_config_file",
-    "config_base_dir",
     "env_files",
     "get_settings",
     "home_dir",

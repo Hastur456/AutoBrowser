@@ -33,13 +33,15 @@ from src.harness.session import SessionContext, SessionRuntime, TaskRecord
 from src.harness.session_store import EVENTS_FILE_NAME, find_session
 from src.mcp import ConnectionState
 from src.messages import Message
-from src.ui.views import ServerView, SessionView, TaskStatus, TaskView
+from src.ui.views import ServerView, SessionView, TaskOutcome, TaskStatus, TaskView
 from src.version import package_version
 
 if TYPE_CHECKING:
     from src.harness.session import AgentLoopResult
 
 logger = logging.getLogger(__name__)
+
+_OUTCOME_STATUSES: frozenset[str] = frozenset({"completed", "blocked", "cancelled", "failed"})
 
 _TASK_STATUSES: frozenset[str] = frozenset(
     {"running", "completed", "blocked", "cancelled", "failed"}
@@ -122,6 +124,33 @@ class SessionController:
         task = self._task
         assert task is not None
         return await task
+
+    async def run_outcome(self, text: str) -> TaskOutcome:
+        """Submit ``text``, wait for it and report how it ended (never raises for the task
+        itself: a failure is a ``failed`` outcome). A session that cannot start still raises,
+        and a cancellation propagates."""
+
+        view = await self.submit(text)
+        task = self._task
+        assert task is not None
+        try:
+            result = await task
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if task.cancelled() and not (current is not None and current.cancelling()):
+                # The task was cancelled (e.g. by ``cancel()``), not this caller.
+                return TaskOutcome(task_id=view.task_id, status="cancelled")
+            raise
+        except Exception as exc:  # noqa: BLE001 - reported as the failed outcome
+            return TaskOutcome(task_id=view.task_id, status="failed", error=f"{type(exc).__name__}: {exc}")
+        record = next((r for r in self._runtime.context.tasks if r.task_id == view.task_id), None)
+        status = record.status if record is not None else "failed"
+        return TaskOutcome(
+            task_id=view.task_id,
+            status=status if status in _OUTCOME_STATUSES else "failed",  # type: ignore[arg-type]
+            final_answer=str(result.final_answer or ""),
+            turns=result.turns,
+        )
 
     async def wait(self) -> TaskView | None:
         """Wait for the running task, if any, and return the last task's view."""
@@ -288,11 +317,14 @@ class SessionController:
         state = dict(self._runtime.context.state)
         return page_url(state.get("observation")) or current_page_url(state)
 
-    def replay(self, target: str = "") -> list[str]:
+    async def replay(self, target: str = "") -> list[str]:
         """The action sequence of a task: the last one (``""``), the ``N``-th of this
-        session, or a whole stored session by id or prefix."""
+        session, or a whole stored session by id or prefix. The trace is read in a worker
+        thread, so a large file never stalls a running task on the session loop."""
 
-        target = target.strip()
+        return await asyncio.to_thread(self._replay, target.strip())
+
+    def _replay(self, target: str) -> list[str]:
         if target and not target.isdigit():
             session = find_session(get_settings().storage.sessions_dir, target)
             trace = session.path / EVENTS_FILE_NAME

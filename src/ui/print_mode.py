@@ -22,7 +22,7 @@ from src.config import UiSettings
 from src.ui.feed import project_event
 from src.ui.plain import PlainState, format_item
 from src.ui.tui.ports import StreamItemView
-from src.ui.views import FeedItem, SessionView, TaskView
+from src.ui.views import FeedItem, SessionView, TaskOutcome
 
 PrintFormat = Literal["text", "json", "stream-json"]
 
@@ -35,9 +35,8 @@ INTERRUPTED_EXIT_CODE = 130
 class PrintController(Protocol):
     """What print mode needs from :class:`src.ui.controller.SessionController`."""
 
-    async def run(self, text: str) -> object: ...
+    async def run_outcome(self, text: str) -> TaskOutcome: ...
     def session_view(self) -> SessionView: ...
-    def task_views(self) -> list[TaskView]: ...
     def subscribe(self, after: Any = None) -> AsyncIterator[StreamItemView]: ...
 
 
@@ -54,7 +53,6 @@ async def run_print(
     """Run ``task`` to its end, print the result, return the exit code."""
 
     outcome_seen = asyncio.Event()
-    outcomes: list[FeedItem] = []
     state = PlainState()
 
     def on_item(item: FeedItem) -> None:
@@ -64,7 +62,6 @@ async def run_print(
             for line in format_item(item, state, settings):
                 write_err(line)
         if item.kind == "outcome":
-            outcomes.append(item)
             outcome_seen.set()
 
     async def forward() -> None:
@@ -76,18 +73,19 @@ async def run_print(
                 on_item(item)
 
     forwarder = asyncio.create_task(forward())
-    tasks_before = len(controller.task_views())
+    outcome: TaskOutcome | None = None
     error = ""
+    cancelled = False
     try:
-        await controller.run(task)
+        outcome = await controller.run_outcome(task)
     except asyncio.CancelledError:
-        error = "cancelled"
-    except Exception as exc:  # noqa: BLE001 - the failure becomes the printed result
+        cancelled = True
+    except Exception as exc:  # noqa: BLE001 - the session could not start: a failed run
         error = f"{type(exc).__name__}: {exc}"
     finally:
-        # Let the outcome event reach the stream before the forwarder stops (only when the
-        # task was tracked: a failed session start has no outcome to wait for).
-        if len(controller.task_views()) > tasks_before:
+        # stream-json/verbose: let the outcome event reach the stream before the forwarder
+        # stops (only when a task of this run was tracked).
+        if outcome is not None and (output_format == "stream-json" or verbose):
             try:
                 await asyncio.wait_for(outcome_seen.wait(), settings.shutdown_timeout_seconds)
             except TimeoutError:
@@ -95,32 +93,32 @@ async def run_print(
         forwarder.cancel()
         await asyncio.gather(forwarder, return_exceptions=True)
 
-    # The answer (or the block reason) is what the goal's terminal event carried.
-    final_answer = outcomes[-1].text if outcomes else ""
-    view = controller.session_view()
-    tasks = controller.task_views()
-    last = tasks[-1] if tasks else None
-    status = last.status if last is not None and last.status != "running" else "failed"
-    if error == "cancelled":
-        status = "cancelled"
-    summary = {
+    # Only this run's task counts: a resumed session already has finished ones.
+    if outcome is not None:
+        status, task_id = outcome.status, outcome.task_id
+        final_answer, turns, error = outcome.final_answer, outcome.turns, outcome.error
+    else:
+        status = "cancelled" if cancelled else "failed"
+        task_id, final_answer, turns = "", "", None
+    summary: dict[str, object] = {
         "status": status,
         "final_answer": final_answer,
-        "turns": last.turns if last is not None else None,
-        "session_id": view.session_id,
-        "task_id": last.task_id if last is not None else "",
+        "turns": turns,
+        "session_id": controller.session_view().session_id,
+        "task_id": task_id,
     }
-    if error and error != "cancelled":
+    if error:
         summary["error"] = error
     if output_format == "json":
         write_out(json.dumps(summary, ensure_ascii=False))
     elif output_format == "stream-json":
         write_out(json.dumps({"type": "result", **summary}, ensure_ascii=False))
+    elif status == "completed":
+        write_out(final_answer)
     else:
-        if status == "completed":
-            write_out(final_answer)
-        else:
-            write_err(f"[{status}] {error or final_answer}".rstrip())
+        write_err(f"[{status}] {error or final_answer}".rstrip())
+    if cancelled:
+        raise asyncio.CancelledError
     return EXIT_CODES.get(status, 1)
 
 

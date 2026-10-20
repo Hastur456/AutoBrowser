@@ -1164,7 +1164,7 @@ def test_the_home_config_file_wins_over_the_legacy_checkout_one(
     (tmp_path / "home" / "config.yaml").write_text("loop:\n  turn_cap: 21\n", encoding="utf-8")
 
     assert settings().loop.turn_cap == 21
-    assert config.config_base_dir() == tmp_path / "home"
+    assert config.active_config_file() == tmp_path / "home" / "config.yaml"
 
 
 def test_the_home_comes_from_the_env_var_or_the_user_home(

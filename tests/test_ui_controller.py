@@ -390,17 +390,17 @@ async def test_current_url_and_replay_read_the_session(monkeypatch: pytest.Monke
 
     assert controller.current_url() == ""
     with pytest.raises(LookupError, match="no tasks"):
-        controller.replay()
+        await controller.replay()
     await controller.run("первая")
     await controller.run("вторая")
 
     assert controller.current_url() == "https://shop.test/cart"
-    last = controller.replay()
-    first = controller.replay("1")
+    last = await controller.replay()
+    first = await controller.replay("1")
     assert last[0] == "#2 · completed" and "goal.started: вторая" in last[1]
     assert first[0] == "#1 · completed" and "goal.started: первая" in first[1]
     with pytest.raises(LookupError, match="from 1 to 2"):
-        controller.replay("5")
-    other = controller.replay(runtime.context.session_id[:10])
+        await controller.replay("5")
+    other = await controller.replay(runtime.context.session_id[:10])
     assert other[0].startswith(runtime.context.session_id[:12])
     await runtime.close()

@@ -15,6 +15,9 @@ from src.harness.session_store import (
     find_session,
     latest_resumable,
     list_sessions,
+    load_session_file,
+    load_state,
+    session_in_use,
 )
 
 
@@ -53,6 +56,20 @@ def resolve_resume(
     """
 
     directory = sessions_dir or get_settings().storage.sessions_dir
+    chosen = _choose(args, directory, interactive=interactive, read=read, write=write)
+    if chosen is not None:
+        _check_usable(chosen)
+    return chosen
+
+
+def _choose(
+    args: argparse.Namespace,
+    directory: Path,
+    *,
+    interactive: bool,
+    read: Callable[[str], str],
+    write: Callable[[str], None],
+) -> Path | None:
     if getattr(args, "continue_session", False):
         latest = latest_resumable(directory)
         if latest is None:
@@ -84,13 +101,27 @@ def resolve_resume(
     while True:
         try:
             answer = read("Resume which session (number, empty to cancel)? ").strip()
-        except EOFError:
+        except (EOFError, KeyboardInterrupt):
             answer = ""
         if not answer:
             raise ResumeError("No session chosen.")
         if answer.isdigit() and 1 <= int(answer) <= len(candidates):
             return candidates[int(answer) - 1].path
         write(f"Enter a number from 1 to {len(candidates)}.")
+
+
+def _check_usable(session_dir: Path) -> None:
+    """A damaged state file or a session open elsewhere is a clean error, not a traceback."""
+
+    holder = session_in_use(session_dir)
+    if holder is not None:
+        raise ResumeError(f"Session {session_dir.name[:12]} is open in another process (pid {holder}).")
+    try:
+        if not load_session_file(session_dir):
+            raise ValueError("session.json is missing or unreadable")
+        load_state(session_dir)
+    except (ValueError, OSError) as exc:
+        raise ResumeError(f"Session {session_dir.name[:12]} cannot be resumed: {exc}") from exc
 
 
 def _when(moment: datetime | None) -> str:

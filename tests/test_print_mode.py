@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,8 @@ from src.cli import bootstrap
 from src.cli.parser import build_parser
 from src.config import CONFIG_FILE_ENV_VAR, UiSettings, get_settings
 from src.contracts import TaskRequest
+from src.ui.print_mode import run_print
+from src.ui.views import SessionView, TaskView
 from tests.session_fakes import install_fake_agent
 from tests.test_harness_session import native_result
 
@@ -122,3 +126,67 @@ def test_verbose_progress_goes_to_stderr_only(monkeypatch: pytest.MonkeyPatch) -
 
     assert (code, out) == (0, "ok\n")
     assert "[done]" in err
+
+
+class StartFailsOnResumedSession:
+    """A controller whose session already has a finished task and cannot start again."""
+
+    async def run_outcome(self, text: str) -> object:
+        raise RuntimeError("chrome did not start")
+
+    def session_view(self) -> SessionView:
+        return SessionView(session_id="sid")
+
+    def task_views(self) -> list[TaskView]:
+        return [TaskView(index=1, task_id="old", task="earlier", status="completed")]
+
+    async def _nothing(self) -> AsyncIterator[object]:
+        await asyncio.Event().wait()
+        yield None
+
+    def subscribe(self, after: object = None) -> AsyncIterator[object]:
+        return self._nothing()
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_session_that_cannot_start_reports_this_run_as_failed() -> None:
+    out: list[str] = []
+    err: list[str] = []
+
+    code = await run_print(
+        StartFailsOnResumedSession(),  # type: ignore[arg-type]
+        "task",
+        output_format="json",
+        verbose=False,
+        settings=UiSettings(),
+        write_out=out.append,
+        write_err=err.append,
+    )
+
+    data = json.loads(out[0])
+    assert code == 1
+    assert data["status"] == "failed" and data["task_id"] == ""
+    assert data["error"] == "RuntimeError: chrome did not start"
+
+
+def test_print_mode_on_a_resumed_session_reports_only_the_new_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    code, out, _err, _requests = run(monkeypatch, native_result(final_answer="first"), "--output-format", "json", "t1")
+    first = json.loads(out)
+    assert code == 0
+
+    session_dir = get_settings().storage.session_dir(first["session_id"])
+    install_fake_agent(monkeypatch, lambda _request: _blocked())
+    args = build_parser().parse_args(["-p", "--no-mcp", "--output-format", "json", "t2"])
+    stdout = io.StringIO()
+    code = bootstrap.run_print_cli(
+        args, UiSettings(), resume_from=session_dir, stdin=Tty(), stdout=stdout, stderr=io.StringIO()
+    )
+
+    second = json.loads(stdout.getvalue())
+    assert code == 3
+    assert second["status"] == "blocked" and second["task_id"] != first["task_id"]
+    assert second["session_id"] == first["session_id"]
+
+
+async def _blocked() -> AgentLoopResult:
+    return native_result(final_answer="Blocked: no", status="blocked")

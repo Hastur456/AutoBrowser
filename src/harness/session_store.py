@@ -14,6 +14,8 @@ This module reads and writes files only; it builds no session objects (``session
 from __future__ import annotations
 
 import json
+import os
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -23,6 +25,12 @@ from typing import Any
 from src.messages import Message, message_from_dict, message_to_dict
 
 STATE_FILE_NAME = "state.json"
+#: Holds the pid of the process that has the session open.
+LOCK_FILE_NAME = ".lock"
+#: What a resumed session carries over: the dialogue only. Page state (observation, kept
+#: snapshots, last browser action) described a browser that is gone after a restart; kept,
+#: it would point the model at dead refs and make permission rules resolve a stale domain.
+RESUMED_STATE_KEYS = ("messages",)
 SESSION_FILE_NAME = "session.json"
 TASKS_FILE_NAME = "tasks.json"
 EVENTS_FILE_NAME = "events.jsonl"
@@ -32,6 +40,10 @@ STATE_FORMAT_VERSION = 1
 
 class SessionNotFoundError(LookupError):
     """No stored session matches the requested id (or the prefix is ambiguous)."""
+
+
+class SessionInUseError(RuntimeError):
+    """Another live process has the session open."""
 
 
 @dataclass(frozen=True)
@@ -44,7 +56,7 @@ class StoredSession:
     last_activity: datetime | None
     task_count: int
     last_task: str
-    #: ``state.json`` exists, so the session can be continued with its dialogue.
+    #: The session ran a task and has ``state.json``, so it can be continued.
     resumable: bool
 
 
@@ -64,7 +76,9 @@ def save_state(session_dir: Path, session_id: str, state: Mapping[str, object]) 
 
 
 def load_state(session_dir: Path) -> dict[str, object]:
-    """The carried state of ``state.json`` (``{}`` when there is none)."""
+    """The carried state of ``state.json`` (``{}`` when there is none).
+
+    Raises ``ValueError`` (``json.JSONDecodeError`` included) for a damaged file."""
 
     path = session_dir / STATE_FILE_NAME
     if not path.is_file():
@@ -94,19 +108,80 @@ def last_event_sequence(session_dir: Path) -> int:
     path = session_dir / EVENTS_FILE_NAME
     if not path.is_file():
         return 0
-    last = 0
-    with path.open(encoding="utf-8") as lines:
+    # Only the last lines are parsed; a last line cut short by a crash falls back to the
+    # one before it.
+    tail: list[str] = []
+    with path.open(encoding="utf-8", errors="replace") as lines:
         for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                sequence = json.loads(line).get("sequence")
-            except (json.JSONDecodeError, AttributeError):
-                continue
-            if isinstance(sequence, int) and sequence > last:
-                last = sequence
-    return last
+            if line.strip():
+                tail = [*tail[-1:], line]
+    for line in reversed(tail):
+        try:
+            sequence = json.loads(line).get("sequence")
+        except (json.JSONDecodeError, AttributeError):
+            continue
+        if isinstance(sequence, int):
+            return sequence
+    return 0
+
+
+def acquire_lock(session_dir: Path) -> None:
+    """Mark the session open by this process; refuse when another live process holds it."""
+
+    holder = session_in_use(session_dir)
+    if holder is not None and holder != os.getpid():
+        raise SessionInUseError(
+            f"Session {session_dir.name[:12]} is open in another process (pid {holder})."
+        )
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / LOCK_FILE_NAME).write_text(str(os.getpid()), encoding="utf-8")
+
+
+def release_lock(session_dir: Path) -> None:
+    path = session_dir / LOCK_FILE_NAME
+    try:
+        if path.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            path.unlink()
+    except (OSError, ValueError):
+        pass
+
+
+def session_in_use(session_dir: Path) -> int | None:
+    """The pid of a live process holding the session, else ``None`` (a stale lock left by
+    a crash does not count)."""
+
+    try:
+        pid = int((session_dir / LOCK_FILE_NAME).read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    return pid if _alive(pid) else None
+
+
+def _alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        query_limited_information, still_active = 0x1000, 259
+        handle = kernel32.OpenProcess(query_limited_information, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return code.value == still_active
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)  # POSIX: signal 0 only checks that the process exists
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def list_sessions(sessions_dir: Path) -> list[StoredSession]:
@@ -152,7 +227,7 @@ def _summary(path: Path) -> StoredSession | None:
         last_activity=_datetime(metadata.get("last_activity")),
         task_count=len(tasks),
         last_task=str(tasks[-1].get("task") or "") if tasks else "",
-        resumable=(path / STATE_FILE_NAME).is_file(),
+        resumable=bool(tasks) and (path / STATE_FILE_NAME).is_file(),
     )
 
 
@@ -192,8 +267,11 @@ def _datetime(value: object) -> datetime | None:
 
 
 __all__ = [
+    "RESUMED_STATE_KEYS",
     "STATE_FILE_NAME",
+    "SessionInUseError",
     "SessionNotFoundError",
+    "acquire_lock",
     "StoredSession",
     "find_session",
     "last_event_sequence",
@@ -202,5 +280,7 @@ __all__ = [
     "load_session_file",
     "load_state",
     "load_task_records",
+    "release_lock",
     "save_state",
+    "session_in_use",
 ]

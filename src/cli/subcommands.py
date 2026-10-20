@@ -61,7 +61,8 @@ def build_subcommand_parser() -> argparse.ArgumentParser:
     sessions.set_defaults(handler=_sessions)
 
     replay = commands.add_parser("replay", help="Print the action sequence of a session.")
-    replay.add_argument("target", help="Session id or prefix, a session folder, or an events.jsonl file.")
+    target = replay.add_argument("target", help="Session id or prefix, a session folder, or an events.jsonl file.")
+    target.completer = session_id_completer  # type: ignore[attr-defined]  # argcomplete
     replay.set_defaults(handler=_replay)
 
     completion = commands.add_parser("completion", help="Print the shell completion script.")
@@ -76,7 +77,6 @@ def build_subcommand_parser() -> argparse.ArgumentParser:
 def _doctor(_args: argparse.Namespace, write: Callable[[str], None]) -> int:
     from src.ui.launch import detect
 
-    settings = get_settings()
     failures = 0
 
     def check(mark: str, label: str, value: object) -> None:
@@ -87,10 +87,13 @@ def _doctor(_args: argparse.Namespace, write: Callable[[str], None]) -> int:
     write(f"{PACKAGE_NAME} {package_version() or 'unknown'} · Python {sys.version.split()[0]}")
     home = home_dir()
     check(_OK if home.is_dir() else _WARN, "home", f"{home}{'' if home.is_dir() else ' (not created yet)'}")
+    found = [str(path) for path in env_files() if path.is_file()]
+    check(_OK, ".env", ", ".join(found) or "none")
     try:
         config_path = active_config_file()
     except FileNotFoundError as exc:
         check(_FAIL, "config file", exc)
+        return 1
     else:
         if config_path is None:
             check(_OK, "config file", "none")
@@ -101,8 +104,12 @@ def _doctor(_args: argparse.Namespace, write: Callable[[str], None]) -> int:
                 else "repo, legacy" if config_path == DEFAULT_CONFIG_FILE_YAML else "home"
             )
             check(_OK, "config file", f"{config_path} ({source})")
-    found = [str(path) for path in env_files() if path.is_file()]
-    check(_OK, ".env", ", ".join(found) or "none")
+    # The checks above need no settings: they still run when the settings do not load.
+    try:
+        settings = get_settings()
+    except Exception as exc:  # noqa: BLE001 - doctor reports a broken configuration
+        check(_FAIL, "settings", f"{type(exc).__name__}: {exc}")
+        return 1
     storage = settings.storage
     check(_OK, "storage", storage.root_dir)
     check(_OK, "sessions", f"{storage.sessions_dir} ({len(list_sessions(storage.sessions_dir))})")
@@ -146,7 +153,8 @@ def _version(executable: str, timeout: float) -> str:
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return f"unknown ({type(exc).__name__})"
-    return (completed.stdout or completed.stderr).strip().splitlines()[0] if (completed.stdout or completed.stderr) else "unknown"
+    lines = (completed.stdout or completed.stderr or "").strip().splitlines()
+    return lines[0] if lines else "unknown"
 
 
 def _port_free(port: int) -> bool:

@@ -39,7 +39,10 @@ from src.harness.memory_store import MemoryContext, MemoryStore
 from src.harness.memory_tool import memory_tools
 from src.harness.runtime import BrowserHarness
 from src.harness.session_store import (
+    RESUMED_STATE_KEYS,
+    acquire_lock,
     last_event_sequence,
+    release_lock,
     load_session_file,
     load_state,
     load_task_records,
@@ -477,7 +480,8 @@ class SessionContext:
             event_sinks=event_sinks,
             session_dir=session_dir.resolve(),
         )
-        context.state.replace(load_state(session_dir))
+        stored = load_state(session_dir)
+        context.state.replace({key: stored[key] for key in RESUMED_STATE_KEYS if key in stored})
         context.tasks = [_restored_task(record) for record in load_task_records(session_dir)]
         context.metadata.started_at = _parse_datetime(metadata.get("started_at"))
         context.metadata.task_count = len(context.tasks)
@@ -527,6 +531,8 @@ class SessionContext:
         if self.session_dir is None:
             self.session_dir = get_settings().storage.session_dir(self.session_id).resolve()
         self.session_dir.mkdir(parents=True, exist_ok=True)
+        # Refuses a session another live process (an open TUI, a parallel -p) is using.
+        acquire_lock(self.session_dir)
         self.event_emitter = EventEmitter(
             _build_session_event_sink(self.session_dir, self.event_sinks),
             session_id=self.session_id,
@@ -765,8 +771,12 @@ class SessionContext:
         }
 
     def persist(self) -> None:
-        """Persist session metadata and task records under .autobrowser."""
+        """Persist session metadata, task records and the carried state (``state.json``)
+        under the session directory; a session that never started and ran nothing leaves
+        no record behind."""
 
+        if not self.initialized and not self.tasks and self.session_dir is None:
+            return
         if self.session_dir is None:
             self.session_dir = get_settings().storage.session_dir(
                 self.session_id
@@ -803,6 +813,8 @@ class SessionContext:
         self.metadata.last_activity = datetime.now(UTC)
         self.initialized = False
         self.persist()
+        if self.session_dir is not None:
+            release_lock(self.session_dir)
         self.events.emit("session.closed", self)
 
     def _close_child_stderr(self) -> None:

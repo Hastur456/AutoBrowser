@@ -211,7 +211,7 @@ async def _url(host: CommandHost, _args: str) -> CommandResult:
 async def _replay(host: CommandHost, args: str) -> CommandResult:
     target = args.strip()
     try:
-        lines = await host.bridge.call(lambda: host.controller.replay(target))
+        lines = await host.bridge.run(lambda: host.controller.replay(target))
     except (LookupError, FileNotFoundError) as exc:
         return CommandResult(messages=(Notice(str(exc).strip("'\""), "warn"),))
     title = "Ход задачи" if host.locale == "ru" else "Replay"

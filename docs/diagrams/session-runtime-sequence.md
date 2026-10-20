@@ -1,38 +1,47 @@
 # Session Runtime Sequence
 
-This diagram shows the long-lived CLI session lifecycle. A terminal
-`AgentLoopResult` ends the current task only; the session keeps waiting for
-another user request until the process is interrupted or an exit command is
-entered. Useful agent context is carried across tasks through the terminal
-result's `session_state` and `SessionContext.state`.
+This diagram shows the long-lived session lifecycle. A terminal `AgentLoopResult` ends the
+current task only; the session keeps waiting for another user request until the process is
+interrupted or an exit command is entered. Useful agent context is carried across tasks
+through the terminal result's `session_state` and `SessionContext.state`, and written to
+`<session>/state.json` so a later process can continue the session (`--continue`,
+`--resume`). Session files live in the AutoBrowser home (`AUTOBROWSER_HOME`, else
+`~/.autobrowser`).
 
 ```mermaid
 sequenceDiagram
   participant User
-  participant CLI as main.py
+  participant CLI as autobrowser / main.py
   participant Session as SessionRuntime
   participant Context as SessionContext
-  participant Files as .autobrowser
+  participant Files as <home>/sessions/<id>
   participant Harness as BrowserHarness
   participant Goals as GoalRunner
   participant Engine as AgentLoopEngine
   participant MCP as MCP/Browser Tools
 
-  User->>CLI: Start process with optional task
-  CLI->>Session: Build config and run session
+  User->>CLI: Start, optionally --continue / --resume <id>
+  alt resume
+    CLI->>Files: Pick the session (has tasks + state.json, not locked by a live pid)
+    CLI->>Session: SessionRuntime(resume_from=dir)
+    Session->>Context: SessionContext.restore(dir)
+    Context->>Files: Read session.json, tasks.json, state.json (dialogue only), last event sequence
+  else new session
+    CLI->>Session: SessionRuntime(config)
+  end
+  Note over Session,Context: Resources start lazily with the first task
+  User->>Session: Submit task
   Session->>Context: initialize()
-  Context->>Context: Create workspace and metadata
-  Context->>Context: Create model, tools, telemetry
-  Context->>Files: Write session.json
+  Context->>Files: Take .lock (pid); refuse a session another live process holds
+  Context->>Context: Workspace, model, tools, telemetry; events continue the stored sequence
   opt Browser tools enabled
     Context->>MCP: Start Chrome/CDP and load tools
   end
   Context->>Harness: Build one harness for the session
   Session->>Context: build_agent() -> one Agent for the session
   loop For each user task
-    User->>Session: Submit task
     Session->>Context: reset_task(task)
-    Context->>Files: Update session.json and tasks.json
+    Context->>Files: Update session.json, tasks.json, state.json
     Session->>Context: Build carried state and reset task-local fields
     Session->>Goals: run(TaskRequest: task, ids, carried state, turn cap)
     Goals->>Engine: Agent.run(TaskRequest) -> AgentLoopEngine.run
@@ -41,13 +50,17 @@ sequenceDiagram
     MCP-->>Engine: Tool results and snapshots
     Engine-->>Goals: Terminal AgentLoopResult
     Goals-->>Session: GoalRunResult with explicit status
-    Session->>Context: Remember result.session_state (messages, observation, snapshot)
-    Session->>Context: finish_task(result)
-    Context->>Files: Update session.json and tasks.json
-    Session-->>User: Print final answer and prompt again
+    Session->>Context: Remember result.session_state (messages, observation, snapshots)
+    Session->>Context: finish_task(result) (also when memory consolidation is cancelled)
+    Context->>Files: Update session.json, tasks.json, state.json
+    Session-->>User: Show the outcome and wait for the next task
   end
-  User->>Session: Ctrl+C, EOF, quit, or exit
+  User->>Session: Ctrl+C x2, Ctrl+D, /exit
+  CLI->>Session: SessionController.shutdown(bounded) then close()
   Session->>Context: close()
-  Context->>Files: Mark session closed
-  Context->>MCP: Close MCP session when enabled
+  Context->>MCP: Close MCP, then Chrome
+  Context->>Files: Persist (a never-started session writes nothing), release .lock
 ```
+
+A resumed session carries the dialogue only: page state (observation, kept snapshots, last
+browser action) described a browser that is gone after a restart.

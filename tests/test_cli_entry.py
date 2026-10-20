@@ -108,3 +108,22 @@ def test_version(capsys: pytest.CaptureFixture[str]) -> None:
 
     assert exit_info.value.code == 0
     assert capsys.readouterr().out.startswith("autobrowser ")
+
+
+def test_doctor_reports_a_missing_config_file_instead_of_crashing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv(CONFIG_FILE_ENV_VAR, str(tmp_path / "missing.yaml"))
+    get_settings.cache_clear()
+
+    assert entry.main(["doctor"]) == 1
+    out = capsys.readouterr().out
+    assert "xx  config file" in out and "missing.yaml" in out
+
+
+def test_replay_completes_session_ids() -> None:
+    parser = subcommands.build_subcommand_parser()
+    replay = next(action for action in parser._subparsers._group_actions[0].choices["replay"]._actions  # type: ignore[union-attr]
+                  if action.dest == "target")
+
+    assert replay.completer is subcommands.session_id_completer  # type: ignore[attr-defined]

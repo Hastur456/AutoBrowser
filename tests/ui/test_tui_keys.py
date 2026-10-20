@@ -97,7 +97,7 @@ class FakeController:
     def current_url(self) -> str:
         return "https://shop.test/cart"
 
-    def replay(self, target: str = "") -> list[str]:
+    async def replay(self, target: str = "") -> list[str]:
         if target == "9":
             raise LookupError("Task numbers run from 1 to 1.")
         return ["#1 · completed", "goal.started: go", "1. any_tool {}"]

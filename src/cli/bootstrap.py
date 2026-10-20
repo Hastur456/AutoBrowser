@@ -140,12 +140,19 @@ def run_agent_cli(args: argparse.Namespace) -> int:
     """
 
     ui = ui_settings_from_args(args)
+    print_mode = bool(getattr(args, "print_mode", False))
     try:
-        resume_from = resolve_resume(args, interactive=is_interactive(args))
+        # In print mode stdout is the result only: the session list and prompt go to stderr.
+        resume_from = resolve_resume(
+            args,
+            interactive=is_interactive(args),
+            read=_stderr_input if print_mode else input,
+            write=_stderr_print if print_mode else print,
+        )
     except ResumeError as exc:
         print(f"autobrowser: {exc}", file=sys.stderr)
         return USAGE_EXIT_CODE
-    if getattr(args, "print_mode", False):
+    if print_mode:
         return run_print_cli(args, ui, resume_from=resume_from)
     if ui.frontend == "classic":
         return run_classic_cli(args, resume_from=resume_from)
@@ -172,6 +179,7 @@ def run_print_cli(
     stdout = stdout or sys.stdout
     stderr = stderr or sys.stderr
     _utf8_when_redirected(stdout)
+    _utf8_when_redirected(stdin)
     task = resolve_initial_task(args)
     if not task and not stdin.isatty():
         task = stdin.read().strip()
@@ -217,13 +225,22 @@ def run_print_cli(
     with terminal_quiet(ui.resolved_log_file(settings.storage)):
         try:
             return asyncio.run(main())
-        except KeyboardInterrupt:
-            err("[cancelled] interrupted")
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            # run_print already reported the cancelled result.
             return INTERRUPTED_EXIT_CODE
 
 
+def _stderr_print(line: str) -> None:
+    print(line, file=sys.stderr, flush=True)
+
+
+def _stderr_input(prompt: str) -> str:
+    print(prompt, end="", file=sys.stderr, flush=True)
+    return sys.stdin.readline().rstrip("\n")
+
+
 def _utf8_when_redirected(stream: TextIO) -> None:
-    """A pipe or file gets UTF-8, not the console code page (B7); a console keeps its own."""
+    """A pipe or file is UTF-8, not the console code page (B7); a console keeps its own."""
 
     if not stream.isatty() and hasattr(stream, "reconfigure"):
         stream.reconfigure(encoding="utf-8", errors="replace")
