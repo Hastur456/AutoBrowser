@@ -46,6 +46,7 @@ from src.ui.tui.commands import CommandResult, SlashCompleter, parse_command, ru
 from src.ui.tui.ports import ControllerPort, RuntimeBridge, RuntimePort, StreamItemView
 from src.ui.tui.pump import PumpLook, RenderPump
 from src.ui.tui.render import render_banner, render_live, render_rule, render_status
+from src.ui.tui.strings import Strings
 from src.ui.tui.terminal import TerminalCaps
 from src.ui.tui.theme import Theme
 from src.ui.tui.transcript import (
@@ -201,6 +202,14 @@ class TuiApp:
                     caps=self._caps,
                     theme=self._theme,
                     settings=self._settings,
+                )
+            )
+        if self._view.resumed:
+            self._pump.post(
+                Notice(
+                    Strings(self._settings.locale)(
+                        "resumed", session=self._view.session_id[:8], count=self._view.task_count
+                    )
                 )
             )
         self._unsubscribe = await self._bridge.call(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import copy
 import sys
+from pathlib import Path
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
@@ -14,6 +15,7 @@ from src.agent_loop.execution.loop import HumanInputCallback
 from src.cli.agent_cli import run_cli
 from src.cli.approval import ApprovalPrompt
 from src.cli.output import print_tools
+from src.cli.sessions import ResumeError, resolve_resume
 from src.cli.tasks import resolve_initial_task
 from src.agent_loop.events import EventSink
 from src.agent_loop.goals import GoalLimits
@@ -29,6 +31,9 @@ from src.harness.session import (
     default_mcp_runtime_factory,
 )
 
+
+#: Exit code of a command line that cannot be acted on (argparse uses the same).
+USAGE_EXIT_CODE = 2
 
 #: The TUI input history under the storage root (``ui.input_history``).
 INPUT_HISTORY_FILE = "input_history"
@@ -70,6 +75,7 @@ def build_session(
     output_fn: Callable[..., None] = print,
     human_input: HumanInputCallback | None = None,
     event_sinks: Sequence[EventSink] = (),
+    resume_from: Path | None = None,
 ) -> SessionRuntime:
     """Build a process-long session runtime from parsed CLI arguments.
 
@@ -92,6 +98,7 @@ def build_session(
         output_fn=output_fn,
         human_input=human_input,
         event_sinks=event_sinks,
+        resume_from=resume_from,
     )
 
 
@@ -132,20 +139,27 @@ def run_agent_cli(args: argparse.Namespace) -> int:
     """
 
     ui = ui_settings_from_args(args)
+    try:
+        resume_from = resolve_resume(args, interactive=is_interactive(args))
+    except ResumeError as exc:
+        print(f"autobrowser: {exc}", file=sys.stderr)
+        return USAGE_EXIT_CODE
     if ui.frontend == "classic":
-        return run_classic_cli(args)
-    return run_frontend_cli(args, ui)
+        return run_classic_cli(args, resume_from=resume_from)
+    return run_frontend_cli(args, ui, resume_from=resume_from)
 
 
-def run_classic_cli(args: argparse.Namespace) -> int:
+def run_classic_cli(args: argparse.Namespace, *, resume_from: Path | None = None) -> int:
     """The cmd2 shell: approvals as ``y`` once, ``s`` for the session, ``n`` deny."""
 
     approvals = ApprovalPrompt() if is_interactive(args) else None
-    session = build_session(args, human_input=approvals)
+    session = build_session(args, human_input=approvals, resume_from=resume_from)
     return run_cli(session, initial_task=resolve_initial_task(args), approvals=approvals)
 
 
-def run_frontend_cli(args: argparse.Namespace, ui: UiSettings) -> int:
+def run_frontend_cli(
+    args: argparse.Namespace, ui: UiSettings, *, resume_from: Path | None = None
+) -> int:
     """The terminal UI or plain mode over a :class:`SessionController`."""
 
     from src.ui.controller import SessionController
@@ -168,6 +182,7 @@ def run_frontend_cli(args: argparse.Namespace, ui: UiSettings) -> int:
         human_input=broker,
         event_sinks=(broadcaster,),
         output_fn=relay,
+        resume_from=resume_from,
     )
     controller = SessionController(session, broker=broker, broadcaster=broadcaster)
     runtime = RuntimeLoop()

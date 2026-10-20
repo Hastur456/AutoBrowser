@@ -22,6 +22,7 @@ from src.contracts import ApprovalResolution, ApprovalTicket
 from src.ui.feed import project_event, sanitize_text
 from src.ui.tui.commands import CommandResult, parse_command, run_command
 from src.ui.tui.ports import ControllerPort, RuntimeBridge, RuntimePort
+from src.ui.tui.strings import Strings
 from src.ui.tui.terminal import TerminalCaps
 from src.ui.tui.transcript import CommandOutput, Notice, Transcript
 from src.ui.views import FeedItem, SessionView
@@ -189,6 +190,12 @@ class PlainFrontend:
         self._emit(
             f"AutoBrowser {view.version} · {view.model or '?'} · session {view.session_id[:8]}".replace("  ", " ")
         )
+        if view.resumed:
+            self._emit(
+                Strings(self._settings.locale)(
+                    "resumed", session=view.session_id[:8], count=view.task_count
+                )
+            )
         unsubscribe = self._runtime.submit(
             _call(lambda: self._controller.subscribe_approvals(self._events.put))
         ).result()

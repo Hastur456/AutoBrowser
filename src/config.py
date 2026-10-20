@@ -698,6 +698,17 @@ class StorageSettings(_Section):
 
     workspace_subdir: Annotated[str, Field(min_length=1)] = "workspace"
 
+    persist_state: Annotated[
+        bool,
+        Field(
+            description=(
+                "Write <session>/state.json after every task: the dialogue and page state "
+                "a following task inherits, so --continue/--resume can pick the session "
+                "up later. Stored as is (not redacted), like the page content it holds."
+            ),
+        ),
+    ] = True
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def sessions_dir(self) -> Path:
@@ -1398,6 +1409,11 @@ class UiSettings(_Section):
             description="How often the status line polls the session (MCP states emit no events).",
         ),
     ] = 1.0
+
+    resume_list_size: Annotated[
+        int,
+        Field(ge=1, le=1000, description="Sessions offered by --resume without an id."),
+    ] = 20
 
     shutdown_timeout_seconds: Annotated[
         float,

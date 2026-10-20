@@ -120,6 +120,23 @@ def build_parser() -> argparse.ArgumentParser:
             f"Default: {settings.permissions.mode}"
         ),
     )
+    session = parser.add_mutually_exclusive_group()
+    session.add_argument(
+        "-c",
+        "--continue",
+        dest="continue_session",
+        action="store_true",
+        help="Continue the most recent session with its dialogue (state.json).",
+    )
+    session.add_argument(
+        "-r",
+        "--resume",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="SESSION_ID",
+        help="Continue a stored session by id or id prefix; without one, pick from a list.",
+    )
     front_end = parser.add_mutually_exclusive_group()
     front_end.add_argument(
         "--classic",

@@ -29,8 +29,12 @@ def test_run_agent_cli_dispatches_by_front_end(
     monkeypatch: pytest.MonkeyPatch, argv: tuple[str, ...], expected: str
 ) -> None:
     calls: list[str] = []
-    monkeypatch.setattr(bootstrap, "run_classic_cli", lambda _args: calls.append("classic") or 0)
-    monkeypatch.setattr(bootstrap, "run_frontend_cli", lambda _args, _ui: calls.append("frontend") or 0)
+    monkeypatch.setattr(
+        bootstrap, "run_classic_cli", lambda _args, **_kw: calls.append("classic") or 0
+    )
+    monkeypatch.setattr(
+        bootstrap, "run_frontend_cli", lambda _args, _ui, **_kw: calls.append("frontend") or 0
+    )
     # Whatever the personal profile says, these runs pin the front end explicitly.
     args = parse(*argv)
     if not argv:

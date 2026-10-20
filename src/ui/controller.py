@@ -247,6 +247,8 @@ class SessionController:
             busy=self.busy,
             current_task_id=current.task_id if current is not None else "",
             turn_cap=config.turn_cap,
+            resumed=context.resumed_from_sequence is not None,
+            task_count=len(context.tasks),
         )
 
     def task_views(self) -> list[TaskView]:

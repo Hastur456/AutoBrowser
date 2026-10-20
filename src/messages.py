@@ -31,6 +31,8 @@ __all__ = [
     "MessageRole",
     "ToolCall",
     "assistant_message",
+    "message_from_dict",
+    "message_to_dict",
     "system_message",
     "tool_message",
     "user_message",
@@ -120,3 +122,43 @@ def tool_message(
     """
 
     return Message(role="tool", content=content, name=name, tool_call_id=tool_call_id)
+
+
+def message_to_dict(message: Message) -> dict[str, Any]:
+    """A lossless plain-JSON form of ``message`` (for ``state.json``)."""
+
+    data: dict[str, Any] = {"role": message.role, "content": message.content}
+    if message.name is not None:
+        data["name"] = message.name
+    if message.tool_call_id is not None:
+        data["tool_call_id"] = message.tool_call_id
+    if message.tool_calls:
+        data["tool_calls"] = [
+            {"id": call.id, "name": call.name, "arguments": call.arguments}
+            for call in message.tool_calls
+        ]
+    return data
+
+
+def message_from_dict(data: dict[str, Any]) -> Message:
+    """The inverse of :func:`message_to_dict`; raises ``ValueError`` on an unknown role."""
+
+    role = data.get("role")
+    if role not in ("system", "user", "assistant", "tool"):
+        raise ValueError(f"Unknown message role: {role!r}")
+    calls = tuple(
+        ToolCall(
+            id=str(call.get("id") or ""),
+            name=str(call.get("name") or ""),
+            arguments=dict(call.get("arguments") or {}),
+        )
+        for call in data.get("tool_calls") or ()
+        if isinstance(call, dict)
+    )
+    return Message(
+        role=role,
+        content=str(data.get("content") or ""),
+        name=data.get("name"),
+        tool_call_id=data.get("tool_call_id"),
+        tool_calls=calls,
+    )

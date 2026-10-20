@@ -203,10 +203,12 @@ class EventEmitter:
         sink: EventSink | None = None,
         *,
         session_id: str | None = None,
+        sequence: int = 0,
     ) -> None:
         self.sink = sink or NullEventSink()
         self.session_id = session_id
-        self._sequence = 0
+        #: The last emitted sequence; a resumed session starts from its stored last one.
+        self._sequence = sequence
 
     @property
     def sequence(self) -> int:

@@ -126,6 +126,10 @@ class SessionView:
     busy: bool = False
     current_task_id: str = ""
     turn_cap: int | None = None
+    #: The session continues a stored one (``--continue``/``--resume``).
+    resumed: bool = False
+    #: Tasks the session has run, including those of a resumed session.
+    task_count: int = 0
 
 
 __all__ = [

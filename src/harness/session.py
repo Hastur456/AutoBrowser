@@ -38,6 +38,13 @@ from src.harness.memory_consolidation import MemoryConsolidator
 from src.harness.memory_store import MemoryContext, MemoryStore
 from src.harness.memory_tool import memory_tools
 from src.harness.runtime import BrowserHarness
+from src.harness.session_store import (
+    last_event_sequence,
+    load_session_file,
+    load_state,
+    load_task_records,
+    save_state,
+)
 from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolRegistry
 
@@ -302,6 +309,36 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _restored_task(record: dict[str, Any]) -> TaskRecord:
+    """A :class:`TaskRecord` from ``tasks.json``; a task left running by a crash is failed."""
+
+    started = _parse_datetime(record.get("started_at")) or datetime.now(UTC)
+    finished = _parse_datetime(record.get("finished_at"))
+    status = str(record.get("status") or "")
+    if finished is None or status in ("", "running"):
+        status = "failed"
+        finished = finished or started
+    turns = record.get("turns")
+    return TaskRecord(
+        task=str(record.get("task") or ""),
+        started_at=started,
+        task_id=str(record.get("task_id") or f"task-{uuid4().hex}"),
+        finished_at=finished,
+        result=record.get("result"),
+        status=status,
+        turns=turns if isinstance(turns, int) and not isinstance(turns, bool) else None,
+    )
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
@@ -412,6 +449,40 @@ class SessionContext:
     #: Open while MCP runs: the stderr log of the stdio servers (:data:`CHILD_STDERR_LOG_NAME`).
     child_stderr: TextIO | None = None
     initialized: bool = False
+    #: The last event sequence of a resumed session; new events continue after it.
+    resumed_from_sequence: int | None = None
+
+    @classmethod
+    def restore(
+        cls,
+        config: SessionConfig,
+        session_dir: Path,
+        *,
+        event_sinks: tuple[EventSink, ...] = (),
+    ) -> SessionContext:
+        """A not yet started context continuing the stored session in ``session_dir``.
+
+        It keeps the session id, the carried state of ``state.json`` (the dialogue the
+        next task inherits), the task history and the start time; resources (Chrome, MCP,
+        the agent) start afresh on the next task like in any new session.
+        """
+
+        data = load_session_file(session_dir)
+        if not data:
+            raise FileNotFoundError(f"No session.json in {session_dir}.")
+        metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        context = cls(
+            config,
+            session_id=str(data.get("session_id") or session_dir.name),
+            event_sinks=event_sinks,
+            session_dir=session_dir.resolve(),
+        )
+        context.state.replace(load_state(session_dir))
+        context.tasks = [_restored_task(record) for record in load_task_records(session_dir)]
+        context.metadata.started_at = _parse_datetime(metadata.get("started_at"))
+        context.metadata.task_count = len(context.tasks)
+        context.resumed_from_sequence = last_event_sequence(session_dir)
+        return context
 
     async def initialize(
         self,
@@ -450,13 +521,16 @@ class SessionContext:
         )
 
         now = datetime.now(UTC)
-        self.metadata.started_at = now
+        if self.metadata.started_at is None:
+            self.metadata.started_at = now
         self.metadata.last_activity = now
-        self.session_dir = get_settings().storage.session_dir(self.session_id).resolve()
+        if self.session_dir is None:
+            self.session_dir = get_settings().storage.session_dir(self.session_id).resolve()
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.event_emitter = EventEmitter(
             _build_session_event_sink(self.session_dir, self.event_sinks),
             session_id=self.session_id,
+            sequence=self.resumed_from_sequence or 0,
         )
         self.workspace = WorkspaceContext(
             self.session_dir / get_settings().storage.workspace_subdir
@@ -522,7 +596,10 @@ class SessionContext:
         self.event_emitter.emit(
             "session.started",
             source="harness.session",
-            payload={"session_id": self.session_id},
+            payload={
+                "session_id": self.session_id,
+                "resumed": self.resumed_from_sequence is not None,
+            },
         )
         self.events.emit("session.started", self)
 
@@ -698,6 +775,9 @@ class SessionContext:
         snapshot = self.snapshot()
         _write_json(self.session_dir / "session.json", snapshot)
         _write_json(self.session_dir / "tasks.json", snapshot["tasks"])
+        if get_settings().storage.persist_state:
+            carried = {key: self.state[key] for key in SESSION_STATE_KEYS if key in self.state}
+            save_state(self.session_dir, self.session_id, carried)
 
     async def close(self) -> None:
         """Release session-owned runtime resources.
@@ -772,10 +852,16 @@ class SessionRuntime:
         output_fn: Callable[..., None] = print,
         human_input: HumanInputCallback | None = None,
         event_sinks: Sequence[EventSink] = (),
+        resume_from: Path | None = None,
     ) -> None:
         self.config = config
         self._event_sinks = tuple(event_sinks)
-        self.context = SessionContext(config, event_sinks=self._event_sinks)
+        #: ``resume_from`` is a stored session directory to continue (``--resume``).
+        self.context = (
+            SessionContext.restore(config, resume_from, event_sinks=self._event_sinks)
+            if resume_from is not None
+            else SessionContext(config, event_sinks=self._event_sinks)
+        )
         self._llm_factory = llm_factory
         self._start_chrome_cdp = start_chrome_cdp
         self._wait_for_port = wait_for_port

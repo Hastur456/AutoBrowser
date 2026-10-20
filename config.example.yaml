@@ -207,6 +207,9 @@ storage:
   batches_subdir: batches                       # (default)
   # Per-session scratch space for screenshots and artifacts.
   workspace_subdir: workspace                   # (default)
+  # <session>/state.json after every task (dialogue + page state, not redacted) for
+  # --continue / --resume.
+  persist_state: true                           # (default)
 
 # ---------------------------------------------------------------------------
 flags:
@@ -321,6 +324,7 @@ ui:
   event_buffer_size: 2000                       # (default) events kept for late subscribers
   subscriber_queue_size: 1000                   # (default) queue before a gap marker
   status_interval_seconds: 1.0                  # (default) status line polling
+  resume_list_size: 20                          # (default) sessions offered by --resume
   shutdown_timeout_seconds: 5.0                 # (default) stopping a task / loop / client
 
 # ---------------------------------------------------------------------------
