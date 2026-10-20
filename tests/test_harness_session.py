@@ -261,7 +261,9 @@ async def test_session_context_lifecycle_initializes_tracks_tasks_and_closes(
     assert context.initialized is True
     assert isinstance(context.harness, FakeHarness)
     assert context.workspace is not None
-    assert context.workspace.root == tmp_path / ".autobrowser" / "sessions" / context.session_id / "workspace"
+    # Sessions live under the AutoBrowser home (tests/conftest.py isolates it per test).
+    home = tmp_path / "autobrowser-home"
+    assert context.workspace.root == home / "sessions" / context.session_id / "workspace"
     assert context.workspace.artifacts.is_dir()
     assert context.metadata.started_at is not None
     assert context.tool_registry is not None

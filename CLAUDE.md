@@ -184,11 +184,20 @@ defaults; an empty value means "not set"; sections are `frozen` with `extra="for
 header — the vendor `OLLAMA_API_KEY` is no longer read. Adding a setting means updating
 `tests/test_config.py`, which fails when `.env.example` drifts from the code.
 
+Files live in the **AutoBrowser home** (`src.config.home_dir()`): `AUTOBROWSER_HOME`, else
+`~/.autobrowser` (`docs/decisions/2026-10-19-autobrowser-command-and-home-directory.md`).
+`storage.root_dir` defaults to the home (sessions, memory, logs, input history); a relative
+root is relative to the home, and the legacy value `.autobrowser` means the home itself (with
+a `FutureWarning`). `.env` is read from the repo root (legacy) and then `<home>/.env`, never
+from the working directory. Tests get an empty home per test from `tests/conftest.py`.
+
 A YAML file can slot in above the environment as a fourth source: `AUTOBROWSER_CONFIG_FILE`
-names it explicitly (mandatory once set — a missing file fails startup), and with that unset,
-`config.yaml` at the repo root auto-loads if present — a fixed path, not a working-directory
-scan, and silent when absent. `config.yaml`/`config.local.yaml` are git-ignored, so the root
-file doubles as a personal default profile. Precedence is init kwargs > YAML > env > `.env` >
+names it explicitly (mandatory once set — a missing file fails startup); with that unset,
+`<home>/config.yaml` loads if present, else `config.yaml` at the repo root (the legacy
+checkout profile) — fixed paths, not a working-directory scan, and silent when absent.
+`config.yaml`/`config.local.yaml` are git-ignored, so the root file still works as a personal
+default profile. Command hooks run in the directory of the config file that declares them
+(`config_base_dir()`), else the home. Precedence is init kwargs > YAML > env > `.env` >
 secret files, and pydantic-settings merges deeply, so the file decides exactly the fields it
 names while everything else still resolves below it: a partial profile, not a full config, and
 one that beats `AUTOBROWSER_*` for the fields it sets. The file source rejects unknown section
@@ -296,7 +305,7 @@ guide: `docs/development/memory.md`; ADR: `docs/decisions/2026-10-02-layered-age
   like `approval_request` (`src/agent_loop/execution/notes.py`), kept on the task-local
   `LoopState.working_notes`.
 - L4 persistent memory (`persistent_enabled`): `MemoryStore`/`MemoryContext` in
-  `src/harness/memory_store.py`, files under `.autobrowser/memory/{sites,procedures}/*.md`;
+  `src/harness/memory_store.py`, files under `<home>/memory/{sites,procedures}/*.md`;
   `memory_view`/`memory_write` tools (`tool_enabled`, `server: memory`) in
   `src/harness/memory_tool.py`; staged trust and opt-in consolidation
   (`src/harness/memory_consolidation.py`) run in `SessionRuntime` after `goal_end`. Browser
@@ -335,7 +344,7 @@ uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
 
 Focused test groups are grouped by area in `AGENTS.md` / `docs/development/setup.md`
 (harness, browser provider, agent-loop contracts, CLI). Runtime output lands in
-`.autobrowser/sessions/<session_id>/` (`session.json`, `tasks.json`, `events.jsonl`,
+`<home>/sessions/<session_id>/` (`session.json`, `tasks.json`, `events.jsonl`,
 `workspace/`) — local and git-ignored; treat exporters/replay as read-only over it.
 
 ## When Changing Things

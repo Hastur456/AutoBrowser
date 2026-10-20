@@ -21,14 +21,23 @@ A YAML file can layer *over* the environment for tunables that are awkward to
 spell as env vars -- a whole ``llm:`` block, ``reasoning_effort``, an
 ``api_key``.
 
+Files live in the AutoBrowser home directory (:func:`home_dir`): ``AUTOBROWSER_HOME``
+when set, otherwise ``~/.autobrowser``. It holds ``config.yaml``, ``.env`` and, by
+default, every runtime artifact (``storage.root_dir``): sessions, memory, logs and the
+input history. Fixed places only, never a working-directory scan, so running the
+``autobrowser`` command from another project's folder picks up nothing of it.
+
 The configuration file is resolved as follows:
 
 1. If `AUTOBROWSER_CONFIG_FILE` is set, that path is used. If the file does
    not exist, startup fails.
-2. If `AUTOBROWSER_CONFIG_FILE` is not set, `config.yaml` at the repo root
-   (`DEFAULT_CONFIG_FILE_YAML`) is used when it exists. This is a fixed path,
-   not a working-directory scan: a `config.yaml` elsewhere is never picked up.
-3. If neither exists, no file source is used at all.
+2. Otherwise `<home>/config.yaml` is used when it exists.
+3. Otherwise `config.yaml` at the repo root (`DEFAULT_CONFIG_FILE_YAML`, the legacy
+   checkout profile) is used when it exists.
+4. If none exists, no file source is used at all.
+
+``.env`` is read from the repo root (legacy) and then from ``<home>/.env``, which wins
+for the keys both set; the working directory's ``.env`` is not read.
 
 `config.yaml` and `config.local.yaml` are git-ignored, so `config.yaml` at the
 repo root doubles as a personal default profile -- convenient for a local
@@ -116,6 +125,43 @@ ROOT_PATH = Path(__file__).resolve().parent.parent
 #: a stray file elsewhere is never picked up. Git-ignored, so it is safe to keep secrets
 #: in it (see ``config.yaml``'s sibling ``config.example.yaml`` for the shape).
 DEFAULT_CONFIG_FILE_YAML = ROOT_PATH / "config.yaml"
+#: The checkout's ``.env``, read before ``<home>/.env`` (legacy; see :func:`env_files`).
+LEGACY_ENV_FILE = ROOT_PATH / ".env"
+
+#: Env var naming the AutoBrowser home directory (process level, like the config file).
+HOME_ENV_VAR = "AUTOBROWSER_HOME"
+#: Name of the home directory under the user's home when ``AUTOBROWSER_HOME`` is unset.
+HOME_DIR_NAME = ".autobrowser"
+#: File names inside the home directory.
+HOME_CONFIG_FILE_NAME = "config.yaml"
+HOME_ENV_FILE_NAME = ".env"
+#: The old ``storage.root_dir`` default, relative to the working directory back then.
+#: Copied into many profiles, so it now means the home directory itself.
+LEGACY_STORAGE_ROOT = Path(".autobrowser")
+
+
+def home_dir() -> Path:
+    """The AutoBrowser home: ``AUTOBROWSER_HOME`` (``~`` and ``%VAR%`` expanded, made
+    absolute) or ``~/.autobrowser``. Read at call time; nothing is created here."""
+
+    configured = os.environ.get(HOME_ENV_VAR)
+    if configured:
+        return Path(os.path.expandvars(configured)).expanduser().absolute()
+    return Path.home() / HOME_DIR_NAME
+
+
+def config_base_dir() -> Path:
+    """The directory of the active YAML config file, else the home: where command hooks
+    run and their relative script paths start."""
+
+    path = _resolve_config_path()
+    return path.parent if path is not None else home_dir()
+
+
+def env_files() -> tuple[Path, ...]:
+    """``.env`` files in load order; a later file wins, missing ones are skipped."""
+
+    return (LEGACY_ENV_FILE, home_dir() / HOME_ENV_FILE_NAME)
 
 
 class _Section(BaseModel):
@@ -631,12 +677,20 @@ class EventSettings(_Section):
 
 
 class StorageSettings(_Section):
-    """On-disk layout under the (git-ignored) ``.autobrowser`` root."""
+    """On-disk layout under the storage root, the AutoBrowser home by default."""
 
     root_dir: Annotated[
         Path,
-        Field(description="Root directory for all runtime artifacts."),
-    ] = Path(".autobrowser")
+        Field(
+            default_factory=home_dir,
+            description=(
+                "Root directory for all runtime artifacts (sessions, memory, logs, input "
+                "history). Default: the AutoBrowser home (AUTOBROWSER_HOME or "
+                "~/.autobrowser). A relative path is relative to the home; the legacy "
+                "value .autobrowser means the home itself."
+            ),
+        ),
+    ]
 
     sessions_subdir: Annotated[str, Field(min_length=1)] = "sessions"
 
@@ -671,9 +725,22 @@ class StorageSettings(_Section):
     @field_validator("root_dir", mode="after")
     @classmethod
     def _expand_root(cls, value: Path) -> Path:
-        """Expand ``%VAR%``/``$VAR`` and ``~`` in the configured root."""
+        """Expand ``%VAR%``/``$VAR`` and ``~``; anchor a relative root at the home."""
 
-        return Path(os.path.expandvars(str(value))).expanduser()
+        value = Path(os.path.expandvars(str(value))).expanduser()
+        if value.is_absolute():
+            return value
+        if value == LEGACY_STORAGE_ROOT:
+            warnings.warn(
+                "storage.root_dir: .autobrowser is the old working-directory default; it "
+                "now means the AutoBrowser home (AUTOBROWSER_HOME or ~/.autobrowser). "
+                "Delete it from your .env / config file, or set an absolute path to keep "
+                "using another folder.",
+                FutureWarning,
+                stacklevel=2,
+            )
+            return home_dir()
+        return home_dir() / value
 
 
 class FlagsSettings(_Section):
@@ -849,6 +916,24 @@ class HooksSettings(_Section):
             description="Timeout of a hook without its own timeout_seconds.",
         ),
     ] = 10.0
+
+    command_stderr_tail_chars: Annotated[
+        int,
+        Field(
+            ge=0,
+            le=20_000,
+            description="Characters of a failed command hook's stderr kept in the error.",
+        ),
+    ] = 300
+
+    command_kill_wait_seconds: Annotated[
+        float,
+        Field(
+            gt=0.0,
+            le=60.0,
+            description="How long to wait for a timed-out command hook's process tree to exit.",
+        ),
+    ] = 2.0
 
     registry: Annotated[
         list[HookSpec],
@@ -1351,6 +1436,9 @@ def _resolve_config_path() -> Path | None:
     configured = os.environ.get(CONFIG_FILE_ENV_VAR)
 
     if not configured:
+        home_config = home_dir() / HOME_CONFIG_FILE_NAME
+        if home_config.is_file():
+            return home_config
         return DEFAULT_CONFIG_FILE_YAML if DEFAULT_CONFIG_FILE_YAML.is_file() else None
 
     path = Path(os.path.expandvars(configured)).expanduser()
@@ -1413,7 +1501,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix=ENV_PREFIX,
         env_nested_delimiter=ENV_NESTED_DELIMITER,
-        env_file=".env",
+        # Resolved per instance in ``__init__`` (the home is read at call time).
+        env_file=None,
         env_file_encoding="utf-8",
         env_ignore_empty=True,
         case_sensitive=False,
@@ -1436,6 +1525,11 @@ class Settings(BaseSettings):
     #: Name of the ``mcp_servers`` entry that provides browser tools (exposed unprefixed).
     #: ``None`` falls back to ``"playwright"`` when such an entry exists.
     browser_mcp_server: str | None = None
+
+    def __init__(self, **values: Any) -> None:
+        # ``_env_file`` given by a caller (tests, scripts) wins, ``None`` included.
+        values.setdefault("_env_file", env_files())
+        super().__init__(**values)
 
     @classmethod
     def settings_customise_sources(
@@ -1495,6 +1589,8 @@ __all__ = [
     "BrowserSettings",
     "CONFIG_FILE_ENV_VAR",
     "DEFAULT_CONFIG_FILE_YAML",
+    "HOME_ENV_VAR",
+    "LEGACY_ENV_FILE",
     "ENV_NESTED_DELIMITER",
     "ENV_PREFIX",
     "EventSettings",
@@ -1512,7 +1608,10 @@ __all__ = [
     "StorageSettings",
     "TOOL_HOOK_EVENTS",
     "UiSettings",
+    "config_base_dir",
+    "env_files",
     "get_settings",
+    "home_dir",
     "normalize_domain",
     "reload_settings",
 ]

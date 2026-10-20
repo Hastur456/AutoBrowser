@@ -31,6 +31,7 @@ from src.config import (
     ENV_PREFIX,
     Settings,
     get_settings,
+    home_dir,
 )
 from src.providers.ollama import OllamaChatModel
 
@@ -41,6 +42,14 @@ def _clean_settings_cache() -> Iterator[None]:
 
     yield
     get_settings.cache_clear()
+
+
+def home_env(tmp_path: Path) -> Path:
+    """``<home>/.env`` of the ``settings`` fixture's home, its folder created."""
+
+    path = tmp_path / "home" / ".env"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 @pytest.fixture
@@ -58,7 +67,11 @@ def settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     monkeypatch.chdir(tmp_path)
     for name in [key for key in os.environ if key.startswith("AUTOBROWSER_")]:
         monkeypatch.delenv(name, raising=False)
+    # An empty home of its own (``tmp_path / "home"``), and the repository's legacy
+    # ``config.yaml`` / ``.env`` redirected to paths that do not exist.
+    monkeypatch.setenv(config.HOME_ENV_VAR, str(tmp_path / "home"))
     monkeypatch.setattr(config, "DEFAULT_CONFIG_FILE_YAML", tmp_path / "unused" / "config.yaml")
+    monkeypatch.setattr(config, "LEGACY_ENV_FILE", tmp_path / "unused" / ".env")
 
     def build(**overrides: Any) -> Settings:
         return Settings(**overrides)
@@ -115,9 +128,10 @@ def test_defaults_match_the_constants_they_replaced(settings: Any) -> None:
     )
     assert config.browser.user_data_dir == Path(r"C:\temp\chrome_debug_profile")
 
-    # was: the hardcoded ".autobrowser" storage literals
-    assert config.storage.sessions_dir == Path(".autobrowser") / "sessions"
-    assert config.storage.batches_dir == Path(".autobrowser") / "batches"
+    # was: the hardcoded ".autobrowser" storage literals (now under the home directory)
+    home = home_dir()
+    assert config.storage.sessions_dir == home / "sessions"
+    assert config.storage.batches_dir == home / "batches"
 
     # was: src/cli/approval.py _ARGS_PREVIEW_CHARS and the 0.8 timeout factor
     assert config.permissions.approval_args_preview_chars == 300
@@ -127,12 +141,12 @@ def test_defaults_match_the_constants_they_replaced(settings: Any) -> None:
     assert config.ui.shutdown_timeout_seconds == 5.0
 
 
-def test_storage_derives_per_session_paths(settings: Any) -> None:
+def test_storage_derives_per_session_paths(settings: Any, tmp_path: Path) -> None:
     storage = settings().storage
 
-    assert storage.session_dir("session-1") == Path(".autobrowser/sessions/session-1")
-    assert storage.workspace_dir("session-1") == Path(
-        ".autobrowser/sessions/session-1/workspace"
+    assert storage.session_dir("session-1") == tmp_path / "home" / "sessions" / "session-1"
+    assert storage.workspace_dir("session-1") == (
+        tmp_path / "home" / "sessions" / "session-1" / "workspace"
     )
 
 
@@ -228,7 +242,7 @@ def test_a_custom_env_file_is_read(settings: Any, tmp_path: Path) -> None:
 
 
 def test_the_discovered_env_file_is_read(settings: Any, tmp_path: Path) -> None:
-    (tmp_path / ".env").write_text(
+    home_env(tmp_path).write_text(
         "AUTOBROWSER_BROWSER__USER_DATA_DIR=C:/from-file\n",
         encoding="utf-8",
     )
@@ -237,7 +251,7 @@ def test_the_discovered_env_file_is_read(settings: Any, tmp_path: Path) -> None:
 
 
 def test_a_discovered_env_file_can_be_disabled(settings: Any, tmp_path: Path) -> None:
-    (tmp_path / ".env").write_text(
+    home_env(tmp_path).write_text(
         "AUTOBROWSER_BROWSER__USER_DATA_DIR=C:/from-file\n",
         encoding="utf-8",
     )
@@ -379,7 +393,7 @@ def test_a_partial_config_file_leaves_the_other_fields_to_the_sources_below(
     _point_at(monkeypatch, _write_config(tmp_path, "llm:\n  model: from-file\n"))
     monkeypatch.setenv("AUTOBROWSER_LLM__TEMPERATURE", "0.5")
     monkeypatch.setenv("AUTOBROWSER_LOOP__TURN_CAP", "11")
-    (tmp_path / ".env").write_text(
+    home_env(tmp_path).write_text(
         "AUTOBROWSER_LLM__REASONING_EFFORT=high\n",
         encoding="utf-8",
     )
@@ -404,7 +418,7 @@ def test_the_config_file_outranks_dotenv(
     ``browser.cdp_port``, and a profile is expected to be able to override them.
     """
 
-    (tmp_path / ".env").write_text(
+    home_env(tmp_path).write_text(
         "AUTOBROWSER_LOOP__TURN_CAP=11\nAUTOBROWSER_LOOP__MAX_REPLANS=9\n",
         encoding="utf-8",
     )
@@ -1111,3 +1125,64 @@ def test_no_permission_rule_ships_with_the_code(settings: Any) -> None:
     permissions = settings().permissions
 
     assert (permissions.mode, permissions.rules) == ("default", [])
+
+
+# --------------------------------------------------------------------------
+# The AutoBrowser home directory
+# --------------------------------------------------------------------------
+
+
+def test_the_working_directory_env_file_is_not_read(settings: Any, tmp_path: Path) -> None:
+    (tmp_path / ".env").write_text("AUTOBROWSER_LOOP__TURN_CAP=7\n", encoding="utf-8")
+
+    assert settings().loop.turn_cap == 50
+
+
+def test_the_home_env_file_wins_over_the_legacy_checkout_one(
+    settings: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    legacy = tmp_path / "checkout" / ".env"
+    legacy.parent.mkdir()
+    legacy.write_text("AUTOBROWSER_LOOP__TURN_CAP=7\nAUTOBROWSER_LOOP__MAX_REPLANS=5\n", encoding="utf-8")
+    monkeypatch.setattr(config, "LEGACY_ENV_FILE", legacy)
+    home_env(tmp_path).write_text("AUTOBROWSER_LOOP__TURN_CAP=9\n", encoding="utf-8")
+
+    loop = settings().loop
+
+    assert (loop.turn_cap, loop.max_replans) == (9, 5)
+
+
+def test_the_home_config_file_wins_over_the_legacy_checkout_one(
+    settings: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    legacy = tmp_path / "checkout.yaml"
+    legacy.write_text("loop:\n  turn_cap: 13\n", encoding="utf-8")
+    monkeypatch.setattr(config, "DEFAULT_CONFIG_FILE_YAML", legacy)
+    assert settings().loop.turn_cap == 13
+
+    (tmp_path / "home" / "config.yaml").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "home" / "config.yaml").write_text("loop:\n  turn_cap: 21\n", encoding="utf-8")
+
+    assert settings().loop.turn_cap == 21
+    assert config.config_base_dir() == tmp_path / "home"
+
+
+def test_the_home_comes_from_the_env_var_or_the_user_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(config.HOME_ENV_VAR, str(tmp_path / "custom"))
+    assert home_dir() == tmp_path / "custom"
+
+    monkeypatch.delenv(config.HOME_ENV_VAR)
+    assert home_dir() == Path.home() / ".autobrowser"
+
+
+def test_storage_paths_are_anchored_at_the_home(settings: Any, tmp_path: Path) -> None:
+    home = tmp_path / "home"
+
+    assert settings().storage.root_dir == home
+    assert settings(storage={"root_dir": "data"}).storage.root_dir == home / "data"
+    assert settings(storage={"root_dir": str(tmp_path / "abs")}).storage.root_dir == tmp_path / "abs"
+    with pytest.warns(FutureWarning, match="old working-directory default"):
+        legacy = settings(storage={"root_dir": ".autobrowser"}).storage.root_dir
+    assert legacy == home
