@@ -17,9 +17,8 @@ from src.harness.session import SessionRuntime
 from src.harness.session_store import (
     STATE_FILE_NAME,
     SessionInUseError,
+    SessionLock,
     SessionNotFoundError,
-    acquire_lock,
-    release_lock,
     session_in_use,
     find_session,
     last_event_sequence,
@@ -250,33 +249,49 @@ def test_a_damaged_state_file_or_a_session_open_elsewhere_is_a_clean_error(tmp_p
         resolve_resume(ns(resume="broken"), interactive=False, sessions_dir=sessions)
 
     busy = _store(sessions, "busysession")
-    acquire_lock(busy)
+    lock = SessionLock.acquire(busy)
     try:
-        # This process holds it: another process asking would be refused.
-        assert session_in_use(busy) is not None
+        assert session_in_use(busy) is True
+        with pytest.raises(ResumeError, match="open in another AutoBrowser process"):
+            resolve_resume(ns(resume="busy"), interactive=False, sessions_dir=sessions)
+        with pytest.raises(SessionInUseError):
+            SessionLock.acquire(busy)
     finally:
-        release_lock(busy)
-    assert session_in_use(busy) is None
-    (busy / ".lock").write_text("999999999", encoding="utf-8")  # a crashed holder
-    assert session_in_use(busy) is None
+        lock.release()
+    # Released (or left behind by a crash: the OS drops the lock): free again.
+    assert session_in_use(busy) is False
+    assert resolve_resume(ns(resume="busy"), interactive=False, sessions_dir=sessions) == busy
 
 
 @pytest.mark.asyncio
-async def test_a_resumed_session_refuses_a_second_live_process(
+async def test_a_resumed_session_holds_its_lock_until_close_and_never_writes_stale_files(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     install_fake_agent(monkeypatch, lambda _request: _done())
     first = runtime()
-    await first.run_task("task")
+    await first.run_task("t1")
     session_dir = first.context.session_dir
     assert session_dir is not None
     await first.close()
-    assert session_in_use(session_dir) is None
 
-    # Another live pid holds the lock (the parent of this test process stands in for it).
-    import os
-
-    (session_dir / ".lock").write_text(str(os.getppid()), encoding="utf-8")
-    second = runtime(resume_from=session_dir)
+    idle = runtime(resume_from=session_dir)  # e.g. a TUI opened with --continue, doing nothing
+    assert session_in_use(session_dir) is True
     with pytest.raises(SessionInUseError):
-        await second.start()
+        runtime(resume_from=session_dir)  # a second process / -p --continue is refused
+    await idle.close()
+    assert session_in_use(session_dir) is False
+
+    second = runtime(resume_from=session_dir)
+    await second.run_task("t2")
+    await second.close()
+    tasks = json.loads((session_dir / "tasks.json").read_text(encoding="utf-8"))
+    assert [task["task"] for task in tasks] == ["t1", "t2"]
+
+
+def test_a_malformed_state_file_is_a_value_error(tmp_path: Path) -> None:
+    for content in ("[]", "null", '{"version": 1, "state": {"messages": [{"role": "user", "tool_calls": [{"arguments": 5}]}]}}'):
+        folder = tmp_path / str(abs(hash(content)))
+        folder.mkdir()
+        (folder / STATE_FILE_NAME).write_text(content, encoding="utf-8")
+        with pytest.raises(ValueError):
+            load_state(folder)

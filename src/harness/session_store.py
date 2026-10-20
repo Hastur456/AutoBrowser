@@ -14,18 +14,17 @@ This module reads and writes files only; it builds no session objects (``session
 from __future__ import annotations
 
 import json
-import os
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from src.messages import Message, message_from_dict, message_to_dict
 
 STATE_FILE_NAME = "state.json"
-#: Holds the pid of the process that has the session open.
+#: Locked (by the operating system) while a process has the session open.
 LOCK_FILE_NAME = ".lock"
 #: What a resumed session carries over: the dialogue only. Page state (observation, kept
 #: snapshots, last browser action) described a browser that is gone after a restart; kept,
@@ -84,12 +83,17 @@ def load_state(session_dir: Path) -> dict[str, object]:
     if not path.is_file():
         return {}
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict) or payload.get("version") != STATE_FORMAT_VERSION:
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path} does not hold a JSON object.")
+    if payload.get("version") != STATE_FORMAT_VERSION:
         raise ValueError(f"{path} has an unsupported format (version {payload.get('version')!r}).")
     state = payload.get("state")
     if not isinstance(state, dict):
         return {}
-    return {key: _decode(key, value) for key, value in state.items()}
+    try:
+        return {key: _decode(key, value) for key, value in state.items()}
+    except (TypeError, AttributeError) as exc:
+        raise ValueError(f"{path} holds a malformed message: {exc}") from exc
 
 
 def load_session_file(session_dir: Path) -> dict[str, Any]:
@@ -125,63 +129,84 @@ def last_event_sequence(session_dir: Path) -> int:
     return 0
 
 
-def acquire_lock(session_dir: Path) -> None:
-    """Mark the session open by this process; refuse when another live process holds it."""
+class SessionLock:
+    """An OS-level exclusive lock on ``<session>/.lock``, held through an open descriptor.
 
-    holder = session_in_use(session_dir)
-    if holder is not None and holder != os.getpid():
-        raise SessionInUseError(
-            f"Session {session_dir.name[:12]} is open in another process (pid {holder})."
-        )
-    session_dir.mkdir(parents=True, exist_ok=True)
-    (session_dir / LOCK_FILE_NAME).write_text(str(os.getpid()), encoding="utf-8")
+    The operating system drops it when the holder exits, crashes or is killed, so a stale
+    lock never blocks a later resume and a recycled pid cannot keep one alive; taking it is
+    atomic, so two processes racing for one session cannot both win. The file itself is
+    never deleted (unlinking a lock file another process has just opened would let two
+    holders coexist).
+    """
 
+    def __init__(self, path: Path, handle: BinaryIO) -> None:
+        self.path = path
+        self._handle: BinaryIO | None = handle
 
-def release_lock(session_dir: Path) -> None:
-    path = session_dir / LOCK_FILE_NAME
-    try:
-        if path.read_text(encoding="utf-8").strip() == str(os.getpid()):
-            path.unlink()
-    except (OSError, ValueError):
-        pass
-
-
-def session_in_use(session_dir: Path) -> int | None:
-    """The pid of a live process holding the session, else ``None`` (a stale lock left by
-    a crash does not count)."""
-
-    try:
-        pid = int((session_dir / LOCK_FILE_NAME).read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return None
-    return pid if _alive(pid) else None
-
-
-def _alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    if sys.platform == "win32":
-        import ctypes
-
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        query_limited_information, still_active = 0x1000, 259
-        handle = kernel32.OpenProcess(query_limited_information, False, pid)
-        if not handle:
-            return False
+    @classmethod
+    def acquire(cls, session_dir: Path) -> SessionLock:
+        session_dir.mkdir(parents=True, exist_ok=True)
+        path = session_dir / LOCK_FILE_NAME
+        handle = path.open("a+b")
         try:
-            code = ctypes.c_ulong()
-            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-                return False
-            return code.value == still_active
-        finally:
-            kernel32.CloseHandle(handle)
-    try:
-        os.kill(pid, 0)  # POSIX: signal 0 only checks that the process exists
-    except ProcessLookupError:
+            _lock(handle)
+        except OSError as exc:
+            handle.close()
+            raise SessionInUseError(
+                f"Session {session_dir.name[:12]} is open in another AutoBrowser process "
+                f"(lock {path})."
+            ) from exc
+        return cls(path, handle)
+
+    @property
+    def held(self) -> bool:
+        return self._handle is not None
+
+    def release(self) -> None:
+        handle, self._handle = self._handle, None
+        if handle is None:
+            return
+        try:
+            _unlock(handle)
+        except OSError:
+            pass
+        handle.close()
+
+
+def session_in_use(session_dir: Path) -> bool:
+    """Whether a session is open (in another process, or by another holder in this one)."""
+
+    if not (session_dir / LOCK_FILE_NAME).exists():
         return False
-    except PermissionError:
+    try:
+        SessionLock.acquire(session_dir).release()
+    except SessionInUseError:
         return True
-    return True
+    return False
+
+
+def _lock(handle: BinaryIO) -> None:
+    if sys.platform == "win32":
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock(handle: BinaryIO) -> None:
+    if sys.platform == "win32":
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def list_sessions(sessions_dir: Path) -> list[StoredSession]:
@@ -270,8 +295,8 @@ __all__ = [
     "RESUMED_STATE_KEYS",
     "STATE_FILE_NAME",
     "SessionInUseError",
+    "SessionLock",
     "SessionNotFoundError",
-    "acquire_lock",
     "StoredSession",
     "find_session",
     "last_event_sequence",
@@ -280,7 +305,6 @@ __all__ = [
     "load_session_file",
     "load_state",
     "load_task_records",
-    "release_lock",
     "save_state",
     "session_in_use",
 ]

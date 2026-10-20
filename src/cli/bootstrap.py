@@ -17,6 +17,7 @@ from src.cli.agent_cli import run_cli
 from src.cli.approval import ApprovalPrompt
 from src.cli.output import print_tools
 from src.cli.sessions import ResumeError, resolve_resume
+from src.harness.session_store import SessionInUseError
 from src.cli.tasks import resolve_initial_task
 from src.agent_loop.events import EventSink
 from src.agent_loop.goals import GoalLimits
@@ -152,11 +153,16 @@ def run_agent_cli(args: argparse.Namespace) -> int:
     except ResumeError as exc:
         print(f"autobrowser: {exc}", file=sys.stderr)
         return USAGE_EXIT_CODE
-    if print_mode:
-        return run_print_cli(args, ui, resume_from=resume_from)
-    if ui.frontend == "classic":
-        return run_classic_cli(args, resume_from=resume_from)
-    return run_frontend_cli(args, ui, resume_from=resume_from)
+    try:
+        if print_mode:
+            return run_print_cli(args, ui, resume_from=resume_from)
+        if ui.frontend == "classic":
+            return run_classic_cli(args, resume_from=resume_from)
+        return run_frontend_cli(args, ui, resume_from=resume_from)
+    except SessionInUseError as exc:
+        # Another process took the session between the check above and the restore.
+        print(f"autobrowser: {exc}", file=sys.stderr)
+        return USAGE_EXIT_CODE
 
 
 def run_print_cli(

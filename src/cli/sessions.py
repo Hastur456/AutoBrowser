@@ -84,6 +84,8 @@ def _choose(
         except SessionNotFoundError as exc:
             raise ResumeError(str(exc)) from exc
         if not session.resumable:
+            if not session.task_count:
+                raise ResumeError(f"Session {session.session_id[:12]} ran no task; nothing to resume.")
             raise ResumeError(
                 f"Session {session.session_id[:12]} has no saved dialogue (state.json); "
                 "it was recorded before storage.persist_state or with it switched off."
@@ -113,14 +115,16 @@ def _choose(
 def _check_usable(session_dir: Path) -> None:
     """A damaged state file or a session open elsewhere is a clean error, not a traceback."""
 
-    holder = session_in_use(session_dir)
-    if holder is not None:
-        raise ResumeError(f"Session {session_dir.name[:12]} is open in another process (pid {holder}).")
+    if session_in_use(session_dir):
+        raise ResumeError(
+            f"Session {session_dir.name[:12]} is open in another AutoBrowser process "
+            f"(lock {session_dir / '.lock'})."
+        )
     try:
         if not load_session_file(session_dir):
             raise ValueError("session.json is missing or unreadable")
         load_state(session_dir)
-    except (ValueError, OSError) as exc:
+    except (ValueError, TypeError, AttributeError, OSError) as exc:
         raise ResumeError(f"Session {session_dir.name[:12]} cannot be resumed: {exc}") from exc
 
 
