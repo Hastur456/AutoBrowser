@@ -20,11 +20,11 @@ from datetime import datetime
 from src.config import UiSettings
 from src.contracts import ApprovalResolution, ApprovalTicket
 from src.ui.feed import project_event, sanitize_text
-from src.ui.tui.commands import CommandResult, parse_command, run_command
+from src.ui.tui.commands import RESUME_PICKER, CommandResult, parse_command, run_command
 from src.ui.tui.ports import ControllerPort, RuntimeBridge, RuntimePort
 from src.ui.tui.strings import Strings
 from src.ui.tui.terminal import TerminalCaps
-from src.ui.tui.transcript import CommandOutput, Notice, Transcript
+from src.ui.tui.transcript import CommandOutput, Notice, PickerShown, Transcript
 from src.ui.views import FeedItem, SessionView
 
 _LOG = logging.getLogger("autobrowser.ui")
@@ -191,11 +191,7 @@ class PlainFrontend:
             f"AutoBrowser {view.version} · {view.model or '?'} · session {view.session_id[:8]}".replace("  ", " ")
         )
         if view.resumed:
-            self._emit(
-                Strings(self._settings.locale)(
-                    "resumed", session=view.session_id[:8], count=view.task_count
-                )
-            )
+            self._show_resumed(view)
         unsubscribe = self._runtime.submit(
             _call(lambda: self._controller.subscribe_approvals(self._events.put))
         ).result()
@@ -329,7 +325,59 @@ class PlainFrontend:
                     self._emit(f"  {line}")
             elif isinstance(message, Notice):
                 self._emit(message.text)
+            elif isinstance(message, PickerShown):
+                chosen = self._pick(message)
+                if chosen is not None and message.picker_id == RESUME_PICKER:
+                    self._resume(chosen)
+        if result.resume is not None:
+            self._resume(result.resume)
         return result
+
+    def _pick(self, picker: PickerShown) -> str | None:
+        """A numbered list and a prompt; empty input or EOF cancels."""
+
+        self._emit(picker.title)
+        for index, option in enumerate(picker.options, start=1):
+            self._emit(f"  {index}. {option.label}  {option.detail}".rstrip())
+        while True:
+            try:
+                answer = self._read("  > ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return None
+            if not answer:
+                return None
+            if answer.isdigit() and 1 <= int(answer) <= len(picker.options):
+                return picker.options[int(answer) - 1].value
+            self._emit(f"  1..{len(picker.options)}")
+
+    def _resume(self, target: str) -> None:
+        try:
+            view = self._runtime.submit(self._controller.resume(target)).result()
+        except Exception as exc:  # noqa: BLE001 - every refusal is shown, the session stays
+            self._emit(_tag("warn", str(exc).strip("'\"")))
+            return
+        self._view = view
+        self._state = PlainState()
+        self._show_resumed(view)
+
+    def _show_resumed(self, view: SessionView) -> None:
+        """The resumed session's earlier tasks and answers, then a one-line notice."""
+
+        past = self._runtime.submit(_call(self._controller.past_tasks)).result()
+        for task in past:
+            self._emit(f"{PROMPT}{task.task}")
+            outcome = FeedItem(
+                kind="outcome",
+                event_type=f"goal.{task.status}",
+                status=task.status,
+                text=task.final_answer,
+                turns=task.turns,
+            )
+            for line in format_item(outcome, PlainState(), self._settings):
+                self._emit(line)
+        self._emit(
+            Strings(self._settings.locale)("resumed", session=view.session_id[:8], count=view.task_count)
+        )
 
     def _settled(self) -> bool:
         """No task runs and nothing is left in the queue to show."""

@@ -408,3 +408,32 @@ def test_browser_state_of_the_controller_is_localized() -> None:
     assert "браузер    выкл." in banner
     odd = SessionView(session_id="abcd1234", model="m", browser="connecting")
     assert "connecting" in render_status(odd, Transcript(), width=80, caps=terminal, theme=theme, settings=SETTINGS, now=T0)
+
+
+def test_the_resume_list_scrolls_around_the_selection_and_ages_read_naturally() -> None:
+    from src.ui.tui.commands import resume_picker
+    from src.ui.tui.strings import Strings
+    from src.ui.tui.transcript import KeyAction, PickerShown
+    from src.ui.views import StoredSessionView
+
+    sessions = [
+        StoredSessionView(f"{n:04d}abcdef00", T0 - timedelta(minutes=n * 90), n, f"задача {n}")
+        for n in range(1, 21)
+    ]
+    picker = resume_picker(sessions, Strings("ru"), now=T0)
+    assert picker.options[0].label == "0001abcd · 1 ч назад · 1 задача"
+    assert picker.options[19].label == "0020abcd · 1 дн назад · 20 задач"
+    assert picker.options[0].detail == "задача 1"
+
+    terminal = caps(80)
+    theme = Theme.resolve(SETTINGS, terminal)
+    transcript, _ = reduce(Transcript(), picker)
+    for _ in range(15):
+        transcript, _ = reduce(transcript, KeyAction("picker_down"))
+    lines = render_live(transcript, width=80, caps=terminal, theme=theme, settings=SETTINGS, now=T0).splitlines()
+
+    assert lines[0] == "▌ Продолжить сессию"
+    assert lines[-1].startswith("▌ ↑↓ выбрать · enter — открыть")
+    assert any(line.startswith("▌ ❯ 16. 0016abcd") for line in lines)
+    assert len(lines) <= SETTINGS.live_max_lines + 2  # window + the "…" markers
+    assert not any("1. 0001abcd" in line for line in lines)  # scrolled past the top

@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal, Protocol
 
-from src.ui.views import FeedItem
+from src.ui.views import FeedItem, PastTask
 
 BlockKind = Literal[
     "banner",
@@ -25,11 +25,14 @@ BlockKind = Literal[
     "approval",
     "outcome",
     "command_output",
+    "picker",
 ]
 BlockState = Literal["live", "frozen"]
 Detail = Literal["compact", "verbose"]
 NoticeLevel = Literal["info", "warn", "error"]
-KeyActionName = Literal["toggle_detail", "toggle_plan", "approval_up", "approval_down"]
+KeyActionName = Literal[
+    "toggle_detail", "toggle_plan", "approval_up", "approval_down", "picker_up", "picker_down"
+]
 
 #: Feed kinds that belong to the current call block.
 _CALL_KINDS = frozenset(
@@ -128,6 +131,38 @@ class ApprovalClosed:
 
 
 @dataclass(frozen=True)
+class PickerOption:
+    """One choice of a picker: ``value`` is what choosing it acts on."""
+
+    value: str
+    label: str
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class PickerShown:
+    """Open a choice list in the live zone (``/resume`` without an id); ``picker_id`` says
+    what Enter acts on."""
+
+    picker_id: str
+    title: str
+    options: tuple[PickerOption, ...]
+
+
+@dataclass(frozen=True)
+class PickerClosed:
+    picker_id: str
+
+
+@dataclass(frozen=True)
+class PastConversation:
+    """Replay a resumed session's finished tasks into the scrollback: the task as the
+    user's line, then its outcome."""
+
+    tasks: tuple[PastTask, ...]
+
+
+@dataclass(frozen=True)
 class KeyAction:
     name: KeyActionName
 
@@ -142,6 +177,9 @@ UiMessage = (
     | TaskSettled
     | ApprovalShown
     | ApprovalClosed
+    | PickerShown
+    | PickerClosed
+    | PastConversation
     | KeyAction
 )
 
@@ -163,8 +201,11 @@ class Block:
     missed: int = 0
     ticket: ApprovalTicketView | None = None
     resolution: ApprovalResolutionView | None = None
-    #: Approval cards: index into :func:`approval_choices` of the card.
+    #: Approval cards: index into :func:`approval_choices`; pickers: into ``options``.
     choice: int = 0
+    #: Picker blocks: what the list is for and its choices.
+    picker_id: str = ""
+    options: tuple[PickerOption, ...] = ()
     #: Plan blocks: the steps and the index of the active one.
     steps: tuple[str, ...] = ()
     step_statuses: tuple[str, ...] = ()
@@ -234,7 +275,41 @@ def reduce(transcript: Transcript, message: UiMessage) -> tuple[Transcript, list
         return replace(transcript, live=(*transcript.live, block)), []
     if isinstance(message, ApprovalClosed):
         return _close_approval(transcript, message.resolution)
+    if isinstance(message, PickerShown):
+        kept = tuple(b for b in transcript.live if b.kind != "picker")
+        transcript, block = _new_block(
+            replace(transcript, live=kept),
+            "picker",
+            text=message.title,
+            picker_id=message.picker_id,
+            options=message.options,
+        )
+        return replace(transcript, live=(*transcript.live, block)), []
+    if isinstance(message, PickerClosed):
+        live = tuple(
+            b for b in transcript.live if not (b.kind == "picker" and b.picker_id == message.picker_id)
+        )
+        return replace(transcript, live=live), []
+    if isinstance(message, PastConversation):
+        return _replay_past(transcript, message.tasks)
     return _reduce_key(transcript, message), []
+
+
+def _replay_past(transcript: Transcript, tasks: tuple[PastTask, ...]) -> tuple[Transcript, list[Block]]:
+    frozen: list[Block] = []
+    for past in tasks:
+        transcript, user = _new_block(transcript, "user", state="frozen", text=past.task)
+        outcome_item = FeedItem(
+            kind="outcome",
+            event_type=f"goal.{past.status}",
+            status=past.status,
+            text=past.final_answer,
+            turns=past.turns,
+            task=past.task,
+        )
+        transcript, outcome = _new_block(transcript, "outcome", state="frozen", items=(outcome_item,))
+        frozen.extend((user, outcome))
+    return transcript, frozen
 
 
 def _reduce_feed(transcript: Transcript, item: FeedItem) -> tuple[Transcript, list[Block]]:
@@ -378,6 +453,12 @@ def _reduce_key(transcript: Transcript, action: KeyAction) -> Transcript:
         return replace(transcript, detail=detail, live=live)
     if action.name == "toggle_plan":
         return replace(transcript, show_plan=not transcript.show_plan)
+    if action.name in ("picker_up", "picker_down"):
+        picker = transcript.block("picker")
+        if picker is None or not picker.options:
+            return transcript
+        step = -1 if action.name == "picker_up" else 1
+        return _swap(transcript, picker, replace(picker, choice=(picker.choice + step) % len(picker.options)))
     card = transcript.block("approval")
     if card is None:
         return transcript
@@ -425,6 +506,10 @@ def _swap(transcript: Transcript, old: Block, new: Block) -> Transcript:
 __all__ = [
     "APPROVAL_CHOICES",
     "ApprovalClosed",
+    "PastConversation",
+    "PickerClosed",
+    "PickerOption",
+    "PickerShown",
     "ApprovalResolutionView",
     "ApprovalShown",
     "ApprovalTicketView",

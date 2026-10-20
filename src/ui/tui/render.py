@@ -108,7 +108,7 @@ def render_live(
         text = _to_text(ctx, _block_renderables(ctx, block, now))
         if not text:
             continue
-        (card if block.kind == "approval" else others).extend(text.split("\n"))
+        (card if block.kind in ("approval", "picker") else others).extend(text.split("\n"))
     spinner: list[str] = []
     if transcript.task is not None:
         spinner = [_to_text(ctx, [spinner_line(ctx, transcript.task, now, turn_cap)])]
@@ -139,7 +139,41 @@ def _block_renderables(
         return _outcome(ctx, block)
     if block.kind == "command_output":
         return _command_output(ctx, block)
+    if block.kind == "picker":
+        return _picker(ctx, block)
     return [_notice(ctx, block)]
+
+
+def _picker(ctx: RenderContext, block: Block) -> list[RenderableType]:
+    """A choice list in the live zone: title, a window of options around the selected one,
+    and the key hint. Like an approval card it is never cut by the live zone."""
+
+    theme, glyphs = ctx.theme, ctx.theme.glyphs
+    bar = Text(f"{glyphs.bar} ", style=theme.style("accent"))
+    head = bar.copy()
+    head.append(block.text, style=theme.style("plan"))
+    rows: list[RenderableType] = [_fitted(head, ctx)]
+    options = block.options
+    # Title and hint take two lines; the rest of the live zone shows options.
+    window = max(ctx.settings.live_max_lines - 2, 1)
+    first = min(max(block.choice - window // 2, 0), max(len(options) - window, 0))
+    if first:
+        rows.append(_fitted(bar + Text(f"  {glyphs.ellipsis}", style=theme.style("muted")), ctx))
+    for index in range(first, min(first + window, len(options))):
+        option = options[index]
+        selected = index == block.choice
+        line = bar.copy()
+        line.append(f"{glyphs.pointer if selected else ' '} ", style=theme.style("accent"))
+        line.append(f"{index + 1}. {option.label}", style=theme.selected() if selected else theme.style("text"))
+        if option.detail:
+            line.append(f"  {option.detail}", style=theme.style("muted"))
+        rows.append(_fitted(line, ctx))
+    if first + window < len(options):
+        rows.append(_fitted(bar + Text(f"  {glyphs.ellipsis}", style=theme.style("muted")), ctx))
+    hint = bar.copy()
+    hint.append(ctx.strings("picker_hint"), style=theme.style("muted"))
+    rows.append(_fitted(hint, ctx))
+    return rows
 
 
 def _user(ctx: RenderContext, block: Block) -> RenderableType:

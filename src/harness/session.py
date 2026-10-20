@@ -194,6 +194,9 @@ class TaskRecord:
     status: str = "running"
     #: Agent turns of a finished task; ``None`` while running or after a failure.
     turns: int | None = None
+    #: The answer (or the block reason) a finished task ended with; ``""`` otherwise.
+    #: Front ends replay a resumed session's conversation from it.
+    final_answer: str = ""
 
 
 @dataclass
@@ -321,6 +324,10 @@ def _restored_task(record: dict[str, Any]) -> TaskRecord:
         status = "failed"
         finished = finished or started
     turns = record.get("turns")
+    answer = record.get("final_answer")
+    if not answer and isinstance(record.get("result"), dict):
+        # tasks.json written before ``final_answer`` was a field keeps it in ``result``.
+        answer = record["result"].get("final_answer")
     return TaskRecord(
         task=str(record.get("task") or ""),
         started_at=started,
@@ -329,6 +336,7 @@ def _restored_task(record: dict[str, Any]) -> TaskRecord:
         result=record.get("result"),
         status=status,
         turns=turns if isinstance(turns, int) and not isinstance(turns, bool) else None,
+        final_answer=str(answer or ""),
     )
 
 
@@ -682,6 +690,7 @@ class SessionContext:
         *,
         status: str = "completed",
         turns: int | None = None,
+        final_answer: str = "",
     ) -> None:
         """Mark a tracked task as finished with its terminal goal ``status``."""
 
@@ -689,6 +698,7 @@ class SessionContext:
         record.result = result
         record.status = status
         record.turns = turns
+        record.final_answer = final_answer
         record.finished_at = now
         self.current_task = None
         self.metadata.task_count += 1
@@ -953,6 +963,28 @@ class SessionRuntime:
         self.context = SessionContext(self.config, event_sinks=self._event_sinks)
         return self.context
 
+    async def switch_to(self, session_dir: Path) -> SessionContext:
+        """Close the current session and continue the stored one in ``session_dir``.
+
+        The stored session is restored (and locked) first, so a refusal (open elsewhere,
+        damaged files) leaves the current session untouched. Like :meth:`reset`, the extra
+        event sinks carry over and resources start lazily with the next task. Refuses while
+        a task is running.
+        """
+
+        if self.context.current_task is not None:
+            raise RuntimeError("Cannot switch sessions while a task is running.")
+        restored = SessionContext.restore(self.config, session_dir, event_sinks=self._event_sinks)
+        try:
+            await self.close()
+        except BaseException:
+            if restored.session_lock is not None:
+                restored.session_lock.release()
+            raise
+        self.agent = None
+        self.context = restored
+        return restored
+
     async def run_task(self, task: str) -> AgentLoopResult:
         """Run one user task through the session's agent."""
 
@@ -995,7 +1027,11 @@ class SessionRuntime:
             # The goal already ended: a cancellation during memory consolidation must not
             # leave the record running (it would block ``reset()`` for good).
             self.context.finish_task(
-                record, result, status=goal_result.status, turns=result.turns
+                record,
+                result,
+                status=goal_result.status,
+                turns=result.turns,
+                final_answer=str(result.final_answer or ""),
             )
         return result
 

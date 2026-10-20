@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import io
 from collections.abc import AsyncIterator, Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -22,7 +22,7 @@ from src.contracts import ApprovalResolution, ApprovalTicket
 from src.ui.runtime_loop import RuntimeLoop
 from src.ui.tui.app import TuiApp
 from src.ui.tui.terminal import TerminalCaps
-from src.ui.views import ServerView, SessionView, TaskView
+from src.ui.views import PastTask, ServerView, SessionView, StoredSessionView, TaskView
 
 T0 = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
 SETTINGS = UiSettings(refresh_hz=30.0, status_interval_seconds=60.0, escape_timeout_ms=0)
@@ -101,6 +101,23 @@ class FakeController:
         if target == "9":
             raise LookupError("Task numbers run from 1 to 1.")
         return ["#1 · completed", "goal.started: go", "1. any_tool {}"]
+
+    resumed: list[str] = []
+
+    def stored_sessions(self) -> list[StoredSessionView]:
+        return [
+            StoredSessionView("aaaa1111bbbb", T0, 3, "купи наушники"),
+            StoredSessionView("cccc2222dddd", T0, 1, "открой почту"),
+        ]
+
+    async def resume(self, target: str) -> SessionView:
+        if target == "nope":
+            raise LookupError("No stored session matches 'nope'.")
+        self.resumed.append(target)
+        return replace(self.session_view(), session_id=target, resumed=True, task_count=1)
+
+    def past_tasks(self) -> list[PastTask]:
+        return [PastTask(index=1, task="старая задача", status="completed", final_answer="старый ответ")]
 
     async def _items(self) -> AsyncIterator[Item]:
         self.queue = asyncio.Queue()
@@ -304,4 +321,43 @@ async def test_url_and_replay_commands(runtime: RuntimeLoop) -> None:
     await until(lambda: "1. any_tool {}" in h.out.getvalue())
     h.send("/replay 9\r")
     await until(lambda: "Task numbers run from 1 to 1." in h.out.getvalue())
+    assert await stop(h, task, pipe) == 0
+
+
+@pytest.mark.asyncio
+async def test_resume_opens_a_list_and_enter_switches_with_the_old_conversation(runtime: RuntimeLoop) -> None:
+    h, task, pipe = await start(runtime)
+    h.controller.resumed = []
+
+    h.send("/resume\r")
+    await until(lambda: h.app.transcript.block("picker") is not None)
+    picker = h.app.transcript.block("picker")
+    assert picker is not None and [o.value for o in picker.options] == ["aaaa1111bbbb", "cccc2222dddd"]
+
+    h.send("\x1b[B\r")  # down, Enter
+    await until(lambda: h.controller.resumed == ["cccc2222dddd"])
+    await until(lambda: "старый ответ" in h.out.getvalue() and "Продолжена сессия cccc2222" in h.out.getvalue())
+    assert h.app.transcript.block("picker") is None
+    assert h.app.view is not None and h.app.view.session_id == "cccc2222dddd"
+    assert await stop(h, task, pipe) == 0
+
+
+@pytest.mark.asyncio
+async def test_resume_list_digits_escape_and_direct_target(runtime: RuntimeLoop) -> None:
+    h, task, pipe = await start(runtime)
+    h.controller.resumed = []
+
+    h.send("/resume\r")
+    await until(lambda: h.app.transcript.block("picker") is not None)
+    h.send("\x1b")
+    await until(lambda: h.app.transcript.block("picker") is None)
+    assert h.controller.resumed == []
+
+    h.send("/resume\r")
+    await until(lambda: h.app.transcript.block("picker") is not None)
+    h.send("1")
+    await until(lambda: h.controller.resumed == ["aaaa1111bbbb"])
+
+    h.send("/resume nope\r")
+    await until(lambda: "No stored session matches 'nope'" in h.out.getvalue())
     assert await stop(h, task, pipe) == 0

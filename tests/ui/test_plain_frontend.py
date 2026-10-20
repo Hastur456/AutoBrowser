@@ -12,7 +12,7 @@ from src.contracts import ApprovalTicket
 from src.ui.plain import PlainFrontend, PlainState, format_item, format_ticket, parse_answer
 from src.ui.runtime_loop import RuntimeLoop
 from src.ui.tui.terminal import TerminalCaps
-from src.ui.views import FeedItem, SessionView, TaskView
+from src.ui.views import FeedItem, PastTask, SessionView, StoredSessionView, TaskView
 
 T0 = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
 SETTINGS = UiSettings()
@@ -243,3 +243,35 @@ def test_ticket_lines_are_sanitized() -> None:
     )
 
     assert format_ticket(hostile)[0] == "[ask]   srv/click on ab (rule x)"
+
+
+
+class ResumableController(ScriptedController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.resumed: list[str] = []
+
+    def stored_sessions(self) -> list[StoredSessionView]:
+        return [StoredSessionView("aaaa1111bbbb", T0, 2, "купи наушники")]
+
+    async def resume(self, target: str) -> SessionView:
+        self.resumed.append(target)
+        return SessionView(session_id=target, resumed=True, task_count=1)
+
+    def past_tasks(self) -> list[PastTask]:
+        return [PastTask(index=1, task="старая", status="completed", final_answer="старый ответ", turns=1)]
+
+
+def test_plain_resume_lists_sessions_and_replays_the_conversation(runtime: RuntimeLoop) -> None:
+    controller = ResumableController()
+    written: list[str] = []
+    replies = iter(["/resume", "1", "/exit"])
+    frontend = PlainFrontend(
+        controller, runtime, settings=SETTINGS, caps=plain_caps(), write=written.append, read=lambda _p: next(replies)
+    )
+
+    assert frontend.run() == 0
+    assert controller.resumed == ["aaaa1111bbbb"]
+    assert "Продолжить сессию" in written
+    assert "autobrowser> старая" in written and "старый ответ" in written
+    assert any(line.startswith("Продолжена сессия aaaa1111") for line in written)

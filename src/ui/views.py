@@ -95,6 +95,28 @@ class TaskOutcome:
 
 
 @dataclass(frozen=True)
+class StoredSessionView:
+    """A stored session ``/resume`` offers."""
+
+    session_id: str
+    last_activity: datetime | None
+    task_count: int
+    #: The text of the session's last task, for recognising it in the list.
+    last_task: str = ""
+
+
+@dataclass(frozen=True)
+class PastTask:
+    """One finished task of the current session, replayed into the feed after a resume."""
+
+    index: int
+    task: str
+    status: TaskStatus
+    final_answer: str = ""
+    turns: int | None = None
+
+
+@dataclass(frozen=True)
 class ServerView:
     """One configured MCP server as ``/mcp`` and the banner show it."""
 
@@ -149,7 +171,9 @@ __all__ = [
     "FeedKind",
     "OutcomeStatus",
     "ServerView",
+    "PastTask",
     "SessionView",
+    "StoredSessionView",
     "TaskOutcome",
     "TaskStatus",
     "TaskView",

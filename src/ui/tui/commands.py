@@ -11,18 +11,33 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Protocol
 
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.document import Document
 
+from src.config import get_settings
 from src.contracts import MemoryEntry
+from src.harness.session_store import list_sessions
 from src.ui.feed import sanitize_text
+from src.ui.tui.strings import Strings
 from src.ui.tui.ports import ControllerPort, RuntimeBridge
 from src.ui.tui.terminal import TerminalCaps
-from src.ui.tui.transcript import CommandOutput, KeyAction, Notice, StreamReset, Transcript, UiMessage
-from src.ui.views import SessionView, TaskView
+from src.ui.tui.transcript import (
+    CommandOutput,
+    KeyAction,
+    Notice,
+    PickerOption,
+    PickerShown,
+    StreamReset,
+    Transcript,
+    UiMessage,
+)
+from src.ui.views import SessionView, StoredSessionView, TaskView
+
+#: ``picker_id`` of the ``/resume`` list.
+RESUME_PICKER = "resume"
 
 THEMES = ("dark", "light", "mono")
 DETAILS = ("compact", "verbose")
@@ -34,6 +49,8 @@ class CommandResult:
     exit: bool = False
     clear: bool = False
     theme: str | None = None
+    #: ``/resume <target>``: the front end switches to that stored session.
+    resume: str | None = None
 
 
 class CommandHost(Protocol):
@@ -225,6 +242,47 @@ def _replay_targets(host: CommandHost, prefix: str) -> Sequence[str]:
     return [str(n) for n in range(1, count + 1) if str(n).startswith(prefix.strip())]
 
 
+async def _resume(host: CommandHost, args: str) -> CommandResult:
+    """``/resume <№|id>`` switches at once; ``/resume`` opens the list of stored sessions."""
+
+    target = args.strip()
+    if target:
+        return CommandResult(resume=target)
+    sessions = await host.bridge.call(host.controller.stored_sessions)
+    strings = Strings(host.locale)  # type: ignore[arg-type]
+    if not sessions:
+        return CommandResult(messages=(Notice(strings("resume_none")),))
+    return CommandResult(messages=(resume_picker(sessions, strings),))
+
+
+def resume_picker(sessions: Sequence[StoredSessionView], strings: Strings, *, now: datetime | None = None) -> PickerShown:
+    """The ``/resume`` list: id, age, task count, and the last task to recognise it by."""
+
+    moment = now or datetime.now(UTC)
+    options = []
+    for session in sessions:
+        age = (
+            strings.ago((moment - session.last_activity).total_seconds())
+            if session.last_activity is not None
+            else "-"
+        )
+        label = f"{session.session_id[:8]} · {age} · {strings.count('tasks', session.task_count)}"
+        detail = sanitize_text(session.last_task).replace("\n", " ")
+        options.append(PickerOption(value=session.session_id, label=label, detail=detail))
+    return PickerShown(picker_id=RESUME_PICKER, title=strings("resume_title"), options=tuple(options))
+
+
+def _session_ids(_host: CommandHost, prefix: str) -> Sequence[str]:
+    """Stored session ids for ``/resume <id>`` (read from the session folders)."""
+
+    word = prefix.strip()
+    return [
+        session.session_id
+        for session in list_sessions(get_settings().storage.sessions_dir)
+        if session.resumable and session.session_id.startswith(word)
+    ]
+
+
 async def _permissions(host: CommandHost, _args: str) -> CommandResult:
     view = await host.bridge.call(host.controller.session_view)
     ru = host.locale == "ru"
@@ -339,6 +397,13 @@ COMMANDS: tuple[SlashCommand, ...] = (
         complete_args=_choices(THEMES),
     ),
     SlashCommand("doctor", "/doctor", {"ru": "возможности терминала", "en": "terminal capabilities"}, _doctor),
+    SlashCommand(
+        "resume",
+        "/resume [№ | id]",
+        {"ru": "продолжить сохранённую сессию", "en": "resume a stored session"},
+        _resume,
+        complete_args=_session_ids,
+    ),
     SlashCommand("reset", "/reset", {"ru": "сбросить контекст сессии", "en": "reset the session context"}, _reset),
     SlashCommand("clear", "/clear", {"ru": "очистить экран", "en": "clear the screen"}, _clear),
     SlashCommand("exit", "/exit", {"ru": "выйти", "en": "quit"}, _exit, aliases=("quit",)),

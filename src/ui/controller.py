@@ -30,10 +30,18 @@ from src.agent_loop.replay import load_events, print_action_sequence, summarize_
 from src.browser.pages import current_page_url, page_url
 from src.config import get_settings
 from src.harness.session import SessionContext, SessionRuntime, TaskRecord
-from src.harness.session_store import EVENTS_FILE_NAME, find_session
+from src.harness.session_store import EVENTS_FILE_NAME, StoredSession, find_session, list_sessions
 from src.mcp import ConnectionState
 from src.messages import Message
-from src.ui.views import ServerView, SessionView, TaskOutcome, TaskStatus, TaskView
+from src.ui.views import (
+    PastTask,
+    ServerView,
+    SessionView,
+    StoredSessionView,
+    TaskOutcome,
+    TaskStatus,
+    TaskView,
+)
 from src.version import package_version
 
 if TYPE_CHECKING:
@@ -224,6 +232,34 @@ class SessionController:
         self._attach()
         return self.session_view()
 
+    async def resume(self, target: str) -> SessionView:
+        """Switch to a stored session by list number (as :meth:`stored_sessions` orders
+        them), id or id prefix, and continue it with its dialogue and task history.
+
+        Raises :class:`TaskBusyError` while a task runs, ``LookupError`` for an unknown,
+        current or not resumable session, ``SessionInUseError`` when another process has
+        it open, ``ValueError`` for damaged files. The current session stays as it was on
+        any refusal."""
+
+        if self.busy:
+            raise TaskBusyError("Cannot resume another session while a task is running.")
+        target = target.strip()
+        sessions_dir = get_settings().storage.sessions_dir
+        offered = self._resumable()
+        if target.isdigit() and 1 <= int(target) <= len(offered):
+            session = offered[int(target) - 1]
+        else:
+            session = find_session(sessions_dir, target)
+        if session.session_id == self._runtime.context.session_id:
+            raise LookupError(f"Session {session.session_id[:12]} is the current one.")
+        if not session.resumable:
+            raise LookupError(f"Session {session.session_id[:12]} has nothing to resume.")
+        context = await self._runtime.switch_to(session.path)
+        if self._broadcaster is not None:
+            self._broadcaster.mark_reset(context.session_id)
+        self._attach()
+        return self.session_view()
+
     def answer(self, ticket_id: str, answer: ApprovalAnswer, *, via: ApprovalVia) -> bool:
         """Answer a pending approval; thread-safe. ``False`` when it is not answerable."""
 
@@ -309,6 +345,45 @@ class SessionController:
         state["messages"] = []
         self._runtime.context.persist()
         return count
+
+    def stored_sessions(self) -> list[StoredSessionView]:
+        """Resumable stored sessions other than the current one, most recent first, at most
+        ``ui.resume_list_size`` of them."""
+
+        return [
+            StoredSessionView(
+                session_id=session.session_id,
+                last_activity=session.last_activity or session.started_at,
+                task_count=session.task_count,
+                last_task=session.last_task,
+            )
+            for session in self._resumable()
+        ]
+
+    def past_tasks(self) -> list[PastTask]:
+        """The finished tasks of the current session, for replaying its conversation."""
+
+        return [
+            PastTask(
+                index=index,
+                task=record.task,
+                status=view.status,
+                final_answer=record.final_answer,
+                turns=record.turns,
+            )
+            for index, record in enumerate(self._runtime.context.tasks, start=1)
+            if (view := _task_view(index, record)).status != "running"
+        ]
+
+    def _resumable(self) -> list[StoredSession]:
+        settings = get_settings()
+        current = self._runtime.context.session_id
+        sessions = [
+            session
+            for session in list_sessions(settings.storage.sessions_dir)
+            if session.resumable and session.session_id != current
+        ]
+        return sessions[: settings.ui.resume_list_size]
 
     def current_url(self) -> str:
         """The page the agent last saw, read from the carried state by its ``Page URL``

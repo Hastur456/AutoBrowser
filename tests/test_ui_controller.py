@@ -15,6 +15,7 @@ from src.harness.approvals import ApprovalBroker
 from src.harness.event_stream import EventBroadcaster
 from src.harness.session import SessionRuntime
 from src.messages import assistant_message, user_message
+from src.harness.session_store import SessionInUseError, SessionLock, session_in_use
 from src.ui.controller import SessionController, TaskBusyError
 from src.ui.runtime_loop import RuntimeLoop
 from tests.session_fakes import install_fake_agent
@@ -403,4 +404,69 @@ async def test_current_url_and_replay_read_the_session(monkeypatch: pytest.Monke
         await controller.replay("5")
     other = await controller.replay(runtime.context.session_id[:10])
     assert other[0].startswith(runtime.context.session_id[:12])
+    await runtime.close()
+
+
+
+@pytest.mark.asyncio
+async def test_resume_switches_to_a_stored_session_and_replays_its_tasks(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def run(request: TaskRequest) -> AgentLoopResult:
+        return native_result(final_answer=f"ответ на {request.task}")
+
+    install_fake_agent(monkeypatch, run)
+    # An earlier session with two tasks, closed.
+    first, first_runtime, _, _ = build()
+    await first.run("первая")
+    await first.run("вторая")
+    stored_id = first_runtime.context.session_id
+    await first_runtime.close()
+
+    controller, runtime, _, _ = build(with_stream=True)
+    await controller.run("текущая")
+    current_dir = runtime.context.session_dir
+    assert [s.session_id for s in controller.stored_sessions()] == [stored_id]  # not the current one
+
+    view = await controller.resume("1")
+
+    assert view.session_id == stored_id and view.resumed and view.task_count == 2
+    assert [(t.task, t.final_answer) for t in controller.past_tasks()] == [
+        ("первая", "ответ на первая"),
+        ("вторая", "ответ на вторая"),
+    ]
+    assert current_dir is not None and session_in_use(current_dir) is False  # the old one closed
+    with pytest.raises(LookupError, match="current one"):
+        await controller.resume(stored_id[:8])
+    await controller.run("продолжение")
+    assert [t.task for t in controller.task_views()] == ["первая", "вторая", "продолжение"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_resume_refuses_while_busy_and_keeps_the_session_on_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def wait_forever(_request: TaskRequest) -> AgentLoopResult:
+        await asyncio.Event().wait()
+        return native_result(final_answer="never")
+
+    install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0, native_result(final_answer="ok")))
+    other, other_runtime, _, _ = build()
+    await other.run("в другой")
+    other_id = other_runtime.context.session_id
+    other_dir = other_runtime.context.session_dir
+    await other_runtime.close()
+    lock = SessionLock.acquire(other_dir)  # type: ignore[arg-type]  # "another process"
+
+    install_fake_agent(monkeypatch, wait_forever)
+    controller, runtime, _, _ = build()
+    await controller.submit("долгая")
+    with pytest.raises(TaskBusyError):
+        await controller.resume(other_id)
+    await controller.cancel()
+
+    before = runtime.context.session_id
+    with pytest.raises(SessionInUseError):
+        await controller.resume(other_id)  # open elsewhere
+    assert runtime.context.session_id == before
+    with pytest.raises(LookupError):
+        await controller.resume("zzzz")
+    lock.release()
     await runtime.close()

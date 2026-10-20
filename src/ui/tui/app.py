@@ -42,7 +42,13 @@ from prompt_toolkit.shortcuts import print_formatted_text
 from src.config import UiSettings
 from src.contracts import ApprovalResolution, ApprovalTicket
 from src.ui.feed import project_event
-from src.ui.tui.commands import CommandResult, SlashCompleter, parse_command, run_command
+from src.ui.tui.commands import (
+    RESUME_PICKER,
+    CommandResult,
+    SlashCompleter,
+    parse_command,
+    run_command,
+)
 from src.ui.tui.ports import ControllerPort, RuntimeBridge, RuntimePort, StreamItemView
 from src.ui.tui.pump import PumpLook, RenderPump
 from src.ui.tui.render import render_banner, render_live, render_rule, render_status
@@ -55,6 +61,8 @@ from src.ui.tui.transcript import (
     KeyAction,
     Notice,
     StreamGap,
+    PastConversation,
+    PickerClosed,
     StreamReset,
     TaskSettled,
     Transcript,
@@ -205,13 +213,7 @@ class TuiApp:
                 )
             )
         if self._view.resumed:
-            self._pump.post(
-                Notice(
-                    Strings(self._settings.locale)(
-                        "resumed", session=self._view.session_id[:8], count=self._view.task_count
-                    )
-                )
-            )
+            await self._show_resumed(self._view)
         self._unsubscribe = await self._bridge.call(
             lambda: self._controller.subscribe_approvals(self._on_approval)
         )
@@ -371,8 +373,54 @@ class TuiApp:
             self._pump.set_look(PumpLook(self._caps, self._theme, settings))
         if result.clear:
             self._app.renderer.clear()
+        if result.resume is not None:
+            asyncio.ensure_future(self._resume(result.resume))
         if result.exit:
             self._app.exit(result=self._exit_code)
+
+    async def _resume(self, target: str) -> None:
+        """Switch to a stored session and replay its conversation (``/resume``)."""
+
+        if self._busy():
+            text = (
+                "дождитесь окончания задачи или прервите её (Esc)"
+                if self.locale == "ru"
+                else "wait for the task to finish or interrupt it (Esc)"
+            )
+            self._pump.post(Notice(text, "warn"))
+            return
+        try:
+            view = await self._bridge.run(lambda: self._controller.resume(target))
+        except Exception as exc:  # noqa: BLE001 - every refusal is shown, the session stays
+            self._pump.post(Notice(str(exc).strip("'\""), "warn"))
+            return
+        self._view = view
+        self._pump.post(StreamReset())
+        await self._show_resumed(view)
+        self.invalidate()
+
+    async def _show_resumed(self, view: SessionView) -> None:
+        """The resumed session's earlier tasks and answers, then a one-line notice."""
+
+        past = await self._bridge.call(self._controller.past_tasks)
+        if past:
+            self._pump.post(PastConversation(tuple(past)))
+        self._pump.post(
+            Notice(Strings(self._settings.locale)("resumed", session=view.session_id[:8], count=view.task_count))
+        )
+
+    def _choose(self, index: int | None = None) -> None:
+        """Enter (or a digit) on an open picker."""
+
+        picker = self.transcript.block("picker")
+        if picker is None or not picker.options:
+            return
+        choice = picker.choice if index is None else index
+        if not 0 <= choice < len(picker.options):
+            return
+        self._pump.apply([PickerClosed(picker.picker_id)])
+        if picker.picker_id == RESUME_PICKER:
+            asyncio.ensure_future(self._resume(picker.options[choice].value))
 
     def _key(self, action: KeyAction) -> None:
         """Apply a key action at once: the next key (Enter on a card) must see its effect."""
@@ -473,7 +521,33 @@ class TuiApp:
     def _key_bindings(self) -> KeyBindings:
         kb = KeyBindings()
         card_open = Condition(lambda: self.transcript.block("approval") is not None)
-        no_card = ~card_open
+        # An approval card wins over an open picker.
+        picker_open = Condition(lambda: self.transcript.block("picker") is not None) & ~card_open
+        no_card = ~card_open & ~picker_open
+
+        @kb.add("up", filter=picker_open)
+        def _(event: KeyPressEvent) -> None:
+            self._key(KeyAction("picker_up"))
+
+        @kb.add("down", filter=picker_open)
+        def _(event: KeyPressEvent) -> None:
+            self._key(KeyAction("picker_down"))
+
+        @kb.add("enter", filter=picker_open)
+        def _(event: KeyPressEvent) -> None:
+            self._choose()
+
+        @kb.add("escape", filter=picker_open, eager=True)
+        def _(event: KeyPressEvent) -> None:
+            picker = self.transcript.block("picker")
+            if picker is not None:
+                self._pump.apply([PickerClosed(picker.picker_id)])
+
+        for number in range(1, 10):
+
+            @kb.add(str(number), filter=picker_open)
+            def _(event: KeyPressEvent, number: int = number) -> None:
+                self._choose(number - 1)
 
         @kb.add("enter", filter=no_card & ~has_completions)
         def _(event: KeyPressEvent) -> None:

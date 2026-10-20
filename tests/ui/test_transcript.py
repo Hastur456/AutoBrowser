@@ -11,6 +11,10 @@ from src.ui.tui.transcript import (
     KeyAction,
     Notice,
     StreamGap,
+    PastConversation,
+    PickerClosed,
+    PickerOption,
+    PickerShown,
     StreamReset,
     TaskSettled,
     Transcript,
@@ -18,7 +22,7 @@ from src.ui.tui.transcript import (
     approval_choices,
     reduce,
 )
-from src.ui.views import FeedItem
+from src.ui.views import FeedItem, PastTask
 
 T0 = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
 
@@ -225,3 +229,41 @@ def test_task_settled_ends_a_task_whose_outcome_was_lost() -> None:
     assert settled.task is None and settled.live == ()
     assert sorted(b.kind for b in frozen) == ["call", "plan"]
     assert run([TaskSettled()], settled) == (settled, [])
+
+
+def test_a_picker_opens_moves_wraps_and_closes() -> None:
+    options = (PickerOption("a", "A"), PickerOption("b", "B"), PickerOption("c", "C"))
+    transcript, frozen = run([PickerShown("resume", "Pick", options)])
+    picker = transcript.block("picker")
+    assert frozen == [] and picker is not None and picker.choice == 0
+
+    transcript, _ = run([KeyAction("picker_up")], transcript)
+    assert transcript.block("picker").choice == 2  # type: ignore[union-attr]
+    transcript, _ = run([KeyAction("picker_down"), KeyAction("picker_down")], transcript)
+    assert transcript.block("picker").choice == 1  # type: ignore[union-attr]
+
+    transcript, _ = run([PickerShown("resume", "Again", options[:1])], transcript)
+    assert [b.kind for b in transcript.live].count("picker") == 1
+    transcript, frozen = run([PickerClosed("resume")], transcript)
+    assert transcript.block("picker") is None and frozen == []
+
+
+def test_a_past_conversation_freezes_each_task_and_its_outcome() -> None:
+    transcript, frozen = run(
+        [
+            PastConversation(
+                (
+                    PastTask(index=1, task="первая", status="completed", final_answer="ответ", turns=2),
+                    PastTask(index=2, task="вторая", status="blocked", final_answer="Blocked: нет"),
+                )
+            )
+        ]
+    )
+
+    assert [(b.kind, b.text) for b in frozen if b.kind == "user"] == [("user", "первая"), ("user", "вторая")]
+    outcomes = [b.items[0] for b in frozen if b.kind == "outcome"]
+    assert [(o.status, o.text, o.turns) for o in outcomes] == [
+        ("completed", "ответ", 2),
+        ("blocked", "Blocked: нет", None),
+    ]
+    assert transcript.live == ()

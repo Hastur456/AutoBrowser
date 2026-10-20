@@ -54,6 +54,13 @@ _STRINGS: dict[str, dict[str, str]] = {
         "help": "? помощь",
         "gap": "пропущено событий: {n}",
         "resumed": "Продолжена сессия {session} · задач: {count} · /tasks — история",
+        "resume_title": "Продолжить сессию",
+        "resume_none": "нет других сессий, которые можно продолжить",
+        "picker_hint": "↑↓ выбрать · enter — открыть · 1–9 — сразу · esc — отмена",
+        "ago_now": "только что",
+        "ago_minutes": "{n} мин назад",
+        "ago_hours": "{n} ч назад",
+        "ago_days": "{n} дн назад",
         "hook": "hook",
         "permission": "разрешение",
         "guard": "guard",
@@ -105,6 +112,13 @@ _STRINGS: dict[str, dict[str, str]] = {
         "help": "? help",
         "gap": "{n} events missed",
         "resumed": "Resumed session {session} · {count} tasks · /tasks for the history",
+        "resume_title": "Resume a session",
+        "resume_none": "no other session to resume",
+        "picker_hint": "↑↓ select · enter to open · 1–9 directly · esc to cancel",
+        "ago_now": "just now",
+        "ago_minutes": "{n} min ago",
+        "ago_hours": "{n} h ago",
+        "ago_days": "{n} d ago",
         "hook": "hook",
         "permission": "permission",
         "guard": "guard",
@@ -126,8 +140,12 @@ _BROWSER_STATES: dict[str, dict[str, str]] = {
 
 #: Plural forms per locale: ru ``(1, 2-4, 5+)``, en ``(1, other)``.
 _PLURALS: dict[str, dict[str, tuple[str, ...]]] = {
-    "ru": {"turns": ("ход", "хода", "ходов"), "calls": ("вызов", "вызова", "вызовов")},
-    "en": {"turns": ("turn", "turns"), "calls": ("call", "calls")},
+    "ru": {
+        "turns": ("ход", "хода", "ходов"),
+        "calls": ("вызов", "вызова", "вызовов"),
+        "tasks": ("задача", "задачи", "задач"),
+    },
+    "en": {"turns": ("turn", "turns"), "calls": ("call", "calls"), "tasks": ("task", "tasks")},
 }
 
 
@@ -151,6 +169,18 @@ class Strings:
         """The controller's browser state in the locale; unknown states unchanged."""
 
         return self._browser_states.get(state, state)
+
+    def ago(self, seconds: float) -> str:
+        """``5 мин назад`` / ``3 h ago`` for an age in seconds."""
+
+        minutes = int(max(seconds, 0) // 60)
+        if minutes < 1:
+            return self("ago_now")
+        if minutes < 60:
+            return self("ago_minutes", n=minutes)
+        if minutes < 24 * 60:
+            return self("ago_hours", n=minutes // 60)
+        return self("ago_days", n=minutes // (24 * 60))
 
     def count(self, key: str, n: int) -> str:
         """``n`` with the plural form of ``key`` (``"4 вызова"``, ``"1 turn"``)."""
