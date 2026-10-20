@@ -13,6 +13,7 @@ This module reads and writes files only; it builds no session objects (``session
 
 from __future__ import annotations
 
+import errno
 import json
 import sys
 from collections.abc import Mapping
@@ -152,6 +153,8 @@ class SessionLock:
             _lock(handle)
         except OSError as exc:
             handle.close()
+            if exc.errno not in _LOCK_CONFLICT_ERRNOS:
+                raise  # the file system cannot lock (e.g. NFS without lockd): say so
             raise SessionInUseError(
                 f"Session {session_dir.name[:12]} is open in another AutoBrowser process "
                 f"(lock {path})."
@@ -183,6 +186,11 @@ def session_in_use(session_dir: Path) -> bool:
     except SessionInUseError:
         return True
     return False
+
+
+#: ``errno`` values that mean "somebody else holds the lock" (Windows reports EACCES or
+#: EDEADLK from ``msvcrt.locking``, POSIX EWOULDBLOCK/EAGAIN from ``flock``).
+_LOCK_CONFLICT_ERRNOS = frozenset({errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK, errno.EDEADLK})
 
 
 def _lock(handle: BinaryIO) -> None:
@@ -268,9 +276,11 @@ def _encode(key: str, value: object) -> object:
 
 
 def _decode(key: str, value: object) -> object:
-    if key == "messages" and isinstance(value, list):
-        return [message_from_dict(item) for item in value if isinstance(item, dict)]
-    return value
+    if key != "messages":
+        return value
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        raise ValueError("messages must be a list of message objects")
+    return [message_from_dict(item) for item in value]
 
 
 def _read_json(path: Path, *, default: Any) -> Any:

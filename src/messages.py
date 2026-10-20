@@ -141,24 +141,29 @@ def message_to_dict(message: Message) -> dict[str, Any]:
 
 
 def message_from_dict(data: dict[str, Any]) -> Message:
-    """The inverse of :func:`message_to_dict`; raises ``ValueError`` on an unknown role."""
+    """The inverse of :func:`message_to_dict`; raises ``ValueError`` on a malformed message."""
 
     role = data.get("role")
     if role not in ("system", "user", "assistant", "tool"):
         raise ValueError(f"Unknown message role: {role!r}")
-    calls = tuple(
-        ToolCall(
-            id=str(call.get("id") or ""),
-            name=str(call.get("name") or ""),
-            arguments=dict(call.get("arguments") or {}),
+    for key in ("content", "name", "tool_call_id"):
+        if data.get(key) is not None and not isinstance(data[key], str):
+            raise ValueError(f"Message {key} must be a string, got {type(data[key]).__name__}")
+    raw_calls = data.get("tool_calls") or []
+    if not isinstance(raw_calls, list) or not all(isinstance(call, dict) for call in raw_calls):
+        raise ValueError("Message tool_calls must be a list of objects")
+    calls = []
+    for call in raw_calls:
+        arguments = call.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            raise ValueError("Tool call arguments must be an object")
+        calls.append(
+            ToolCall(id=str(call.get("id") or ""), name=str(call.get("name") or ""), arguments=dict(arguments))
         )
-        for call in data.get("tool_calls") or ()
-        if isinstance(call, dict)
-    )
     return Message(
         role=role,
-        content=str(data.get("content") or ""),
+        content=data.get("content") or "",
         name=data.get("name"),
         tool_call_id=data.get("tool_call_id"),
-        tool_calls=calls,
+        tool_calls=tuple(calls),
     )

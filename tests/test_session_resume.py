@@ -289,9 +289,75 @@ async def test_a_resumed_session_holds_its_lock_until_close_and_never_writes_sta
 
 
 def test_a_malformed_state_file_is_a_value_error(tmp_path: Path) -> None:
-    for content in ("[]", "null", '{"version": 1, "state": {"messages": [{"role": "user", "tool_calls": [{"arguments": 5}]}]}}'):
+    for content in (
+        "[]",
+        "null",
+        '{"version": 1, "state": {"messages": [{"role": "user", "tool_calls": [{"arguments": 5}]}]}}',
+        '{"version": 1, "state": {"messages": "hello"}}',
+        '{"version": 1, "state": {"messages": [{"role": "user", "name": 5}]}}',
+    ):
         folder = tmp_path / str(abs(hash(content)))
         folder.mkdir()
         (folder / STATE_FILE_NAME).write_text(content, encoding="utf-8")
         with pytest.raises(ValueError):
             load_state(folder)
+
+
+
+def test_a_failed_restore_releases_the_lock(tmp_path: Path) -> None:
+    folder = _store(tmp_path / "sessions", "torn")
+    (folder / STATE_FILE_NAME).write_text('{"version": 1, "state": {"messages": "x"}}', encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        runtime(resume_from=folder)
+
+    assert session_in_use(folder) is False
+
+
+@pytest.mark.asyncio
+async def test_a_new_session_takes_its_lock_at_start_and_records_itself_without_tasks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_fake_agent(monkeypatch, lambda _request: _done())
+    session = runtime()
+    assert session.context.session_lock is None
+
+    await session.start()
+    session_dir = session.context.session_dir
+    assert session_dir is not None and session_in_use(session_dir) is True
+    with pytest.raises(SessionInUseError):
+        SessionLock.acquire(session_dir)
+    await session.close()
+
+    assert session_in_use(session_dir) is False
+    listed = list_sessions(get_settings().storage.sessions_dir)
+    assert [(s.session_id, s.task_count, s.resumable) for s in listed] == [
+        (session.context.session_id, 0, False)
+    ]
+
+
+def test_persist_writes_nothing_without_the_lock(tmp_path: Path) -> None:
+    from src.harness.session import SessionContext
+
+    context = SessionContext(make_config(), session_dir=tmp_path / "unlocked")
+    (tmp_path / "unlocked").mkdir()
+    context.persist()
+
+    assert list((tmp_path / "unlocked").iterdir()) == []
+
+
+def test_a_file_system_that_cannot_lock_is_not_reported_as_in_use(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import errno
+
+    import src.harness.session_store as store
+
+    def no_locks(_handle: object) -> None:
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    monkeypatch.setattr(store, "_lock", no_locks)
+
+    with pytest.raises(OSError, match="No locks available") as raised:
+        SessionLock.acquire(tmp_path / "nfs")
+    assert not isinstance(raised.value, SessionInUseError)

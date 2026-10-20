@@ -784,18 +784,14 @@ class SessionContext:
 
     def persist(self) -> None:
         """Persist session metadata, task records and the carried state (``state.json``)
-        under the session directory; a session that never started and ran nothing leaves
-        no record behind."""
+        under the session directory.
 
-        if self.session_lock is None or not self.session_lock.held:
-            return  # only the holder of the session's lock writes its files
-        if not self.tasks and self.resumed_from_sequence is None:
-            return  # a session that ran nothing (or failed to start) leaves no record
-        if self.session_dir is None:
-            self.session_dir = get_settings().storage.session_dir(
-                self.session_id
-            ).resolve()
-            self.session_dir.mkdir(parents=True, exist_ok=True)
+        Only the holder of the session's lock writes: a session that never started holds
+        none and leaves no record; a started one without tasks is recorded but not
+        resumable (``list_sessions`` requires a task)."""
+
+        if self.session_lock is None or not self.session_lock.held or self.session_dir is None:
+            return
         snapshot = self.snapshot()
         _write_json(self.session_dir / "session.json", snapshot)
         _write_json(self.session_dir / "tasks.json", snapshot["tasks"])
@@ -826,10 +822,12 @@ class SessionContext:
         self.current_task = None
         self.metadata.last_activity = datetime.now(UTC)
         self.initialized = False
-        self.persist()
-        if self.session_lock is not None:
-            self.session_lock.release()
-            self.session_lock = None
+        try:
+            self.persist()
+        finally:
+            if self.session_lock is not None:
+                self.session_lock.release()
+                self.session_lock = None
         self.events.emit("session.closed", self)
 
     def _close_child_stderr(self) -> None:

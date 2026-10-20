@@ -22,9 +22,10 @@ sequenceDiagram
 
   User->>CLI: Start, optionally --continue / --resume <id>
   alt resume
-    CLI->>Files: Pick the session (has tasks + state.json, not locked by a live pid)
+    CLI->>Files: Pick the session (has tasks + state.json, its .lock not held)
     CLI->>Session: SessionRuntime(resume_from=dir)
     Session->>Context: SessionContext.restore(dir)
+    Context->>Files: Take the OS lock on .lock (held until close; refused if held)
     Context->>Files: Read session.json, tasks.json, state.json (dialogue only), last event sequence
   else new session
     CLI->>Session: SessionRuntime(config)
@@ -32,7 +33,7 @@ sequenceDiagram
   Note over Session,Context: Resources start lazily with the first task
   User->>Session: Submit task
   Session->>Context: initialize()
-  Context->>Files: Take .lock (pid); refuse a session another live process holds
+  Context->>Files: New session: take the OS lock on .lock (a resumed one already holds it)
   Context->>Context: Workspace, model, tools, telemetry; events continue the stored sequence
   opt Browser tools enabled
     Context->>MCP: Start Chrome/CDP and load tools
@@ -59,7 +60,7 @@ sequenceDiagram
   CLI->>Session: SessionController.shutdown(bounded) then close()
   Session->>Context: close()
   Context->>MCP: Close MCP, then Chrome
-  Context->>Files: Persist (a never-started session writes nothing), release .lock
+  Context->>Files: Persist (only the lock holder writes; a never-started session holds none), release the lock
 ```
 
 A resumed session carries the dialogue only: page state (observation, kept snapshots, last
