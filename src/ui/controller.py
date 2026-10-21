@@ -264,17 +264,19 @@ class SessionController:
         return self.session_view()
 
     def _pick_session(self, target: str) -> StoredSession:
-        """An id or unambiguous id prefix first; only then a number of the list (ids are hex,
-        so a prefix may be all digits)."""
+        """A number within the offered list picks that entry (only an exact id beats it);
+        anything else is an id or an unambiguous id prefix. Ids are hex, so a one-digit
+        prefix is common: trying it first would make ``/resume 1`` depend on the ids."""
 
         sessions_dir = get_settings().storage.sessions_dir
-        try:
-            session = find_session(sessions_dir, target)
-        except LookupError:
-            offered = self._resumable()
-            if not (target.isdigit() and 1 <= int(target) <= len(offered)):
-                raise
+        offered = self._resumable()
+        exact = [session for session in offered if session.session_id == target]
+        if exact:
+            session = exact[0]
+        elif target.isdigit() and 1 <= int(target) <= len(offered):
             session = offered[int(target) - 1]
+        else:
+            session = find_session(sessions_dir, target)
         if session.session_id == self._runtime.context.session_id:
             raise LookupError(f"Session {session.session_id[:12]} is the current one.")
         if not session.resumable:

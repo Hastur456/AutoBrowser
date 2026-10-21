@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,7 @@ from src.harness.approvals import ApprovalBroker
 from src.harness.event_stream import EventBroadcaster
 from src.harness.session import SessionRuntime
 from src.messages import assistant_message, user_message
-from src.harness.session_store import SessionInUseError, SessionLock, session_in_use
+from src.harness.session_store import SessionInUseError, SessionLock, save_state, session_in_use
 from src.ui.controller import SessionController, TaskBusyError
 from src.ui.runtime_loop import RuntimeLoop
 from tests.session_fakes import install_fake_agent
@@ -547,4 +548,29 @@ async def test_replay_reads_an_all_digit_id_prefix_as_a_session(monkeypatch: pyt
     assert lines[0].startswith("1234567890ab")
     with pytest.raises(LookupError, match="from 1 to 1"):
         await controller.replay("7")
+    await runtime.close()
+
+
+
+@pytest.mark.asyncio
+async def test_a_list_number_beats_a_digit_id_prefix_and_an_exact_id_beats_a_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0, native_result(final_answer="ok")))
+    sessions_dir = get_settings().storage.sessions_dir
+    for session_id, when in (("2aaaaaaaaaaaaaaa", "2026-10-20T10:00:00+00:00"), ("1bbbbbbbbbbbbbbb", "2026-10-19T10:00:00+00:00")):
+        folder = sessions_dir / session_id
+        folder.mkdir(parents=True)
+        (folder / "session.json").write_text(
+            json.dumps({"session_id": session_id, "metadata": {"last_activity": when}}), encoding="utf-8"
+        )
+        (folder / "tasks.json").write_text(json.dumps([{"task": "t", "status": "completed"}]), encoding="utf-8")
+        save_state(folder, session_id, {"messages": []})
+
+    controller, runtime, _, _ = build()
+    # The list is newest first: 1 -> "2aaa...", 2 -> "1bbb..."; "1" is also the only prefix of "1bbb...".
+    view = await controller.resume("1")
+    assert view.session_id == "2aaaaaaaaaaaaaaa"
+    view = await controller.resume("1bbbbbbbbbbbbbbb")
+    assert view.session_id == "1bbbbbbbbbbbbbbb"
     await runtime.close()

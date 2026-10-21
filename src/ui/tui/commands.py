@@ -49,6 +49,8 @@ class CommandResult:
     theme: str | None = None
     #: ``/resume <target>``: the front end switches to that stored session.
     resume: str | None = None
+    #: The stored sessions changed (``/reset`` stored the previous one): refresh caches.
+    refresh_sessions: bool = False
 
 
 class CommandHost(Protocol):
@@ -214,7 +216,7 @@ async def _memory(host: CommandHost, _args: str) -> CommandResult:
 async def _reset(host: CommandHost, _args: str) -> CommandResult:
     await host.bridge.run(host.controller.reset)
     text = "контекст сессии сброшен" if host.locale == "ru" else "session context reset"
-    return CommandResult(messages=(StreamReset(), Notice(text)))
+    return CommandResult(messages=(StreamReset(), Notice(text)), refresh_sessions=True)
 
 
 async def _url(host: CommandHost, _args: str) -> CommandResult:

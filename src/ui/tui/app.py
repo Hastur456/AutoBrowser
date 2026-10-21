@@ -63,6 +63,7 @@ from src.ui.tui.transcript import (
     StreamGap,
     PastConversation,
     PickerClosed,
+    PickerShown,
     StreamReset,
     TaskSettled,
     Transcript,
@@ -374,6 +375,8 @@ class TuiApp:
 
     def _apply_command(self, result: CommandResult) -> None:
         for message in result.messages:
+            if isinstance(message, PickerShown) and self._buffer.text:
+                continue  # typing started before the list arrived: the text wins
             self._pump.post(message)
         if result.theme is not None:
             settings = self._settings.model_copy(update={"theme": result.theme})
@@ -385,6 +388,8 @@ class TuiApp:
             self._app.renderer.clear()
         if result.resume is not None:
             asyncio.ensure_future(self._resume(result.resume))
+        if result.refresh_sessions:
+            asyncio.ensure_future(self._refresh_stored_ids())
         if result.exit:
             self._app.exit(result=self._exit_code)
 
@@ -557,11 +562,11 @@ class TuiApp:
         empty_input = Condition(lambda: not self._buffer.text)
         no_card = ~card_open & ~(picker_open & empty_input)
 
-        @kb.add("up", filter=picker_open)
+        @kb.add("up", filter=picker_open & empty_input)
         def _(event: KeyPressEvent) -> None:
             self._key(KeyAction("picker_up"))
 
-        @kb.add("down", filter=picker_open)
+        @kb.add("down", filter=picker_open & empty_input)
         def _(event: KeyPressEvent) -> None:
             self._key(KeyAction("picker_down"))
 
