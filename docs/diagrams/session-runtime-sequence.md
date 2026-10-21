@@ -56,6 +56,13 @@ sequenceDiagram
     Context->>Files: Update session.json, tasks.json, state.json
     Session-->>User: Show the outcome and wait for the next task
   end
+  opt /resume inside the UI (no task running)
+    User->>Session: /resume -> pick a stored session
+    Session->>Context: SessionContext.restore(target) (lock taken first; a refusal keeps the current one)
+    Session->>Context: close() the current session (MCP, Chrome, its lock)
+    Session->>Session: swap in the restored context; the event stream is marked reset
+    Session-->>User: Replay the restored session's tasks and answers
+  end
   User->>Session: Ctrl+C x2, Ctrl+D, /exit
   CLI->>Session: SessionController.shutdown(bounded) then close()
   Session->>Context: close()

@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from src.agent_loop.execution.loop import AgentLoopResult
-from src.config import PermissionsSettings, UiSettings
+from src.config import PermissionsSettings, UiSettings, get_settings
 from src.contracts import PermissionVerdict, TaskRequest
 from src.harness.approvals import ApprovalBroker
 from src.harness.event_stream import EventBroadcaster
@@ -424,7 +424,7 @@ async def test_resume_switches_to_a_stored_session_and_replays_its_tasks(monkeyp
     controller, runtime, _, _ = build(with_stream=True)
     await controller.run("текущая")
     current_dir = runtime.context.session_dir
-    assert [s.session_id for s in controller.stored_sessions()] == [stored_id]  # not the current one
+    assert [s.session_id for s in await controller.stored_sessions()] == [stored_id]  # not the current one
 
     view = await controller.resume("1")
 
@@ -469,4 +469,82 @@ async def test_resume_refuses_while_busy_and_keeps_the_session_on_errors(monkeyp
     with pytest.raises(LookupError):
         await controller.resume("zzzz")
     lock.release()
+    await runtime.close()
+
+
+
+@pytest.mark.asyncio
+async def test_a_replayed_conversation_is_sanitized_and_an_id_prefix_wins_over_a_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    esc = chr(0x1B)
+    hostile = f"ok{esc}]0;pwned{chr(7)}{esc}[2Jdone"
+
+    async def run(_request: TaskRequest) -> AgentLoopResult:
+        return native_result(final_answer=hostile)
+
+    install_fake_agent(monkeypatch, run)
+    first, first_runtime, _, _ = build()
+    await first.run(f"задача{esc}[31m")
+    stored_id = first_runtime.context.session_id
+    await first_runtime.close()
+
+    controller, runtime, _, _ = build()
+    await controller.resume(stored_id[:10])
+    (past,) = controller.past_tasks()
+
+    assert past.task == "задача" and past.final_answer == "okdone"
+    assert esc not in past.final_answer
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_nothing_starts_while_a_session_switch_is_in_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0, native_result(final_answer="ok")))
+    first, first_runtime, _, _ = build()
+    await first.run("в первой")
+    stored_id = first_runtime.context.session_id
+    await first_runtime.close()
+
+    controller, runtime, _, _ = build()
+    await controller.run("текущая")
+    closing = asyncio.Event()
+    release = asyncio.Event()
+    original_close = runtime.close
+
+    async def slow_close() -> None:
+        closing.set()
+        await release.wait()
+        await original_close()
+
+    monkeypatch.setattr(runtime, "close", slow_close)
+    switch = asyncio.create_task(controller.resume(stored_id))
+    await closing.wait()
+
+    assert controller.busy is True
+    with pytest.raises(TaskBusyError):
+        await controller.submit("в промежутке")
+    with pytest.raises(TaskBusyError):
+        await controller.resume(stored_id)
+    release.set()
+    await switch
+    assert controller.busy is False
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_replay_reads_an_all_digit_id_prefix_as_a_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0, native_result(final_answer="ok")))
+    controller, runtime, _, _ = build()
+    await controller.run("одна")
+    stored = get_settings().storage.sessions_dir / "1234567890abcdef"
+    stored.mkdir(parents=True)
+    (stored / "session.json").write_text('{"session_id": "1234567890abcdef", "metadata": {}}', encoding="utf-8")
+    (stored / "events.jsonl").write_text('{"type": "goal.started", "source": "t", "payload": {"task": "x"}}\n', encoding="utf-8")
+
+    lines = await controller.replay("1234567890")
+
+    assert lines[0].startswith("1234567890ab")
+    with pytest.raises(LookupError, match="from 1 to 1"):
+        await controller.replay("7")
     await runtime.close()

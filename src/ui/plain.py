@@ -175,6 +175,10 @@ class PlainFrontend:
     def locale(self) -> str:
         return self._settings.locale
 
+    @property
+    def stored_ids(self) -> tuple[str, ...]:
+        return ()  # line input has no completion
+
     def notice(self, text: str) -> None:
         """Show a session message as one line; safe from any thread."""
 

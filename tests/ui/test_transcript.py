@@ -267,3 +267,16 @@ def test_a_past_conversation_freezes_each_task_and_its_outcome() -> None:
         ("blocked", "Blocked: нет", None),
     ]
     assert transcript.live == ()
+
+
+def test_events_of_a_resumed_session_with_lower_sequences_are_kept_after_a_reset() -> None:
+    old = FeedItem(kind="call", event_type="action.proposed", sequence=500, task_id="t1", tool="a")
+    new = FeedItem(kind="call", event_type="action.proposed", sequence=12, task_id="t9", tool="b")
+    transcript, _ = run([old])
+
+    dropped, _ = run([new], transcript)
+    kept, frozen = run([StreamReset(), new], transcript)
+
+    assert dropped.block("call").items[0].tool == "a"  # type: ignore[union-attr]
+    assert kept.block("call").items[0].tool == "b"  # type: ignore[union-attr]
+    assert [b.items[0].tool for b in frozen] == ["a"]

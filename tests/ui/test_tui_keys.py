@@ -104,7 +104,7 @@ class FakeController:
 
     resumed: list[str] = []
 
-    def stored_sessions(self) -> list[StoredSessionView]:
+    async def stored_sessions(self) -> list[StoredSessionView]:
         return [
             StoredSessionView("aaaa1111bbbb", T0, 3, "купи наушники"),
             StoredSessionView("cccc2222dddd", T0, 1, "открой почту"),
@@ -361,3 +361,33 @@ async def test_resume_list_digits_escape_and_direct_target(runtime: RuntimeLoop)
     h.send("/resume nope\r")
     await until(lambda: "No stored session matches 'nope'" in h.out.getvalue())
     assert await stop(h, task, pipe) == 0
+
+
+@pytest.mark.asyncio
+async def test_typing_closes_the_resume_list_so_digits_go_into_the_task(runtime: RuntimeLoop) -> None:
+    h, task, pipe = await start(runtime)
+    h.controller.resumed = []
+
+    h.send("/resume\r")
+    await until(lambda: h.app.transcript.block("picker") is not None)
+    h.send("открой вкладку 2")
+    await until(lambda: h.app.transcript.block("picker") is None)
+    await asyncio.sleep(0.2)
+
+    assert h.controller.resumed == []
+    assert h.app.application.current_buffer.text == "открой вкладку 2"
+    assert await stop_with_text(h, task, pipe) == 0
+
+
+@pytest.mark.asyncio
+async def test_resume_ids_complete_from_the_cached_list(runtime: RuntimeLoop) -> None:
+    h, task, pipe = await start(runtime)
+
+    await until(lambda: h.app.stored_ids == ("aaaa1111bbbb", "cccc2222dddd"))
+    assert await stop(h, task, pipe) == 0
+
+
+async def stop_with_text(h: Harness, task: asyncio.Task[int], pipe: object) -> int:
+    h.send("\x03")  # clear the draft
+    await until(lambda: not h.app.application.current_buffer.text)
+    return await stop(h, task, pipe)

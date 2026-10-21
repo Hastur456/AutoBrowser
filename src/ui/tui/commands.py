@@ -17,9 +17,7 @@ from typing import Protocol
 from prompt_toolkit.completion import CompleteEvent, Completer, Completion
 from prompt_toolkit.document import Document
 
-from src.config import get_settings
 from src.contracts import MemoryEntry
-from src.harness.session_store import list_sessions
 from src.ui.feed import sanitize_text
 from src.ui.tui.strings import Strings
 from src.ui.tui.ports import ControllerPort, RuntimeBridge
@@ -68,6 +66,8 @@ class CommandHost(Protocol):
     def view(self) -> SessionView | None: ...
     @property
     def locale(self) -> str: ...
+    @property
+    def stored_ids(self) -> Sequence[str]: ...
 
 
 @dataclass(frozen=True)
@@ -248,7 +248,7 @@ async def _resume(host: CommandHost, args: str) -> CommandResult:
     target = args.strip()
     if target:
         return CommandResult(resume=target)
-    sessions = await host.bridge.call(host.controller.stored_sessions)
+    sessions = await host.bridge.run(host.controller.stored_sessions)
     strings = Strings(host.locale)  # type: ignore[arg-type]
     if not sessions:
         return CommandResult(messages=(Notice(strings("resume_none")),))
@@ -272,15 +272,12 @@ def resume_picker(sessions: Sequence[StoredSessionView], strings: Strings, *, no
     return PickerShown(picker_id=RESUME_PICKER, title=strings("resume_title"), options=tuple(options))
 
 
-def _session_ids(_host: CommandHost, prefix: str) -> Sequence[str]:
-    """Stored session ids for ``/resume <id>`` (read from the session folders)."""
+def _session_ids(host: CommandHost, prefix: str) -> Sequence[str]:
+    """Stored session ids for ``/resume <id>``, from the front end's cached list (never
+    read from disk on a keystroke)."""
 
     word = prefix.strip()
-    return [
-        session.session_id
-        for session in list_sessions(get_settings().storage.sessions_dir)
-        if session.resumable and session.session_id.startswith(word)
-    ]
+    return [session_id for session_id in host.stored_ids if session_id.startswith(word)]
 
 
 async def _permissions(host: CommandHost, _args: str) -> CommandResult:

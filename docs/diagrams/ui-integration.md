@@ -26,7 +26,7 @@ flowchart LR
   LOG[(ui.log_file: logging, warnings, tracebacks<br/>session_dir/stderr.log: MCP stderr)]
   TERM[[Terminal]]
 
-  KEYS -- "RuntimeBridge: submit / cancel / reset" --> CTL
+  KEYS -- "RuntimeBridge: submit / cancel / reset / resume" --> CTL
   KEYS -- "answer (thread-safe)" --> AB
   CTL --> SR
   EN --> EE

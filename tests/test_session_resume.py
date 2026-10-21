@@ -361,3 +361,27 @@ def test_a_file_system_that_cannot_lock_is_not_reported_as_in_use(
     with pytest.raises(OSError, match="No locks available") as raised:
         SessionLock.acquire(tmp_path / "nfs")
     assert not isinstance(raised.value, SessionInUseError)
+
+
+
+@pytest.mark.asyncio
+async def test_a_failing_close_during_a_switch_releases_the_restored_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_fake_agent(monkeypatch, lambda _request: _done())
+    first = runtime()
+    await first.run_task("t1")
+    stored = first.context.session_dir
+    assert stored is not None
+    await first.close()
+
+    current = runtime()
+    await current.run_task("t2")
+
+    async def broken_close() -> None:
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(current, "close", broken_close)
+    with pytest.raises(OSError, match="disk gone"):
+        await current.switch_to(stored)
+
+    assert session_in_use(stored) is False
+    assert current.context.session_dir != stored

@@ -115,11 +115,14 @@ class TuiApp:
         self._exit_code = 0
         self._theme = Theme.resolve(settings, caps)
         self._pump = RenderPump(self, PumpLook(caps, self._theme, settings), clock=self._clock)
+        self._stored_ids: tuple[str, ...] = ()
+        self._switching = False
         self._buffer = Buffer(
             multiline=True,
             history=_history(settings, history_path),
             completer=SlashCompleter(self),
             complete_while_typing=True,
+            on_text_changed=self._close_picker_on_typing,
         )
         self._app: Application[int] = Application(
             layout=self._layout(),
@@ -165,6 +168,12 @@ class TuiApp:
         return self._settings.locale
 
     @property
+    def stored_ids(self) -> tuple[str, ...]:
+        """Session ids ``/resume <id>`` completes, refreshed off the UI loop."""
+
+        return self._stored_ids
+
+    @property
     def application(self) -> Application[int]:
         return self._app
 
@@ -202,6 +211,7 @@ class TuiApp:
         loop = asyncio.get_running_loop()
         self._pump.bind(loop)
         self._view = await self._bridge.call(self._controller.session_view)
+        asyncio.ensure_future(self._refresh_stored_ids())
         if self._settings.banner:
             self._pump.print_now(
                 render_banner(
@@ -352,7 +362,7 @@ class TuiApp:
         """A task runs from its submission until its outcome reached the transcript."""
 
         submitting = self._task_future is not None and not self._task_future.done()
-        return submitting or self.transcript.task is not None
+        return submitting or self._switching or self.transcript.task is not None
 
     async def _run_command(self, text: str) -> None:
         try:
@@ -389,15 +399,29 @@ class TuiApp:
             )
             self._pump.post(Notice(text, "warn"))
             return
+        # Until the switch is done nothing else may start: a task submitted in between
+        # would find the old session half closed.
+        self._switching = True
         try:
             view = await self._bridge.run(lambda: self._controller.resume(target))
         except Exception as exc:  # noqa: BLE001 - every refusal is shown, the session stays
             self._pump.post(Notice(str(exc).strip("'\""), "warn"))
             return
+        finally:
+            self._switching = False
         self._view = view
         self._pump.post(StreamReset())
         await self._show_resumed(view)
+        asyncio.ensure_future(self._refresh_stored_ids())
         self.invalidate()
+
+    async def _refresh_stored_ids(self) -> None:
+        try:
+            sessions = await self._bridge.run(self._controller.stored_sessions)
+        except Exception:  # noqa: BLE001 - completion is a convenience
+            _LOG.debug("listing stored sessions failed", exc_info=True)
+            return
+        self._stored_ids = tuple(session.session_id for session in sessions)
 
     async def _show_resumed(self, view: SessionView) -> None:
         """The resumed session's earlier tasks and answers, then a one-line notice."""
@@ -408,6 +432,11 @@ class TuiApp:
         self._pump.post(
             Notice(Strings(self._settings.locale)("resumed", session=view.session_id[:8], count=view.task_count))
         )
+
+    def _close_picker_on_typing(self, buffer: Buffer) -> None:
+        picker = self.transcript.block("picker")
+        if picker is not None and buffer.text:
+            self._pump.apply([PickerClosed(picker.picker_id)])
 
     def _choose(self, index: int | None = None) -> None:
         """Enter (or a digit) on an open picker."""
@@ -523,7 +552,10 @@ class TuiApp:
         card_open = Condition(lambda: self.transcript.block("approval") is not None)
         # An approval card wins over an open picker.
         picker_open = Condition(lambda: self.transcript.block("picker") is not None) & ~card_open
-        no_card = ~card_open & ~picker_open
+        # The list answers Enter and digits only while the input is empty; typing closes it
+        # (see ``_close_picker_on_typing``), so a digit in a sentence never switches sessions.
+        empty_input = Condition(lambda: not self._buffer.text)
+        no_card = ~card_open & ~(picker_open & empty_input)
 
         @kb.add("up", filter=picker_open)
         def _(event: KeyPressEvent) -> None:
@@ -533,7 +565,7 @@ class TuiApp:
         def _(event: KeyPressEvent) -> None:
             self._key(KeyAction("picker_down"))
 
-        @kb.add("enter", filter=picker_open)
+        @kb.add("enter", filter=picker_open & empty_input)
         def _(event: KeyPressEvent) -> None:
             self._choose()
 
@@ -545,7 +577,7 @@ class TuiApp:
 
         for number in range(1, 10):
 
-            @kb.add(str(number), filter=picker_open)
+            @kb.add(str(number), filter=picker_open & empty_input)
             def _(event: KeyPressEvent, number: int = number) -> None:
                 self._choose(number - 1)
 

@@ -42,6 +42,7 @@ from src.ui.views import (
     TaskStatus,
     TaskView,
 )
+from src.ui.feed import sanitize_text
 from src.version import package_version
 
 if TYPE_CHECKING:
@@ -79,6 +80,10 @@ class SessionController:
         self._task: asyncio.Task[AgentLoopResult] | None = None
         #: The ``submit`` call while it starts the session (Chrome, MCP), before the task.
         self._starting: asyncio.Task[Any] | None = None
+        #: ``reset``/``resume`` while they close one session and open another: nothing
+        #: else may start in that window (a task would find no agent, a second switch
+        #: would orphan a restored session and its lock).
+        self._switching = False
         self._attached: SessionContext | None = None
 
     # ------------------------------------------------------------------ commands
@@ -226,10 +231,14 @@ class SessionController:
 
         if self.busy:
             raise TaskBusyError("Cannot reset while a task is running.")
-        context = await self._runtime.reset()
-        if self._broadcaster is not None:
-            self._broadcaster.mark_reset(context.session_id)
-        self._attach()
+        self._switching = True
+        try:
+            context = await self._runtime.reset()
+            if self._broadcaster is not None:
+                self._broadcaster.mark_reset(context.session_id)
+            self._attach()
+        finally:
+            self._switching = False
         return self.session_view()
 
     async def resume(self, target: str) -> SessionView:
@@ -243,22 +252,34 @@ class SessionController:
 
         if self.busy:
             raise TaskBusyError("Cannot resume another session while a task is running.")
-        target = target.strip()
+        self._switching = True
+        try:
+            session = await asyncio.to_thread(self._pick_session, target.strip())
+            context = await self._runtime.switch_to(session.path)
+            if self._broadcaster is not None:
+                self._broadcaster.mark_reset(context.session_id)
+            self._attach()
+        finally:
+            self._switching = False
+        return self.session_view()
+
+    def _pick_session(self, target: str) -> StoredSession:
+        """An id or unambiguous id prefix first; only then a number of the list (ids are hex,
+        so a prefix may be all digits)."""
+
         sessions_dir = get_settings().storage.sessions_dir
-        offered = self._resumable()
-        if target.isdigit() and 1 <= int(target) <= len(offered):
-            session = offered[int(target) - 1]
-        else:
+        try:
             session = find_session(sessions_dir, target)
+        except LookupError:
+            offered = self._resumable()
+            if not (target.isdigit() and 1 <= int(target) <= len(offered)):
+                raise
+            session = offered[int(target) - 1]
         if session.session_id == self._runtime.context.session_id:
             raise LookupError(f"Session {session.session_id[:12]} is the current one.")
         if not session.resumable:
             raise LookupError(f"Session {session.session_id[:12]} has nothing to resume.")
-        context = await self._runtime.switch_to(session.path)
-        if self._broadcaster is not None:
-            self._broadcaster.mark_reset(context.session_id)
-        self._attach()
-        return self.session_view()
+        return session
 
     def answer(self, ticket_id: str, answer: ApprovalAnswer, *, via: ApprovalVia) -> bool:
         """Answer a pending approval; thread-safe. ``False`` when it is not answerable."""
@@ -295,7 +316,8 @@ class SessionController:
         """A task is running, or ``submit`` is still starting the session for one."""
 
         starting = self._starting is not None and not self._starting.done()
-        return starting or (self._task is not None and not self._task.done())
+        running = self._task is not None and not self._task.done()
+        return starting or running or self._switching
 
     def session_view(self) -> SessionView:
         context = self._runtime.context
@@ -346,29 +368,32 @@ class SessionController:
         self._runtime.context.persist()
         return count
 
-    def stored_sessions(self) -> list[StoredSessionView]:
+    async def stored_sessions(self) -> list[StoredSessionView]:
         """Resumable stored sessions other than the current one, most recent first, at most
-        ``ui.resume_list_size`` of them."""
+        ``ui.resume_list_size`` of them. The folders are read in a worker thread (task
+        files can be large), never on the session loop."""
 
+        sessions = await asyncio.to_thread(self._resumable)
         return [
             StoredSessionView(
-                session_id=session.session_id,
+                session_id=sanitize_text(session.session_id),
                 last_activity=session.last_activity or session.started_at,
                 task_count=session.task_count,
-                last_task=session.last_task,
+                last_task=sanitize_text(session.last_task),
             )
-            for session in self._resumable()
+            for session in sessions
         ]
 
     def past_tasks(self) -> list[PastTask]:
         """The finished tasks of the current session, for replaying its conversation."""
 
         return [
+            # From disk, like page content: no control sequence reaches a terminal.
             PastTask(
                 index=index,
-                task=record.task,
+                task=sanitize_text(record.task),
                 status=view.status,
-                final_answer=record.final_answer,
+                final_answer=sanitize_text(record.final_answer),
                 turns=record.turns,
             )
             for index, record in enumerate(self._runtime.context.tasks, start=1)
@@ -400,15 +425,23 @@ class SessionController:
         return await asyncio.to_thread(self._replay, target.strip())
 
     def _replay(self, target: str) -> list[str]:
-        if target and not target.isdigit():
-            session = find_session(get_settings().storage.sessions_dir, target)
+        tasks = self._runtime.context.tasks
+        # A number in the task range is a task; anything else (session ids are hex, so a
+        # prefix may be all digits) is a stored session's id or prefix.
+        is_task_number = target.isdigit() and 1 <= int(target) <= len(tasks)
+        if target and not is_task_number:
+            try:
+                session = find_session(get_settings().storage.sessions_dir, target)
+            except LookupError:
+                if target.isdigit() and tasks:
+                    raise LookupError(f"Task numbers run from 1 to {len(tasks)}.") from None
+                raise
             trace = session.path / EVENTS_FILE_NAME
             if not trace.is_file():
                 raise FileNotFoundError(f"Session {session.session_id[:12]} has no events yet.")
             events = load_events(trace)
             return [f"{session.session_id[:12]} · {summarize_trace(events).terminal_status}",
                     *print_action_sequence(events).splitlines()]
-        tasks = self._runtime.context.tasks
         if not tasks:
             raise LookupError("This session has no tasks yet.")
         index = int(target) if target else len(tasks)

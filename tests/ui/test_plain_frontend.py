@@ -251,7 +251,7 @@ class ResumableController(ScriptedController):
         super().__init__()
         self.resumed: list[str] = []
 
-    def stored_sessions(self) -> list[StoredSessionView]:
+    async def stored_sessions(self) -> list[StoredSessionView]:
         return [StoredSessionView("aaaa1111bbbb", T0, 2, "купи наушники")]
 
     async def resume(self, target: str) -> SessionView:

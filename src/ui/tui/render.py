@@ -154,8 +154,10 @@ def _picker(ctx: RenderContext, block: Block) -> list[RenderableType]:
     head.append(block.text, style=theme.style("plan"))
     rows: list[RenderableType] = [_fitted(head, ctx)]
     options = block.options
-    # Title and hint take two lines; the rest of the live zone shows options.
+    # Title and hint take two lines, and a scrolled list one "…" line above and/or below.
     window = max(ctx.settings.live_max_lines - 2, 1)
+    if len(options) > window:
+        window = max(window - 2, 1)
     first = min(max(block.choice - window // 2, 0), max(len(options) - window, 0))
     if first:
         rows.append(_fitted(bar + Text(f"  {glyphs.ellipsis}", style=theme.style("muted")), ctx))
