@@ -37,7 +37,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, TypeVar
+from typing import Any, TextIO, TypeVar
 
 import anyio
 from mcp import ClientSession, McpError, types
@@ -201,6 +201,7 @@ class MCPManager:
         max_tool_name: int = MAX_TOOL_NAME,
         client_info: types.Implementation | None = None,
         stop_timeout_s: float = 5.0,
+        errlog: TextIO | None = None,
     ) -> None:
         if registry is None:
             registry = ServerRegistry()
@@ -210,6 +211,8 @@ class MCPManager:
         self._max_tool_name = max_tool_name
         self._client_info = client_info or types.Implementation(name="autobrowser", version="0")
         self._stop_timeout_s = stop_timeout_s
+        #: Where stdio servers write their stderr; ``None`` is this process's stderr.
+        self._errlog = errlog
         self._servers: dict[str, ManagedServer] = {
             name: ManagedServer(name=name, config=config) for name, config in registry.all().items()
         }
@@ -575,7 +578,7 @@ class MCPManager:
         session_ref: ClientSession | None = None
         relay_send, relay_recv = anyio.create_memory_object_stream[Any](0)
         try:
-            async with open_transport(cfg) as streams:
+            async with open_transport(cfg, errlog=self._errlog) as streams:
                 read_stream, write_stream = streams[0], streams[1]
                 async with anyio.create_task_group() as tg:
                     tg.start_soon(self._pump, managed, read_stream, relay_send, wake)
@@ -754,7 +757,7 @@ class MCPManager:
         """Open transport + session + initialize in the *current* task (ephemeral mode)."""
 
         cfg = managed.config
-        async with open_transport(cfg) as streams:
+        async with open_transport(cfg, errlog=self._errlog) as streams:
             async with ClientSession(
                 streams[0],
                 streams[1],

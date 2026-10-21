@@ -160,8 +160,9 @@ def _is_error_event(event: _EventView) -> bool:
 def _final_answer(event: _EventView | None) -> str:
     if event is None:
         return ""
-    result = event.payload.get("result")
-    answer = _find_final_answer(result)
+    # ``final_answer`` is top-level since ``goal.*`` carry structured fields; older traces
+    # nest it in ``result``.
+    answer = _find_final_answer(event.payload)
     return "" if answer is None else str(answer)
 
 

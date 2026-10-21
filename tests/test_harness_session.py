@@ -154,7 +154,7 @@ async def noop_wait(_port: int, _timeout: float) -> None:
     return None
 
 
-def no_mcp_runtime(_port: int) -> FakeMCPRuntime:
+def no_mcp_runtime(_port: int, _errlog: Any) -> FakeMCPRuntime:
     return FakeMCPRuntime([])
 
 
@@ -240,7 +240,7 @@ async def test_session_context_lifecycle_initializes_tracks_tasks_and_closes(
     events: list[str] = []
     runtime = FakeMCPRuntime()
 
-    def mcp_runtime_factory(_port: int) -> FakeMCPRuntime:
+    def mcp_runtime_factory(_port: int, _errlog: Any) -> FakeMCPRuntime:
         return runtime
 
     context.events.subscribe("session.started", lambda name, _payload: events.append(name))
@@ -261,7 +261,9 @@ async def test_session_context_lifecycle_initializes_tracks_tasks_and_closes(
     assert context.initialized is True
     assert isinstance(context.harness, FakeHarness)
     assert context.workspace is not None
-    assert context.workspace.root == tmp_path / ".autobrowser" / "sessions" / context.session_id / "workspace"
+    # Sessions live under the AutoBrowser home (tests/conftest.py isolates it per test).
+    home = tmp_path / "autobrowser-home"
+    assert context.workspace.root == home / "sessions" / context.session_id / "workspace"
     assert context.workspace.artifacts.is_dir()
     assert context.metadata.started_at is not None
     assert context.tool_registry is not None
@@ -441,6 +443,48 @@ async def test_session_runtime_watchdog_failure_clears_active_task(
         "goal.started",
         "goal.failed",
     ]
+
+
+@pytest.mark.asyncio
+async def test_session_runtime_cancellation_closes_the_task_record(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    started = asyncio.Event()
+
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
+        started.set()
+        await asyncio.Event().wait()
+        return native_result(final_answer="never reached")
+
+    install_runner(monkeypatch, task_runner)
+    runtime = make_runtime()
+    bus_events: list[str] = []
+    runtime.context.events.subscribe(
+        "task.cancelled", lambda name, _payload: bus_events.append(name)
+    )
+
+    task = asyncio.create_task(runtime.run_task("inspect page"))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    record = runtime.context.tasks[0]
+    assert record.finished_at is not None
+    assert isinstance(record.result, asyncio.CancelledError)
+    assert runtime.context.current_task is None
+    assert runtime.context.metadata.task_count == 1
+    assert bus_events == ["task.cancelled"]
+    assert runtime.context.session_dir is not None
+    typed_events = read_typed_events(runtime.context.session_dir)
+    assert [event["type"] for event in typed_events] == [
+        "session.started",
+        "goal.started",
+        "goal.cancelled",
+    ]
+    assert typed_events[-1]["payload"]["status"] == "cancelled"
 
 
 @pytest.mark.asyncio
@@ -990,3 +1034,77 @@ async def test_consolidation_after_a_done_task(
     assert (root / "sites" / "ozon.ru.md").exists() is written
     types = [event["type"] for event in read_typed_events(runtime.context.session_dir)]
     assert ("memory.consolidated" if written else "memory.consolidation_failed") in types
+
+
+# --------------------------------------------------------------------------- event sinks, reset
+
+
+@pytest.mark.asyncio
+async def test_extra_event_sinks_receive_the_session_events(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from src.agent_loop.events import InMemoryEventSink
+
+    monkeypatch.chdir(tmp_path)
+
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
+        return native_result(final_answer="done")
+
+    install_runner(monkeypatch, task_runner)
+    sink = InMemoryEventSink()
+    runtime = SessionRuntime(
+        make_config(),
+        llm_factory=llm_factory,
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        mcp_runtime_factory=no_mcp_runtime,
+        event_sinks=[sink],
+    )
+
+    await runtime.run_task("inspect page")
+
+    # memory.* events depend on the memory settings; the lifecycle ones do not.
+    assert [r.type for r in sink.records if not r.type.startswith("memory.")] == [
+        "session.started",
+        "goal.started",
+        "goal.completed",
+    ]
+    assert {record.session_id for record in sink.records} == {runtime.context.session_id}
+
+
+@pytest.mark.asyncio
+async def test_reset_replaces_the_session_and_keeps_the_extra_sinks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from src.agent_loop.events import InMemoryEventSink
+
+    monkeypatch.chdir(tmp_path)
+
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
+        return native_result(final_answer="done", messages=["kept"])
+
+    install_runner(monkeypatch, task_runner)
+    sink = InMemoryEventSink()
+    runtime = SessionRuntime(
+        make_config(),
+        llm_factory=llm_factory,
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        mcp_runtime_factory=no_mcp_runtime,
+        event_sinks=[sink],
+    )
+    await runtime.run_task("first")
+    old_id = runtime.context.session_id
+
+    context = await runtime.reset()
+
+    assert context is runtime.context
+    assert context.session_id != old_id
+    assert context.initialized is False
+    assert context.tasks == []
+    assert runtime.agent is None
+    await runtime.run_task("second")
+    assert sink.records[-1].session_id == context.session_id
+    assert "session.closed" in [record.type for record in sink.records]

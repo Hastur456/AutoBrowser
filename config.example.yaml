@@ -196,8 +196,10 @@ events:
 # ---------------------------------------------------------------------------
 # Where runtime output lands.
 storage:
-  # Root for all session/batch output. Relative paths resolve from the CWD.
-  root_dir: .autobrowser                        # (default)
+  # Root for all runtime output (sessions, memory, logs, input history). Default:
+  # the AutoBrowser home (AUTOBROWSER_HOME or ~/.autobrowser). A relative path is
+  # relative to the home; set an absolute path to keep data elsewhere.
+  # root_dir: C:/data/autobrowser
   # <root_dir>/<sessions_subdir>/<session_id>/ -- session.json, tasks.json,
   # events.jsonl, workspace/.
   sessions_subdir: sessions                     # (default)
@@ -205,6 +207,9 @@ storage:
   batches_subdir: batches                       # (default)
   # Per-session scratch space for screenshots and artifacts.
   workspace_subdir: workspace                   # (default)
+  # <session>/state.json after every task (dialogue + page state, not redacted) for
+  # --continue / --resume.
+  persist_state: true                           # (default)
 
 # ---------------------------------------------------------------------------
 flags:
@@ -241,6 +246,9 @@ permissions:
   classifier_description_chars: 400             # (default) tool description shown to it
   # approval_request values (lower-cased) that mean "no approval needed":
   approval_false_words: ["", "false", "no", "none", "null", "0"]  # (default)
+  # Share of loop.progress_timeout_seconds you may take to answer an approval.
+  approval_timeout_ratio: 0.8                   # (default) 0 < ratio < 1; no answer = deny
+  approval_args_preview_chars: 300              # (default) JSON arguments in the question
   rules: []                                     # (default)
   # rules:
   #   # Opt-in guards for risky tools. MCP annotations cannot tell page
@@ -287,6 +295,40 @@ permissions:
   #     args: {text: '\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}'}  # {arg: re.search}
 
 # ---------------------------------------------------------------------------
+# Interactive front ends (src/ui/): the terminal UI, the plain fallback and
+# print mode (-p).
+ui:
+  frontend: auto                                # (default) auto | tui | plain | classic
+  screen: inline                                # (default) transcript flows into scrollback
+  theme: dark                                   # (default) dark | light | mono
+  color: auto                                   # (default) auto | truecolor | "256" | "16" | none
+  glyphs: auto                                  # (default) auto | unicode | ascii
+  banner: true                                  # (default)
+  density: comfortable                          # (default) comfortable | compact
+  detail: compact                               # (default) compact | verbose
+  preview_lines: 3                              # (default) result lines in verbose (0..50)
+  preview_chars: 400                            # (default) preview characters (40..20000)
+  live_max_lines: 12                            # (default) live zone height (4..60)
+  refresh_hz: 10.0                              # (default) redraws per second (1..30)
+  sync_output: auto                             # (default) DEC 2026: auto | on | off
+  escape_timeout_ms: 50                         # (default) lone-Esc delay (0..1000)
+  double_press_seconds: 0.8                     # (default) repeated Ctrl+C / Ctrl+D window
+  size_poll_seconds: 0.5                        # (default) terminal size polling
+  markdown: true                                # (default) markdown final answer
+  input_history: true                           # (default)
+  input_history_size: 1000                      # (default) (0..100000)
+  approval_bell: false                          # (default) bell + window title on approval
+  locale: ru                                    # (default) ru | en
+  print_format: text                            # (default) text | json | stream-json
+  log_file: logs/autobrowser.log                # (default) relative = under storage.root_dir
+  event_buffer_size: 2000                       # (default) events kept for late subscribers
+  subscriber_queue_size: 1000                   # (default) queue before a gap marker
+  status_interval_seconds: 1.0                  # (default) status line polling
+  doctor_probe_timeout_seconds: 10.0            # (default) each external doctor check
+  resume_list_size: 20                          # (default) sessions offered by --resume
+  shutdown_timeout_seconds: 5.0                 # (default) stopping a task / loop / client
+
+# ---------------------------------------------------------------------------
 # Deterministic lifecycle hooks around the agent loop (src/harness/hooks.py).
 # Handlers are "package.module:attr" import paths of async callables, resolved
 # at session start -- an import error, a duplicate id or a sync handler fails
@@ -302,6 +344,10 @@ hooks:
   # Timeout of a hook without its own timeout_seconds. Must stay below
   # loop.progress_timeout_seconds.
   default_timeout_seconds: 10.0                 # (default)
+  # Command hooks run in the repository checkout; stderr kept in an error (0..20000)
+  # and the wait for a timed-out process tree (0 < s <= 60).
+  command_stderr_tail_chars: 300                # (default)
+  command_kill_wait_seconds: 2.0                # (default)
   # Hooks, run sequentially in this order per event. Example:
   registry: []                                  # (default)
   # registry:

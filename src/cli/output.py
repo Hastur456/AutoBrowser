@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 def format_state(value: Any, as_json: bool = False) -> str:
@@ -14,17 +14,17 @@ def format_state(value: Any, as_json: bool = False) -> str:
     return repr(value)
 
 
-def print_tools(tools: list[Any]) -> None:
-    """Print loaded MCP tool names (with the owning MCP server when known)."""
+def print_tools(tools: list[Any], output_fn: Callable[[str], None] = print) -> None:
+    """Write loaded MCP tool names (with the owning MCP server when known) to ``output_fn``."""
 
-    print("MCP tools:")
+    output_fn("MCP tools:")
     if not tools:
-        print("- none")
+        output_fn("- none")
         return
     for tool in tools:
         name = getattr(tool, "name", tool)
         server = getattr(tool, "server", None)
-        print(f"- {name} [{server}]" if server else f"- {name}")
+        output_fn(f"- {name} [{server}]" if server else f"- {name}")
 
 
 def format_mcp_status(statuses: Mapping[str, Any]) -> list[str]:

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TextIO
 
 from mcp.types import Implementation
 
@@ -132,11 +132,13 @@ def build_mcp_runtime(
     cdp_port: int,
     settings: Any | None = None,
     client_version: str = "0",
+    errlog: TextIO | None = None,
 ) -> MCPRuntime:
     """Build (not start) the session's MCP runtime from settings.
 
     Reads ``settings.mcp_servers`` (falls back to :func:`default_mcp_servers`) and
     ``settings.browser_mcp_server`` (falls back to ``"playwright"`` when that server exists).
+    ``errlog`` receives the stderr of stdio servers (``None``: this process's stderr).
     """
 
     settings = settings if settings is not None else get_settings()
@@ -159,6 +161,7 @@ def build_mcp_runtime(
     manager = MCPManager(
         registry,
         client_info=Implementation(name="autobrowser", version=client_version),
+        errlog=errlog,
     )
     tool_source = MCPToolSource(
         manager,

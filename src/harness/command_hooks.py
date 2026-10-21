@@ -37,7 +37,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from src.config import ROOT_PATH
+from src.config import ROOT_PATH, HooksSettings
 from src.contracts import HookEvent, HookEventName, HookResult
 
 #: Exit code that blocks, as in Claude Code and Codex.
@@ -52,15 +52,22 @@ _DECISION_ALIASES: dict[Any, str | None] = {
     "block": "deny",
 }
 _STRING_FIELDS = ("reason", "additional_context", "user_message")
-_STDERR_TAIL_CHARS = 300
-
 
 class CommandHook:
     """Async hook handler that runs ``command`` once per event."""
 
-    def __init__(self, command: str, *, cwd: Path = ROOT_PATH) -> None:
+    def __init__(
+        self,
+        command: str,
+        *,
+        cwd: Path | None = None,
+        settings: HooksSettings | None = None,
+    ) -> None:
         self.command = command
-        self.cwd = cwd
+        #: The checkout: the shipped ``scripts/hooks/`` and relative script paths start
+        #: there wherever the config file lives (a hook may also come from env or code).
+        self.cwd = cwd if cwd is not None else ROOT_PATH
+        self._settings = settings or HooksSettings()
 
     async def __call__(self, event: HookEvent) -> HookResult | None:
         payload = json.dumps(asdict(event)).encode("ascii")
@@ -83,13 +90,16 @@ class CommandHook:
         except BaseException:
             _kill_tree(process)
             with contextlib.suppress(BaseException):
-                await asyncio.wait_for(process.wait(), timeout=2.0)
+                await asyncio.wait_for(
+                    process.wait(), timeout=self._settings.command_kill_wait_seconds
+                )
             raise
         return parse_command_output(
             event.name,
             process.returncode if process.returncode is not None else -1,
             _decode(stdout),
             _decode(stderr),
+            stderr_tail_chars=self._settings.command_stderr_tail_chars,
         )
 
     def __repr__(self) -> str:
@@ -101,6 +111,8 @@ def parse_command_output(
     returncode: int,
     stdout: str,
     stderr: str,
+    *,
+    stderr_tail_chars: int | None = None,
 ) -> HookResult | None:
     """Translate one finished command run into a :class:`HookResult` (see the module doc).
 
@@ -114,7 +126,12 @@ def parse_command_output(
             return HookResult(additional_context=reason)
         return HookResult(decision="deny", reason=reason)
     if returncode != 0:
-        tail = stderr.strip()[-_STDERR_TAIL_CHARS:]
+        keep = (
+            HooksSettings().command_stderr_tail_chars
+            if stderr_tail_chars is None
+            else stderr_tail_chars
+        )
+        tail = stderr.strip()[-keep:] if keep else ""
         raise RuntimeError(f"exit code {returncode}" + (f": {tail}" if tail else ""))
 
     text = stdout.strip()

@@ -391,3 +391,45 @@ def test_agent_trace_projects_permission_decisions_without_arguments(tmp_path: P
         {"type": "approval.resolved", "decision": "allow", "by": "human", "scope": "session"},
     ]
     assert "secret.example" not in trace_path.read_text(encoding="utf-8")
+
+
+def test_agent_trace_projects_structured_goal_terminals(tmp_path: Path) -> None:
+    trace_path = tmp_path / "agent_trace.jsonl"
+    emitter = EventEmitter(AgentTraceSink(trace_path), session_id="session-1")
+
+    emitter.emit(
+        "goal.completed",
+        source="test",
+        payload={"task": "inspect", "status": "completed", "final_answer": "done", "turns": 4},
+    )
+    emitter.emit(
+        "goal.cancelled",
+        source="test",
+        payload={"task": "inspect", "status": "cancelled", "reason": "Stopped."},
+    )
+    emitter.emit(
+        "goal.blocked",
+        source="test",
+        payload={"task": "inspect", "status": "blocked", "final_answer": "Login needed.", "turns": 2},
+    )
+
+    trace = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    for event in trace:
+        event.pop("timestamp")
+    assert trace == [
+        {
+            "type": "goal.completed",
+            "task": "inspect",
+            "status": "completed",
+            "final_answer": "done",
+            "turns": 4,
+        },
+        {"type": "goal.cancelled", "task": "inspect", "status": "cancelled", "reason": "Stopped."},
+        {
+            "type": "goal.blocked",
+            "task": "inspect",
+            "status": "blocked",
+            "final_answer": "Login needed.",
+            "turns": 2,
+        },
+    ]

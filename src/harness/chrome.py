@@ -44,7 +44,11 @@ def start_chrome_cdp(
             f"--user-data-dir={user_data_dir}",
             "--no-first-run",
             "--no-default-browser-check",
-        ]
+        ],
+        # Chrome prints "DevTools listening on ..." and GPU warnings; nothing of ours to
+        # show, and a stray writer would tear the terminal UI.
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
 
@@ -55,7 +59,6 @@ async def wait_for_port(port: int, timeout_seconds: float) -> None:
     while not is_port_open(port):
         if asyncio.get_running_loop().time() >= deadline:
             raise TimeoutError(f"Chrome CDP port {port} did not open in time.")
-        print("Подключение к серверу...")
         await asyncio.sleep(0.5)
 
 

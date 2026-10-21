@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
-from collections.abc import Awaitable, Callable, Iterator, MutableMapping
+from collections.abc import Awaitable, Callable, Iterator, MutableMapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 from uuid import uuid4
 
 from src.agent_loop.events import (
     AgentTraceSink,
     CompositeEventSink,
     EventEmitter,
+    EventSink,
     JsonlEventSink,
 )
 from src.agent_loop.context import ContextAssembler
@@ -36,18 +38,36 @@ from src.harness.memory_consolidation import MemoryConsolidator
 from src.harness.memory_store import MemoryContext, MemoryStore
 from src.harness.memory_tool import memory_tools
 from src.harness.runtime import BrowserHarness
+from src.harness.session_store import (
+    RESUMED_STATE_KEYS,
+    SessionLock,
+    last_event_sequence,
+    load_session_file,
+    load_state,
+    load_task_records,
+    save_state,
+)
 from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolRegistry
 
 
 LLMFactory = Callable[..., Any]
 HarnessFactory = Callable[..., BrowserHarness]
-MCPRuntimeFactory = Callable[[int], MCPRuntime]
+#: ``factory(cdp_port, errlog)``: ``errlog`` is the session's child-process stderr log.
+MCPRuntimeFactory = Callable[[int, TextIO], MCPRuntime]
+#: ``print_tools(tools, output_fn)`` writes the loaded tool list through ``output_fn``.
+ToolPrinter = Callable[[list[Any], Callable[[str], None]], None]
 EventHandler = Callable[[str, object | None], None]
 
 EXIT_COMMANDS = {"quit", "exit"}
 
 SERVER_CONNECTED_MESSAGE = "=== Server connected ==="
+
+CONNECTING_MESSAGE = "Подключение к серверу..."
+
+#: File in the session directory that receives the stderr of stdio MCP servers, so no
+#: child process writes into a terminal the CLI or the terminal UI owns.
+CHILD_STDERR_LOG_NAME = "stderr.log"
 
 INTERACTIVE_MESSAGE = "Interactive mode. Type 'quit' or 'exit' to quit.\n"
 
@@ -169,6 +189,14 @@ class TaskRecord:
     task_id: str = field(default_factory=lambda: f"task-{uuid4().hex}")
     finished_at: datetime | None = None
     result: Any | None = None
+    #: ``running`` until closed, then the goal status (``completed``/``blocked``/
+    #: ``cancelled``) or ``failed``.
+    status: str = "running"
+    #: Agent turns of a finished task; ``None`` while running or after a failure.
+    turns: int | None = None
+    #: The answer (or the block reason) a finished task ended with; ``""`` otherwise.
+    #: Front ends replay a resumed session's conversation from it.
+    final_answer: str = ""
 
 
 @dataclass
@@ -261,10 +289,10 @@ class WorkspaceContext:
             path.mkdir(parents=True, exist_ok=True)
 
 
-def default_mcp_runtime_factory(cdp_port: int) -> MCPRuntime:
+def default_mcp_runtime_factory(cdp_port: int, errlog: TextIO) -> MCPRuntime:
     """Build the session's MCP runtime from settings (``mcp_servers``)."""
 
-    return build_mcp_runtime(cdp_port=cdp_port)
+    return build_mcp_runtime(cdp_port=cdp_port, errlog=errlog)
 
 
 def _json_safe(value: Any) -> Any:
@@ -286,6 +314,41 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _restored_task(record: dict[str, Any]) -> TaskRecord:
+    """A :class:`TaskRecord` from ``tasks.json``; a task left running by a crash is failed."""
+
+    started = _parse_datetime(record.get("started_at")) or datetime.now(UTC)
+    finished = _parse_datetime(record.get("finished_at"))
+    status = str(record.get("status") or "")
+    if finished is None or status in ("", "running"):
+        status = "failed"
+        finished = finished or started
+    turns = record.get("turns")
+    answer = record.get("final_answer")
+    if not answer and isinstance(record.get("result"), dict):
+        # tasks.json written before ``final_answer`` was a field keeps it in ``result``.
+        answer = record["result"].get("final_answer")
+    return TaskRecord(
+        task=str(record.get("task") or ""),
+        started_at=started,
+        task_id=str(record.get("task_id") or f"task-{uuid4().hex}"),
+        finished_at=finished,
+        result=record.get("result"),
+        status=status,
+        turns=turns if isinstance(turns, int) and not isinstance(turns, bool) else None,
+        final_answer=str(answer or ""),
+    )
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
@@ -296,13 +359,16 @@ def _write_json(path: Path, payload: Any) -> None:
     tmp_path.replace(path)
 
 
-def _build_session_event_sink(session_dir: Path) -> CompositeEventSink:
-    """Build the session's durable event sinks and projections."""
+def _build_session_event_sink(
+    session_dir: Path, extra_sinks: Sequence[EventSink] = ()
+) -> CompositeEventSink:
+    """Build the session's durable event sinks and projections, then the extra ones."""
 
     return CompositeEventSink(
         [
             JsonlEventSink(session_dir / "events.jsonl"),
             AgentTraceSink(session_dir / "agent_trace.jsonl"),
+            *extra_sinks,
         ]
     )
 
@@ -358,6 +424,9 @@ class SessionContext:
 
     config: SessionConfig
     session_id: str = field(default_factory=lambda: uuid4().hex)
+    #: Sinks that receive every session event after the durable files (e.g. the in-process
+    #: ``EventBroadcaster`` a UI subscribes to).
+    event_sinks: tuple[EventSink, ...] = ()
     session_dir: Path | None = None
     workspace: WorkspaceContext | None = None
     artifacts: ArtifactRegistry = field(default_factory=ArtifactRegistry)
@@ -387,7 +456,56 @@ class SessionContext:
     #: Renders the ``Memory`` context block for the engine (``EngineResources.memory``).
     memory: MemoryContext | NullMemoryContext = field(default_factory=NullMemoryContext)
     chrome_process: Any | None = None
+    #: Open while MCP runs: the stderr log of the stdio servers (:data:`CHILD_STDERR_LOG_NAME`).
+    child_stderr: TextIO | None = None
     initialized: bool = False
+    #: The last event sequence of a resumed session; new events continue after it.
+    resumed_from_sequence: int | None = None
+    #: The OS lock on the session directory, held from :meth:`restore` (or the start of a
+    #: new session) until :meth:`close`. Only the holder writes the session's files.
+    session_lock: SessionLock | None = None
+
+    @classmethod
+    def restore(
+        cls,
+        config: SessionConfig,
+        session_dir: Path,
+        *,
+        event_sinks: tuple[EventSink, ...] = (),
+    ) -> SessionContext:
+        """A not yet started context continuing the stored session in ``session_dir``.
+
+        It keeps the session id, the carried state of ``state.json`` (the dialogue the
+        next task inherits), the task history and the start time; resources (Chrome, MCP,
+        the agent) start afresh on the next task like in any new session.
+        """
+
+        data = load_session_file(session_dir)
+        if not data:
+            raise FileNotFoundError(f"No session.json in {session_dir}.")
+        # Held from now on, before reading the files: another process cannot change them
+        # under this one, and this one never writes back a stale copy.
+        lock = SessionLock.acquire(session_dir)
+        try:
+            data = load_session_file(session_dir)
+            metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+            context = cls(
+                config,
+                session_id=str(data.get("session_id") or session_dir.name),
+                event_sinks=event_sinks,
+                session_dir=session_dir.resolve(),
+            )
+            stored = load_state(session_dir)
+            context.state.replace({key: stored[key] for key in RESUMED_STATE_KEYS if key in stored})
+            context.tasks = [_restored_task(record) for record in load_task_records(session_dir)]
+            context.metadata.started_at = _parse_datetime(metadata.get("started_at"))
+            context.metadata.task_count = len(context.tasks)
+            context.resumed_from_sequence = last_event_sequence(session_dir)
+            context.session_lock = lock
+            return context
+        except BaseException:
+            lock.release()
+            raise
 
     async def initialize(
         self,
@@ -397,7 +515,7 @@ class SessionContext:
         wait_for_port: Callable[[int, float], Awaitable[None]],
         mcp_runtime_factory: MCPRuntimeFactory,
         output_fn: Callable[..., None],
-        print_tools: Callable[[list[Any]], None] | None,
+        print_tools: ToolPrinter | None,
         harness_factory: HarnessFactory,
     ) -> None:
         """Initialize session-owned runtime resources once."""
@@ -426,13 +544,19 @@ class SessionContext:
         )
 
         now = datetime.now(UTC)
-        self.metadata.started_at = now
+        if self.metadata.started_at is None:
+            self.metadata.started_at = now
         self.metadata.last_activity = now
-        self.session_dir = get_settings().storage.session_dir(self.session_id).resolve()
+        if self.session_dir is None:
+            self.session_dir = get_settings().storage.session_dir(self.session_id).resolve()
         self.session_dir.mkdir(parents=True, exist_ok=True)
+        # A new session takes its lock here; a resumed one has held it since restore().
+        if self.session_lock is None:
+            self.session_lock = SessionLock.acquire(self.session_dir)
         self.event_emitter = EventEmitter(
-            _build_session_event_sink(self.session_dir),
+            _build_session_event_sink(self.session_dir, self.event_sinks),
             session_id=self.session_id,
+            sequence=self.resumed_from_sequence or 0,
         )
         self.workspace = WorkspaceContext(
             self.session_dir / get_settings().storage.workspace_subdir
@@ -458,15 +582,21 @@ class SessionContext:
                     self.config.user_data_dir,
                     self.config.cdp_port,
                 )
+                if self.chrome_process is not None:
+                    output_fn(CONNECTING_MESSAGE)
                 await wait_for_port(self.config.cdp_port, self.config.cdp_timeout)
                 output_fn(SERVER_CONNECTED_MESSAGE)
-                mcp = mcp_runtime_factory(self.config.cdp_port)
+                self.child_stderr = (self.session_dir / CHILD_STDERR_LOG_NAME).open(
+                    "a", encoding="utf-8", buffering=1
+                )
+                mcp = mcp_runtime_factory(self.config.cdp_port, self.child_stderr)
                 await mcp.start()  # raises if the browser server cannot start
             except BaseException:
                 if mcp is not None:
                     with contextlib.suppress(Exception):
                         await mcp.close()
                 self._close_chrome_process()
+                self._close_child_stderr()
                 raise
             self.mcp = mcp
             # The MCP tool source is live: rediscovery (list_changed) and servers going
@@ -477,7 +607,7 @@ class SessionContext:
                 normalizers=mcp.normalizers,
             )
             if self.config.show_tools and print_tools is not None:
-                print_tools(list(await self.tool_registry.get_all()))
+                print_tools(list(await self.tool_registry.get_all()), output_fn)
 
         self.harness = harness_factory(
             llm=self.llm,
@@ -492,7 +622,10 @@ class SessionContext:
         self.event_emitter.emit(
             "session.started",
             source="harness.session",
-            payload={"session_id": self.session_id},
+            payload={
+                "session_id": self.session_id,
+                "resumed": self.resumed_from_sequence is not None,
+            },
         )
         self.events.emit("session.started", self)
 
@@ -550,11 +683,22 @@ class SessionContext:
         self.events.emit("task.started", record)
         return record
 
-    def finish_task(self, record: TaskRecord, result: Any) -> None:
-        """Mark a tracked task as completed."""
+    def finish_task(
+        self,
+        record: TaskRecord,
+        result: Any,
+        *,
+        status: str = "completed",
+        turns: int | None = None,
+        final_answer: str = "",
+    ) -> None:
+        """Mark a tracked task as finished with its terminal goal ``status``."""
 
         now = datetime.now(UTC)
         record.result = result
+        record.status = status
+        record.turns = turns
+        record.final_answer = final_answer
         record.finished_at = now
         self.current_task = None
         self.metadata.task_count += 1
@@ -565,6 +709,18 @@ class SessionContext:
     def fail_task(self, record: TaskRecord, exception: BaseException) -> None:
         """Mark a tracked task as failed while preserving the exception."""
 
+        record.status = "failed"
+        self._close_task(record, exception)
+        self.events.emit("task.failed", record)
+
+    def cancel_task(self, record: TaskRecord, exception: asyncio.CancelledError) -> None:
+        """Mark a tracked task as cancelled; its result is the cancellation itself."""
+
+        record.status = "cancelled"
+        self._close_task(record, exception)
+        self.events.emit("task.cancelled", record)
+
+    def _close_task(self, record: TaskRecord, exception: BaseException) -> None:
         now = datetime.now(UTC)
         record.result = exception
         record.finished_at = now
@@ -572,7 +728,6 @@ class SessionContext:
         self.metadata.task_count += 1
         self.metadata.last_activity = now
         self.persist()
-        self.events.emit("task.failed", record)
 
     def snapshot(self) -> dict[str, Any]:
         """Return a durable, JSON-compatible view of the session."""
@@ -638,16 +793,21 @@ class SessionContext:
         }
 
     def persist(self) -> None:
-        """Persist session metadata and task records under .autobrowser."""
+        """Persist session metadata, task records and the carried state (``state.json``)
+        under the session directory.
 
-        if self.session_dir is None:
-            self.session_dir = get_settings().storage.session_dir(
-                self.session_id
-            ).resolve()
-            self.session_dir.mkdir(parents=True, exist_ok=True)
+        Only the holder of the session's lock writes: a session that never started holds
+        none and leaves no record; a started one without tasks is recorded but not
+        resumable (``list_sessions`` requires a task)."""
+
+        if self.session_lock is None or not self.session_lock.held or self.session_dir is None:
+            return
         snapshot = self.snapshot()
         _write_json(self.session_dir / "session.json", snapshot)
         _write_json(self.session_dir / "tasks.json", snapshot["tasks"])
+        if get_settings().storage.persist_state:
+            carried = {key: self.state[key] for key in SESSION_STATE_KEYS if key in self.state}
+            save_state(self.session_dir, self.session_id, carried)
 
     async def close(self) -> None:
         """Release session-owned runtime resources.
@@ -659,6 +819,7 @@ class SessionContext:
         self.mcp = None
         if mcp is not None:
             await mcp.close()
+        self._close_child_stderr()
         self._close_chrome_process()
         self.event_emitter.emit(
             "session.closed",
@@ -671,8 +832,20 @@ class SessionContext:
         self.current_task = None
         self.metadata.last_activity = datetime.now(UTC)
         self.initialized = False
-        self.persist()
+        try:
+            self.persist()
+        finally:
+            if self.session_lock is not None:
+                self.session_lock.release()
+                self.session_lock = None
         self.events.emit("session.closed", self)
+
+    def _close_child_stderr(self) -> None:
+        stream = self.child_stderr
+        self.child_stderr = None
+        if stream is not None:
+            with contextlib.suppress(OSError):
+                stream.close()
 
     def _close_chrome_process(self) -> None:
         process = self.chrome_process
@@ -708,14 +881,22 @@ class SessionRuntime:
         start_chrome_cdp: Callable[[str, str, int], Any],
         wait_for_port: Callable[[int, float], Awaitable[None]],
         mcp_runtime_factory: MCPRuntimeFactory = default_mcp_runtime_factory,
-        print_tools: Callable[[list[Any]], None] | None = None,
+        print_tools: ToolPrinter | None = None,
         harness_factory: HarnessFactory = BrowserHarness,
         input_fn: Callable[[str], str] = input,
         output_fn: Callable[..., None] = print,
         human_input: HumanInputCallback | None = None,
+        event_sinks: Sequence[EventSink] = (),
+        resume_from: Path | None = None,
     ) -> None:
         self.config = config
-        self.context = SessionContext(config)
+        self._event_sinks = tuple(event_sinks)
+        #: ``resume_from`` is a stored session directory to continue (``--resume``).
+        self.context = (
+            SessionContext.restore(config, resume_from, event_sinks=self._event_sinks)
+            if resume_from is not None
+            else SessionContext(config, event_sinks=self._event_sinks)
+        )
         self._llm_factory = llm_factory
         self._start_chrome_cdp = start_chrome_cdp
         self._wait_for_port = wait_for_port
@@ -728,6 +909,15 @@ class SessionRuntime:
         self._human_input = human_input
         #: Built once in :meth:`start` by :meth:`SessionContext.build_agent`.
         self.agent: Agent | None = None
+
+    def set_output_fn(self, output_fn: Callable[..., None]) -> None:
+        """Route session messages (startup notices, the tool list) to ``output_fn``.
+
+        A front end that owns the terminal turns them into its own notices; takes effect for
+        everything written after the call (the session starts lazily).
+        """
+
+        self._output = output_fn
 
     @property
     def harness(self) -> BrowserHarness:
@@ -758,6 +948,43 @@ class SessionRuntime:
                 "and always-ask rules still hold."
             )
 
+    async def reset(self) -> SessionContext:
+        """Close the session and replace it with a fresh, not yet started one.
+
+        The new context gets a new session id, no history and no tasks; it starts lazily
+        with the next task (or :meth:`start`). The extra event sinks carry over, so a
+        subscribed UI sees the new session's events. Refuses while a task is running.
+        """
+
+        if self.context.current_task is not None:
+            raise RuntimeError("Cannot reset the session while a task is running.")
+        await self.close()
+        self.agent = None
+        self.context = SessionContext(self.config, event_sinks=self._event_sinks)
+        return self.context
+
+    async def switch_to(self, session_dir: Path) -> SessionContext:
+        """Close the current session and continue the stored one in ``session_dir``.
+
+        The stored session is restored (and locked) first, so a refusal (open elsewhere,
+        damaged files) leaves the current session untouched. Like :meth:`reset`, the extra
+        event sinks carry over and resources start lazily with the next task. Refuses while
+        a task is running.
+        """
+
+        if self.context.current_task is not None:
+            raise RuntimeError("Cannot switch sessions while a task is running.")
+        restored = SessionContext.restore(self.config, session_dir, event_sinks=self._event_sinks)
+        try:
+            await self.close()
+        except BaseException:
+            if restored.session_lock is not None:
+                restored.session_lock.release()
+            raise
+        self.agent = None
+        self.context = restored
+        return restored
+
     async def run_task(self, task: str) -> AgentLoopResult:
         """Run one user task through the session's agent."""
 
@@ -781,14 +1008,31 @@ class SessionRuntime:
         )
         try:
             goal_result = await runner.run(request)
+        except asyncio.CancelledError as exc:
+            self._forget_memory(task_id)
+            self.context.cancel_task(record, exc)
+            raise
         except Exception as exc:
             self._forget_memory(task_id)
             self.context.fail_task(record, exc)
             raise
         result = goal_result.result
         self.context.state.replace(dict(result.session_state))
-        await self._update_memory(task, task_id, goal_result.status, result)
-        self.context.finish_task(record, result)
+        try:
+            await self._update_memory(task, task_id, goal_result.status, result)
+        except BaseException:
+            self._forget_memory(task_id)
+            raise
+        finally:
+            # The goal already ended: a cancellation during memory consolidation must not
+            # leave the record running (it would block ``reset()`` for good).
+            self.context.finish_task(
+                record,
+                result,
+                status=goal_result.status,
+                turns=result.turns,
+                final_answer=str(result.final_answer or ""),
+            )
         return result
 
     async def _update_memory(
@@ -879,6 +1123,7 @@ class SessionRuntime:
 __all__ = [
     "Artifact",
     "ArtifactRegistry",
+    "CHILD_STDERR_LOG_NAME",
     "EXIT_COMMANDS",
     "MCPRuntimeFactory",
     "SessionConfig",
@@ -888,6 +1133,7 @@ __all__ = [
     "SessionRuntime",
     "SessionState",
     "TaskRecord",
+    "ToolPrinter",
     "WorkspaceContext",
     "default_mcp_runtime_factory",
 ]

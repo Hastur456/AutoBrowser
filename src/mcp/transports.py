@@ -8,8 +8,9 @@ The legacy SSE transport is deprecated by the spec since 2025-03-26 and not wire
 from __future__ import annotations
 
 import contextlib
+import sys
 from collections.abc import AsyncIterator, Callable
-from typing import Any, AsyncContextManager
+from typing import Any, AsyncContextManager, TextIO
 
 import httpx
 from mcp import StdioServerParameters
@@ -29,17 +30,22 @@ except ImportError:  # pragma: no cover
     create_mcp_http_client = None
 
 
-def open_stdio_transport(config: StdioServerConfig) -> AsyncContextManager[Any]:
+def open_stdio_transport(
+    config: StdioServerConfig, *, errlog: TextIO | None = None
+) -> AsyncContextManager[Any]:
     # ``env`` is merged by the SDK over ``get_default_environment()``; None -> defaults only.
     # On exit ``stdio_client`` closes stdin, waits, then escalates to SIGTERM/SIGKILL of
     # the whole process tree — also when the owning task is cancelled.
+    # ``errlog`` receives the server's stderr; it must be a real file (the child process
+    # inherits its descriptor). ``None`` keeps the SDK default, this process's stderr.
     return stdio_client(
         StdioServerParameters(
             command=config.command,
             args=list(config.args),
             env=dict(config.env) if config.env is not None else None,
             cwd=config.cwd,
-        )
+        ),
+        errlog=sys.stderr if errlog is None else errlog,
     )
 
 
@@ -61,22 +67,26 @@ async def _open_streamable_http(config: StreamableHttpServerConfig) -> AsyncIter
         yield streams
 
 
-def open_streamable_http_transport(config: StreamableHttpServerConfig) -> AsyncContextManager[Any]:
+def open_streamable_http_transport(
+    config: StreamableHttpServerConfig, *, errlog: TextIO | None = None
+) -> AsyncContextManager[Any]:
+    del errlog  # a remote server has no stderr of ours
     return _open_streamable_http(config)
 
 
-TRANSPORT_FACTORIES: dict[str, Callable[[Any], AsyncContextManager[Any]]] = {
+#: ``factory(config, errlog=...)`` -> async context manager yielding the streams.
+TRANSPORT_FACTORIES: dict[str, Callable[..., AsyncContextManager[Any]]] = {
     "stdio": open_stdio_transport,
     "streamable_http": open_streamable_http_transport,
 }
 
 
-def open_transport(config: Any) -> AsyncContextManager[Any]:
+def open_transport(config: Any, *, errlog: TextIO | None = None) -> AsyncContextManager[Any]:
     try:
         factory = TRANSPORT_FACTORIES[config.transport]
     except KeyError:
         raise ValueError(f"unsupported MCP transport {config.transport!r}") from None
-    return factory(config)
+    return factory(config, errlog=errlog)
 
 
 __all__ = [

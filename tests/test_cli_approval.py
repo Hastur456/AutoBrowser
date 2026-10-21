@@ -9,11 +9,12 @@ from typing import Any
 
 import pytest
 
-from src.cli.approval import ApprovalPrompt, approval_question
+from src.cli.approval import ApprovalPrompt, ticket_question
 from src.cli.bootstrap import build_session, effective_permission_mode, is_interactive
 from src.cli.parser import build_parser
 from src.config import PermissionsSettings, Settings
-from src.contracts import PermissionVerdict
+from src.contracts import ApprovalTicket, PermissionVerdict
+from src.harness.approvals import ApprovalBroker
 from tests.session_fakes import install_fake_agent
 
 REQUEST = {"name": "browser_click", "args": {"element": "Купить", "target": "e2"}}
@@ -48,30 +49,47 @@ async def ask(prompt: ApprovalPrompt, verdict: PermissionVerdict, *answers: str)
     return await task
 
 
+async def broker_ticket(
+    request: dict[str, Any], verdict: PermissionVerdict, settings: PermissionsSettings | None = None
+) -> ApprovalTicket:
+    """The ticket a real broker opens for ``request`` (the wait times out at once)."""
+
+    broker = ApprovalBroker(
+        settings or PermissionsSettings(), progress_timeout_seconds=10.0, timeout_seconds=0.01
+    )
+    tickets: list[ApprovalTicket] = []
+    broker.subscribe(lambda item: tickets.append(item) if isinstance(item, ApprovalTicket) else None)
+    await broker(request, verdict.reason, verdict)  # type: ignore[arg-type]
+    return tickets[0]
+
+
 # --------------------------------------------------------------------------- the prompt
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("source", ["model", "classifier"])
-def test_a_judge_question_names_who_asked_and_offers_no_session(source: str) -> None:
+async def test_a_judge_question_names_who_asked_and_offers_no_session(source: str) -> None:
     verdict = PermissionVerdict(
         decision="ask", reason="Оплата заказа на 9 826 ₽.", source=source, always_ask=True  # type: ignore[arg-type]
     )
-    text = approval_question(REQUEST, verdict.reason, verdict)
+    text = ticket_question(await broker_ticket(REQUEST, verdict))
     assert text.startswith(f"Approval needed (asked by the {source}): browser_click")
     assert "Оплата заказа на 9 826 ₽." in text
     assert "[s]" not in text
 
 
-def test_the_question_names_tool_domain_rule_and_choices() -> None:
-    text = approval_question(REQUEST, GRANTABLE.reason, GRANTABLE)
+@pytest.mark.asyncio
+async def test_the_question_names_tool_domain_rule_and_choices() -> None:
+    text = ticket_question(await broker_ticket(REQUEST, GRANTABLE))
     assert text.startswith("Approval needed (rule buy): browser_click on ozon.ru")
     assert "Approval required by rule buy." in text
     assert '"element": "Купить"' in text
     assert "[y] once   [s] session for browser_click on ozon.ru   [n] deny" in text
 
 
-def test_always_ask_hides_the_session_choice() -> None:
-    text = approval_question({"name": "browser_evaluate"}, ALWAYS.reason, ALWAYS)
+@pytest.mark.asyncio
+async def test_always_ask_hides_the_session_choice() -> None:
+    text = ticket_question(await broker_ticket({"name": "browser_evaluate"}, ALWAYS))
     assert "[s]" not in text and "[y] once   [n] deny" in text
 
 
@@ -240,3 +258,52 @@ def test_the_cmd2_shell_routes_the_next_line_to_a_pending_approval() -> None:
         assert future.result(timeout=5) == "session"
     finally:
         cli._runtime_loop.stop()
+
+
+# --------------------------------------------------------------------------- settings
+
+
+@pytest.mark.asyncio
+async def test_the_args_preview_is_clipped_to_the_configured_length() -> None:
+    request = {"name": "browser_type", "args": {"text": "x" * 100}}
+
+    ticket = await broker_ticket(
+        request, GRANTABLE, PermissionsSettings(approval_args_preview_chars=20)
+    )
+    text = ticket_question(ticket)
+
+    args_line = next(line for line in text.splitlines() if line.strip().startswith("args:"))
+    assert args_line.strip() == "args: " + '{"text": "xxxxxxx...'
+
+
+def test_the_prompt_waits_within_the_goal_watchdog(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.config import LoopSettings
+
+    settings = Settings(
+        loop=LoopSettings(progress_timeout_seconds=100.0, task_timeout_seconds=40.0),
+        permissions=PermissionsSettings(approval_timeout_ratio=0.5),
+    )
+    monkeypatch.setattr("src.cli.approval.get_settings", lambda: settings)
+
+    # min(progress, task) x ratio: the task timeout never fires before the approval deny.
+    assert ApprovalPrompt().broker.timeout_seconds == 20.0
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_is_an_adapter_over_a_shared_broker() -> None:
+    from src.harness.approvals import ApprovalBroker
+
+    broker = ApprovalBroker(PermissionsSettings(), progress_timeout_seconds=10.0)
+    resolutions: list[Any] = []
+    broker.subscribe(resolutions.append)
+    out: list[str] = []
+    prompt = ApprovalPrompt(output=out.append, broker=broker)
+
+    # The engine calls the broker directly; the prompt still sees and answers the ticket.
+    task = asyncio.create_task(broker(REQUEST, GRANTABLE.reason, GRANTABLE))
+    await asyncio.to_thread(lambda: [threading.Event().wait(0.005) for _ in iter(lambda: prompt.pending, True)])
+    assert prompt.answer("y") is True
+    assert await task == "once"
+    assert out[0].startswith("Approval needed (rule buy): browser_click on ozon.ru")
+    assert resolutions[-1].via == "classic"
+    prompt.close()

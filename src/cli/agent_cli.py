@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import sys
 import threading
+from collections.abc import Mapping
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
@@ -16,11 +17,15 @@ import cmd2
 from cmd2 import Cmd2ArgumentParser, with_argparser
 
 from src.browser.pages import current_page_url
-from src.cli.output import format_mcp_status
 from src.cli.approval import ApprovalPrompt
-from src.harness.session import SessionContext, SessionRuntime, TaskRecord
+from src.cli.output import format_mcp_status
+from src.config import get_settings
+from src.harness.session import SessionRuntime
 from src.harness.tools import ToolRegistry
-from src.mcp import ConnectionState
+from src.ui.controller import SessionController
+from src.ui.runtime_loop import RuntimeLoop
+from src.ui.views import TaskView
+
 
 @dataclass(frozen=True)
 class CommandSpec:
@@ -60,40 +65,6 @@ mcp_parser.add_argument("action", nargs="?", choices=("status", "reconnect"), de
 mcp_parser.add_argument("server", nargs="?", help="Server name (for reconnect).")
 
 
-class RuntimeLoop:
-    """Own one event loop for all async session operations."""
-
-    def __init__(self) -> None:
-        self._loop = asyncio.new_event_loop()
-        self._started = threading.Event()
-        self._thread = threading.Thread(
-            target=self._run,
-            name="autobrowser-runtime-loop",
-            daemon=True,
-        )
-        self._thread.start()
-        self._started.wait()
-
-    def submit(self, coro: Any) -> Future[Any]:
-        return asyncio.run_coroutine_threadsafe(coro, self._loop)
-
-    def run(self, coro: Any) -> Any:
-        return self.submit(coro).result()
-
-    def stop(self) -> None:
-        if not self._loop.is_closed():
-            self._loop.call_soon_threadsafe(self._loop.stop)
-            self._thread.join(timeout=5)
-
-    def _run(self) -> None:
-        asyncio.set_event_loop(self._loop)
-        self._started.set()
-        try:
-            self._loop.run_forever()
-        finally:
-            self._loop.close()
-
-
 class AgentCli(cmd2.Cmd):
     """Interactive shell around an initialized or lazy `SessionRuntime`."""
 
@@ -106,12 +77,17 @@ class AgentCli(cmd2.Cmd):
         *,
         use_color: bool | None = None,
         approvals: ApprovalPrompt | None = None,
+        controller: SessionController | None = None,
     ) -> None:
         super().__init__(allow_cli_args=False, include_ipy=False)
         self.prompt = "autobrowser> "
         self.runtime = runtime
         #: Pending permission approvals of the running task; the next input line answers.
         self.approvals = approvals
+        #: Every command goes through the UI-neutral controller, like the other front ends.
+        self.controller = controller or SessionController(
+            runtime, broker=approvals.broker if approvals is not None else None
+        )
         self._runtime_loop = RuntimeLoop()
         self.use_color = sys.stdout.isatty() if use_color is None else use_color
         self._task_future: Future[Any] | None = None
@@ -182,15 +158,15 @@ class AgentCli(cmd2.Cmd):
     def do_tasks(self, _: str) -> None:
         """Show all tasks in the current session."""
 
-        tasks = self.runtime.context.tasks
+        tasks = self.controller.task_views()
         if not tasks:
             self.poutput("No tasks in this session.")
             return
 
-        for index, record in enumerate(tasks, start=1):
-            status = self._task_status(record)
-            started = self._format_dt(record.started_at)
-            self.poutput(f"{index:>2}. {status:<9} {started} {record.task}")
+        for view in tasks:
+            status = self._task_status(view)
+            started = self._format_dt(view.started_at)
+            self.poutput(f"{view.index:>2}. {status:<9} {started} {view.task}")
 
     def do_cancel(self, _: str) -> None:
         """Cancel the currently running task."""
@@ -199,12 +175,11 @@ class AgentCli(cmd2.Cmd):
             self.poutput("No task is currently running.")
             return
 
-        future = self._task_future
-        if future is None:
+        if self._task_future is None:
             self.perror("Running task cannot be cancelled yet.")
             return
 
-        future.cancel()
+        self._runtime_loop.submit(self.controller.cancel())
         self.poutput(self._warn("Cancellation requested."))
 
     def do_session(self, _: str) -> None:
@@ -227,34 +202,35 @@ class AgentCli(cmd2.Cmd):
             self.perror("Cannot reset while a task is running. Use 'cancel' first.")
             return
 
-        self._runtime_loop.run(self._reset_session())
+        self._runtime_loop.run(self.controller.reset())
         self.poutput(self._ok("Session reset."))
 
     @with_argparser(history_parser)
     def do_history(self, args: argparse.Namespace) -> None:
         """Show the last N dialogue messages."""
 
-        messages = self._get_history_messages()
+        messages = self.controller.history(max(args.limit, 0))
         if not messages:
             self.poutput("No dialogue history is available.")
             return
 
-        limit = max(args.limit, 0)
-        for message in messages[-limit:]:
+        for message in messages:
             self.poutput(self._format_message(message))
 
     def do_clear(self, _: str) -> None:
         """Clear dialogue history."""
 
-        count = self._clear_history_messages()
-        self.runtime.context.persist()
+        if self._is_task_running():
+            self.perror("Cannot clear the history while a task is running.")
+            return
+        count = self.controller.clear_history()
         self.poutput(self._ok(f"Dialogue history cleared ({count} item(s))."))
 
     def do_browser(self, _: str) -> None:
         """Show browser status."""
 
         context = self.runtime.context
-        self.poutput(f"Browser: {self._browser_state()}")
+        self.poutput(f"Browser: {self.controller.session_view().browser}")
         mcp = context.mcp
         if mcp is not None and mcp.browser_server:
             self.poutput(f"Server:  {mcp.browser_server}")
@@ -277,11 +253,11 @@ class AgentCli(cmd2.Cmd):
                 self.perror("Cannot reconnect while a task is running. Use 'cancel' first.")
                 return
             try:
-                self._runtime_loop.run(mcp.manager.reconnect(name))
+                view = self._runtime_loop.run(self.controller.reconnect(name))
             except Exception as exc:
                 self.perror(f"Reconnect failed: {exc}")
                 return
-            self.poutput(self._ok(f"Reconnected {name} (generation {mcp.manager.generation(name)})."))
+            self.poutput(self._ok(f"Reconnected {name} (generation {view.generation})."))
             return
         for line in format_mcp_status(mcp.status()):
             self.poutput(line)
@@ -295,12 +271,11 @@ class AgentCli(cmd2.Cmd):
     def do_status(self, _: str) -> None:
         """Show short session, browser, and task status."""
 
-        context = self.runtime.context
-        browser = self._browser_state()
+        view = self.controller.session_view()
         task = "running" if self._is_task_running() else "idle"
         self.poutput(
-            f"session={context.session_id[:8]} status={task} "
-            f"browser={browser} tasks={len(context.tasks)}"
+            f"session={view.session_id[:8]} status={task} "
+            f"browser={view.browser} tasks={len(self.controller.task_views())}"
         )
 
     def do_exit(self, _: str) -> bool:
@@ -313,17 +288,13 @@ class AgentCli(cmd2.Cmd):
 
         return self._exit()
 
-    async def _reset_session(self) -> None:
-        await self.runtime.close()
-        self.runtime.context = SessionContext(self.runtime.config)
-
     def _start_background_task(self, task_text: str) -> None:
         self._task_done.clear()
         self._task_error = None
         self._task_result = None
         self._task_text = task_text
 
-        self._task_future = self._runtime_loop.submit(self.runtime.run_task(task_text))
+        self._task_future = self._runtime_loop.submit(self.controller.run(task_text))
         self._task_future.add_done_callback(self._on_task_done)
 
     def _on_task_done(self, future: Future[Any]) -> None:
@@ -351,7 +322,7 @@ class AgentCli(cmd2.Cmd):
         if self._is_task_running():
             self.do_cancel("")
             self.poutput("Waiting for running task to stop...")
-            self._task_done.wait(timeout=5)
+            self._task_done.wait(timeout=get_settings().ui.shutdown_timeout_seconds)
         self.close_runtime()
         self.poutput("Bye.")
         return True
@@ -366,55 +337,18 @@ class AgentCli(cmd2.Cmd):
             future = self._task_future
             if future is not None:
                 future.cancel()
-            self._task_done.wait(timeout=5)
+            self._task_done.wait(timeout=get_settings().ui.shutdown_timeout_seconds)
         self._runtime_loop.run(self.runtime.close())
         self._runtime_loop.stop()
 
-    def _get_history_messages(self) -> list[Any]:
-        state = self.runtime.context.state
-        for key in ("messages", "history", "conversation", "conversation_history"):
-            value = state.get(key)
-            if isinstance(value, list):
-                return value
-        return []
+    def _format_message(self, message: Mapping[str, object]) -> str:
+        role = str(message.get("role") or "message")
+        return f"{self._style(role, 'cyan')}: {message.get('content', '')}"
 
-    def _clear_history_messages(self) -> int:
-        state = self.runtime.context.state
-        count = 0
-        for key in ("messages", "history", "conversation", "conversation_history"):
-            value = state.get(key)
-            if isinstance(value, list):
-                count += len(value)
-                state[key] = []
-        return count
-
-    def _format_message(self, message: Any) -> str:
-        role = getattr(message, "type", None) or getattr(message, "role", None) or type(message).__name__
-        content = getattr(message, "content", message)
-        return f"{self._style(str(role), 'cyan')}: {content}"
-
-    def _task_status(self, record: TaskRecord) -> str:
-        if record.finished_at is None:
-            return self._style("running", "yellow")
-        if isinstance(record.result, BaseException):
-            return self._style("failed", "red")
-        return self._style("done", "green")
-
-    def _browser_state(self) -> str:
-        if self.runtime.config.no_mcp:
-            return "disabled"
-        context = self.runtime.context
-        mcp = context.mcp
-        if not context.initialized or mcp is None:
-            return "not started"
-        if not mcp.browser_server:
-            return "no browser server"
-        status = mcp.status().get(mcp.browser_server)
-        if status is None:
-            return "unknown"
-        if status.state is ConnectionState.READY:
-            return "on"
-        return status.state.value
+    def _task_status(self, view: TaskView) -> str:
+        colors = {"running": "yellow", "cancelled": "yellow", "failed": "red", "blocked": "red"}
+        status = "done" if view.status == "completed" else view.status
+        return self._style(status, colors.get(view.status, "green"))
 
     def _tool_count_text(self, registry: ToolRegistry | None) -> str:
         if registry is None:
@@ -469,7 +403,7 @@ def run_cli(
     cli = AgentCli(runtime, approvals=approvals)
     try:
         if initial_task:
-            _run_blocking(cli, runtime.run_task(initial_task))
+            _run_blocking(cli, cli.controller.run(initial_task))
         cli.cmdloop()
         return 0
     finally:

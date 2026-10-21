@@ -70,6 +70,17 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Explicit Agent Objects Plan](development/2026-10-17-explicit-agent-objects-plan.md):
   browser-neutral engine via injected tool roles, dead-code removal, typed
   layer objects (Russian).
+- [Terminal UI Redesign Design](development/2026-10-19-gui-redesign-design.md): proposed
+  Claude-Code-style inline TUI (prompt_toolkit + rich) over a shared `SessionController`, the
+  `autobrowser` command and home directory, visual design (palette, glyphs, mockups),
+  visual-bug prevention rules, terminal support matrix, test strategy and rollout plan; the
+  web UI is deferred (Russian, Proposed).
+- [Autonomous Test Pipeline Design](development/2026-10-19-autonomous-test-pipeline-design.md):
+  proposed `scripts/ci.py` pipeline — test tiers, merge gate vs nightly, baseline v2 and
+  comparison rules, recorded model/tool cassettes, A/B and history benchmarks, CI workflows,
+  and the decision not to add Langfuse (Russian, Proposed; ADRs
+  [pipeline](decisions/2026-10-19-autonomous-test-pipeline.md) and
+  [Langfuse](decisions/2026-10-19-langfuse-observability.md)).
 - [Browser Provider Boundary ADR](decisions/2026-07-26-browser-provider-boundary.md):
   superseded record for the former Playwright adapter boundary.
 - [Task Memory Isolation ADR](decisions/2026-07-24-task-memory-isolation-and-session-persistence.md):

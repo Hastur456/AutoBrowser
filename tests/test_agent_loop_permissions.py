@@ -108,7 +108,7 @@ async def test_a_hook_allow_cannot_lift_a_deny_rule() -> None:
     )
 
     assert echo.calls == []
-    turn = [t for t in types_of(records) if t not in {"model.requested", "model.responded"}]
+    turn = [t for t in types_of(records) if t not in {"model.requested", "model.responded", "plan.updated", "turn.started"}]
     assert turn[:3] == ["action.proposed", "hook.decided", "permission.decided"]
 
 

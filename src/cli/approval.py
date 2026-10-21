@@ -1,100 +1,119 @@
-"""Interactive approval of tool calls the PermissionEngine asks about.
+"""Interactive approval of tool calls the PermissionEngine asks about, in the cmd2 shell.
 
+The approvals themselves live in :class:`~src.harness.approvals.ApprovalBroker` (tickets, the
+bounded wait, ``approval.answered``); :class:`ApprovalPrompt` is the terminal adapter over it.
 The agent task runs on the CLI's background event loop while the terminal belongs to another
-thread (the cmd2 prompt, or the main thread blocked on the startup task). So the callback
-does not read stdin itself: it posts a pending question and waits for whichever thread owns
-the terminal to :meth:`ApprovalPrompt.answer` it — cmd2 routes the next input line here, the
+thread (the cmd2 prompt, or the main thread blocked on the startup task). So the prompt does
+not read stdin itself: it prints each new ticket and waits for whichever thread owns the
+terminal to :meth:`ApprovalPrompt.answer` it — cmd2 routes the next input line here, the
 blocking startup run calls :meth:`ApprovalPrompt.serve`.
 
-The wait is bounded (``timeout_seconds``, below ``loop.progress_timeout_seconds``) because the
-goal watchdog sees no events while a human thinks; no answer in time is a ``deny``.
+The wait is bounded (``permissions.approval_timeout_ratio`` of
+``loop.progress_timeout_seconds``) because the goal watchdog sees no events while a human
+thinks; no answer in time is a ``deny``.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
-import threading
 from collections.abc import Callable
-from concurrent.futures import Future
-from dataclasses import dataclass, field
 
+from src.agent_loop.goals import GoalLimits
 from src.config import get_settings
-from src.contracts import ApprovalAnswer, PermissionVerdict, ToolRequest
+from src.contracts import (
+    ApprovalAnswer,
+    ApprovalResolution,
+    ApprovalTicket,
+    ApprovalVia,
+    PermissionVerdict,
+    ToolRequest,
+)
+from src.harness.approvals import ApprovalBroker
 
 _ONCE = {"y", "yes", "once", "o", "д", "да"}
 _SESSION = {"s", "session", "с", "сессия"}
 _DENY = {"n", "no", "deny", "н", "нет"}
-_ARGS_PREVIEW_CHARS = 300
 
 
-@dataclass
-class _Pending:
-    question: str
-    allow_session: bool
-    future: Future[ApprovalAnswer] = field(default_factory=Future)
-
-
-def approval_timeout_seconds() -> float:
-    """How long a human may think: well inside the goal watchdog's progress timeout."""
-
-    return get_settings().loop.progress_timeout_seconds * 0.8
-
-
-def _args_preview(request: ToolRequest) -> str:
-    try:
-        text = json.dumps(request.get("args") or {}, ensure_ascii=False, sort_keys=True, default=str)
-    except (TypeError, ValueError):
-        text = str(request.get("args"))
-    if len(text) > _ARGS_PREVIEW_CHARS:
-        text = text[: _ARGS_PREVIEW_CHARS - 3] + "..."
-    return text
-
-
-def approval_question(request: ToolRequest, reason: str, verdict: PermissionVerdict) -> str:
-    """Terminal text of one approval question (arguments are shown, never persisted)."""
-
-    tool = str(request.get("name") or "the tool")
-    domain = verdict.grant_key[2] if verdict.grant_key else ""
+def _question(
+    *,
+    tool: str,
+    domain: str,
+    reason: str,
+    args_preview: str,
+    allow_session: bool,
+    rule_id: str,
+    source: str,
+) -> str:
+    tool = tool or "the tool"
     where = f" on {domain}" if domain else ""
     choices = ["[y] once"]
-    if verdict.grant_key is not None and not verdict.always_ask:
+    if allow_session:
         choices.append(f"[s] session for {tool}{where}")
     choices.append("[n] deny")
-    if verdict.rule_id:
-        rule = f" (rule {verdict.rule_id})"
-    elif verdict.source in ("model", "classifier"):
-        rule = f" (asked by the {verdict.source})"
+    if rule_id:
+        rule = f" (rule {rule_id})"
+    elif source in ("model", "classifier"):
+        rule = f" (asked by the {source})"
     else:
         rule = ""
     return (
         f"Approval needed{rule}: {tool}{where}\n"
         f"  {reason}\n"
-        f"  args: {_args_preview(request)}\n"
+        f"  args: {args_preview}\n"
         f"  {'   '.join(choices)}"
     )
 
 
+def ticket_question(ticket: ApprovalTicket) -> str:
+    """Terminal text of one :class:`ApprovalTicket` (its arguments are already redacted)."""
+
+    return _question(
+        tool=ticket.tool,
+        domain=ticket.domain,
+        reason=ticket.reason,
+        args_preview=ticket.args_preview,
+        allow_session=ticket.allow_session,
+        rule_id=ticket.rule_id,
+        source=ticket.source,
+    )
+
+
 class ApprovalPrompt:
-    """:data:`~src.agent_loop.execution.loop.HumanInputCallback` answered from the terminal."""
+    """Terminal adapter over an :class:`ApprovalBroker`; itself a ``HumanInputCallback``.
+
+    Without an explicit ``broker`` it builds one from the settings (``timeout_seconds``
+    overrides the derived wait). Calling the prompt delegates to the broker, so it can be
+    handed to the session as its human-input callback.
+    """
 
     def __init__(
         self,
         *,
         output: Callable[[str], None] = print,
         timeout_seconds: float | None = None,
+        broker: ApprovalBroker | None = None,
+        via: ApprovalVia = "classic",
     ) -> None:
+        if broker is None:
+            settings = get_settings()
+            broker = ApprovalBroker(
+                settings.permissions,
+                # The goal watchdog's own bound: min(progress, task timeout).
+                progress_timeout_seconds=GoalLimits.from_settings(
+                    settings.loop
+                ).progress_timeout_seconds,
+                timeout_seconds=timeout_seconds,
+            )
+        self.broker = broker
         self._output = output
-        self._timeout = approval_timeout_seconds() if timeout_seconds is None else timeout_seconds
-        self._lock = threading.Lock()
-        self._pending: _Pending | None = None
+        self._via: ApprovalVia = via
+        self._unsubscribe = broker.subscribe(self._on_item)
 
     @property
     def pending(self) -> bool:
         """A question is waiting for an answer."""
 
-        with self._lock:
-            return self._pending is not None and not self._pending.future.done()
+        return bool(self.broker.pending())
 
     async def __call__(
         self,
@@ -102,47 +121,29 @@ class ApprovalPrompt:
         reason: str,
         verdict: PermissionVerdict,
     ) -> ApprovalAnswer:
-        pending = _Pending(
-            question=approval_question(request, reason, verdict),
-            allow_session=verdict.grant_key is not None and not verdict.always_ask,
-        )
-        with self._lock:
-            self._pending = pending
-        self._output(pending.question)
-        try:
-            return await asyncio.wait_for(asyncio.wrap_future(pending.future), self._timeout)
-        except TimeoutError:
-            self._output(f"No answer in {self._timeout:g}s: denied.")
-            return "deny"
-        finally:
-            with self._lock:
-                if self._pending is pending:
-                    self._pending = None
+        return await self.broker(request, reason, verdict)
 
     def answer(self, text: str) -> bool:
-        """Answer the pending question; ``False`` (and a hint) when the text is not an answer."""
+        """Answer the oldest pending question; ``False`` (and a hint) when the text is not one."""
 
-        with self._lock:
-            pending = self._pending
-        if pending is None or pending.future.done():
+        pending = self.broker.pending()
+        if not pending:
             self._output("No approval is pending.")
             return False
+        ticket = pending[0]
         choice = str(text or "").strip().lower()
         answer: ApprovalAnswer
         if choice in _ONCE:
             answer = "once"
-        elif choice in _SESSION and pending.allow_session:
+        elif choice in _SESSION and ticket.allow_session:
             answer = "session"
         elif choice in _DENY:
             answer = "deny"
         else:
-            options = "y / s / n" if pending.allow_session else "y / n"
+            options = "y / s / n" if ticket.allow_session else "y / n"
             self._output(f"Answer {options}.")
             return False
-        with self._lock:
-            if self._pending is pending and not pending.future.done():
-                pending.future.set_result(answer)
-        return True
+        return self.broker.answer(ticket.ticket_id, answer, via=self._via)
 
     def serve(self, read_line: Callable[[str], str] = input) -> None:
         """Ask on the calling thread until the pending question is answered (if any)."""
@@ -154,5 +155,16 @@ class ApprovalPrompt:
                 text = "n"
             self.answer(text)
 
+    def close(self) -> None:
+        """Stop printing the broker's tickets."""
 
-__all__ = ["ApprovalPrompt", "approval_question", "approval_timeout_seconds"]
+        self._unsubscribe()
+
+    def _on_item(self, item: ApprovalTicket | ApprovalResolution) -> None:
+        if isinstance(item, ApprovalTicket):
+            self._output(ticket_question(item))
+        elif item.via == "timeout":
+            self._output(f"No answer in {self.broker.timeout_seconds:g}s: denied.")
+
+
+__all__ = ["ApprovalPrompt", "ticket_question"]

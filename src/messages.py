@@ -31,6 +31,8 @@ __all__ = [
     "MessageRole",
     "ToolCall",
     "assistant_message",
+    "message_from_dict",
+    "message_to_dict",
     "system_message",
     "tool_message",
     "user_message",
@@ -120,3 +122,48 @@ def tool_message(
     """
 
     return Message(role="tool", content=content, name=name, tool_call_id=tool_call_id)
+
+
+def message_to_dict(message: Message) -> dict[str, Any]:
+    """A lossless plain-JSON form of ``message`` (for ``state.json``)."""
+
+    data: dict[str, Any] = {"role": message.role, "content": message.content}
+    if message.name is not None:
+        data["name"] = message.name
+    if message.tool_call_id is not None:
+        data["tool_call_id"] = message.tool_call_id
+    if message.tool_calls:
+        data["tool_calls"] = [
+            {"id": call.id, "name": call.name, "arguments": call.arguments}
+            for call in message.tool_calls
+        ]
+    return data
+
+
+def message_from_dict(data: dict[str, Any]) -> Message:
+    """The inverse of :func:`message_to_dict`; raises ``ValueError`` on a malformed message."""
+
+    role = data.get("role")
+    if role not in ("system", "user", "assistant", "tool"):
+        raise ValueError(f"Unknown message role: {role!r}")
+    for key in ("content", "name", "tool_call_id"):
+        if data.get(key) is not None and not isinstance(data[key], str):
+            raise ValueError(f"Message {key} must be a string, got {type(data[key]).__name__}")
+    raw_calls = data.get("tool_calls") or []
+    if not isinstance(raw_calls, list) or not all(isinstance(call, dict) for call in raw_calls):
+        raise ValueError("Message tool_calls must be a list of objects")
+    calls = []
+    for call in raw_calls:
+        arguments = call.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            raise ValueError("Tool call arguments must be an object")
+        calls.append(
+            ToolCall(id=str(call.get("id") or ""), name=str(call.get("name") or ""), arguments=dict(arguments))
+        )
+    return Message(
+        role=role,
+        content=data.get("content") or "",
+        name=data.get("name"),
+        tool_call_id=data.get("tool_call_id"),
+        tool_calls=tuple(calls),
+    )

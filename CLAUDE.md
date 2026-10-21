@@ -30,7 +30,9 @@ Get-Content -LiteralPath path\to\file.md -Encoding UTF8
 AutoBrowser is a Python 3.12 browser automation agent that turns a
 natural-language task into a plan → reason → policy → execute → observe loop.
 Browser interaction goes through the tools of the configured MCP servers (Playwright
-MCP by default). It runs as a long-lived interactive `cmd2` REPL (`main.py`) over
+MCP by default). It runs as a long-lived interactive session (`main.py`, the
+`autobrowser` console script) — a Claude-Code-style inline terminal UI by default,
+plain line mode without a capable terminal, the old `cmd2` shell with `--classic` — over
 an Ollama-compatible chat model (default `gemma4:31b-cloud`). Control flow is
 **engine-native** — there is no compiled graph. The explicit `AgentLoopEngine`
 owns the loop; see `docs/decisions/2026-08-31-native-agent-loop-engine.md` for
@@ -175,18 +177,28 @@ Every tunable lives in `src/config.py` — a pydantic-settings root read at call
 never imports it back). See
 `docs/decisions/2026-09-16-typed-settings-module.md` and the `.env.example` template.
 
-Names are `AUTOBROWSER_<SECTION>__<FIELD>` over ten sections (`llm`, `browser`, `loop`,
-`observation`, `memory`, `events`, `storage`, `flags`, `hooks`, `permissions`). Env outranks `.env` outranks the code
+Names are `AUTOBROWSER_<SECTION>__<FIELD>` over eleven sections (`llm`, `browser`, `loop`,
+`observation`, `memory`, `events`, `storage`, `flags`, `hooks`, `permissions`, `ui`). Env outranks `.env` outranks the code
 defaults; an empty value means "not set"; sections are `frozen` with `extra="forbid"`.
 `AUTOBROWSER_LLM__API_KEY` is passed to the provider as an explicit `Authorization: Bearer`
 header — the vendor `OLLAMA_API_KEY` is no longer read. Adding a setting means updating
 `tests/test_config.py`, which fails when `.env.example` drifts from the code.
 
+Files live in the **AutoBrowser home** (`src.config.home_dir()`): `AUTOBROWSER_HOME`, else
+`~/.autobrowser` (`docs/decisions/2026-10-19-autobrowser-command-and-home-directory.md`).
+`storage.root_dir` defaults to the home (sessions, memory, logs, input history); a relative
+root is relative to the home, and the legacy value `.autobrowser` means the home itself (with
+a `FutureWarning`). `.env` is read from the repo root (legacy) and then `<home>/.env`, never
+from the working directory. Tests get an empty home per test from `tests/conftest.py`.
+
 A YAML file can slot in above the environment as a fourth source: `AUTOBROWSER_CONFIG_FILE`
-names it explicitly (mandatory once set — a missing file fails startup), and with that unset,
-`config.yaml` at the repo root auto-loads if present — a fixed path, not a working-directory
-scan, and silent when absent. `config.yaml`/`config.local.yaml` are git-ignored, so the root
-file doubles as a personal default profile. Precedence is init kwargs > YAML > env > `.env` >
+names it explicitly (mandatory once set — a missing file fails startup); with that unset,
+`<home>/config.yaml` loads if present, else `config.yaml` at the repo root (the legacy
+checkout profile) — fixed paths, not a working-directory scan, and silent when absent.
+`config.yaml`/`config.local.yaml` are git-ignored, so the root file still works as a personal
+default profile. Command hooks still run in the checkout (`ROOT_PATH`): a hook may come from
+env, `.env` or code, so "the file that declares it" is not knowable, and the shipped
+`scripts/hooks/` live there. Precedence is init kwargs > YAML > env > `.env` >
 secret files, and pydantic-settings merges deeply, so the file decides exactly the fields it
 names while everything else still resolves below it: a partial profile, not a full config, and
 one that beats `AUTOBROWSER_*` for the fields it sets. The file source rejects unknown section
@@ -194,6 +206,24 @@ names itself (the root is `extra="ignore"`). `config.example.yaml` is the templa
 `docs/decisions/2026-09-16-opt-in-yaml-settings-file.md` records the original opt-in design,
 superseded on the activation question by
 `docs/decisions/2026-09-26-default-yaml-settings-file.md`.
+
+## Terminal UI
+
+Front ends are clients of the session, never part of it
+(`docs/decisions/2026-10-19-session-controller-and-local-web-ui.md`; guide:
+`docs/development/terminal-ui.md`).
+
+- `src/ui/controller.py` — `SessionController`, the UI-neutral facade over `SessionRuntime`
+  (submit/cancel/reset/reconnect/answer, `SessionView`/`TaskView` read models from
+  `src/ui/views.py`). Its coroutines run on `src/ui/runtime_loop.RuntimeLoop`.
+- The session feeds front ends through `EventBroadcaster` (`src/harness/event_stream.py`, an
+  extra session event sink) and `ApprovalBroker` (`src/harness/approvals.py`, the
+  `HumanInputCallback`); `src/cli/bootstrap.run_frontend_cli` composes them.
+- `src/ui/feed.py` projects redacted records to `FeedItem`s by event type and sanitizes every
+  displayed string; `src/ui/tui/` holds pure transcript/render code plus `TuiApp` and the
+  `RenderPump`, the only terminal writer; `src/ui/plain.py` is the line front end.
+- `src/agent_loop/**` and `src/harness/**` never import `src.ui`/`src.cli`; `src/ui/**`
+  never imports `src.agent_loop.execution`. UI tunables live in `settings.ui`.
 
 ## Lifecycle Hooks
 
@@ -276,7 +306,7 @@ guide: `docs/development/memory.md`; ADR: `docs/decisions/2026-10-02-layered-age
   like `approval_request` (`src/agent_loop/execution/notes.py`), kept on the task-local
   `LoopState.working_notes`.
 - L4 persistent memory (`persistent_enabled`): `MemoryStore`/`MemoryContext` in
-  `src/harness/memory_store.py`, files under `.autobrowser/memory/{sites,procedures}/*.md`;
+  `src/harness/memory_store.py`, files under `<home>/memory/{sites,procedures}/*.md`;
   `memory_view`/`memory_write` tools (`tool_enabled`, `server: memory`) in
   `src/harness/memory_tool.py`; staged trust and opt-in consolidation
   (`src/harness/memory_consolidation.py`) run in `SessionRuntime` after `goal_end`. Browser
@@ -303,8 +333,12 @@ uv run pytest                                 # full suite
 uv run pytest tests\test_harness_session.py   # engine + session lifecycle
 uv run pytest tests\test_prompts.py           # ALWAYS run after changing any prompt
 
-uv run main.py                                # interactive REPL (browser + MCP)
+uv run main.py                                # terminal UI (browser + MCP); --classic = cmd2
+uv run pytest tests/ui tests/test_ui_feed.py   # terminal UI: render snapshots, keys, ConPTY
 uv run main.py --no-mcp --task "inspect page" # dry run, no browser/MCP (dev checks)
+uv run main.py --continue                     # resume the latest session (state.json)
+uv run main.py -p "task" --output-format json # print mode: result only, exit 0/1/2/3/130
+uv run main.py doctor                         # paths, config source, node/npx, Chrome, terminal
 uv run main.py --show-state --task "..."      # debug state per step
 
 uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
@@ -314,7 +348,7 @@ uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
 
 Focused test groups are grouped by area in `AGENTS.md` / `docs/development/setup.md`
 (harness, browser provider, agent-loop contracts, CLI). Runtime output lands in
-`.autobrowser/sessions/<session_id>/` (`session.json`, `tasks.json`, `events.jsonl`,
+`<home>/sessions/<session_id>/` (`session.json`, `tasks.json`, `events.jsonl`,
 `workspace/`) — local and git-ignored; treat exporters/replay as read-only over it.
 
 ## When Changing Things
@@ -338,3 +372,9 @@ Focused test groups are grouped by area in `AGENTS.md` / `docs/development/setup
 - Update `docs/diagrams/` when engine phases, loop boundaries, session lifecycle, harness
   injection, policy routing, or MCP integration change. Add superseding ADRs; don't rewrite
   historical ones.
+- **Review every implementation.** After any change to code (`src/`, `tests/`, `scripts/`,
+  `main.py`) and before reporting the work as done, committing or opening a PR, run the
+  user-level `code-reviewer` subagent (`~/.claude/agents/code-reviewer.md`) over the change
+  without waiting to be asked. It only reports findings; fix the confirmed ones yourself, tell
+  the user about any you leave unfixed (with the reason), and re-run the reviewer after
+  non-trivial fixes. Doc-only changes don't need it.

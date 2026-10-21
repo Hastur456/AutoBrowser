@@ -27,6 +27,9 @@ development workflows.
   `Memory` and `Working Notes` blocks, memory tools in the normal pipeline) and the
   task boundary (task digest, staged trust, opt-in consolidation).
 
+- [UI Integration](ui-integration.md): the terminal UI thread model (UI loop vs.
+  `RuntimeLoop`, the render pump as the only writer) and a task with an approval card.
+
 ## Update Guidance
 
 Update diagrams when engine phases, loop boundaries, session lifecycle,

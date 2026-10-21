@@ -191,7 +191,7 @@ class HookEngine:
                 f"below loop.progress_timeout_seconds ({progress_timeout_seconds}s)."
             )
         loaded = [
-            _load_hook(spec, default_timeout=hooks.default_timeout_seconds)
+            _load_hook(spec, settings=hooks)
             for spec in hooks.registry
         ]
         return cls(
@@ -344,9 +344,10 @@ def _import_target(path: str, hook_id: str) -> Any:
     return target
 
 
-def _load_hook(spec: HookSpec, *, default_timeout: float) -> RegisteredHook:
+def _load_hook(spec: HookSpec, *, settings: HooksSettings) -> RegisteredHook:
+    default_timeout = settings.default_timeout_seconds
     if spec.type == "command":
-        handler: Any = CommandHook(spec.command)
+        handler: Any = CommandHook(spec.command, settings=settings)
     else:
         handler = _load_python_handler(spec)
     return RegisteredHook(

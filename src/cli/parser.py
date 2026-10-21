@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import argparse
 
+from src.cli.subcommands import SUBCOMMANDS, session_id_completer
 from src.config import get_settings
+from src.version import PACKAGE_NAME, package_version
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -19,7 +21,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run the AutoBrowser browser agent from the command line."
     )
-    parser.add_argument("task", nargs="*", help="Task for the browser agent.")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"{PACKAGE_NAME} {package_version() or 'unknown'}",
+    )
+    task = parser.add_argument(
+        "task",
+        nargs="*",
+        help=(
+            "Task for the browser agent, or a subcommand: "
+            + ", ".join(SUBCOMMANDS)
+            + " (see autobrowser <subcommand> --help)."
+        ),
+    )
+    task.completer = _first_word_completer  # type: ignore[attr-defined]  # argcomplete
     parser.add_argument("--task", "-t", dest="task_text", help="Task for the agent.")
     parser.add_argument(
         "--loop",
@@ -115,12 +131,88 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "-p",
+        "--print",
+        dest="print_mode",
+        action="store_true",
+        help=(
+            "Print mode: run the task without the terminal UI and print only the result "
+            "(task from the arguments or stdin). Exit 0 done, 1 failed, 2 usage, 3 blocked, "
+            "130 interrupted."
+        ),
+    )
+    parser.add_argument(
+        "--output-format",
+        choices=("text", "json", "stream-json"),
+        default=None,
+        help=f"Print mode output. Default: ui.print_format ({settings.ui.print_format}).",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print mode: show the task's progress on stderr.",
+    )
+    session = parser.add_mutually_exclusive_group()
+    session.add_argument(
+        "-c",
+        "--continue",
+        dest="continue_session",
+        action="store_true",
+        help="Continue the most recent session with its dialogue (state.json).",
+    )
+    resume = session.add_argument(
+        "-r",
+        "--resume",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="SESSION_ID",
+        help="Continue a stored session by id or id prefix; without one, pick from a list.",
+    )
+    resume.completer = session_id_completer  # type: ignore[attr-defined]  # argcomplete
+    front_end = parser.add_mutually_exclusive_group()
+    front_end.add_argument(
+        "--classic",
+        action="store_true",
+        help="Use the cmd2 shell instead of the terminal UI (ui.frontend=classic).",
+    )
+    front_end.add_argument(
+        "--plain",
+        action="store_true",
+        help="Line-by-line output without the terminal UI (ui.frontend=plain).",
+    )
+    parser.add_argument(
+        "--ascii",
+        action="store_true",
+        help="ASCII glyphs only (ui.glyphs=ascii).",
+    )
+    parser.add_argument(
+        "--no-color",
+        dest="no_color",
+        action="store_true",
+        help="No colours (ui.color=none); NO_COLOR in the environment does the same.",
+    )
+    parser.add_argument(
+        "--theme",
+        choices=("dark", "light", "mono"),
+        default=None,
+        help=f"Colour theme for this run. Default: {settings.ui.theme}",
+    )
+    parser.add_argument(
         "--turn-cap",
         type=int,
         default=settings.loop.turn_cap,
         help=f"Maximum agent turns (turn cap). Default: {settings.loop.turn_cap}",
     )
     return parser
+
+
+def _first_word_completer(prefix: str, parsed_args: argparse.Namespace, **_kwargs: object) -> list[str]:
+    """Offer the subcommands for the first word only; a task is free text."""
+
+    if getattr(parsed_args, "task", None):
+        return []
+    return [word for word in SUBCOMMANDS if word.startswith(prefix)]
 
 
 __all__ = ["build_parser"]

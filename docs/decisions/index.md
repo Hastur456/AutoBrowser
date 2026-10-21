@@ -4,6 +4,32 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-10-19 Autonomous Test Pipeline](2026-10-19-autonomous-test-pipeline.md) (Proposed,
+  Russian): one `scripts/ci.py` entry point with `gate` (hermetic, Windows + Linux: unit,
+  scripted evals against baseline v2, cassette replay of recorded model/tool responses, TUI
+  tests, paired A/B offline bench) and `nightly` (real model + Playwright MCP on a local fixture
+  site, golden set with generic graders, live latency/token benchmarks against a rolling
+  history) profiles; exit codes and a one-line verdict; baselines change only by an explicit
+  command; `ModelUsage` on `ModelResponse`; a `pipeline` settings section.
+- [2026-10-19 No Langfuse; Neutral OTLP Export Deferred](2026-10-19-langfuse-observability.md)
+  (Proposed, Russian): Langfuse is not added — the hermetic gate needs no service and events,
+  usage and local history cover the verdict; a Langfuse-specific SDK sink is rejected; an
+  off-by-default `OtlpEventSink` (any OTLP backend, Langfuse included) is recorded as a
+  deferred option with explicit revisit triggers.
+- [2026-10-19 Terminal UI over a Shared SessionController](2026-10-19-session-controller-and-local-web-ui.md)
+  (Accepted, Russian): a Claude-Code-style inline TUI on prompt_toolkit + rich (frozen blocks
+  in the scrollback, a bounded live zone, in-stream approvals, slash commands, status line) over
+  a UI-neutral `SessionController` in `src/ui/`, a session-scoped `EventBroadcaster` sink and
+  `ApprovalBroker`. Single-writer render rules, `full/degraded/plain` terminal levels, a themed
+  palette with 256/16-colour and ASCII fallbacks, a new `ui` settings section, structured
+  `goal.*` payloads and `goal.cancelled`. Web UI deferred. The file keeps its first-draft name.
+- [2026-10-19 The `autobrowser` Command and Home Directory](2026-10-19-autobrowser-command-and-home-directory.md)
+  (Accepted, Russian): `uv_build` packaging with an `autobrowser` console script (`uv tool
+  install`, `pipx`, `uv run`). `AUTOBROWSER_HOME` (default `~/.autobrowser`) replaces cwd- and
+  repo-relative lookups for `config.yaml`, `.env` and `storage.root_dir`, keeping legacy repo
+  paths as a fallback. Claude-style CLI (`-p`, `--output-format`, `--continue/--resume`,
+  `doctor`, `sessions`, `replay`, `completion` via argcomplete). Supersedes the default-YAML ADR
+  on the file location once accepted.
 - [2026-10-19 Name-Free Tool Handling](2026-10-19-name-free-tool-handling.md): nothing
   decides by a tool name. Kept snapshots are per server from `readOnlyHint`; arguments are
   filtered by schema only; the session configures prompt resources; memory compresses every
