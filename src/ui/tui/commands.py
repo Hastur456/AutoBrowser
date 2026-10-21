@@ -105,8 +105,27 @@ async def _exit(_host: CommandHost, _args: str) -> CommandResult:
     return CommandResult(exit=True)
 
 
-async def _clear(_host: CommandHost, _args: str) -> CommandResult:
-    return CommandResult(clear=True)
+async def _clear(host: CommandHost, _args: str) -> CommandResult:
+    """Leave the current session for a fresh one (new id, empty dialogue) and clear the
+    screen. The current session stays on disk, and the notice names the ``/resume`` that
+    goes straight back to it."""
+
+    before = await host.bridge.call(host.controller.session_view)
+    try:
+        await host.bridge.run(host.controller.reset)
+    except Exception as exc:  # noqa: BLE001 - e.g. a task is running: say so, stay here
+        return CommandResult(messages=(Notice(str(exc), "warn"),))
+    ru = host.locale == "ru"
+    if before.task_count:
+        short = before.session_id[:8]
+        text = (
+            f"Новая сессия. Предыдущая сохранена — /resume {short} вернёт в неё"
+            if ru
+            else f"New session. The previous one is saved — /resume {short} goes back to it"
+        )
+    else:
+        text = "Новая сессия" if ru else "New session"
+    return CommandResult(messages=(StreamReset(), Notice(text)), clear=True, refresh_sessions=True)
 
 
 async def _detail(host: CommandHost, args: str) -> CommandResult:
@@ -211,12 +230,6 @@ async def _memory(host: CommandHost, _args: str) -> CommandResult:
     title = "Память" if ru else "Memory"
     rows = tuple(sanitize_text(_entry_label(entry)) for entry in entries)
     return CommandResult(messages=(CommandOutput(title, rows or (("память пуста" if ru else "memory is empty"),)),))
-
-
-async def _reset(host: CommandHost, _args: str) -> CommandResult:
-    await host.bridge.run(host.controller.reset)
-    text = "контекст сессии сброшен" if host.locale == "ru" else "session context reset"
-    return CommandResult(messages=(StreamReset(), Notice(text)), refresh_sessions=True)
 
 
 async def _url(host: CommandHost, _args: str) -> CommandResult:
@@ -403,8 +416,16 @@ COMMANDS: tuple[SlashCommand, ...] = (
         _resume,
         complete_args=_session_ids,
     ),
-    SlashCommand("reset", "/reset", {"ru": "сбросить контекст сессии", "en": "reset the session context"}, _reset),
-    SlashCommand("clear", "/clear", {"ru": "очистить экран", "en": "clear the screen"}, _clear),
+    SlashCommand(
+        "clear",
+        "/clear",
+        {
+            "ru": "новая сессия; текущая сохраняется (/resume — вернуться)",
+            "en": "new session; the current one is kept (/resume goes back)",
+        },
+        _clear,
+        aliases=("reset", "new"),
+    ),
     SlashCommand("exit", "/exit", {"ru": "выйти", "en": "quit"}, _exit, aliases=("quit",)),
 )
 

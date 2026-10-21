@@ -210,7 +210,7 @@ uv run main.py --classic  # the cmd2 shell described below
 
 The terminal UI takes free-form tasks and slash commands (`/help`, `/status`, `/tasks`,
 `/cancel`, `/mcp [reconnect <name>]`, `/history [N]`, `/memory`, `/permissions`, `/detail`,
-`/theme`, `/doctor`, `/reset`, `/clear`, `/exit`); keys and terminals are listed in
+`/theme`, `/doctor`, `/resume`, `/clear` = new session (aliases `/reset`, `/new`), `/exit`); keys and terminals are listed in
 `docs/development/terminal-ui.md`.
 
 `--classic` (cmd2) commands include:

@@ -68,7 +68,10 @@ class FakeController:
     async def reconnect(self, server: str) -> ServerView:
         return ServerView(server, "ready")
 
+    resets = 0
+
     async def reset(self) -> SessionView:
+        self.resets += 1
         return self.session_view()
 
     def answer(self, ticket_id: str, answer: str, *, via: str) -> bool:
@@ -391,3 +394,20 @@ async def stop_with_text(h: Harness, task: asyncio.Task[int], pipe: object) -> i
     h.send("\x03")  # clear the draft
     await until(lambda: not h.app.application.current_buffer.text)
     return await stop(h, task, pipe)
+
+
+@pytest.mark.asyncio
+async def test_clear_starts_a_new_session_and_names_the_resume_back(
+    runtime: RuntimeLoop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h, task, pipe = await start(runtime)
+    with_tasks = replace(h.controller.session_view(), task_count=2)
+    monkeypatch.setattr(h.controller, "session_view", lambda: with_tasks)
+
+    h.send("/clear\r")
+    await until(lambda: h.controller.resets == 1)
+    await until(lambda: "/resume 9c441f7e" in h.out.getvalue())
+
+    h.send("/new\r")  # an alias
+    await until(lambda: h.controller.resets == 2)
+    assert await stop(h, task, pipe) == 0
