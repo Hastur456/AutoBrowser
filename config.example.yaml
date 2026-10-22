@@ -51,28 +51,82 @@
 # in .gitignore, and a committed profile should be given a name of its own.
 
 llm:
+  # Wire protocol: ollama (/api/chat) | openai_compat (any Chat Completions
+  # service). Profiles for common services are at the end of this block.
+  provider: ollama                              # (default)
   # Chat model id, as the provider expects it.
   model: gemma4:31b-cloud                      # (default)
-  # Sampling temperature. 0.0 keeps planning deterministic.
+  # Sampling temperature. 0.0 keeps planning deterministic. null sends no
+  # temperature at all -- reasoning models (gpt-5.x, o-series) reject it.
   temperature: 0.0                              # (default)
-  # Base URL of the Ollama-compatible endpoint. null = unset: the provider then
-  # falls back to its own default (OLLAMA_HOST or localhost). Set this to point
-  # at a remote host.
+  # Base URL. Required for openai_compat (the service's .../v1 URL; the
+  # OPENAI_BASE_URL variable is not read). For ollama null lets the client fall
+  # back to OLLAMA_HOST or localhost.
   # host: http://localhost:11434                  # (unset by default) e.g. http://localhost:11434
-  # Ollama cloud key. This file holds a live secret, so it must stay out of git.
-  # A local daemon needs no key -- use null.
+  # Bearer key. This file holds a live secret, so it must stay out of git.
+  # Without a key no Authorization header is sent (local servers);
+  # OPENAI_API_KEY is not read.
   # api_key: "YOUR_API_KEY"                        # (unset by default)
-  # Reasoning budget. Accepted: minimal | low | medium | high. DECLARATIVE FOR
-  # NOW -- see the note under max_reasoning_tokens.
+  # Timeout of one HTTP call to the provider, seconds. null waits forever (slow
+  # local models on a CPU).
+  timeout_seconds: 60.0                         # (default)
+  # openai_compat: retries on connection errors and 408/409/429/5xx, 0..10.
+  # 0 keeps one model call within loop.progress_timeout_seconds; doctor warns
+  # when timeout_seconds x (max_retries + 1) reaches it.
+  max_retries: 0                                # (default)
+  # Reasoning budget: minimal | low | medium | high. Sent by openai_compat,
+  # declarative for ollama.
   reasoning_effort: null                        # (default)
-  # Cap on generated tokens per model call. Same status as reasoning_effort.
+  # Cap on generated tokens per model call: num_predict for ollama, the field
+  # named by max_tokens_param for openai_compat.
   max_output_tokens: null                       # (default) e.g. 4096, >= 1
-  # Cap on tokens spent on internal reasoning, when the model bills them
-  # separately from the answer. STATUS: src/providers/ollama.py forwards only
-  # temperature (plus num_predict/num_ctx/top_p/seed), so these three reasoning
-  # fields are recorded configuration until that adapter is taught the
-  # parameters -- setting them here changes no request yet.
+  # openai_compat: max_completion_tokens | max_tokens (older servers, some models).
+  max_tokens_param: max_completion_tokens       # (default)
+  # Cap on reasoning tokens. Declarative: Chat Completions has no standard field;
+  # pass a vendor equivalent through extra_body.
   max_reasoning_tokens: null                    # (default) e.g. 2048, >= 1
+  # openai_compat: parallel_tool_calls with tool requests. The engine runs one
+  # call per turn, so false saves tokens; null sends nothing.
+  parallel_tool_calls: null                     # (default)
+  # openai_compat: extra request headers. Values may be secrets (never logged;
+  # doctor prints the names only).
+  extra_headers: {}                             # (default) e.g. {"X-Title": "AutoBrowser"}
+  # openai_compat: vendor fields merged into the request body. Keys with a typed
+  # field of their own (model, messages, tools, stream, temperature, max_tokens,
+  # max_completion_tokens, reasoning_effort, parallel_tool_calls) are rejected.
+  extra_body: {}                                # (default)
+  # Characters of a provider error body quoted in error messages, >= 40.
+  error_preview_chars: 300                      # (default)
+
+  # Service profiles -- replace the fields above with one of these blocks.
+  #
+  # OhMyLama (aggregator, OpenAI-compatible API):
+  #   provider: openai_compat
+  #   host: https://ohmylama.ru/v1
+  #   api_key: "YOUR_API_KEY"
+  #   model: gemma-4
+  #   parallel_tool_calls: false
+  #
+  # OpenAI, a reasoning model (no temperature):
+  #   provider: openai_compat
+  #   host: https://api.openai.com/v1
+  #   api_key: "YOUR_API_KEY"
+  #   model: gpt-5-mini
+  #   temperature: null
+  #   reasoning_effort: low
+  #   parallel_tool_calls: false
+  #
+  # OpenRouter:
+  #   provider: openai_compat
+  #   host: https://openrouter.ai/api/v1
+  #   api_key: "YOUR_API_KEY"
+  #   model: <vendor>/<model>
+  #   extra_headers: {"X-Title": "AutoBrowser"}
+  #
+  # Local server -- LM Studio (:1234), vLLM (:8000), Ollama's /v1 (:11434):
+  #   provider: openai_compat
+  #   host: http://localhost:1234/v1
+  #   model: <model-id>
 
 # ---------------------------------------------------------------------------
 browser:
@@ -242,6 +296,9 @@ permissions:
   approval_judge: "off"                         # (default) quoted: bare off is YAML false
   # classifier_model: gemma4:31b-cloud          # (unset by default) null = the session model
   classifier_timeout_seconds: 30.0              # (default)
+  # Temperature of a separate classifier_model, 0.0..2.0. null = llm.temperature;
+  # with llm.temperature: null none is sent at all (reasoning models).
+  classifier_temperature: 0.0                   # (default)
   classifier_args_chars: 1500                   # (default) JSON arguments shown to the classifier
   classifier_description_chars: 400             # (default) tool description shown to it
   # approval_request values (lower-cased) that mean "no approval needed":
