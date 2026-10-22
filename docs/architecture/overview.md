@@ -29,7 +29,7 @@ AutoBrowser turns a natural-language browser task into a controlled loop:
 | `src/state.py` | Type-only `AgentState` TypedDict kept for browser-layer annotation. |
 | `src/messages.py` | Dependency-free provider-neutral chat `Message`/`ToolCall` types shared by the engine and providers. |
 | `src/llm.py` | The provider-neutral `ChatModel`/`ModelResponse` chat contract the engine drives. |
-| `src/providers/` | Thin `ChatModel` adapters (for example `ollama.py`) that serialize `Message`/`ToolDef` to a backend wire format and parse replies into `ModelResponse`. |
+| `src/providers/` | Thin `ChatModel` adapters — `ollama.py` (`/api/chat`) and `openai_compat.py` (Chat Completions) — that serialize `Message`/`ToolDef` to a wire protocol and parse replies into `ModelResponse` (with `ModelUsage`); `registry.py` picks one by `llm.provider` and probes it for `doctor --llm`. Imported only by `src/cli/`. |
 | `src/browser/` | Provider-neutral browser contracts, canonical browser names, backend adapters, and fake browser tools for tests. |
 | `src/harness/` | Session runtime, harness composition root, context, memory, tools, policy, and telemetry boundaries. |
 | `src/mcp/` | Playwright MCP process/session lifecycle helpers and provider loading. |

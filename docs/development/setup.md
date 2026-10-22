@@ -4,7 +4,8 @@
 
 - [uv](https://docs.astral.sh/uv/) (it provides Python 3.12 and the dependencies from
   `pyproject.toml` / `uv.lock`)
-- Ollama-compatible chat model for normal CLI runs
+- A chat model for normal CLI runs: Ollama, or any OpenAI-compatible service (see
+  [Model provider](#model-provider))
 - Chrome/Chromium and Playwright MCP tooling for browser-enabled runs
 
 Runtime folders such as `.venv/`, `.pytest_cache/`, `.playwright-mcp/`,
@@ -70,6 +71,34 @@ Rules that matter in practice:
   unset for a local Ollama daemon. The same key is no longer read from the
   vendor `OLLAMA_API_KEY`. `AUTOBROWSER_LLM__HOST` is optional and, when unset,
   the provider still falls back to `OLLAMA_HOST` and then to a local daemon.
+
+## Model provider
+
+`llm.provider` picks the wire protocol: `ollama` (the default, `/api/chat`) or `openai_compat` —
+any service speaking OpenAI Chat Completions: OpenAI, aggregators such as OhMyLama or
+OpenRouter, vendor endpoints, and local servers (LM Studio, vLLM, llama.cpp server, Ollama's
+`/v1`). `--provider` overrides it for one run. Design and decision:
+[design](2026-10-22-openai-compat-provider-design.md),
+[ADR](../decisions/2026-10-22-openai-compatible-chat-provider.md).
+
+- `openai_compat` needs `llm.host` (the `.../v1` base URL) and usually `llm.api_key`; without
+  a key no `Authorization` header is sent. `OPENAI_API_KEY`, `OPENAI_BASE_URL`,
+  `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID` and `OPENAI_CUSTOM_HEADERS` are deliberately **not**
+  read — keys and organisation headers of another project never reach a third-party service.
+- `config.example.yaml` has commented profiles (OhMyLama, OpenAI, OpenRouter, a local server).
+- Reasoning models (gpt-5.x, o-series) reject `temperature`: set `llm.temperature: null`.
+  The provider's 400 names the parameter; nothing is retried silently.
+- `llm.timeout_seconds` (60 s) now bounds one call for **both** providers — a slow local model
+  on a CPU may need more, or `null` for the old unbounded wait. `llm.max_retries` is 0 so a call
+  stays within `loop.progress_timeout_seconds`; `autobrowser doctor` warns when it does not.
+- `llm.max_output_tokens` is sent (`num_predict` for Ollama, `llm.max_tokens_param` for
+  `openai_compat`), `llm.reasoning_effort` is sent by `openai_compat`, vendor fields go through
+  `llm.extra_headers`/`llm.extra_body`.
+- `autobrowser doctor` prints the provider line offline; `autobrowser doctor --llm` lists the
+  provider's models over the network (it sends the key).
+- **Data leaves the machine.** Everything the agent sees — page contents, tool output, memory —
+  goes to the configured provider; with a cloud service that is an external transfer.
+- Token counts arrive in `model.responded` events (`usage`).
 
 Settings are read at call time through `get_settings()`, not captured at import,
 so `reload_settings()` re-reads the environment for tests and long-lived

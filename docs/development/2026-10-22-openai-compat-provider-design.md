@@ -1,6 +1,8 @@
 # OpenAI-совместимый провайдер чат-моделей
 
-Статус: Proposed (проект, код не менялся; открытые вопросы решены 2026-10-22, см. §7.1)
+Статус: Proposed — шаги 1–5 плана (§8) реализованы в ветке; живая проверка на OhMyLama
+(шаг 6) и перевод ADR в Accepted ещё впереди. Открытые вопросы решены 2026-10-22, см. §7.1.
+Отличия реализации от проекта — в §7.3.
 Дата: 2026-10-22
 Ветка: `feat/openai-compat-provider`
 ADR (Proposed):
@@ -681,6 +683,38 @@ llm:
    `loop.progress_timeout_seconds` (`doctor` подскажет, если бюджет мал).
 
 ---
+
+### 7.3 Уточнения при реализации (2026-10-22)
+
+- **Парность вызовов в истории.** При отказе в подтверждении движок пишет финальный ответ
+  сразу после `assistant.tool_calls`, без `tool`-сообщения (`blocked_response`), а сессия
+  переносит эту историю в следующую задачу. Chat Completions отклоняет такой запрос (400).
+  `openai_compat` при сериализации выбрасывает вызовы без ответа и ответы без вызова
+  (`messages_to_wire`); движок не меняется, Ollama такое и так принимает.
+- **Окружение SDK шире, чем описано в §4.4.** Кроме `OPENAI_API_KEY`, `OPENAI_ORG_ID` и
+  `OPENAI_PROJECT_ID` SDK читает `OPENAI_BASE_URL`, `OPENAI_ADMIN_KEY`,
+  `OPENAI_WEBHOOK_SECRET` и `OPENAI_CUSTOM_HEADERS` (произвольные заголовки). `build_client`
+  нейтрализует все; без `llm.host` клиент не строится, чтобы не уйти на `OPENAI_BASE_URL`.
+- **Без ключа.** SDK отказывается создавать клиент без ключа и проверяет каждый запрос на
+  `Authorization`, поэтому клиент получает ключ-заглушку, а заголовок снимается на каждом
+  запросе (`request_headers`). Тест на `MockTransport` проверяет, что заголовка нет.
+- **`temperature: null` и CLI.** Отдельного значения «не отправлять» у `--temperature` нет:
+  при `llm.temperature: null` умолчание флага само становится `None`, и фабрика берёт `None`
+  из настроек.
+- **Логи.** Отдельной настройки логгеров не понадобилось: под TUI `terminal_quiet` уже
+  направляет корневой логгер в файл, а `openai`/`httpx` пропагируют в него.
+- **`Authorization` из `extra_headers`** (в любом регистре) имеет приоритет над ключом. С ключом
+  заголовок `Bearer` кладётся в заголовки клиента явно, чтобы `Authorization` из
+  `OPENAI_CUSTOM_HEADERS` не мог его вытеснить или сломать проверку заголовков SDK.
+- **Форма `usage` в событиях.** `usage` лежит на верхнем уровне payload `model.responded` в фазах
+  `plan` и `agent` (а не в `metadata`, как в §4.5), чтобы потребителям хватало одной формы.
+- **Классификатор подтверждений.** Литерал `temperature=0.0` для отдельной `classifier_model`
+  вынесен в настройку `permissions.classifier_temperature` (0.0; `null` — взять
+  `llm.temperature`). Если сессия температуру не отправляет (`llm.temperature: null`),
+  классификатор тоже её не получает (`ApprovalJudge.from_settings(send_temperature=...)`).
+- **`doctor`** печатает `llm.host` без userinfo, query и fragment.
+- **Тесты событий** — в `tests/test_engine_events.py` (там уже проверяется `model.responded`
+  фазы `plan`), а не в `tests/test_agent_loop_events.py`.
 
 ## 8. План внедрения
 

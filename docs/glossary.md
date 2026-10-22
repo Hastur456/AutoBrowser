@@ -61,10 +61,10 @@
 | MemoryStore | Persistent memory files under `<storage.root_dir>/<memory.dir>/` (`src/harness/memory_store.py`): cached reads, path safety, the generated index, scope lookup, policy-checked writes and staged trust. |
 | Message | Provider-neutral chat message (`src/messages.py`) with a `system`/`user`/`assistant`/`tool` role; assistant messages may carry `tool_calls`, and a `tool` message pairs a result back to exactly one `ToolCall.id`. |
 | ModelProviderError | Proposed (ADR-2026-10-22): neutral exception in `src/llm.py` that provider adapters raise for a failed model call — `provider`, optional HTTP `status_code`, `retryable`, and a short message (capped by `llm.error_preview_chars`) that never carries keys or headers. |
-| ModelResponse | Canonical provider-neutral model reply (`content` and/or `tool_calls`, plus `finish_reason`) returned by a `ChatModel`. |
+| ModelResponse | Canonical provider-neutral model reply (`content` and/or `tool_calls`, plus `finish_reason` and an optional `usage: ModelUsage`) returned by a `ChatModel`. |
 | ModelUsage | Proposed (ADR-2026-10-22): optional token accounting on `ModelResponse.usage` (`input_tokens`, `output_tokens`, `cached_input_tokens`, `reasoning_tokens`, Ollama durations); a field the provider did not report stays `None`, and the set fields travel in `model.responded`. |
 | Observer | Engine phase that translates tool results into compact loop state updates. |
-| Ollama provider | Thin `ChatModel` adapter in `src/providers/ollama.py` (`OllamaChatModel` / `ollama_llm_factory`) that maps neutral `Message`/`ToolDef` objects to Ollama's `/api/chat` shape and parses replies into `ModelResponse`. |
+| Ollama provider | Thin `ChatModel` adapter in `src/providers/ollama.py` (`OllamaChatModel` / `ollama_llm_factory`) that maps neutral `Message`/`ToolDef` objects to Ollama's `/api/chat` shape and parses replies into `ModelResponse`; `llm.timeout_seconds` bounds a call, `llm.max_output_tokens` becomes `num_predict`, client failures become `ModelProviderError`. |
 | OpenAI-compatible provider | Proposed (ADR-2026-10-22): `OpenAICompatChatModel` in `src/providers/openai_compat.py` (`llm.provider: openai_compat`), one `ChatModel` adapter for any Chat Completions service (OpenAI, aggregators, local servers) chosen purely by `llm.host`/`api_key`/`model`; no vendor names in code. |
 | Planner | Engine phase that creates or revises compact task plans. |
 | Playwright MCP | Browser automation MCP server the agent uses by default. |
