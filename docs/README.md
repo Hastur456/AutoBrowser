@@ -81,6 +81,11 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   and the decision not to add Langfuse (Russian, Proposed; ADRs
   [pipeline](decisions/2026-10-19-autonomous-test-pipeline.md) and
   [Langfuse](decisions/2026-10-19-langfuse-observability.md)).
+- [OpenAI-Compatible Provider Design](development/2026-10-22-openai-compat-provider-design.md):
+  proposed Chat Completions adapter next to Ollama — wire mapping of messages, tool calls and
+  usage, `llm.*` settings and service profiles (OhMyLama, OpenAI, OpenRouter, local servers),
+  neutral provider errors, tests and rollout plan (Russian, Proposed; ADR
+  [OpenAI-compatible provider](decisions/2026-10-22-openai-compatible-chat-provider.md)).
 - [Browser Provider Boundary ADR](decisions/2026-07-26-browser-provider-boundary.md):
   superseded record for the former Playwright adapter boundary.
 - [Task Memory Isolation ADR](decisions/2026-07-24-task-memory-isolation-and-session-persistence.md):
