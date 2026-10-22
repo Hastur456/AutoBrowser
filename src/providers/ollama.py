@@ -7,28 +7,48 @@ package is imported lazily so importing this module never requires Ollama toolin
 unless a model is actually constructed.
 
 Only wire concerns live here: neutral ``Message``/``ToolDef`` objects are serialized to
-Ollama's request shape and the reply is parsed back into a :class:`~src.llm.ModelResponse`.
+Ollama's request shape and the reply is parsed back into a :class:`~src.llm.ModelResponse`
+with its :class:`~src.llm.ModelUsage`; client failures become
+:class:`~src.llm.ModelProviderError`.
 
 Connection settings come from :mod:`src.config` (``settings.llm``): ``host`` is handed to
-the client as ``base_url``, and a configured ``api_key`` becomes an explicit
-``Authorization: Bearer`` header. Passing the header ourselves (rather than relying on the
-client's own ``OLLAMA_API_KEY`` lookup) keeps every credential in one configuration module;
-when no key is configured the client's discovery is left untouched for local daemons.
+the client as ``base_url``, ``timeout_seconds`` bounds one call, and a configured
+``api_key`` becomes an explicit ``Authorization: Bearer`` header. Passing the header
+ourselves (rather than relying on the client's own ``OLLAMA_API_KEY`` lookup) keeps every
+credential in one configuration module; when no key is configured the client's discovery
+is left untouched for local daemons.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping, Sequence
 from typing import Any
-from uuid import uuid4
 
 from pydantic import SecretStr
 
-from src.config import get_settings
+from src.config import LLMSettings, get_settings
 from src.contracts import ToolDef
-from src.llm import ModelResponse, ChatModel
+from src.llm import ChatModel, ModelProviderError, ModelResponse, ModelUsage
 from src.messages import Message, ToolCall
+from src.providers._wire import (
+    arguments_to_dict,
+    connection_error,
+    new_call_id,
+    optional_int,
+    preview,
+    status_error,
+    timeout_error,
+    tool_to_wire,
+)
+
+#: Protocol name carried by this adapter's errors (``settings.llm.provider``).
+PROVIDER = "ollama"
+
+#: Call params forwarded into Ollama ``options``; anything else is ignored.
+_OPTION_PARAMS = ("num_predict", "num_ctx", "top_p", "seed")
+
+#: Ollama reports durations in nanoseconds.
+_NS_PER_MS = 1_000_000
 
 
 class OllamaChatModel(ChatModel):
@@ -41,20 +61,27 @@ class OllamaChatModel(ChatModel):
         base_url: str | None = None,
         timeout: float | None = None,
         *,
+        settings: LLMSettings | None = None,
         client: Any | None = None,
     ) -> None:
-        settings = get_settings().llm
+        """Omitted ``model``/``temperature``/``base_url``/``timeout`` come from
+        ``settings`` (``get_settings().llm`` when not given). A ``None`` temperature
+        there sends none at all; a ``None`` ``timeout_seconds`` waits forever."""
+
+        settings = settings if settings is not None else get_settings().llm
         self._model = model if model is not None else settings.model
-        self._temperature = float(
-            temperature if temperature is not None else settings.temperature
-        )
+        resolved = temperature if temperature is not None else settings.temperature
+        self._temperature = float(resolved) if resolved is not None else None
+        self._max_output_tokens = settings.max_output_tokens
+        self._timeout = timeout if timeout is not None else settings.timeout_seconds
+        self._error_preview_chars = settings.error_preview_chars
         if client is None:
             from ollama import AsyncClient  # lazy: only needed when a model is built
 
             client = AsyncClient(
                 host=base_url if base_url is not None else settings.host,
-                timeout=timeout,
-                headers=_auth_headers(settings.api_key),
+                timeout=self._timeout,
+                headers=auth_headers(settings.api_key),
             )
         self._client = client
 
@@ -70,12 +97,20 @@ class OllamaChatModel(ChatModel):
         request: dict[str, Any] = {
             "model": self._model,
             "messages": [_message_to_wire(message) for message in messages],
-            "options": _options(self._temperature, params),
+            "options": _options(self._temperature, self._max_output_tokens, params),
         }
         if tools:
-            request["tools"] = [_tool_to_wire(tool_def) for tool_def in tools]
+            request["tools"] = [tool_to_wire(tool_def) for tool_def in tools]
 
-        reply = await self._client.chat(**request)
+        try:
+            reply = await self._client.chat(**request)
+        except ModelProviderError:
+            raise
+        except Exception as exc:
+            error = provider_error(exc, self._timeout, self._error_preview_chars)
+            if error is None:
+                raise
+            raise error from exc
         return _response_from_reply(reply)
 
 
@@ -92,7 +127,7 @@ def ollama_llm_factory(
     return OllamaChatModel(model=model, temperature=temperature, **kwargs)
 
 
-def _auth_headers(api_key: SecretStr | None) -> dict[str, str] | None:
+def auth_headers(api_key: SecretStr | None) -> dict[str, str] | None:
     """Build the ``Authorization`` header for a configured API key.
 
     Returns ``None`` — not an empty mapping — when no usable key is configured,
@@ -107,12 +142,47 @@ def _auth_headers(api_key: SecretStr | None) -> dict[str, str] | None:
     return {"Authorization": f"Bearer {key}"}
 
 
-def _options(temperature: float, params: Mapping[str, Any]) -> dict[str, Any]:
-    options: dict[str, Any] = {"temperature": temperature}
-    for key in ("num_predict", "num_ctx", "top_p", "seed"):
+def _options(
+    temperature: float | None,
+    max_output_tokens: int | None,
+    params: Mapping[str, Any],
+) -> dict[str, Any]:
+    options: dict[str, Any] = {}
+    if temperature is not None:
+        options["temperature"] = temperature
+    if max_output_tokens is not None:
+        options["num_predict"] = max_output_tokens
+    for key in _OPTION_PARAMS:
         if key in params:
             options[key] = params[key]
     return options
+
+
+def provider_error(
+    exc: Exception, timeout: float | None, limit: int
+) -> ModelProviderError | None:
+    """Translate an ``ollama``/``httpx`` failure; ``None`` for anything else."""
+
+    import httpx
+    from ollama import RequestError, ResponseError
+
+    if isinstance(exc, ResponseError):
+        if exc.status_code and exc.status_code > 0:
+            return status_error(PROVIDER, exc.status_code, exc.error, limit)
+        return ModelProviderError(
+            f"{PROVIDER}: {preview(exc.error, limit) or 'request failed'}",
+            provider=PROVIDER,
+        )
+    if isinstance(exc, httpx.TimeoutException):
+        return timeout_error(PROVIDER, timeout)
+    if isinstance(exc, (ConnectionError, httpx.TransportError)):
+        return connection_error(PROVIDER, exc)
+    if isinstance(exc, RequestError):
+        return ModelProviderError(
+            f"{PROVIDER}: {preview(exc.error, limit) or 'invalid request'}",
+            provider=PROVIDER,
+        )
+    return None
 
 
 def _message_to_wire(message: Message) -> dict[str, Any]:
@@ -142,19 +212,6 @@ def _message_to_wire(message: Message) -> dict[str, Any]:
     return {"role": message.role, "content": message.content}
 
 
-def _tool_to_wire(tool_def: ToolDef) -> dict[str, Any]:
-    """Serialize one ``ToolDef`` into the OpenAI-compatible tool envelope Ollama accepts."""
-
-    return {
-        "type": "function",
-        "function": {
-            "name": tool_def.name,
-            "description": tool_def.description,
-            "parameters": tool_def.input_schema,
-        },
-    }
-
-
 def _response_from_reply(reply: Any) -> ModelResponse:
     """Parse an ``ollama`` chat reply into a :class:`ModelResponse`."""
 
@@ -168,28 +225,34 @@ def _response_from_reply(reply: Any) -> ModelResponse:
             continue
         tool_calls.append(
             ToolCall(
-                id=f"call_{uuid4().hex}",
+                id=new_call_id(),
                 name=name,
-                arguments=_arguments_to_dict(getattr(function, "arguments", {})),
+                arguments=arguments_to_dict(getattr(function, "arguments", {})),
             )
         )
     return ModelResponse(
         content=content,
         tool_calls=tuple(tool_calls),
         finish_reason=getattr(reply, "done_reason", None),
+        usage=_usage_from_reply(reply),
     )
 
 
-def _arguments_to_dict(arguments: Any) -> dict[str, Any]:
-    if isinstance(arguments, dict):
-        return dict(arguments)
-    if isinstance(arguments, str):
-        try:
-            parsed = json.loads(arguments)
-        except (ValueError, TypeError):
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
-    return {}
+def _usage_from_reply(reply: Any) -> ModelUsage | None:
+    """Token counts and durations of an Ollama reply; ``None`` when it reports none."""
+
+    usage = ModelUsage(
+        input_tokens=optional_int(getattr(reply, "prompt_eval_count", None)),
+        output_tokens=optional_int(getattr(reply, "eval_count", None)),
+        provider_duration_ms=_ns_to_ms(getattr(reply, "total_duration", None)),
+        load_duration_ms=_ns_to_ms(getattr(reply, "load_duration", None)),
+    )
+    return usage if usage.to_json_dict() else None
 
 
-__all__ = ["OllamaChatModel", "ollama_llm_factory"]
+def _ns_to_ms(value: Any) -> int | None:
+    nanoseconds = optional_int(value)
+    return nanoseconds // _NS_PER_MS if nanoseconds is not None else None
+
+
+__all__ = ["OllamaChatModel", "auth_headers", "ollama_llm_factory", "provider_error"]
