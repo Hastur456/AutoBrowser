@@ -102,3 +102,41 @@ def test_the_fence_sees_the_source_modules() -> None:
 
     assert {"agent_loop/execution/loop.py", "harness/session.py", "browser/permissions.py"} <= names
     assert "agent_loop/prompts.py" not in names
+
+
+# -- model providers -----------------------------------------------------------------------
+# ``docs/decisions/2026-10-22-openai-compatible-chat-provider.md``: the adapters are wired by
+# the CLI composition only, and they name protocols, never vendors.
+
+PROVIDER_CLIENT_LAYERS = ("agent_loop", "harness", "ui", "browser")
+PROVIDER_CLIENT_MODULES = sorted(
+    path for layer in PROVIDER_CLIENT_LAYERS for path in (SRC / layer).rglob("*.py")
+)
+#: Vendor names and URLs that belong in config.example.yaml and the docs, not in ``src/``.
+VENDOR_MARKERS = re.compile(
+    r"ohmylama|openrouter|api\.openai\.com|groq|together\.ai|deepseek|mistral", re.IGNORECASE
+)
+
+
+@pytest.mark.parametrize(
+    "path", PROVIDER_CLIENT_MODULES, ids=lambda path: path.relative_to(SRC).as_posix()
+)
+def test_only_the_cli_imports_the_providers(path: Path) -> None:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+
+    provider_imports = [
+        module
+        for module in _imported_modules(tree)
+        if module == "src.providers" or module.startswith("src.providers.")
+    ]
+
+    assert not provider_imports, f"{path.relative_to(SRC)} imports {provider_imports}"
+
+
+@pytest.mark.parametrize(
+    "path", sorted(SRC.rglob("*.py")), ids=lambda path: path.relative_to(SRC).as_posix()
+)
+def test_no_source_module_names_a_model_vendor(path: Path) -> None:
+    found = VENDOR_MARKERS.findall(path.read_text(encoding="utf-8"))
+
+    assert not found, f"{path.relative_to(SRC)} mentions {sorted(set(found))}"

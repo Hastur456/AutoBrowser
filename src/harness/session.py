@@ -49,9 +49,12 @@ from src.harness.session_store import (
 )
 from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolRegistry
+from src.llm import ChatModel
 
 
-LLMFactory = Callable[..., Any]
+#: ``llm_factory(model=..., temperature=...)``; the CLI passes the provider registry
+#: (``src.providers.registry.build_chat_model``), tests pass fakes.
+LLMFactory = Callable[..., ChatModel]
 HarnessFactory = Callable[..., BrowserHarness]
 #: ``factory(cdp_port, errlog)``: ``errlog`` is the session's child-process stderr log.
 MCPRuntimeFactory = Callable[[int, TextIO], MCPRuntime]
@@ -111,7 +114,7 @@ class SessionConfig:
     """Configuration used to build and run a process-long AutoBrowser session."""
 
     model: str
-    temperature: float
+    temperature: float | None
     no_mcp: bool
     show_state: bool
     show_tools: bool
@@ -571,6 +574,8 @@ class SessionContext:
             settings.permissions,
             llm=self.llm,
             llm_factory=llm_factory,
+            # A reasoning model rejects any temperature, the classifier's included.
+            send_temperature=self.config.temperature is not None,
         )
         if self.config.no_mcp:
             self.tool_registry = ToolRegistry(session_tools)

@@ -21,6 +21,20 @@ from src.agent_loop.actions import (
 from src.harness.tools import to_tool_def
 
 
+def response_usage(response: Any) -> dict[str, int] | None:
+    """The token accounting of a model reply as event fields, ``None`` when unreported.
+
+    Read structurally (``ModelResponse.usage``), so fakes without it simply report none.
+    """
+
+    usage = getattr(response, "usage", None)
+    to_json_dict = getattr(usage, "to_json_dict", None)
+    if not callable(to_json_dict):
+        return None
+    payload = to_json_dict()
+    return dict(payload) if payload else None
+
+
 @dataclass(frozen=True)
 class ModelTurn:
     """One raw model response together with parsed actions."""
@@ -357,4 +371,5 @@ __all__ = [
     "ActionParser",
     "ModelDriver",
     "ModelTurn",
+    "response_usage",
 ]

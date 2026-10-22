@@ -210,15 +210,21 @@ class ApprovalJudge:
         *,
         llm: Any,
         llm_factory: Callable[..., Any] | None = None,
+        send_temperature: bool = True,
     ) -> ApprovalJudge:
         """Build from ``settings.permissions``; the classifier reuses ``llm`` unless
-        ``classifier_model`` names another model and ``llm_factory`` can build it."""
+        ``classifier_model`` names another model and ``llm_factory`` can build it.
+        That factory gets ``classifier_temperature``, or ``None`` (the model settings)
+        when the session sends no temperature (``send_temperature=False``)."""
 
         classifier = None
         if settings.approval_judge in ("classifier", "both"):
             classifier_llm = llm
             if settings.classifier_model and llm_factory is not None:
-                classifier_llm = llm_factory(model=settings.classifier_model, temperature=0.0)
+                classifier_llm = llm_factory(
+                    model=settings.classifier_model,
+                    temperature=settings.classifier_temperature if send_temperature else None,
+                )
             classifier = ApprovalClassifier(
                 classifier_llm,
                 timeout_seconds=settings.classifier_timeout_seconds,

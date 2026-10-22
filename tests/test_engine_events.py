@@ -21,6 +21,7 @@ from src.agent_loop.execution.resources import EngineResources
 from src.harness.hooks import NullHookEngine
 from src.harness.runtime import BrowserHarness
 from src.harness.tools import ToolRegistry
+from src.llm import ModelResponse, ModelUsage
 
 PLAN = {
     "steps": [
@@ -116,3 +117,46 @@ def test_the_agent_trace_keeps_the_plan_but_not_the_turns(tmp_path: Path) -> Non
         "steps": [{"description": "Open the page", "status": "pending"}],
         "replan_count": 1,
     }
+
+
+class UsageModel:
+    """Replies like ``FakeChatModel`` but reports token usage on every response."""
+
+    def __init__(self, responses: list[dict[str, Any]]) -> None:
+        self._responses = [json.dumps(response) for response in responses]
+
+    async def complete(self, messages: Any, *, tools: Any = (), **params: Any) -> ModelResponse:
+        return ModelResponse(
+            content=self._responses.pop(0),
+            usage=ModelUsage(input_tokens=100, output_tokens=0),
+        )
+
+
+@pytest.mark.asyncio
+async def test_model_responded_carries_the_reported_usage() -> None:
+    sink = InMemoryEventSink()
+    emitter = EventEmitter(sink, session_id="session-1")
+    llm = UsageModel([PLAN, DONE])
+    harness = BrowserHarness(llm=llm, tool_registry=ToolRegistry(tools=[]), event_emitter=emitter)
+    resources = EngineResources.from_harness(
+        harness, llm=llm, events=emitter, hooks=NullHookEngine()
+    )
+
+    await AgentLoopEngine(resources).run(
+        "Find the price.", task_id="task-1", goal_id="task-1", session_id="session-1"
+    )
+
+    responded = of_type(list(sink.records), "model.responded")
+    plan, agent = responded[0].payload, responded[1].payload
+    assert plan == {"phase": "plan", "usage": {"input_tokens": 100, "output_tokens": 0}}
+    assert agent["phase"] == "agent"
+    assert agent["usage"] == {"input_tokens": 100, "output_tokens": 0}
+
+
+@pytest.mark.asyncio
+async def test_without_reported_usage_the_events_carry_none() -> None:
+    _, records = await run_engine([PLAN, DONE])
+
+    responded = of_type(records, "model.responded")
+    assert "usage" not in responded[0].payload
+    assert "usage" not in responded[1].payload

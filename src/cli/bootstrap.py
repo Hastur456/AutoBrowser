@@ -5,12 +5,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import copy
+import functools
 import sys
 from pathlib import Path
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, TextIO
 
-from src.providers.ollama import ollama_llm_factory
+from src.providers.registry import build_chat_model
 
 from src.agent_loop.execution.loop import HumanInputCallback
 from src.cli.agent_cli import run_cli
@@ -68,7 +69,7 @@ def effective_permission_mode(args: argparse.Namespace, *, interactive: bool) ->
 def build_session(
     args: argparse.Namespace,
     *,
-    llm_factory: Callable[..., Any] = ollama_llm_factory,
+    llm_factory: Callable[..., Any] | None = None,
     start_chrome: Callable[[str, str, int], Any] = start_chrome_cdp,
     wait_for_cdp_port: Callable[[int, float], Awaitable[None]] = wait_for_port,
     mcp_runtime_factory: MCPRuntimeFactory = default_mcp_runtime_factory,
@@ -84,8 +85,14 @@ def build_session(
     MCP servers come from ``settings.mcp_servers`` via ``mcp_runtime_factory``; they are
     started together with the session and shut down by ``SessionRuntime.close()``.
     ``human_input`` answers permission approvals; without it they are denied.
+    ``llm_factory`` defaults to the provider registry, bound to ``--provider`` so the
+    approval classifier gets the same provider as the session.
     """
 
+    if llm_factory is None:
+        llm_factory = functools.partial(
+            build_chat_model, provider=getattr(args, "provider", None)
+        )
     args = copy.copy(args)
     args.permission_mode = effective_permission_mode(args, interactive=is_interactive(args))
     session_config = SessionConfig.from_args(args)
