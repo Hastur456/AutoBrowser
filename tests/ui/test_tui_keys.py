@@ -387,6 +387,18 @@ async def test_model_with_an_id_switches_at_once_and_a_provider_error_is_shown(r
     h.send("/model gpt-5-mini\r")
     await until(lambda: h.controller.models_set == ["gpt-5-mini"])
     await until(lambda: h.app.view is not None and h.app.view.model == "gpt-5-mini")
+    assert "нет в списке провайдера" not in h.out.getvalue()  # no list fetched yet
+
+    h.send("/model\r")
+    await until(lambda: h.app.transcript.block("picker") is not None)
+    h.send("\x1b")
+    await until(lambda: h.app.transcript.block("picker") is None)
+    h.send("/model gpt-6.1-sol\r")
+    await until(lambda: h.controller.models_set == ["gpt-5-mini", "gpt-6.1-sol"])
+    await until(lambda: "этой модели нет в списке провайдера" in h.out.getvalue())
+    h.send("/model gemma-4\r")  # listed: no warning
+    await until(lambda: "модель: gemma-4 — со следующей задачи" in h.out.getvalue())
+    assert h.out.getvalue().count("этой модели нет в списке провайдера") == 1
 
     h.controller.models_error = RuntimeError("openai_compat 401: authentication failed")
     try:

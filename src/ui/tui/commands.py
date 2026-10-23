@@ -318,7 +318,16 @@ async def _model(host: CommandHost, args: str) -> CommandResult:
             if ru
             else f"model: {view.model} — from the next task"
         )
-        return CommandResult(messages=(Notice(text),), view=view)
+        messages: list[UiMessage] = [Notice(text)]
+        if host.model_ids and name not in host.model_ids:
+            # Not refused: providers serve aliases they do not list.
+            unlisted = (
+                "этой модели нет в списке провайдера — если задача упадёт с ошибкой модели, выберите из /model"
+                if ru
+                else "the provider does not list this model — if the task fails on the model, pick one from /model"
+            )
+            messages.append(Notice(unlisted, "warn"))
+        return CommandResult(messages=tuple(messages), view=view)
     hint = "назовите модель: /model <id>" if ru else "name the model: /model <id>"
     try:
         models = await host.bridge.run(host.controller.available_models)

@@ -69,6 +69,26 @@ class ModelProviderError(RuntimeError):
         self.status_code = status_code
         self.retryable = retryable
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        # ``copy``/``pickle`` rebuild an exception from its positional ``args`` only, which
+        # would drop the keyword-only fields (and fail on the required ``provider``). The
+        # third item restores ``__dict__``, notes from ``add_note()`` included.
+        return (
+            _rebuild_provider_error,
+            (type(self), str(self), self.provider, self.status_code, self.retryable),
+            dict(self.__dict__),
+        )
+
+
+def _rebuild_provider_error(
+    cls: type[ModelProviderError],
+    message: str,
+    provider: str,
+    status_code: int | None,
+    retryable: bool,
+) -> ModelProviderError:
+    return cls(message, provider=provider, status_code=status_code, retryable=retryable)
+
 
 @dataclass(frozen=True)
 class ModelResponse:

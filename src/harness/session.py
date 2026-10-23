@@ -7,7 +7,7 @@ import contextlib
 import json
 import logging
 from collections.abc import Awaitable, Callable, Iterator, MutableMapping, Sequence
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
@@ -324,6 +324,18 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+
+def _task_snapshot(task: TaskRecord) -> dict[str, Any]:
+    """``asdict(task)`` without deep-copying ``result``: a failed task holds its exception,
+    and copying an exception rebuilds it from ``args`` alone, which breaks any exception with
+    keyword-only fields -- and with it every later save of the session."""
+
+    snapshot = {item.name: getattr(task, item.name) for item in fields(task)}
+    result = task.result
+    if is_dataclass(result) and not isinstance(result, type):
+        snapshot["result"] = asdict(result)
+    return snapshot
 
 
 def _restored_task(record: dict[str, Any]) -> TaskRecord:
@@ -710,12 +722,21 @@ class SessionContext:
 
         now = datetime.now(UTC)
         record = TaskRecord(task=task, started_at=now, task_id=task_id or f"task-{uuid4().hex}")
+        previous_activity = self.metadata.last_activity
         self.current_task = task
         self.tasks.append(record)
+        self.metadata.last_activity = now
+        try:
+            self.persist()
+        except BaseException:
+            # The task never started: a session left "running" would refuse every later
+            # task, reset, resume and model switch until a restart.
+            self.tasks.remove(record)
+            self.current_task = None
+            self.metadata.last_activity = previous_activity
+            raise
         if self.memory_store is not None:
             self.memory_store.bind_task(record.task_id)
-        self.metadata.last_activity = now
-        self.persist()
         self.events.emit("task.started", record)
         return record
 
@@ -739,7 +760,7 @@ class SessionContext:
         self.current_task = None
         self.metadata.task_count += 1
         self.metadata.last_activity = now
-        self.persist()
+        self._persist_closed_task()
         self.events.emit("task.finished", record)
 
     def fail_task(self, record: TaskRecord, exception: BaseException) -> None:
@@ -763,7 +784,17 @@ class SessionContext:
         self.current_task = None
         self.metadata.task_count += 1
         self.metadata.last_activity = now
-        self.persist()
+        self._persist_closed_task()
+
+    def _persist_closed_task(self) -> None:
+        """Save after a task ended. The outcome is already recorded in memory (the next save
+        retries the files), so a failed write is logged instead of replacing the task's own
+        result or error and skipping its event."""
+
+        try:
+            self.persist()
+        except OSError:
+            _LOG.warning("the session files were not saved after a task ended", exc_info=True)
 
     def snapshot(self) -> dict[str, Any]:
         """Return a durable, JSON-compatible view of the session."""
@@ -783,7 +814,7 @@ class SessionContext:
                 "artifacts": workspace.artifacts if workspace else None,
             },
             "artifacts": [asdict(artifact) for artifact in self.artifacts.all()],
-            "tasks": [asdict(task) for task in self.tasks],
+            "tasks": [_task_snapshot(task) for task in self.tasks],
             "hooks": {
                 "enabled": isinstance(self.hooks, HookEngine),
                 "registry_sha256": self.hooks_registry_sha256,
