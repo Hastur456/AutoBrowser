@@ -20,7 +20,13 @@ from datetime import datetime
 from src.config import UiSettings
 from src.contracts import ApprovalResolution, ApprovalTicket
 from src.ui.feed import project_event, sanitize_text
-from src.ui.tui.commands import RESUME_PICKER, CommandResult, parse_command, run_command
+from src.ui.tui.commands import (
+    MODEL_PICKER,
+    RESUME_PICKER,
+    CommandResult,
+    parse_command,
+    run_command,
+)
 from src.ui.tui.ports import ControllerPort, RuntimeBridge, RuntimePort
 from src.ui.tui.strings import Strings
 from src.ui.tui.terminal import TerminalCaps
@@ -179,6 +185,10 @@ class PlainFrontend:
     def stored_ids(self) -> tuple[str, ...]:
         return ()  # line input has no completion
 
+    @property
+    def model_ids(self) -> tuple[str, ...]:
+        return ()
+
     def notice(self, text: str) -> None:
         """Show a session message as one line; safe from any thread."""
 
@@ -319,6 +329,10 @@ class PlainFrontend:
         try:
             # Commands await the bridge, which needs a running loop on this thread.
             result = asyncio.run(run())
+        except KeyboardInterrupt:
+            # Ctrl+C on a slow command (``/model`` waits for the provider) cancels it only.
+            self._emit(_tag("cancelled", ""))
+            return CommandResult()
         except Exception as exc:  # noqa: BLE001 - a failing command is reported, not fatal
             self._emit(_tag("error", f"{type(exc).__name__}: {exc}"))
             return CommandResult()
@@ -333,6 +347,10 @@ class PlainFrontend:
                 chosen = self._pick(message)
                 if chosen is not None and message.picker_id == RESUME_PICKER:
                     self._resume(chosen)
+                elif chosen is not None and message.picker_id == MODEL_PICKER:
+                    self._runtime_command(f"/model {chosen}")
+        if result.view is not None:
+            self._view = result.view
         if result.resume is not None:
             self._resume(result.resume)
         return result

@@ -226,6 +226,23 @@ class SessionController:
                 return view
         raise KeyError(server)
 
+    async def available_models(self) -> list[str]:
+        """The model ids the session's provider offers (one provider call, sorted).
+
+        Raises when the session has no catalog or the provider cannot answer; the message
+        is short and carries no secrets (``ModelProviderError``)."""
+
+        return await self._runtime.list_models()
+
+    async def set_model(self, model: str) -> SessionView:
+        """Use ``model`` from the next task on, for this and the following sessions of the
+        process (``/clear``, ``/resume``). Refuses while a task is running."""
+
+        if self.busy:
+            raise TaskBusyError("Cannot switch the model while a task is running.")
+        await self._runtime.set_model(model)
+        return self.session_view()
+
     async def reset(self) -> SessionView:
         """Close the session and continue in a fresh one (new id, no history, no tasks)."""
 
@@ -329,8 +346,9 @@ class SessionController:
         return SessionView(
             session_id=context.session_id,
             version=package_version(),
-            model=config.model,
-            provider="",
+            # The model id may come from a provider's list: never raw on a terminal.
+            model=sanitize_text(config.model),
+            provider=sanitize_text(config.provider),
             workspace=str(workspace) if workspace is not None else os.getcwd(),
             browser=self._browser_state(),
             servers=tuple(self._server_views()),

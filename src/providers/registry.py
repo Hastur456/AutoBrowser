@@ -7,6 +7,7 @@ use. A new protocol adds a value to ``LLMProvider``, a module here and a branch 
 
 :func:`probe_chat_provider` is the network check behind ``autobrowser doctor --llm``: it asks
 the provider for its model list with the configured URL, key and headers, without retries.
+:func:`list_chat_models` returns that list for ``/model`` in the terminal UI.
 Only ``src/cli/`` imports this package.
 """
 
@@ -65,12 +66,45 @@ def probe_chat_provider(settings: LLMSettings, *, timeout: float) -> ProviderPro
     return asyncio.run(_probe(settings, timeout))
 
 
+async def list_chat_models(
+    *,
+    provider: LLMProvider | None = None,
+    settings: LLMSettings | None = None,
+) -> list[str]:
+    """The model ids the provider offers (``/model`` in the terminal UI), in its order.
+
+    One call within ``llm.timeout_seconds``, no retries. Raises
+    :class:`~src.llm.ModelProviderError` when the provider cannot answer and ``ValueError``
+    for a configuration the client refuses; an empty list when it returned none.
+    """
+
+    resolved = _settings_for(provider, settings)
+    if resolved.provider == "openai_compat" and not (resolved.host or "").strip():
+        # The one configuration error, raised before the call: every ValueError from the
+        # call itself (a malformed reply: pydantic, JSON) is wrapped below.
+        raise ValueError("llm.host is required for provider openai_compat.")
+    try:
+        return await _model_names(resolved, resolved.timeout_seconds) or []
+    except ModelProviderError:
+        raise
+    except Exception as exc:
+        # The type only: an unexpected exception's text may quote a header or a body.
+        raise ModelProviderError(
+            f"{resolved.provider}: unexpected {type(exc).__name__}", provider=resolved.provider
+        ) from exc
+
+
+async def _model_names(settings: LLMSettings, timeout: float | None) -> list[str] | None:
+    if settings.provider == "openai_compat":
+        names = await _openai_compat_models(settings, timeout)
+    else:
+        names = await _ollama_models(settings, timeout)
+    return None if names is None else [name for name in names if name]
+
+
 async def _probe(settings: LLMSettings, timeout: float) -> ProviderProbe:
     try:
-        if settings.provider == "openai_compat":
-            names = await _openai_compat_models(settings, timeout)
-        else:
-            names = await _ollama_models(settings, timeout)
+        names = await _model_names(settings, timeout)
     except ModelProviderError as exc:
         return ProviderProbe(reachable=False, error=str(exc))
     except ValueError as exc:  # a configuration the client refuses (no host)
@@ -87,7 +121,9 @@ async def _probe(settings: LLMSettings, timeout: float) -> ProviderProbe:
     )
 
 
-async def _openai_compat_models(settings: LLMSettings, timeout: float) -> list[str] | None:
+async def _openai_compat_models(
+    settings: LLMSettings, timeout: float | None
+) -> list[str] | None:
     client = openai_compat.build_client(settings, timeout=timeout, max_retries=0)
     try:
         page = await client.models.list(extra_headers=openai_compat.request_headers(settings))
@@ -105,7 +141,7 @@ async def _openai_compat_models(settings: LLMSettings, timeout: float) -> list[s
     return [str(getattr(entry, "id", "") or "") for entry in data]
 
 
-async def _ollama_models(settings: LLMSettings, timeout: float) -> list[str] | None:
+async def _ollama_models(settings: LLMSettings, timeout: float | None) -> list[str] | None:
     from ollama import AsyncClient
 
     client = AsyncClient(
@@ -140,4 +176,4 @@ def _settings_for(provider: LLMProvider | None, settings: LLMSettings | None) ->
     return LLMSettings.model_validate({**resolved.model_dump(), "provider": provider})
 
 
-__all__ = ["ProviderProbe", "build_chat_model", "probe_chat_provider"]
+__all__ = ["ProviderProbe", "build_chat_model", "list_chat_models", "probe_chat_provider"]

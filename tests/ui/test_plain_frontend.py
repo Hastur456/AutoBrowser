@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
@@ -260,6 +261,59 @@ class ResumableController(ScriptedController):
 
     def past_tasks(self) -> list[PastTask]:
         return [PastTask(index=1, task="старая", status="completed", final_answer="старый ответ", turns=1)]
+
+
+class ModelController(ScriptedController):
+    def __init__(self) -> None:
+        super().__init__()
+        self.models_set: list[str] = []
+
+    async def available_models(self) -> list[str]:
+        return ["gemma-4", "gpt-5-mini"]
+
+    async def set_model(self, model: str) -> SessionView:
+        self.models_set.append(model)
+        return SessionView(session_id="s", model=model)
+
+
+def test_plain_model_lists_the_models_and_switches_to_the_chosen_one(runtime: RuntimeLoop) -> None:
+    controller = ModelController()
+    written: list[str] = []
+    replies = iter(["/model", "2", "/model qwen3:8b", "/exit"])
+    frontend = PlainFrontend(
+        controller, runtime, settings=SETTINGS, caps=plain_caps(), write=written.append, read=lambda _p: next(replies)
+    )
+
+    assert frontend.run() == 0
+    assert controller.models_set == ["gpt-5-mini", "qwen3:8b"]
+    assert "  2. gpt-5-mini" in written
+    assert "модель: qwen3:8b — со следующей задачи" in written
+
+
+def test_ctrl_c_during_a_slow_command_cancels_it_and_keeps_the_session(
+    runtime: RuntimeLoop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ctrl+C lands in the plain thread's ``asyncio.run`` while ``/model`` waits."""
+
+    real_run = asyncio.run
+    calls: list[object] = []
+
+    def interrupted_once(coro: Any) -> Any:
+        calls.append(coro)
+        if len(calls) == 1:
+            coro.close()
+            raise KeyboardInterrupt
+        return real_run(coro)
+
+    monkeypatch.setattr("src.ui.plain.asyncio.run", interrupted_once)
+    written: list[str] = []
+    replies = iter(["/model", "/exit"])
+    frontend = PlainFrontend(
+        ModelController(), runtime, settings=SETTINGS, caps=plain_caps(), write=written.append, read=lambda _p: next(replies)
+    )
+
+    assert frontend.run() == 0
+    assert "[cancelled]" in written
 
 
 def test_plain_resume_lists_sessions_and_replays_the_conversation(runtime: RuntimeLoop) -> None:

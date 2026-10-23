@@ -122,6 +122,20 @@ class FakeController:
     def past_tasks(self) -> list[PastTask]:
         return [PastTask(index=1, task="старая задача", status="completed", final_answer="старый ответ")]
 
+    model = "fake-model"
+    models_error: Exception | None = None
+    models_set: list[str] = []
+
+    async def available_models(self) -> list[str]:
+        if self.models_error is not None:
+            raise self.models_error
+        return ["fake-model", "gemma-4", "gpt-5-mini"]
+
+    async def set_model(self, model: str) -> SessionView:
+        self.models_set.append(model)
+        self.model = model
+        return replace(self.session_view(), model=model)
+
     async def _items(self) -> AsyncIterator[Item]:
         self.queue = asyncio.Queue()
         while True:
@@ -342,6 +356,45 @@ async def test_resume_opens_a_list_and_enter_switches_with_the_old_conversation(
     await until(lambda: "старый ответ" in h.out.getvalue() and "Продолжена сессия cccc2222" in h.out.getvalue())
     assert h.app.transcript.block("picker") is None
     assert h.app.view is not None and h.app.view.session_id == "cccc2222dddd"
+    assert await stop(h, task, pipe) == 0
+
+
+@pytest.mark.asyncio
+async def test_model_lists_the_provider_models_and_enter_switches(runtime: RuntimeLoop) -> None:
+    h, task, pipe = await start(runtime)
+    h.controller.models_set = []
+
+    h.send("/model\r")
+    await until(lambda: h.app.transcript.block("picker") is not None)
+    picker = h.app.transcript.block("picker")
+    assert picker is not None and [o.value for o in picker.options] == ["fake-model", "gemma-4", "gpt-5-mini"]
+    assert [o.detail for o in picker.options] == ["текущая", "", ""]
+    assert h.app.model_ids == ("fake-model", "gemma-4", "gpt-5-mini")
+
+    h.send("\x1b[B\r")  # down, Enter
+    await until(lambda: h.controller.models_set == ["gemma-4"])
+    await until(lambda: h.app.view is not None and h.app.view.model == "gemma-4")
+    await until(lambda: "модель: gemma-4 — со следующей задачи" in h.out.getvalue())
+    assert h.app.transcript.block("picker") is None
+    assert await stop(h, task, pipe) == 0
+
+
+@pytest.mark.asyncio
+async def test_model_with_an_id_switches_at_once_and_a_provider_error_is_shown(runtime: RuntimeLoop) -> None:
+    h, task, pipe = await start(runtime)
+    h.controller.models_set = []
+
+    h.send("/model gpt-5-mini\r")
+    await until(lambda: h.controller.models_set == ["gpt-5-mini"])
+    await until(lambda: h.app.view is not None and h.app.view.model == "gpt-5-mini")
+
+    h.controller.models_error = RuntimeError("openai_compat 401: authentication failed")
+    try:
+        h.send("/model\r")
+        await until(lambda: "openai_compat 401: authentication failed · назовите модель: /model <id>" in h.out.getvalue())
+        assert h.app.transcript.block("picker") is None
+    finally:
+        h.controller.models_error = None
     assert await stop(h, task, pipe) == 0
 
 

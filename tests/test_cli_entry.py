@@ -154,7 +154,7 @@ def test_build_session_binds_the_provider_flag_to_the_registry() -> None:
     import argparse
 
     from src.cli import bootstrap
-    from src.providers.registry import build_chat_model
+    from src.providers.registry import build_chat_model, list_chat_models
 
     args = argparse.Namespace(
         task=[], task_text=None, loop=False, model="m", temperature=None, show_state=False,
@@ -168,6 +168,10 @@ def test_build_session_binds_the_provider_flag_to_the_registry() -> None:
     factory = session._llm_factory
     assert factory.func is build_chat_model
     assert factory.keywords == {"provider": "openai_compat"}
+    catalog = session._model_catalog
+    assert catalog.func is list_chat_models
+    assert catalog.keywords == {"provider": "openai_compat"}
+    assert session.config.provider == "openai_compat"
 
 
 def test_doctor_prints_the_provider_without_secrets_or_network(

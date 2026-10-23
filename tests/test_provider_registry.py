@@ -7,6 +7,7 @@ transport for ``openai_compat`` and a fake client for Ollama.
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ import ollama
 import pytest
 
 from src.config import LLMSettings
+from src.llm import ModelProviderError
 from src.providers import openai_compat, registry
 from src.providers.ollama import OllamaChatModel
 from src.providers.openai_compat import OpenAICompatChatModel
@@ -157,6 +159,60 @@ def test_failures_are_unreachable_without_retries_or_secrets(
     assert "sk-secret" not in (probe.error or "")
 
 
+def test_list_chat_models_returns_the_ids_in_provider_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_transport(monkeypatch, httpx.Response(200, json=models_page("gpt-5", "gemma-4")))
+
+    names = asyncio.run(registry.list_chat_models(settings=compat_settings()))
+
+    assert names == ["gpt-5", "gemma-4"]
+
+
+def test_list_chat_models_raises_the_provider_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_transport(monkeypatch, httpx.Response(401, json={"error": {"message": "bad key"}}))
+
+    with pytest.raises(ModelProviderError, match="authentication failed"):
+        asyncio.run(registry.list_chat_models(settings=compat_settings()))
+
+
+def test_list_chat_models_reports_an_unexpected_failure_by_type_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(*_args: Any, **_kwargs: Any) -> Any:
+        raise TypeError("header Bearer sk-secret")
+
+    monkeypatch.setattr(openai_compat, "build_client", broken)
+
+    with pytest.raises(ModelProviderError) as caught:
+        asyncio.run(registry.list_chat_models(settings=compat_settings()))
+
+    assert str(caught.value) == "openai_compat: unexpected TypeError"
+
+
+def test_list_chat_models_wraps_a_malformed_ollama_reply(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_ollama(monkeypatch, error=ValueError("1 validation error input_value={'secret': 1}"))
+
+    with pytest.raises(ModelProviderError) as caught:
+        asyncio.run(registry.list_chat_models(settings=LLMSettings()))
+
+    assert str(caught.value) == "ollama: unexpected ValueError"
+
+
+def test_list_chat_models_raises_the_missing_host_as_a_configuration_error() -> None:
+    settings = LLMSettings().model_copy(update={"provider": "openai_compat"})
+
+    with pytest.raises(ValueError, match="llm.host is required"):
+        asyncio.run(registry.list_chat_models(settings=settings))
+
+
+def test_list_chat_models_follows_a_provider_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    listing = ollama.ListResponse(models=[{"model": "qwen3:8b"}])
+    fake_ollama(monkeypatch, listing)
+
+    names = asyncio.run(registry.list_chat_models(provider="ollama", settings=compat_settings()))
+
+    assert names == ["qwen3:8b"]
+
+
 def test_a_missing_host_is_reported_not_raised() -> None:
     settings = LLMSettings().model_copy(update={"provider": "openai_compat"})
 
@@ -235,4 +291,9 @@ def test_an_unexpected_failure_is_reported_by_type_only(monkeypatch: pytest.Monk
 
 
 def test_registry_exports() -> None:
-    assert set(registry.__all__) == {"ProviderProbe", "build_chat_model", "probe_chat_provider"}
+    assert set(registry.__all__) == {
+        "ProviderProbe",
+        "build_chat_model",
+        "list_chat_models",
+        "probe_chat_provider",
+    }

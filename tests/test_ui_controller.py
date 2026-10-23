@@ -574,3 +574,182 @@ async def test_a_list_number_beats_a_digit_id_prefix_and_an_exact_id_beats_a_num
     view = await controller.resume("1bbbbbbbbbbbbbbb")
     assert view.session_id == "1bbbbbbbbbbbbbbb"
     await runtime.close()
+
+
+# -- /model: the model catalog and switching the model ----------------------------------------
+
+
+class NamedLLM:
+    def __init__(self, model: str, temperature: float | None) -> None:
+        self.model, self.temperature = model, temperature
+
+    async def complete(self, messages: Any, *, tools: Any = (), **params: Any) -> Any:
+        raise AssertionError("not called in these tests")
+
+
+def model_runtime(
+    built: list[NamedLLM], catalog: Any = None, **config: Any
+) -> tuple[SessionController, SessionRuntime]:
+    def factory(*, model: str, temperature: float | None) -> NamedLLM:
+        llm = NamedLLM(model, temperature)
+        built.append(llm)
+        return llm
+
+    runtime = SessionRuntime(
+        make_config(**config),
+        llm_factory=factory,
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        mcp_runtime_factory=no_mcp_runtime,
+        model_catalog=catalog,
+    )
+    return SessionController(runtime), runtime
+
+
+@pytest.mark.asyncio
+async def test_set_model_rebuilds_the_model_and_the_agent_of_a_started_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agents = install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0, native_result(final_answer="ok")))
+    built: list[NamedLLM] = []
+    controller, runtime = model_runtime(built, provider="openai_compat")
+    await controller.start()
+
+    view = await controller.set_model("gemma-4")
+
+    assert (view.model, view.provider) == ("gemma-4", "openai_compat")
+    assert [(llm.model, llm.temperature) for llm in built] == [("test-model", 0.1), ("gemma-4", 0.1)]
+    assert runtime.context.llm is built[-1]
+    assert runtime.harness.llm is built[-1]
+    assert len(agents) == 2 and agents[-1].resources.llm is built[-1]
+    session_file = json.loads((runtime.context.session_dir / "session.json").read_text(encoding="utf-8"))  # type: ignore[operator]
+    assert session_file["config"]["model"] == "gemma-4"
+
+    # The same model again changes nothing.
+    await controller.set_model("gemma-4")
+    assert len(built) == 2
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_model_chosen_before_the_start_and_kept_across_a_reset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0, native_result(final_answer="ok")))
+    built: list[NamedLLM] = []
+    controller, runtime = model_runtime(built)
+
+    await controller.set_model("qwen3:8b")
+    assert built == []  # nothing is started yet
+    await controller.start()
+    await controller.reset()
+    await controller.start()
+
+    assert [llm.model for llm in built] == ["qwen3:8b", "qwen3:8b"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_set_model_refuses_while_a_task_runs_and_rejects_an_empty_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = asyncio.Event()
+
+    async def run(_request: TaskRequest) -> AgentLoopResult:
+        await release.wait()
+        return native_result(final_answer="done")
+
+    install_fake_agent(monkeypatch, run)
+    built: list[NamedLLM] = []
+    controller, runtime = model_runtime(built)
+
+    with pytest.raises(ValueError):
+        await controller.set_model("  ")
+    await controller.submit("long task")
+    with pytest.raises(TaskBusyError):
+        await controller.set_model("gemma-4")
+    release.set()
+    await controller.wait()
+    assert controller.session_view().model == "test-model"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_model_that_cannot_be_built_leaves_the_session_as_it_was(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agents = install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0, native_result(final_answer="ok")))
+    built: list[NamedLLM] = []
+
+    def factory(*, model: str, temperature: float | None) -> NamedLLM:
+        if model == "broken":
+            raise ValueError("llm.host is required for provider openai_compat")
+        llm = NamedLLM(model, temperature)
+        built.append(llm)
+        return llm
+
+    runtime = SessionRuntime(
+        make_config(), llm_factory=factory, start_chrome_cdp=no_start,
+        wait_for_port=noop_wait, mcp_runtime_factory=no_mcp_runtime,
+    )
+    controller = SessionController(runtime)
+    await controller.start()
+
+    with pytest.raises(ValueError, match="llm.host"):
+        await controller.set_model("broken")
+
+    assert controller.session_view().model == "test-model"
+    assert runtime.context.llm is built[0] and runtime.harness.llm is built[0]
+    assert len(agents) == 1
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_the_approval_classifier_follows_the_new_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    profile = tmp_path / "profile.yaml"
+    profile.write_text("permissions:\n  approval_judge: classifier\n", encoding="utf-8")
+    monkeypatch.setenv("AUTOBROWSER_CONFIG_FILE", str(profile))
+    get_settings.cache_clear()
+    install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0, native_result(final_answer="ok")))
+    built: list[NamedLLM] = []
+    controller, runtime = model_runtime(built)
+    await controller.start()
+
+    await controller.set_model("gemma-4")
+
+    classifier = runtime.context.approval.classifier
+    assert classifier is not None and classifier._llm is built[-1]
+    assert built[-1].model == "gemma-4"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["evil\x1b[2Jmodel", "bell\x07", "rtl\u202eid"])
+async def test_a_model_id_with_control_characters_is_refused(model: str) -> None:
+    controller, runtime = model_runtime([])
+
+    with pytest.raises(ValueError, match="control"):
+        await controller.set_model(model)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_available_models_come_from_the_catalog_sorted_and_unique() -> None:
+    async def catalog() -> list[str]:
+        return ["gpt-5", "", "gemma-4", "gpt-5", "evil\x1b[2Jmodel"]
+
+    controller, runtime = model_runtime([], catalog=catalog)
+
+    assert await controller.available_models() == ["gemma-4", "gpt-5"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_without_a_catalog_the_list_is_refused_with_a_hint() -> None:
+    controller, runtime = model_runtime([])
+
+    with pytest.raises(RuntimeError, match="name the model"):
+        await controller.available_models()
+    await runtime.close()
