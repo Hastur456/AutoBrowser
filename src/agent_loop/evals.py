@@ -15,15 +15,14 @@ import yaml
 from src.llm import ModelResponse
 from src.messages import Message
 
-from src.agent_loop.context import ContextAssembler
+from src.agent_loop.context import ContextAssembler, PromptSection
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.agent_loop.execution.loop import Agent
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.replay import TraceSummary, print_action_sequence, summarize_trace
-from src.agent_loop.skills import browser_agent_rules_resource
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
 from src.browser.permissions import BrowserResourceResolver
-from src.config import PermissionsSettings
+from src.config import PermissionsSettings, SkillsSettings
 from src.contracts import (
     ApprovalAnswer,
     PermissionVerdict,
@@ -35,6 +34,14 @@ from src.contracts import (
 from src.harness.permissions import PermissionEngine
 from src.harness.normalization import SchemaArgsNormalizer
 from src.harness.runtime import BrowserHarness
+from src.harness.skill_tool import skill_tools
+from src.harness.skills import (
+    BROWSER_CAPABILITY,
+    SkillStore,
+    always_sections,
+    builtin_skills_root,
+    catalog_section,
+)
 from src.harness.tools import ToolRegistry
 
 _INVALID_REF_PATTERN = re.compile(
@@ -368,12 +375,38 @@ def _scripted_human(answers: list[str]) -> Any:
     return answer
 
 
-async def run_scenario(scenario: EvalScenario, *, memory: Any | None = None) -> EvalResult:
+def builtin_skill_store(settings: SkillsSettings | None = None) -> SkillStore:
+    """The built-in skills of a browser session, from explicit (by default the code-default)
+    skill settings — never the developer's config or skills folder."""
+
+    return SkillStore.load(
+        settings or SkillsSettings(),
+        roots=[("builtin", builtin_skills_root())],
+        capabilities={BROWSER_CAPABILITY},
+    )
+
+
+def _browser_sections() -> list[PromptSection]:
+    """The built-in always-on skills of a browser session."""
+
+    return always_sections(builtin_skill_store())
+
+
+async def run_scenario(
+    scenario: EvalScenario,
+    *,
+    memory: Any | None = None,
+    skills: SkillStore | None = None,
+) -> EvalResult:
     """Run one scenario against the engine-native execution loop.
 
     ``memory`` is an explicit ``Memory`` block renderer (a ``MemoryContext`` over a seed
-    directory); evals never read the developer's memory or its settings.
+    directory); evals never read the developer's memory or its settings. ``skills`` is an
+    explicit store run as a session would run it: with ``enabled`` and a visible skill, the
+    catalog and ``skill_view``; the always-on bodies either way. Without it, the built-in
+    always-on bodies only (skills off).
     """
+    skills_on = skills is not None and skills.settings.enabled and bool(skills.skills())
 
     sink = InMemoryEventSink()
     session_id = f"eval-{uuid4().hex}"
@@ -383,11 +416,19 @@ async def run_scenario(scenario: EvalScenario, *, memory: Any | None = None) -> 
     llm = FakeChatModel(responses=scenario.model_responses)
     harness = BrowserHarness(
         llm=llm,
-        # A browser scenario: the same prompt resources a session with a browser server gets.
-        context_assembler=ContextAssembler(resources=[browser_agent_rules_resource()]),
+        # A browser scenario: the same always-on skills a session with a browser server gets.
+        context_assembler=ContextAssembler(
+            sections=(
+                (catalog_section(skills) if skills_on else []) + always_sections(skills)
+                if skills is not None
+                else _browser_sections()
+            )
+        ),
         # Same schema normalizer the real session wires (see src/harness/mcp_setup.py).
         tool_registry=ToolRegistry(
-            providers=[provider], normalizers=[SchemaArgsNormalizer(), provider]
+            list(skill_tools(skills)) if skills is not None and skills_on else None,
+            providers=[provider],
+            normalizers=[SchemaArgsNormalizer(), provider],
         ),
         event_emitter=emitter,
     )

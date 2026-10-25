@@ -128,9 +128,11 @@ around the engine:
   extraction.
 - `batch.py`, `export.py`, and `evals.py` power Golden Set runs, session export
   rows, and deterministic fake-browser scenario checks.
-- `context.py`, `prompts.py`, and `skills.py` implement the canonical prompt-construction
-  path: `ContextAssembler` builds the durable system prompt, the per-turn user prompt, and the
-  planner prompt from typed context blocks.
+- `context.py` and `prompts.py` implement the canonical prompt-construction path:
+  `ContextAssembler` builds the durable system prompt (the agent prompt plus the session's
+  `PromptSection`s: the skill catalog and the always-on skills such as the browser rules), the
+  per-turn user prompt, and the planner prompt from typed context blocks. Skills themselves
+  live in `src/harness/skills.py` ([guide](../development/skills.md)).
 
 The interactive CLI in `src/cli/agent_cli.py` wraps a prepared
 `SessionRuntime`. It keeps all asynchronous session operations on one dedicated

@@ -810,6 +810,78 @@ class MemorySettings(_Section):
     ] = 0
 
 
+class SkillsSettings(_Section):
+    """Agent skills: ``SKILL.md`` folders, a catalog in the prompt, bodies loaded on demand
+    (``docs/development/2026-10-26-agent-skills-design.md``).
+
+    Built-in skills marked ``always`` reach the prompt whether or not skills are enabled;
+    ``enabled`` adds the catalog, the ``skill_view`` tool and the user's skills.
+    """
+
+    enabled: Annotated[
+        bool,
+        Field(
+            description=(
+                "Show the skill catalog, register the skill_view tool and read the user's "
+                "skills. Always-on built-in skills (the browser rules) work without it."
+            ),
+        ),
+    ] = False
+
+    dir: Annotated[
+        str,
+        Field(
+            min_length=1,
+            description=(
+                "Folder of the user's skills (one sub-folder with a SKILL.md per skill), "
+                "relative to storage.root_dir."
+            ),
+        ),
+    ] = "skills"
+
+    max_skills: Annotated[
+        int,
+        Field(ge=1, description="Skills read from one source; the rest are skipped."),
+    ] = 100
+
+    catalog_max_chars: Annotated[
+        int,
+        Field(ge=1, description="Characters of the whole Skills catalog block."),
+    ] = 4_000
+
+    description_max_chars: Annotated[
+        int,
+        Field(ge=1, description="Characters of one skill description shown in the catalog."),
+    ] = 1_024
+
+    body_max_chars: Annotated[
+        int,
+        Field(ge=1, description="Characters of a skill body returned by skill_view."),
+    ] = 20_000
+
+    file_max_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Characters of a skill file returned by skill_view; a SKILL.md longer than "
+                "this is not loaded."
+            ),
+        ),
+    ] = 20_000
+
+    always_max_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Characters of the body of an always-on skill (put into every system "
+                "prompt); a longer one is not loaded."
+            ),
+        ),
+    ] = 12_000
+
+
 class EventSettings(_Section):
     """Truncation limits for persisted events and the agent trace sidecar."""
 
@@ -1705,6 +1777,7 @@ class Settings(BaseSettings):
     loop: LoopSettings = Field(default_factory=LoopSettings)
     observation: ObservationSettings = Field(default_factory=ObservationSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
+    skills: SkillsSettings = Field(default_factory=SkillsSettings)
     events: EventSettings = Field(default_factory=EventSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     flags: FlagsSettings = Field(default_factory=FlagsSettings)

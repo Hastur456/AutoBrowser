@@ -239,6 +239,22 @@ memory:
   working_notes_max_chars: 0                    # (default)
 
 # ---------------------------------------------------------------------------
+# Agent skills: folders with a SKILL.md (Agent Skills format) -- built-in ones in
+# the package and yours under <storage.root_dir>/<skills.dir>/ (design:
+# docs/development/2026-10-26-agent-skills-design.md). The prompt lists name and
+# description; the model loads a body with skill_view. Always-on built-in skills
+# (the browser rules) work even while skills are off.
+skills:
+  enabled: false                                # (default) catalog + skill_view + your skills
+  dir: skills                                   # (default) relative to storage.root_dir
+  max_skills: 100                               # (default) skills read per source
+  catalog_max_chars: 4000                       # (default) the whole Skills block
+  description_max_chars: 1024                   # (default) one description in the catalog
+  body_max_chars: 20000                         # (default) a body returned by skill_view
+  file_max_chars: 20000                         # (default) a skill file; a longer SKILL.md is skipped
+  always_max_chars: 12000                       # (default) an always-on body; longer is skipped
+
+# ---------------------------------------------------------------------------
 # Persisted event/trace detail under .autobrowser/sessions/<session_id>/.
 events:
   # Longest string recorded in an event before it is truncated.

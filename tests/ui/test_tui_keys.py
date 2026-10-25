@@ -22,7 +22,7 @@ from src.contracts import ApprovalResolution, ApprovalTicket
 from src.ui.runtime_loop import RuntimeLoop
 from src.ui.tui.app import TuiApp
 from src.ui.tui.terminal import TerminalCaps
-from src.ui.views import PastTask, ServerView, SessionView, StoredSessionView, TaskView
+from src.ui.views import PastTask, ServerView, SessionView, SkillsView, SkillView, StoredSessionView, TaskView
 
 T0 = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
 SETTINGS = UiSettings(refresh_hz=30.0, status_interval_seconds=60.0, escape_timeout_ms=0)
@@ -96,6 +96,18 @@ class FakeController:
 
     def memory_entries(self) -> list[object]:
         return []
+
+    skills_view = SkillsView(
+        enabled=True,
+        skills=(
+            SkillView("browser-agent-rules", "Browser rules.", "builtin", always=True),
+            SkillView("price-compare", "Compare prices across shops.", "user"),
+        ),
+        problems=("user/broken: description is missing",),
+    )
+
+    def skills(self) -> SkillsView:
+        return self.skills_view
 
     def current_url(self) -> str:
         return "https://shop.test/cart"
@@ -325,6 +337,42 @@ async def test_ctrl_o_and_ctrl_t_toggle_views(runtime: RuntimeLoop) -> None:
     await until(lambda: h.app.transcript.detail == "verbose")
     h.send("\x14")  # Ctrl+T
     await until(lambda: h.app.transcript.show_plan is False)
+    assert await stop(h, task, pipe) == 0
+
+
+@pytest.mark.asyncio
+async def test_skills_command_lists_the_skills(runtime: RuntimeLoop) -> None:
+    h, task, pipe = await start(runtime)
+
+    h.send("/skills\r")
+    await until(lambda: "price-compare" in h.out.getvalue())
+    out = h.out.getvalue()
+    assert "Скиллы" in out
+    assert "browser-agent-rules (встроенный, всегда в промпте) — Browser rules." in out
+    assert "price-compare (ваш) — Compare prices across shops." in out
+    assert "пропущен user/broken: description is missing" in out
+    assert await stop(h, task, pipe) == 0
+
+
+@pytest.mark.asyncio
+async def test_skills_command_before_the_session_starts_and_with_skills_off(runtime: RuntimeLoop) -> None:
+    h, task, pipe = await start(runtime)
+
+    h.controller.skills_view = SkillsView(enabled=True, loaded=False)
+    h.send("/skills" + chr(13))
+    await until(lambda: "скиллы читаются при старте сессии" in h.out.getvalue())
+    assert "(сейчас включены)" in h.out.getvalue()
+
+    h.controller.skills_view = SkillsView(
+        enabled=False,
+        skills=(SkillView("browser-agent-rules", "Rules.", "user", always=True),),
+        shadowed=("browser-agent-rules",),
+    )
+    h.send("/skills" + chr(13))
+    await until(lambda: "включить: skills.enabled: true" in h.out.getvalue())
+    out = h.out.getvalue()
+    assert "Скиллы (выключены: только встроенные always)" in out
+    assert "browser-agent-rules (ваш, заменяет встроенный, всегда в промпте) — Rules." in out
     assert await stop(h, task, pipe) == 0
 
 

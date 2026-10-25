@@ -20,13 +20,12 @@ from src.agent_loop.events import (
     EventSink,
     JsonlEventSink,
 )
-from src.agent_loop.context import ContextAssembler
+from src.agent_loop.context import ContextAssembler, PromptSection
 from src.agent_loop.execution.approval import ApprovalJudge
 from src.agent_loop.execution.loop import Agent, AgentLoopResult, HumanInputCallback
 from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalLimits, GoalRunner
-from src.agent_loop.skills import PromptResource, browser_agent_rules_resource
 from src.config import get_settings
 from src.contracts import PermissionMode, TaskRequest
 from src.harness.hooks import HookEngine, NullHookEngine, registry_digest
@@ -38,6 +37,14 @@ from src.harness.memory import MemoryManager, NullMemoryContext
 from src.harness.memory_consolidation import MemoryConsolidator
 from src.harness.memory_store import MemoryContext, MemoryStore
 from src.harness.memory_tool import memory_tools
+from src.harness.skill_tool import skill_tools
+from src.harness.skills import (
+    BROWSER_CAPABILITY,
+    SkillStore,
+    always_sections,
+    catalog_section,
+    skill_roots,
+)
 from src.harness.runtime import BrowserHarness
 from src.harness.session_store import (
     RESUMED_STATE_KEYS,
@@ -485,6 +492,9 @@ class SessionContext:
     memory_store: MemoryStore | None = None
     #: Renders the ``Memory`` context block for the engine (``EngineResources.memory``).
     memory: MemoryContext | NullMemoryContext = field(default_factory=NullMemoryContext)
+    #: The session's skills (``settings.skills``), read once in :meth:`initialize` after MCP
+    #: starts (a skill may require the browser capability).
+    skill_store: SkillStore | None = None
     chrome_process: Any | None = None
     #: Open while MCP runs: the stderr log of the stdio servers (:data:`CHILD_STDERR_LOG_NAME`).
     child_stderr: TextIO | None = None
@@ -567,7 +577,7 @@ class SessionContext:
             mode=self.config.permission_mode,
         )
         self._initialize_memory(settings)
-        session_tools = (
+        session_tools: list[Any] = (
             memory_tools(self.memory_store)
             if self.memory_store is not None and settings.memory.tool_enabled
             else []
@@ -595,6 +605,7 @@ class SessionContext:
 
         self.llm, self.approval = self._build_model(self.config, llm_factory)
         if self.config.no_mcp:
+            session_tools += self._load_skills(settings)
             self.tool_registry = ToolRegistry(session_tools)
         else:
             mcp: MCPRuntime | None = None
@@ -621,6 +632,7 @@ class SessionContext:
                 self._close_child_stderr()
                 raise
             self.mcp = mcp
+            session_tools += self._load_skills(settings)
             # The MCP tool source is live: rediscovery (list_changed) and servers going
             # down / coming back are reflected on the next registry read.
             self.tool_registry = ToolRegistry(
@@ -634,7 +646,7 @@ class SessionContext:
         self.harness = harness_factory(
             llm=self.llm,
             tool_registry=self.tool_registry,
-            context_assembler=ContextAssembler(resources=self._prompt_resources()),
+            context_assembler=ContextAssembler(sections=self._prompt_sections(settings)),
             telemetry=self.telemetry,
             event_emitter=self.event_emitter,
             compress_tools=self.config.compress_tools,
@@ -647,6 +659,7 @@ class SessionContext:
             payload={
                 "session_id": self.session_id,
                 "resumed": self.resumed_from_sequence is not None,
+                "skills": self._skills_snapshot(),
             },
         )
         self.events.emit("session.started", self)
@@ -677,13 +690,47 @@ class SessionContext:
         if self.harness is not None:
             self.harness.llm = llm
 
-    def _prompt_resources(self) -> list[PromptResource]:
-        """Prompt resources for this session: the browser rules iff a browser server is
+    def _capabilities(self) -> frozenset[str]:
+        """What skills may require of this session: ``browser`` iff a browser server is
         configured (``browser_mcp_server``), so a session without one sees no browser text."""
 
         if self.mcp is not None and self.mcp.browser_server:
-            return [browser_agent_rules_resource()]
+            return frozenset({BROWSER_CAPABILITY})
+        return frozenset()
+
+    def _load_skills(self, settings: Any) -> list[Any]:
+        """Read the session's skills (once MCP runs, so the capabilities are known) and
+        return the skill tools to register: ``skill_view`` when skills are enabled and at
+        least one is visible."""
+
+        self.skill_store = SkillStore.load(
+            settings.skills,
+            roots=skill_roots(settings.skills, settings.storage),
+            capabilities=self._capabilities(),
+            on_event=self.emit_skill_event,
+        )
+        if settings.skills.enabled and self.skill_store.skills():
+            return list(skill_tools(self.skill_store))
         return []
+
+    def _prompt_sections(self, settings: Any) -> list[PromptSection]:
+        """The session's fixed system blocks: the skill catalog when skills are enabled, and
+        the always-on bodies (the browser rules in a browser session) either way."""
+
+        store = self.skill_store
+        if store is None:
+            return []
+        catalog = catalog_section(store) if settings.skills.enabled else []
+        return catalog + always_sections(store)
+
+    def emit_skill_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        """Forward a skills event (``skills.*``) to the session's event stream."""
+
+        self.event_emitter.emit(
+            event_type,  # type: ignore[arg-type]
+            source="harness.skills",
+            payload=payload,
+        )
 
     def _initialize_memory(self, settings: Any) -> None:
         """Build the persistent memory store and its context renderer (or switch them off)."""
@@ -824,6 +871,7 @@ class SessionContext:
                 "approval_judge": self.approval.mode,
             },
             "memory": self._memory_snapshot(),
+            "skills": self._skills_snapshot(),
         }
 
     def build_agent(self, *, human_input: HumanInputCallback | None = None) -> Agent:
@@ -857,6 +905,20 @@ class SessionContext:
             "root": str(store.root),
             "entries": len(store.entries()),
             "tools": isinstance(self.memory, MemoryContext) and self.memory.tools_enabled,
+        }
+
+    def _skills_snapshot(self) -> dict[str, Any]:
+        store = self.skill_store
+        if store is None:
+            return {"enabled": False, "skills": [], "problems": 0, "shadowed": []}
+        return {
+            "enabled": store.settings.enabled,
+            "skills": [
+                {"name": skill.name, "source": skill.source, "always": skill.always}
+                for skill in store.skills()
+            ],
+            "problems": len(store.problems()),
+            "shadowed": list(store.shadowed()),
         }
 
     def persist(self) -> None:

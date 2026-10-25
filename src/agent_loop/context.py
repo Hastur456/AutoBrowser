@@ -19,7 +19,6 @@ from src.agent_loop.prompts import (
     PLANNER_SYSTEM_PROMPT,
     PLANNER_USER_PROMPT,
 )
-from src.agent_loop.skills import PromptResource
 from src.config import get_settings
 from src.harness.tools import tool_name
 
@@ -53,6 +52,23 @@ class ContextBlock:
 
 
 @dataclass(frozen=True)
+class PromptSection:
+    """A fixed system block the composition root chose for this session.
+
+    Rendered under ``title`` into :meth:`ContextAssembler.get_system_prompt`, the system
+    message of the session's history. The session builds these from its skills (the
+    always-on bodies, the skill catalog); the assembler never reads files or skills.
+    """
+
+    #: Stable id (a skill name, ``skills`` for the catalog); recorded as the block source.
+    name: str
+    #: Heading of the context block.
+    title: str
+    text: str
+    priority: int = 45
+
+
+@dataclass(frozen=True)
 class AssembledContext:
     """Ordered context blocks and their rendered prompt views."""
 
@@ -66,25 +82,35 @@ class ContextAssembler:
 
     This is the sanctioned prompt-assembly boundary for the engine-native loop:
     it knows the agent system prompt and the agent/planner prompts, so the engine
-    never imports prompt resources itself. ``resources`` are the prompt resources the
-    composition root chose for this session (the browser rules when a browser server is
-    configured); each is rendered as a system block on every turn. Nothing here inspects
-    tool names, state keys or task words to decide that.
+    never imports prompt resources itself. ``sections`` are the fixed system blocks the
+    composition root chose for this session (the always-on skills such as the browser rules
+    when a browser server is configured, the skill catalog); they reach the model through
+    :meth:`get_system_prompt`, the system message of the history (``assemble`` lists them too,
+    for inspection; its ``system_prompt`` is not what the model gets).
+    Nothing here inspects tool names, state keys or task words to decide that.
     """
 
     def __init__(
         self,
         system_prompt: str | None = None,
         *,
-        resources: Sequence[PromptResource] = (),
+        sections: Sequence[PromptSection] = (),
     ) -> None:
         self._system_prompt = system_prompt or AGENT_SYSTEM_PROMPT
-        self._resources = tuple(resources)
+        self._sections = tuple(sections)
 
     def get_system_prompt(self) -> str:
-        """Return the system prompt injected into durable message history."""
+        """Return the system prompt injected into durable message history.
 
-        return self._system_prompt
+        The agent system prompt followed by the session's sections (the skill catalog, the
+        always-on skills), in priority order. The ``Tool Inventory`` block is not part of it:
+        the model gets the tools as native tool schemas.
+        """
+
+        sections = self.render(self._section_blocks())
+        if not sections:
+            return self._system_prompt
+        return f"{self._system_prompt}\n\n{sections}"
 
     def assemble(
         self,
@@ -232,18 +258,27 @@ class ContextAssembler:
                     source="tool_registry",
                 )
             )
-        for resource in self._resources:
-            blocks.append(
-                ContextBlock(
-                    name=resource.title,
-                    role="system",
-                    content=resource.load(),
-                    priority=45,
-                    source=f"resource:{resource.name}",
-                    metadata={"resource": resource.name},
-                )
-            )
+        blocks.extend(self._section_blocks())
         return blocks
+
+    def _section_blocks(self) -> list[ContextBlock]:
+        """The session's sections as system blocks, in priority order."""
+
+        blocks = [
+            ContextBlock(
+                name=section.title,
+                role="system",
+                content=section.text,
+                priority=section.priority,
+                source=f"section:{section.name}",
+                metadata={"section": section.name},
+            )
+            for section in self._sections
+        ]
+        return sorted(
+            (block for block in blocks if not block.is_empty()),
+            key=lambda block: (block.priority, block.name, block.source),
+        )
 
 
 def _memory_block(memory: str) -> ContextBlock:
@@ -305,4 +340,5 @@ __all__ = [
     "ContextAssembler",
     "ContextBlock",
     "ContextRole",
+    "PromptSection",
 ]

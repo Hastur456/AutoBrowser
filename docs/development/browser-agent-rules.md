@@ -1,3 +1,11 @@
+---
+name: browser-agent-rules
+description: Snapshot-driven browser interaction and extraction rules.
+metadata:
+  always: "true"
+  requires: browser
+  title: Browser Rules
+---
 # Browser Agent Rules
 
 AutoBrowser is a Playwright MCP browser agent, not a traditional Playwright

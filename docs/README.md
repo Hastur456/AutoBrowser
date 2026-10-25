@@ -11,6 +11,8 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   usage, and prompt-change workflow.
 - [Browser Agent Rules](development/browser-agent-rules.md): Playwright MCP
   interaction rules and search-flow debugging guidance.
+- [Agent Skills Guide](development/skills.md): `SKILL.md` skills — format, built-in and
+  your skills, the catalog and `skill_view`, enabling, debugging and tests.
 - [Lifecycle Hooks Guide](development/lifecycle-hooks.md): how hooks work, their
   architecture, configuration, Python and command hooks, and how to create, change,
   disable and test them.
@@ -84,8 +86,13 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [OpenAI-Compatible Provider Design](development/2026-10-22-openai-compat-provider-design.md):
   proposed Chat Completions adapter next to Ollama — wire mapping of messages, tool calls and
   usage, `llm.*` settings and service profiles (OhMyLama, OpenAI, OpenRouter, local servers),
-  neutral provider errors, tests and rollout plan (Russian, Proposed; ADR
+  neutral provider errors, tests and rollout plan (Russian, Accepted; ADR
   [OpenAI-compatible provider](decisions/2026-10-22-openai-compatible-chat-provider.md)).
+- [Agent Skills Design](development/2026-10-26-agent-skills-design.md): proposed skills in
+  the Agent Skills `SKILL.md` format — catalog in the prompt, bodies and files loaded on demand
+  by the model with `skill_view`, built-in and `<home>/skills/` sources, the browser rules as
+  the first built-in `always` skill, `skills.*` settings, layering, tests and rollout plan
+  (Russian, Accepted; ADR [agent skills](decisions/2026-10-26-agent-skills.md)).
 - [Browser Provider Boundary ADR](decisions/2026-07-26-browser-provider-boundary.md):
   superseded record for the former Playwright adapter boundary.
 - [Task Memory Isolation ADR](decisions/2026-07-24-task-memory-isolation-and-session-persistence.md):

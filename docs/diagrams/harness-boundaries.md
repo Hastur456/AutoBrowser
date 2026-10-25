@@ -23,7 +23,11 @@ flowchart LR
   SessionCtx --> Harness[BrowserHarness]
   SessionCtx --> Hooks[HookEngine]
   SessionCtx --> Permissions[PermissionEngine: rules, mode, grants]
-  SessionCtx --> PromptRes[Prompt resources: browser rules iff a browser server]
+  SessionCtx --> Skills[SkillStore: built-in + user skills, capability browser iff a browser server]
+  Skills --> Sections[PromptSections: Skills catalog + always-on bodies]
+  Skills --> SkillView[skill_view tool, server skills]
+  Sections --> ContextAssembler
+  SkillView --> Tools
   Hooks --> HookHandlers[Hook handlers: builtin_hooks, browser.hooks]
   Hooks --> CommandHooks[CommandHook: external process]
   MCPRuntime --> Manager[MCPManager]
@@ -88,6 +92,9 @@ the personal config.
 No tool name decides anything. The `ObservationCompiler` gets the server and the
 `readOnlyHint` of every call: a successful read-only call stores its output as that server's
 snapshot, a successful state-changing call of the server drops it, other servers are
-untouched. The session hands `ContextAssembler` its prompt resources (the browser rules iff a
-browser server is configured). The engine imports nothing from `src/browser/`
+untouched. The session hands `ContextAssembler` its prompt sections: the always-on skills
+(the browser rules iff a browser server is configured) and, with `skills.enabled`, the
+`Skills` catalog whose bodies the model loads with the `skill_view` harness tool. Neither the
+engine nor the assembler knows the skill modules or the tool name
+(`tests/test_skill_boundaries.py`). The engine imports nothing from `src/browser/`
 (`tests/test_engine_boundaries.py`).

@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import io
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -268,3 +270,50 @@ def test_doctor_llm_probes_the_provider(
     assert calls == [get_settings().ui.doctor_probe_timeout_seconds]
     if failed:
         assert code == 1
+
+
+def test_doctor_reports_skills_off_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_profile(monkeypatch, tmp_path, "skills:\n  enabled: false\n")
+    monkeypatch.setattr(subcommands.shutil, "which", lambda name: None)
+
+    entry.main(["doctor"])
+
+    assert doctor_line(capsys.readouterr().out, "skills") == "ok  skills         off · 1 built-in"
+
+
+def test_doctor_reports_user_skills_shadowing_and_problems(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tests.test_skills import write_skill
+
+    folder = tmp_path / "my-skills"
+    write_skill(folder, "pdf-forms", metadata="version: 2")
+    write_skill(folder, "browser-agent-rules")
+    write_skill(folder, "broken", frontmatter="name: broken")
+    use_profile(monkeypatch, tmp_path, f"skills:\n  enabled: true\n  dir: '{folder.as_posix()}'\n")
+    monkeypatch.setattr(subcommands.shutil, "which", lambda name: None)
+
+    entry.main(["doctor"])
+
+    out = capsys.readouterr().out
+    line = doctor_line(out, "skills")
+    assert line.startswith("!")
+    for part in ("on · 0 built-in", "2 yours", str(folder), "yours replace browser-agent-rules"):
+        assert part in line, part
+    assert "user/broken skipped: description is missing" in out
+    assert "pdf-forms: unknown frontmatter keys version" in out
+
+
+def test_doctor_survives_a_legacy_code_page_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="cp1251", errors="strict")
+    monkeypatch.setattr(sys, "stdout", stream)
+    monkeypatch.setattr(subcommands.shutil, "which", lambda name: None)
+
+    code = entry.main(["doctor"])
+
+    stream.flush()
+    assert code in (0, 1)
+    assert b"skills" in raw.getvalue()

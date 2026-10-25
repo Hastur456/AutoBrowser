@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.agent_loop.context import AssembledContext, ContextAssembler, ContextBlock
-from src.agent_loop.skills import browser_agent_rules_resource
+from src.agent_loop.context import AssembledContext, ContextAssembler, ContextBlock, PromptSection
+from src.agent_loop.evals import _browser_sections
+from src.agent_loop.prompts import AGENT_SYSTEM_PROMPT
 
 
 @dataclass
@@ -12,7 +13,7 @@ class FakeTool:
     description: str = ""
 
 
-BROWSER = ContextAssembler(resources=[browser_agent_rules_resource()])
+BROWSER = ContextAssembler(sections=_browser_sections())
 
 
 def test_context_block_model_assembles_state_and_tools() -> None:
@@ -51,7 +52,7 @@ def test_context_assembler_omits_empty_blocks() -> None:
     assert context.turn_prompt == "Task:\nsummarize notes"
 
 
-def test_browser_rules_come_from_the_session_resources() -> None:
+def test_browser_rules_come_from_the_session_sections() -> None:
     context = BROWSER.assemble({"task": "summarize this page"}, tools=[FakeTool("anything")])
 
     assert "Browser Rules:" in context.system_prompt
@@ -60,7 +61,7 @@ def test_browser_rules_come_from_the_session_resources() -> None:
     assert "Browser Snapshot:" not in context.turn_prompt
 
 
-def test_without_resources_no_browser_text_is_added_whatever_the_tools_or_task() -> None:
+def test_without_sections_no_browser_text_is_added_whatever_the_tools_or_task() -> None:
     # Tool names, state keys and task words never switch the browser rules on.
     context = ContextAssembler().assemble(
         {"task": "open the product page and click buy", "snapshots": {"web": "button [ref=e1]"}},
@@ -70,13 +71,34 @@ def test_without_resources_no_browser_text_is_added_whatever_the_tools_or_task()
     assert "Browser Rules:" not in context.system_prompt
 
 
-def test_browser_rule_resource_is_local_and_deterministic() -> None:
-    resource = browser_agent_rules_resource()
+def test_the_browser_rules_are_the_built_in_always_on_skill() -> None:
+    (section,) = _browser_sections()
 
-    assert resource.name == "browser-agent-rules"
-    assert resource.title == "Browser Rules"
-    assert resource.path.name == "browser-agent-rules.md"
-    assert resource.load().startswith("# Browser Agent Rules")
+    assert (section.name, section.title, section.priority) == ("browser-agent-rules", "Browser Rules", 45)
+    assert section.text.startswith("# Browser Agent Rules")
+    assert "---" not in section.text.splitlines()[0]
+
+
+def test_the_browser_rules_block_is_the_skill_body_without_frontmatter() -> None:
+    (section,) = _browser_sections()
+    context = BROWSER.assemble({"task": "t"})
+
+    assert context.system_prompt == f"Browser Rules:\n{section.text.strip()}"
+    assert "name: browser-agent-rules" not in context.system_prompt
+
+
+def test_sections_render_as_system_blocks_in_priority_order() -> None:
+    assembler = ContextAssembler(
+        sections=[PromptSection("late", "Late", "b", priority=46), PromptSection("early", "Early", "a", priority=44)]
+    )
+
+    context = assembler.assemble({"task": "t"})
+
+    assert context.system_prompt == "Early:\na\n\nLate:\nb"
+    assert [(block.name, block.source) for block in context.blocks if block.role == "system"] == [
+        ("Early", "section:early"),
+        ("Late", "section:late"),
+    ]
 
 
 def test_context_assembler_sorts_by_priority_then_name_and_source() -> None:
@@ -217,3 +239,11 @@ def test_working_notes_render_after_the_action_history() -> None:
     names = [block.name for block in context.blocks]
     assert names.index("Working Notes") == names.index("Action History") + 1
     assert "Working Notes:\nKettle A: 1990" in context.turn_prompt
+
+
+def test_the_system_prompt_sent_to_the_model_carries_the_sections_but_not_the_tool_inventory() -> None:
+    (section,) = _browser_sections()
+
+    assert BROWSER.get_system_prompt() == f"{AGENT_SYSTEM_PROMPT}\n\nBrowser Rules:\n{section.text.strip()}"
+    assert ContextAssembler().get_system_prompt() == AGENT_SYSTEM_PROMPT
+    assert "Tool Inventory" not in BROWSER.get_system_prompt()

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from src.agent_loop.skills import browser_agent_rules_resource
+from src.harness.skills import SKILL_FILE, builtin_skills_root
 from src.cli.entry import main
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,11 +17,11 @@ DOCS_RULES = ROOT / "docs" / "development" / "browser-agent-rules.md"
 
 
 def test_the_bundled_browser_rules_match_the_reference_copy_in_docs() -> None:
-    bundled = browser_agent_rules_resource().path
+    bundled = builtin_skills_root() / "browser-agent-rules" / SKILL_FILE
 
     assert bundled.is_relative_to(ROOT / "src")
     assert bundled.read_bytes() == DOCS_RULES.read_bytes(), (
-        "src/agent_loop/resources/browser-agent-rules.md and "
+        "src/agent_loop/resources/skills/browser-agent-rules/SKILL.md and "
         "docs/development/browser-agent-rules.md differ; edit both"
     )
 
@@ -57,6 +57,6 @@ def test_the_wheel_ships_the_package_the_command_and_the_resources(tmp_path: Pat
     top_level = {name.split("/")[0] for name in names}
     assert top_level == {"src", wheel.name.split("-py3")[0] + ".dist-info"}
     assert "src/cli/entry.py" in names
-    assert "src/agent_loop/resources/browser-agent-rules.md" in names
+    assert "src/agent_loop/resources/skills/browser-agent-rules/SKILL.md" in names
     assert not [name for name in names if ".pytest_cache" in name or "__pycache__" in name]
     assert "autobrowser = src.cli.entry:main" in scripts

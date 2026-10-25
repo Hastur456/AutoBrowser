@@ -32,7 +32,7 @@ from src.ui.tui.transcript import (
     Transcript,
     UiMessage,
 )
-from src.ui.views import SessionView, StoredSessionView, TaskView
+from src.ui.views import SessionView, SkillView, StoredSessionView, TaskView
 
 #: ``picker_id`` of the ``/resume`` list.
 RESUME_PICKER = "resume"
@@ -240,6 +240,33 @@ async def _memory(host: CommandHost, _args: str) -> CommandResult:
     return CommandResult(messages=(CommandOutput(title, rows or (("память пуста" if ru else "memory is empty"),)),))
 
 
+async def _skills(host: CommandHost, _args: str) -> CommandResult:
+    view = await host.bridge.call(host.controller.skills)
+    ru = host.locale == "ru"
+    if not view.loaded:
+        if ru:
+            state = "включены" if view.enabled else "выключены"
+        else:
+            state = "on" if view.enabled else "off"
+        text = (
+            f"скиллы читаются при старте сессии, с первой задачей (сейчас {state})"
+            if ru
+            else f"skills are read when the session starts, with the first task (currently {state})"
+        )
+        return CommandResult(messages=(Notice(text),))
+    if view.enabled:
+        title = "Скиллы" if ru else "Skills"
+    else:
+        title = "Скиллы (выключены: только встроенные always)" if ru else "Skills (off: built-in always-on only)"
+    rows = [sanitize_text(_skill_label(skill, ru, skill.name in view.shadowed)) for skill in view.skills]
+    rows += [sanitize_text(("пропущен " if ru else "skipped ") + problem) for problem in view.problems]
+    if not rows:
+        rows = ["скиллов нет" if ru else "no skills"]
+    if not view.enabled:
+        rows.append("включить: skills.enabled: true" if ru else "enable with skills.enabled: true")
+    return CommandResult(messages=(CommandOutput(title, tuple(rows)),))
+
+
 async def _url(host: CommandHost, _args: str) -> CommandResult:
     url = sanitize_text(await host.bridge.call(host.controller.current_url))
     if not url:
@@ -420,6 +447,15 @@ def _entry_label(entry: MemoryEntry) -> str:
     return f"{label} — {entry.description}" if entry.description else label
 
 
+def _skill_label(skill: SkillView, ru: bool, shadows: bool) -> str:
+    tags = ["встроенный" if ru else "built-in"] if skill.source == "builtin" else ["ваш" if ru else "yours"]
+    if shadows:
+        tags.append("заменяет встроенный" if ru else "replaces the built-in")
+    if skill.always:
+        tags.append("всегда в промпте" if ru else "always in the prompt")
+    return f"{skill.name} ({', '.join(tags)}) — {skill.description}"
+
+
 def _server_names(host: CommandHost, prefix: str) -> Sequence[str]:
     words = prefix.split()
     if not words or (len(words) == 1 and not prefix.endswith(" ")):
@@ -459,6 +495,7 @@ COMMANDS: tuple[SlashCommand, ...] = (
     ),
     SlashCommand("history", "/history [N]", {"ru": "история диалога", "en": "dialogue history"}, _history),
     SlashCommand("memory", "/memory", {"ru": "записи памяти", "en": "memory entries"}, _memory),
+    SlashCommand("skills", "/skills", {"ru": "скиллы агента", "en": "agent skills"}, _skills),
     SlashCommand("url", "/url", {"ru": "адрес текущей страницы", "en": "current page URL"}, _url),
     SlashCommand(
         "replay",
