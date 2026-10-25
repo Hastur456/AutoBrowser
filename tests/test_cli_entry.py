@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import io
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -302,3 +304,16 @@ def test_doctor_reports_user_skills_shadowing_and_problems(
         assert part in line, part
     assert "user/broken skipped: description is missing" in out
     assert "pdf-forms: unknown frontmatter keys version" in out
+
+
+def test_doctor_survives_a_legacy_code_page_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="cp1251", errors="strict")
+    monkeypatch.setattr(sys, "stdout", stream)
+    monkeypatch.setattr(subcommands.shutil, "which", lambda name: None)
+
+    code = entry.main(["doctor"])
+
+    stream.flush()
+    assert code in (0, 1)
+    assert b"skills" in raw.getvalue()

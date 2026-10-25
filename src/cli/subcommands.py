@@ -47,10 +47,20 @@ _OK, _WARN, _FAIL = "ok", "!!", "xx"
 
 
 def run_subcommand(argv: Sequence[str], *, write: Callable[[str], None] = print) -> int:
+    _tolerate_unencodable_output()
     parser = build_subcommand_parser()
     args = parser.parse_args(list(argv))
     handler: Callable[[argparse.Namespace, Callable[[str], None]], int] = args.handler
     return handler(args, write)
+
+
+def _tolerate_unencodable_output() -> None:
+    """A redirected stdout uses the legacy code page on Windows (cp1251, cp1252), which has
+    no ``·`` or ``×``: replace such characters instead of failing mid-report."""
+
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(errors="replace")
 
 
 def build_subcommand_parser() -> argparse.ArgumentParser:
