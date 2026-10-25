@@ -14,16 +14,17 @@ import pytest
 
 from src.agent_loop.context import ContextAssembler
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
-from src.agent_loop.execution.loop import AgentLoopEngine
+from src.agent_loop.execution.loop import Agent, AgentLoopEngine
 from src.agent_loop.execution.resources import EngineResources
 from src.config import PermissionRule, PermissionsSettings, SkillsSettings
-from src.contracts import PermissionCheck
+from src.contracts import PermissionCheck, TaskRequest
 from src.harness.permissions import PermissionEngine
 from src.harness.runtime import BrowserHarness
 from src.harness.skill_tool import skill_tools
 from src.harness.skills import SKILLS_SERVER, VIEW_TOOL, SkillStore, always_sections, catalog_section
 from src.harness.tools import ToolRegistry, to_tool_def, tool_is_read_only
 from src.llm import ModelResponse
+from src.messages import system_message, user_message
 from tests.test_skills import write_skill
 
 PLAN = {"steps": [{"id": 1, "description": "Do the task", "status": "pending"}]}
@@ -178,3 +179,39 @@ async def test_the_model_sees_the_catalog_and_loads_a_skill_on_demand(tmp_path: 
     assert "Fill the fields" not in system  # the body is loaded, not listed
     tool_text = [str(message.content) for message in result.state.messages if message.role == "tool"]
     assert "2. Fill the fields." in tool_text[0]
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_history_reaches_the_model_with_the_current_catalog(tmp_path: Path) -> None:
+    """The resume path: carried messages start with an old system message (a session that ran
+    with skills off); the model's first call must get the current prompt with the catalog."""
+
+    store = make_store(tmp_path)
+    emitter = EventEmitter(InMemoryEventSink(), session_id="session-1")
+    llm = RecordingModel([PLAN, DONE])
+    assembler = ContextAssembler(sections=catalog_section(store) + always_sections(store))
+    harness = BrowserHarness(
+        llm=llm,
+        tool_registry=ToolRegistry(skill_tools(store)),
+        context_assembler=assembler,
+        event_emitter=emitter,
+    )
+    agent = Agent(EngineResources.from_harness(harness, llm=llm, events=emitter))
+    carried = [system_message("Old prompt without skills."), user_message("User request (task-0):\nearlier")]
+
+    result = await agent.run(
+        TaskRequest(
+            task="Fill the PDF form.",
+            task_id="task-1",
+            session_id="session-1",
+            turn_cap=5,
+            state_overrides={"messages": carried},
+        )
+    )
+
+    assert result.status == "done"
+    for call in llm.calls:
+        assert call[0].role == "system"
+        assert call[0].content == assembler.get_system_prompt()
+        assert "- pdf-forms: Fill PDF forms." in call[0].content
+    assert result.session_state["messages"][0].content == assembler.get_system_prompt()
