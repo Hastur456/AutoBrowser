@@ -25,6 +25,7 @@ from src.config import (
     LEGACY_STORAGE_ROOT,
     ROOT_PATH,
     LLMSettings,
+    Settings,
     env_files,
     get_settings,
     home_dir,
@@ -35,6 +36,7 @@ from src.harness.session_store import (
     find_session,
     list_sessions,
 )
+from src.harness.skills import SESSION_CAPABILITIES, SkillStore, skill_roots, user_skills_root
 from src.version import PACKAGE_NAME, package_version
 
 SUBCOMMANDS = ("doctor", "sessions", "replay", "completion")
@@ -149,6 +151,7 @@ def _doctor(args: argparse.Namespace, write: Callable[[str], None]) -> int:
     check(_OK if free else _WARN, "cdp port", f"{port}" if free else f"{port} in use (a Chrome may already listen)")
     servers = ", ".join(f"{name} ({config.transport})" for name, config in settings.mcp_servers.items())
     check(_OK if servers else _WARN, "mcp servers", servers or "none configured")
+    _doctor_skills(settings, check)
 
     caps = detect(settings.ui)
     check(
@@ -157,6 +160,32 @@ def _doctor(args: argparse.Namespace, write: Callable[[str], None]) -> int:
         f"{caps.level} · {caps.host} · colors {caps.color} · unicode {caps.unicode} · {caps.reason}",
     )
     return 1 if failures else 0
+
+
+def _doctor_skills(settings: Settings, check: Callable[[str, str, object], None]) -> None:
+    """Skills of every capability (doctor knows no session): counts, shadowed built-ins,
+    skipped skills and frontmatter keys outside the Agent Skills format."""
+
+    skills = settings.skills
+    store = SkillStore.load(
+        skills,
+        roots=skill_roots(skills, settings.storage),
+        capabilities=SESSION_CAPABILITIES,
+    )
+    builtin = sum(1 for skill in store.skills() if skill.source == "builtin")
+    user = [skill for skill in store.skills() if skill.source == "user"]
+    folder = user_skills_root(skills, settings.storage)
+    line = f"{'on' if skills.enabled else 'off'} · {builtin} built-in"
+    if skills.enabled:
+        line += f" · {len(user)} yours ({folder}{'' if folder.is_dir() else ', not created yet'})"
+    if store.shadowed():
+        line += f" · yours replace {', '.join(store.shadowed())}"
+    check(_WARN if store.problems() else _OK, "skills", line)
+    for problem in store.problems():
+        check(_WARN, "skill", f"{problem.source}/{problem.path} skipped: {problem.reason}")
+    for skill in store.skills():
+        if skill.unknown_fields:
+            check(_WARN, "skill", f"{skill.name}: unknown frontmatter keys {', '.join(skill.unknown_fields)}")
 
 
 def _llm_summary(llm: LLMSettings, stall_budget: float) -> tuple[str, str]:

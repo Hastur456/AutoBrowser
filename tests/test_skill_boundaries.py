@@ -33,8 +33,8 @@ def test_the_context_assembler_knows_no_skills() -> None:
     assert "skill_view" not in source
 
 
-def test_skill_modules_are_reached_only_through_the_session_and_the_evals() -> None:
-    allowed = {"session.py", "skills.py", "skill_tool.py", "evals.py"}
+def test_skill_modules_are_reached_only_through_the_session_evals_and_doctor() -> None:
+    allowed = {"session.py", "skills.py", "skill_tool.py", "evals.py", "subcommands.py"}
     for path in (ROOT / "src").rglob("*.py"):
         if path.name in allowed:
             continue

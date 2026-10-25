@@ -659,6 +659,7 @@ class SessionContext:
             payload={
                 "session_id": self.session_id,
                 "resumed": self.resumed_from_sequence is not None,
+                "skills": self._skills_snapshot(),
             },
         )
         self.events.emit("session.started", self)
@@ -870,6 +871,7 @@ class SessionContext:
                 "approval_judge": self.approval.mode,
             },
             "memory": self._memory_snapshot(),
+            "skills": self._skills_snapshot(),
         }
 
     def build_agent(self, *, human_input: HumanInputCallback | None = None) -> Agent:
@@ -903,6 +905,20 @@ class SessionContext:
             "root": str(store.root),
             "entries": len(store.entries()),
             "tools": isinstance(self.memory, MemoryContext) and self.memory.tools_enabled,
+        }
+
+    def _skills_snapshot(self) -> dict[str, Any]:
+        store = self.skill_store
+        if store is None:
+            return {"enabled": False, "skills": [], "problems": 0, "shadowed": []}
+        return {
+            "enabled": store.settings.enabled,
+            "skills": [
+                {"name": skill.name, "source": skill.source, "always": skill.always}
+                for skill in store.skills()
+            ],
+            "problems": len(store.problems()),
+            "shadowed": list(store.shadowed()),
         }
 
     def persist(self) -> None:

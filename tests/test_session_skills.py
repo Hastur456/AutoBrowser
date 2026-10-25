@@ -6,6 +6,7 @@ never the developer's config.yaml or skills folder.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from tests.test_harness_session import (
     make_config,
     no_start,
     noop_wait,
+    read_typed_events,
 )
 from tests.test_skills import write_skill
 
@@ -115,6 +117,19 @@ async def test_enabled_skills_add_the_catalog_the_tool_and_user_skills(
     assert VIEW_TOOL in await tool_names(context)
     assert context.skill_store is not None
     assert context.skill_store.get("pdf-forms") is not None
+    assert context.session_dir is not None
+    snapshot = json.loads((context.session_dir / "session.json").read_text(encoding="utf-8"))["skills"]
+    assert snapshot == {
+        "enabled": True,
+        "skills": [
+            {"name": "browser-agent-rules", "source": "builtin", "always": True},
+            {"name": "pdf-forms", "source": "user", "always": False},
+        ],
+        "problems": 0,
+        "shadowed": [],
+    }
+    started = [event for event in read_typed_events(context.session_dir) if event["type"] == "session.started"]
+    assert started[0]["payload"]["skills"] == snapshot
     await context.close()
 
 

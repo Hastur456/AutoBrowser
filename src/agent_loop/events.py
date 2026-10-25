@@ -41,7 +41,6 @@ EventType = Literal[
     "memory.consolidated",
     "memory.consolidation_failed",
     # Agent skills (src/harness/skills.py).
-    "skills.loaded",
     "skills.invalid",
     "skills.shadowed",
 ]
