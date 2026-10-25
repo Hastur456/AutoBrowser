@@ -924,7 +924,8 @@ async def test_a_failed_save_after_a_failed_task_keeps_the_task_error(
 @pytest.mark.asyncio
 async def test_skills_view_reflects_the_session_store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     controller, runtime, _, _ = build()
-    assert controller.skills() == SkillsView(enabled=False)
+    # Before the first task the session has not read its skills yet.
+    assert controller.skills().loaded is False
 
     write_skill(tmp_path / "builtin", "rules", metadata='metadata:\n  always: "true"')
     write_skill(tmp_path / "user", "rules", description="Mine.")
@@ -944,4 +945,23 @@ async def test_skills_view_reflects_the_session_store(monkeypatch: pytest.Monkey
     ]
     assert view.shadowed == ("rules",)
     assert view.problems == ("user/broken: description is missing",)
+
+    runtime.context.skill_store = SkillStore.load(
+        SkillsSettings(),
+        roots=[("builtin", tmp_path / "builtin")],
+    )
+    off = controller.skills()
+    assert (off.enabled, [skill.name for skill in off.skills]) == (False, ["rules"])  # always-on only
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_multi_line_skill_problem_is_one_row(tmp_path: Path) -> None:
+    controller, runtime, _, _ = build()
+    write_skill(tmp_path, "yaml", frontmatter="name: [unclosed\ndescription: x")
+    runtime.context.skill_store = SkillStore.load(SkillsSettings(enabled=True), roots=[("user", tmp_path)])
+
+    (problem,) = controller.skills().problems
+
+    assert problem.startswith("user/yaml: ") and "\n" not in problem
     await runtime.close()

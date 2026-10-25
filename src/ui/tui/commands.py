@@ -243,6 +243,17 @@ async def _memory(host: CommandHost, _args: str) -> CommandResult:
 async def _skills(host: CommandHost, _args: str) -> CommandResult:
     view = await host.bridge.call(host.controller.skills)
     ru = host.locale == "ru"
+    if not view.loaded:
+        if ru:
+            state = "включены" if view.enabled else "выключены"
+        else:
+            state = "on" if view.enabled else "off"
+        text = (
+            f"скиллы читаются при старте сессии, с первой задачей (сейчас {state})"
+            if ru
+            else f"skills are read when the session starts, with the first task (currently {state})"
+        )
+        return CommandResult(messages=(Notice(text),))
     if view.enabled:
         title = "Скиллы" if ru else "Skills"
     else:

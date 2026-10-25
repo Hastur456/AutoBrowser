@@ -355,6 +355,28 @@ async def test_skills_command_lists_the_skills(runtime: RuntimeLoop) -> None:
 
 
 @pytest.mark.asyncio
+async def test_skills_command_before_the_session_starts_and_with_skills_off(runtime: RuntimeLoop) -> None:
+    h, task, pipe = await start(runtime)
+
+    h.controller.skills_view = SkillsView(enabled=True, loaded=False)
+    h.send("/skills" + chr(13))
+    await until(lambda: "скиллы читаются при старте сессии" in h.out.getvalue())
+    assert "(сейчас включены)" in h.out.getvalue()
+
+    h.controller.skills_view = SkillsView(
+        enabled=False,
+        skills=(SkillView("browser-agent-rules", "Rules.", "user", always=True),),
+        shadowed=("browser-agent-rules",),
+    )
+    h.send("/skills" + chr(13))
+    await until(lambda: "включить: skills.enabled: true" in h.out.getvalue())
+    out = h.out.getvalue()
+    assert "Скиллы (выключены: только встроенные always)" in out
+    assert "browser-agent-rules (ваш, заменяет встроенный, всегда в промпте) — Rules." in out
+    assert await stop(h, task, pipe) == 0
+
+
+@pytest.mark.asyncio
 async def test_url_and_replay_commands(runtime: RuntimeLoop) -> None:
     h, task, pipe = await start(runtime)
 

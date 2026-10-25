@@ -486,15 +486,20 @@ class SessionController:
 
         store = self._runtime.context.skill_store
         if store is None:
-            return SkillsView(enabled=False)
+            return SkillsView(enabled=get_settings().skills.enabled, loaded=False)
+        enabled = store.settings.enabled
         return SkillsView(
-            enabled=store.settings.enabled,
+            enabled=enabled,
+            # With skills off only the always-on ones reach the model.
             skills=tuple(
                 SkillView(skill.name, skill.description, skill.source, skill.always)
                 for skill in store.skills()
+                if enabled or skill.always
             ),
             problems=tuple(
-                f"{problem.source}/{problem.path}: {problem.reason}" for problem in store.problems()
+                # A YAML error spans several lines; one row per problem.
+                f"{problem.source}/{problem.path}: {' '.join(problem.reason.split())}"
+                for problem in store.problems()
             ),
             shadowed=store.shadowed(),
         )

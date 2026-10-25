@@ -146,6 +146,8 @@ class SkillsView:
     """The session's skills: whether the catalog is on, the visible skills, what was skipped."""
 
     enabled: bool
+    #: ``False`` until the session starts (skills are read with it, on the first task).
+    loaded: bool = True
     skills: tuple[SkillView, ...] = ()
     #: ``source/folder: reason`` of every skipped skill.
     problems: tuple[str, ...] = ()
