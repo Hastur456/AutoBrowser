@@ -173,19 +173,62 @@ class _Section(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+#: Wire protocols a chat model adapter can speak (``src/providers/``). These name
+#: protocols, not vendors: any service speaking Chat Completions is ``openai_compat``.
+LLMProvider = Literal["ollama", "openai_compat"]
+
+#: Request-body keys ``llm.extra_body`` may not set: each has a typed field of its own
+#: (or is owned by the adapter), so a vendor profile cannot silently override them.
+RESERVED_EXTRA_BODY_KEYS = frozenset(
+    {
+        "model",
+        "messages",
+        "tools",
+        "stream",
+        "temperature",
+        "max_tokens",
+        "max_completion_tokens",
+        "reasoning_effort",
+        "parallel_tool_calls",
+    }
+)
+
+#: Spellings of "unset" accepted from an env var for the nullable scalars below
+#: (``null`` in YAML already parses to ``None``; an empty env value means "not set").
+_NULL_STRINGS = frozenset({"null", "none"})
+
+
+def _null_string_to_none(value: Any) -> Any:
+    if isinstance(value, str) and value.strip().lower() in _NULL_STRINGS:
+        return None
+    return value
+
+
 class LLMSettings(_Section):
     """Provider-neutral chat model defaults.
 
-    ``host``/``api_key`` are left as ``None`` by default so the underlying
-    client keeps its own discovery (``OLLAMA_HOST``, ``~/.ollama``, a local
-    daemon on the default port).
+    ``provider`` picks the wire protocol (see
+    ``docs/decisions/2026-10-22-openai-compatible-chat-provider.md``); every other
+    field says in its description which adapter reads it.
 
-    The reasoning budget fields are recorded here for providers that separate
-    reasoning tokens from output tokens. They are declarative for now:
-    ``src/providers/ollama.py`` forwards only ``temperature`` (plus the
-    ``num_predict``/``num_ctx``/``top_p``/``seed`` call params), so setting them
-    changes no request until that adapter is taught the parameter.
+    For ``ollama`` ``host``/``api_key`` may stay ``None`` so the client keeps its own
+    discovery (``OLLAMA_HOST``, a local daemon on the default port). ``openai_compat``
+    has no vendor default: ``host`` is required, and neither the key nor the base URL is
+    read from ``OPENAI_*`` environment variables.
+
+    ``max_reasoning_tokens`` stays declarative: Chat Completions has no standard field
+    for it, so a vendor that supports one gets it through ``extra_body``.
     """
+
+    provider: Annotated[
+        LLMProvider,
+        Field(
+            description=(
+                "Wire protocol of the chat model: ``ollama`` (/api/chat) or "
+                "``openai_compat`` (any Chat Completions service)."
+            ),
+        ),
+    ] = "ollama"
 
     model: Annotated[
         str,
@@ -196,33 +239,66 @@ class LLMSettings(_Section):
     ] = "gemma4:31b-cloud"
 
     temperature: Annotated[
-        float,
+        float | None,
         Field(
             ge=0.0,
             le=2.0,
-            description="Sampling temperature; 0.0 is deterministic.",
+            description=(
+                "Sampling temperature; 0.0 is deterministic. ``None`` sends no "
+                "temperature at all (reasoning models reject the parameter)."
+            ),
         ),
     ] = 0.0
 
     host: Annotated[
         str | None,
-        Field(description="Provider base URL. ``None`` lets the client decide."),
+        Field(
+            description=(
+                "Provider base URL. Required for ``openai_compat`` (``.../v1``); "
+                "``None`` lets the Ollama client decide."
+            ),
+        ),
     ] = None
 
     api_key: Annotated[
         SecretStr | None,
         Field(
-            description="Provider API key. Never logged; use .get_secret_value().",
+            description=(
+                "Provider API key, sent as ``Authorization: Bearer``; without one "
+                "no such header is sent. Never logged; use .get_secret_value()."
+            ),
         ),
     ] = None
+
+    timeout_seconds: Annotated[
+        float | None,
+        Field(
+            gt=0.0,
+            description=(
+                "Timeout of one HTTP call to the provider, both adapters. ``None`` "
+                "waits forever."
+            ),
+        ),
+    ] = 60.0
+
+    max_retries: Annotated[
+        int,
+        Field(
+            ge=0,
+            le=10,
+            description=(
+                "``openai_compat``: client retries on connection errors, 408/409/"
+                "429/5xx. 0 keeps one model call within the goal stall budget."
+            ),
+        ),
+    ] = 0
 
     reasoning_effort: Annotated[
         Literal["minimal", "low", "medium", "high"] | None,
         Field(
             description=(
-                "How much reasoning to spend, for providers that expose a "
-                "level rather than a token count. ``None`` leaves the choice "
-                "to the provider."
+                "How much reasoning to spend, sent by ``openai_compat`` (declarative "
+                "for ``ollama``). ``None`` leaves the choice to the provider."
             ),
         ),
     ] = None
@@ -233,11 +309,22 @@ class LLMSettings(_Section):
             ge=1,
             description=(
                 "Cap on generated output tokens, reasoning included for "
-                "providers that do not budget it separately. ``None`` lets "
-                "the provider decide."
+                "providers that do not budget it separately: ``num_predict`` for "
+                "``ollama``, the ``max_tokens_param`` field for ``openai_compat``. "
+                "``None`` lets the provider decide."
             ),
         ),
     ] = None
+
+    max_tokens_param: Annotated[
+        Literal["max_completion_tokens", "max_tokens"],
+        Field(
+            description=(
+                "``openai_compat``: request field carrying ``max_output_tokens``; "
+                "older servers and some models only know ``max_tokens``."
+            ),
+        ),
+    ] = "max_completion_tokens"
 
     max_reasoning_tokens: Annotated[
         int | None,
@@ -245,10 +332,78 @@ class LLMSettings(_Section):
             ge=1,
             description=(
                 "Cap on reasoning/thinking tokens specifically, for providers "
-                "that budget them apart from output tokens."
+                "that budget them apart from output tokens. Declarative: no adapter "
+                "sends it; use ``extra_body`` for a vendor equivalent."
             ),
         ),
     ] = None
+
+    parallel_tool_calls: Annotated[
+        bool | None,
+        Field(
+            description=(
+                "``openai_compat``: ``parallel_tool_calls`` sent with tool requests. "
+                "The engine runs one call per turn, so ``false`` saves tokens; "
+                "``None`` sends nothing (not every server accepts it)."
+            ),
+        ),
+    ] = None
+
+    extra_headers: Annotated[
+        dict[str, str],
+        Field(
+            description=(
+                "``openai_compat``: extra request headers for a vendor. Values may "
+                "be secrets: they are never logged and ``doctor`` prints names only."
+            ),
+        ),
+    ] = {}
+
+    extra_body: Annotated[
+        dict[str, Any],
+        Field(
+            description=(
+                "``openai_compat``: vendor fields merged into the request body. "
+                "Keys with a typed field of their own are rejected."
+            ),
+        ),
+    ] = {}
+
+    error_preview_chars: Annotated[
+        int,
+        Field(
+            ge=40,
+            description=(
+                "Characters of a provider error body quoted in the error message."
+            ),
+        ),
+    ] = 300
+
+    @field_validator("temperature", "timeout_seconds", "parallel_tool_calls", mode="before")
+    @classmethod
+    def _null_string_means_unset(cls, value: Any) -> Any:
+        """Let an env var spell ``None`` as ``null``/``none`` for the nullable scalars."""
+
+        return _null_string_to_none(value)
+
+    @field_validator("extra_body", mode="after")
+    @classmethod
+    def _extra_body_keys_are_not_reserved(cls, value: dict[str, Any]) -> dict[str, Any]:
+        reserved = sorted(RESERVED_EXTRA_BODY_KEYS.intersection(value))
+        if reserved:
+            raise ValueError(
+                f"llm.extra_body may not set {reserved}; use the typed llm.* fields."
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _openai_compat_needs_a_host(self) -> "LLMSettings":
+        if self.provider == "openai_compat" and not (self.host or "").strip():
+            raise ValueError(
+                "llm.host is required for provider openai_compat: set the service "
+                "base URL, e.g. https://<service>/v1 (AUTOBROWSER_LLM__HOST)."
+            )
+        return self
 
 
 class BrowserSettings(_Section):
@@ -1141,6 +1296,24 @@ class PermissionsSettings(_Section):
             ),
         ),
     ] = 30.0
+
+    classifier_temperature: Annotated[
+        float | None,
+        Field(
+            ge=0.0,
+            le=2.0,
+            description=(
+                "Sampling temperature of a separate ``classifier_model``. ``None`` takes "
+                "``llm.temperature``; a session that sends no temperature "
+                "(``llm.temperature: null``) never sends one to the classifier either."
+            ),
+        ),
+    ] = 0.0
+
+    @field_validator("classifier_temperature", mode="before")
+    @classmethod
+    def _classifier_temperature_null_string(cls, value: Any) -> Any:
+        return _null_string_to_none(value)
 
     classifier_args_chars: Annotated[
         int,

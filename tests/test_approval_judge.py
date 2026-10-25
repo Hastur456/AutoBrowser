@@ -522,6 +522,35 @@ def test_from_settings_builds_the_configured_judge() -> None:
     assert reuse.classifier is not None and reuse.classifier._llm == "llm"
 
 
+def test_a_session_without_temperature_builds_the_classifier_without_one() -> None:
+    """``llm.temperature: null`` (reasoning models): the classifier must not force 0.0."""
+
+    built: list[dict[str, Any]] = []
+
+    def factory(**kwargs: Any) -> str:
+        built.append(kwargs)
+        return "classifier-llm"
+
+    ApprovalJudge.from_settings(
+        PermissionsSettings(approval_judge="classifier", classifier_model="small:1b"),
+        llm="llm",
+        llm_factory=factory,
+        send_temperature=False,
+    )
+    ApprovalJudge.from_settings(
+        PermissionsSettings(
+            approval_judge="classifier", classifier_model="small:1b", classifier_temperature=0.3
+        ),
+        llm="llm",
+        llm_factory=factory,
+    )
+
+    assert built == [
+        {"model": "small:1b", "temperature": None},
+        {"model": "small:1b", "temperature": 0.3},
+    ]
+
+
 def test_a_bare_yaml_off_is_accepted() -> None:
     assert PermissionsSettings(approval_judge=False).approval_judge == "off"  # type: ignore[arg-type]
     with pytest.raises(ValueError):

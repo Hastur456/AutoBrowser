@@ -14,6 +14,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from src.agent_loop.replay import load_events, print_action_sequence, summarize_trace
 from src.cli.sessions import session_rows
@@ -23,6 +24,7 @@ from src.config import (
     DEFAULT_CONFIG_FILE_YAML,
     LEGACY_STORAGE_ROOT,
     ROOT_PATH,
+    LLMSettings,
     env_files,
     get_settings,
     home_dir,
@@ -53,7 +55,14 @@ def build_subcommand_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=PACKAGE_NAME)
     commands = parser.add_subparsers(dest="command", required=True)
 
-    doctor = commands.add_parser("doctor", help="Check paths, configuration, Node.js, Chrome and the terminal.")
+    doctor = commands.add_parser(
+        "doctor", help="Check paths, configuration, the model provider, Node.js, Chrome and the terminal."
+    )
+    doctor.add_argument(
+        "--llm",
+        action="store_true",
+        help="Also ask the model provider over the network for its model list (sends the key).",
+    )
     doctor.set_defaults(handler=_doctor)
 
     sessions = commands.add_parser("sessions", help="List stored sessions, the most recent first.")
@@ -74,7 +83,7 @@ def build_subcommand_parser() -> argparse.ArgumentParser:
 # -- doctor ----------------------------------------------------------------------------------
 
 
-def _doctor(_args: argparse.Namespace, write: Callable[[str], None]) -> int:
+def _doctor(args: argparse.Namespace, write: Callable[[str], None]) -> int:
     from src.ui.launch import detect
 
     failures = 0
@@ -123,6 +132,10 @@ def _doctor(_args: argparse.Namespace, write: Callable[[str], None]) -> int:
         )
 
     timeout = settings.ui.doctor_probe_timeout_seconds
+    llm_mark, llm_line = _llm_summary(settings.llm, settings.loop.progress_timeout_seconds)
+    check(llm_mark, "llm", llm_line)
+    if getattr(args, "llm", False):
+        check(*_llm_probe(settings.llm, timeout))
     for tool in ("node", "npx"):
         path = shutil.which(tool)
         if path is None:
@@ -144,6 +157,56 @@ def _doctor(_args: argparse.Namespace, write: Callable[[str], None]) -> int:
         f"{caps.level} · {caps.host} · colors {caps.color} · unicode {caps.unicode} · {caps.reason}",
     )
     return 1 if failures else 0
+
+
+def _llm_summary(llm: LLMSettings, stall_budget: float) -> tuple[str, str]:
+    """The provider line, offline: protocol, URL, model, key set or not, call budget.
+
+    Never prints the key or a header value. Warns when one model call can outlast the goal
+    stall budget (``timeout_seconds x (max_retries + 1)``).
+    """
+
+    key = "key set" if llm.api_key and llm.api_key.get_secret_value().strip() else "no key"
+    if llm.timeout_seconds is None:
+        budget, worst = "no timeout", None
+    else:
+        budget = f"timeout {llm.timeout_seconds:g} s × {llm.max_retries + 1}"
+        worst = llm.timeout_seconds * (llm.max_retries + 1)
+    parts = [llm.provider, _public_url(llm.host) or "client default", llm.model, key, budget]
+    if llm.extra_headers:
+        parts.append("headers " + ", ".join(sorted(llm.extra_headers)))
+    line = " · ".join(parts)
+    if worst is None or worst >= stall_budget:
+        return _WARN, f"{line} — one call may outlast loop.progress_timeout_seconds ({stall_budget:g} s)"
+    return _OK, line
+
+
+def _public_url(url: str | None) -> str | None:
+    """``url`` without userinfo, query and fragment, which may carry credentials."""
+
+    if not url:
+        return url
+    parts = urlsplit(url)
+    if not parts.netloc:
+        return url.split("?", 1)[0].split("#", 1)[0]
+    host = parts.netloc.rsplit("@", 1)[-1]
+    return urlunsplit((parts.scheme, host, parts.path, "", ""))
+
+
+def _llm_probe(llm: LLMSettings, timeout: float) -> tuple[str, str, str]:
+    """``doctor --llm``: list the provider's models once, without retries."""
+
+    from src.providers.registry import probe_chat_provider
+
+    probe = probe_chat_provider(llm, timeout=timeout)
+    if not probe.reachable:
+        return _FAIL, "llm probe", probe.error or "unreachable"
+    if probe.models_count is None:
+        return _OK, "llm probe", "reachable · no model list"
+    listed = f"{probe.models_count} models"
+    if probe.model_listed:
+        return _OK, "llm probe", f"reachable · {listed} · {llm.model} listed"
+    return _WARN, "llm probe", f"reachable · {listed} · {llm.model} not listed (aliases are not shown)"
 
 
 def _version(executable: str, timeout: float) -> str:

@@ -43,6 +43,7 @@ from src.config import UiSettings
 from src.contracts import ApprovalResolution, ApprovalTicket
 from src.ui.feed import project_event
 from src.ui.tui.commands import (
+    MODEL_PICKER,
     RESUME_PICKER,
     CommandResult,
     SlashCompleter,
@@ -117,6 +118,7 @@ class TuiApp:
         self._theme = Theme.resolve(settings, caps)
         self._pump = RenderPump(self, PumpLook(caps, self._theme, settings), clock=self._clock)
         self._stored_ids: tuple[str, ...] = ()
+        self._model_ids: tuple[str, ...] = ()
         self._switching = False
         self._buffer = Buffer(
             multiline=True,
@@ -173,6 +175,12 @@ class TuiApp:
         """Session ids ``/resume <id>`` completes, refreshed off the UI loop."""
 
         return self._stored_ids
+
+    @property
+    def model_ids(self) -> tuple[str, ...]:
+        """Model ids ``/model <id>`` completes: the list the last ``/model`` fetched."""
+
+        return self._model_ids
 
     @property
     def application(self) -> Application[int]:
@@ -390,6 +398,11 @@ class TuiApp:
             asyncio.ensure_future(self._resume(result.resume))
         if result.refresh_sessions:
             asyncio.ensure_future(self._refresh_stored_ids())
+        if result.models is not None:
+            self._model_ids = result.models
+        if result.view is not None:
+            self._view = result.view
+            self.invalidate()
         if result.exit:
             self._app.exit(result=self._exit_code)
 
@@ -455,6 +468,8 @@ class TuiApp:
         self._pump.apply([PickerClosed(picker.picker_id)])
         if picker.picker_id == RESUME_PICKER:
             asyncio.ensure_future(self._resume(picker.options[choice].value))
+        elif picker.picker_id == MODEL_PICKER:
+            asyncio.ensure_future(self._run_command(f"/model {picker.options[choice].value}"))
 
     def _key(self, action: KeyAction) -> None:
         """Apply a key action at once: the next key (Enter on a card) must see its effect."""

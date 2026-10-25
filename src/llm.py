@@ -7,10 +7,11 @@ The provider-neutral model contract the engine drives lives here: a
 Model names and sampling defaults are **not** defined here — they are
 configured in :mod:`src.config` (``settings.llm``).
 
-A concrete provider (e.g. Ollama) is a thin adapter that (a) serializes
-``Message`` objects and ``ToolDef`` schemas into the provider wire format and
-(b) parses the provider reply back into a :class:`ModelResponse`. The engine
-never sees provider objects.
+A concrete provider (``src/providers/``: Ollama, any OpenAI-compatible service) is a
+thin adapter that (a) serializes ``Message`` objects and ``ToolDef`` schemas into the
+provider wire format and (b) parses the provider reply back into a
+:class:`ModelResponse` with its :class:`ModelUsage`. A failed call surfaces as
+:class:`ModelProviderError`. The engine never sees provider objects.
 
 It imports nothing from ``src/agent/``, ``src/agent_loop/``, ``src/harness/`` or
 ``src/browser/``.
@@ -18,11 +19,75 @@ It imports nothing from ``src/agent/``, ``src/agent_loop/``, ``src/harness/`` or
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Protocol, Sequence, runtime_checkable
 
 from src.contracts import ToolDef
 from src.messages import Message, ToolCall
+
+
+@dataclass(frozen=True)
+class ModelUsage:
+    """Token accounting reported by the provider for one call.
+
+    Every field is optional: ``None`` means "not reported", which is kept apart from a
+    reported ``0``. Durations are milliseconds.
+    """
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    reasoning_tokens: int | None = None
+    provider_duration_ms: int | None = None
+    load_duration_ms: int | None = None
+
+    def to_json_dict(self) -> dict[str, int]:
+        """The reported fields only, ready for an event payload."""
+
+        return {key: value for key, value in asdict(self).items() if value is not None}
+
+
+class ModelProviderError(RuntimeError):
+    """A provider call failed.
+
+    The message is short, already truncated, and never carries a key or a header
+    value, so it can reach events and the terminal as is. ``provider`` names the wire
+    protocol (``settings.llm.provider``), not a vendor; ``retryable`` marks transient
+    failures (connection, timeout, 429, 5xx) for callers that want to retry.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider: str,
+        status_code: int | None = None,
+        retryable: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.provider = provider
+        self.status_code = status_code
+        self.retryable = retryable
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        # ``copy``/``pickle`` rebuild an exception from its positional ``args`` only, which
+        # would drop the keyword-only fields (and fail on the required ``provider``). The
+        # third item restores ``__dict__``, notes from ``add_note()`` included.
+        return (
+            _rebuild_provider_error,
+            (type(self), str(self), self.provider, self.status_code, self.retryable),
+            dict(self.__dict__),
+        )
+
+
+def _rebuild_provider_error(
+    cls: type[ModelProviderError],
+    message: str,
+    provider: str,
+    status_code: int | None,
+    retryable: bool,
+) -> ModelProviderError:
+    return cls(message, provider=provider, status_code=status_code, retryable=retryable)
 
 
 @dataclass(frozen=True)
@@ -37,6 +102,8 @@ class ModelResponse:
     content: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
     finish_reason: str | None = None
+    #: Token accounting, ``None`` when the provider reported none.
+    usage: ModelUsage | None = None
 
     @property
     def has_tool_calls(self) -> bool:
@@ -67,5 +134,7 @@ class ChatModel(Protocol):
 
 __all__ = [
     "ChatModel",
+    "ModelProviderError",
     "ModelResponse",
+    "ModelUsage",
 ]

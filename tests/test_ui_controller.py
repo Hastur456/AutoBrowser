@@ -61,6 +61,21 @@ def build(
     return controller, runtime, broker, broadcaster
 
 
+@pytest.fixture
+def letter_session_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    """New session ids start with a letter. Ids are hex, so a random one starting with a
+    digit made a test's task number ("5", "7") read as that session's id prefix."""
+
+    import uuid
+
+    real_uuid4 = uuid.uuid4
+
+    def lettered() -> uuid.UUID:
+        return uuid.UUID(hex="f" + real_uuid4().hex[1:])
+
+    monkeypatch.setattr("src.harness.session.uuid4", lettered)
+
+
 @pytest.fixture(autouse=True)
 def _in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
@@ -380,7 +395,9 @@ async def test_shutdown_gives_up_on_a_task_that_ignores_cancellation(
 
 
 @pytest.mark.asyncio
-async def test_current_url_and_replay_read_the_session(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_current_url_and_replay_read_the_session(
+    monkeypatch: pytest.MonkeyPatch, letter_session_ids: None
+) -> None:
     async def run(request: TaskRequest) -> AgentLoopResult:
         return native_result(
             final_answer="ok",
@@ -534,7 +551,9 @@ async def test_nothing_starts_while_a_session_switch_is_in_progress(monkeypatch:
 
 
 @pytest.mark.asyncio
-async def test_replay_reads_an_all_digit_id_prefix_as_a_session(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_replay_reads_an_all_digit_id_prefix_as_a_session(
+    monkeypatch: pytest.MonkeyPatch, letter_session_ids: None
+) -> None:
     install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0, native_result(final_answer="ok")))
     controller, runtime, _, _ = build()
     await controller.run("одна")
@@ -573,4 +592,326 @@ async def test_a_list_number_beats_a_digit_id_prefix_and_an_exact_id_beats_a_num
     assert view.session_id == "2aaaaaaaaaaaaaaa"
     view = await controller.resume("1bbbbbbbbbbbbbbb")
     assert view.session_id == "1bbbbbbbbbbbbbbb"
+    await runtime.close()
+
+
+# -- /model: the model catalog and switching the model ----------------------------------------
+
+
+class NamedLLM:
+    def __init__(self, model: str, temperature: float | None) -> None:
+        self.model, self.temperature = model, temperature
+
+    async def complete(self, messages: Any, *, tools: Any = (), **params: Any) -> Any:
+        raise AssertionError("not called in these tests")
+
+
+def model_runtime(
+    built: list[NamedLLM], catalog: Any = None, **config: Any
+) -> tuple[SessionController, SessionRuntime]:
+    def factory(*, model: str, temperature: float | None) -> NamedLLM:
+        llm = NamedLLM(model, temperature)
+        built.append(llm)
+        return llm
+
+    runtime = SessionRuntime(
+        make_config(**config),
+        llm_factory=factory,
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        mcp_runtime_factory=no_mcp_runtime,
+        model_catalog=catalog,
+    )
+    return SessionController(runtime), runtime
+
+
+@pytest.mark.asyncio
+async def test_set_model_rebuilds_the_model_and_the_agent_of_a_started_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agents = install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0, native_result(final_answer="ok")))
+    built: list[NamedLLM] = []
+    controller, runtime = model_runtime(built, provider="openai_compat")
+    await controller.start()
+
+    view = await controller.set_model("gemma-4")
+
+    assert (view.model, view.provider) == ("gemma-4", "openai_compat")
+    assert [(llm.model, llm.temperature) for llm in built] == [("test-model", 0.1), ("gemma-4", 0.1)]
+    assert runtime.context.llm is built[-1]
+    assert runtime.harness.llm is built[-1]
+    assert len(agents) == 2 and agents[-1].resources.llm is built[-1]
+    session_file = json.loads((runtime.context.session_dir / "session.json").read_text(encoding="utf-8"))  # type: ignore[operator]
+    assert session_file["config"]["model"] == "gemma-4"
+
+    # The same model again changes nothing.
+    await controller.set_model("gemma-4")
+    assert len(built) == 2
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_model_chosen_before_the_start_and_kept_across_a_reset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0, native_result(final_answer="ok")))
+    built: list[NamedLLM] = []
+    controller, runtime = model_runtime(built)
+
+    await controller.set_model("qwen3:8b")
+    assert built == []  # nothing is started yet
+    await controller.start()
+    await controller.reset()
+    await controller.start()
+
+    assert [llm.model for llm in built] == ["qwen3:8b", "qwen3:8b"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_set_model_refuses_while_a_task_runs_and_rejects_an_empty_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = asyncio.Event()
+
+    async def run(_request: TaskRequest) -> AgentLoopResult:
+        await release.wait()
+        return native_result(final_answer="done")
+
+    install_fake_agent(monkeypatch, run)
+    built: list[NamedLLM] = []
+    controller, runtime = model_runtime(built)
+
+    with pytest.raises(ValueError):
+        await controller.set_model("  ")
+    await controller.submit("long task")
+    with pytest.raises(TaskBusyError):
+        await controller.set_model("gemma-4")
+    release.set()
+    await controller.wait()
+    assert controller.session_view().model == "test-model"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_model_that_cannot_be_built_leaves_the_session_as_it_was(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agents = install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0, native_result(final_answer="ok")))
+    built: list[NamedLLM] = []
+
+    def factory(*, model: str, temperature: float | None) -> NamedLLM:
+        if model == "broken":
+            raise ValueError("llm.host is required for provider openai_compat")
+        llm = NamedLLM(model, temperature)
+        built.append(llm)
+        return llm
+
+    runtime = SessionRuntime(
+        make_config(), llm_factory=factory, start_chrome_cdp=no_start,
+        wait_for_port=noop_wait, mcp_runtime_factory=no_mcp_runtime,
+    )
+    controller = SessionController(runtime)
+    await controller.start()
+
+    with pytest.raises(ValueError, match="llm.host"):
+        await controller.set_model("broken")
+
+    assert controller.session_view().model == "test-model"
+    assert runtime.context.llm is built[0] and runtime.harness.llm is built[0]
+    assert len(agents) == 1
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_the_approval_classifier_follows_the_new_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    profile = tmp_path / "profile.yaml"
+    profile.write_text("permissions:\n  approval_judge: classifier\n", encoding="utf-8")
+    monkeypatch.setenv("AUTOBROWSER_CONFIG_FILE", str(profile))
+    get_settings.cache_clear()
+    install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0, native_result(final_answer="ok")))
+    built: list[NamedLLM] = []
+    controller, runtime = model_runtime(built)
+    await controller.start()
+
+    await controller.set_model("gemma-4")
+
+    classifier = runtime.context.approval.classifier
+    assert classifier is not None and classifier._llm is built[-1]
+    assert built[-1].model == "gemma-4"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["evil\x1b[2Jmodel", "bell\x07", "rtl\u202eid"])
+async def test_a_model_id_with_control_characters_is_refused(model: str) -> None:
+    controller, runtime = model_runtime([])
+
+    with pytest.raises(ValueError, match="control"):
+        await controller.set_model(model)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_available_models_come_from_the_catalog_sorted_and_unique() -> None:
+    async def catalog() -> list[str]:
+        return ["gpt-5", "", "gemma-4", "gpt-5", "evil\x1b[2Jmodel"]
+
+    controller, runtime = model_runtime([], catalog=catalog)
+
+    assert await controller.available_models() == ["gemma-4", "gpt-5"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_without_a_catalog_the_list_is_refused_with_a_hint() -> None:
+    controller, runtime = model_runtime([])
+
+    with pytest.raises(RuntimeError, match="name the model"):
+        await controller.available_models()
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_provider_error_does_not_break_the_next_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: a task failing with ModelProviderError (an unknown model, 404) used to
+    make every later save of the session raise, so no further task could start."""
+
+    from src.llm import ModelProviderError
+
+    calls: list[str] = []
+
+    async def run(request: TaskRequest) -> AgentLoopResult:
+        calls.append(request.task)
+        if len(calls) == 1:
+            raise ModelProviderError(
+                "ollama 404: model or endpoint not found: model 'gpt-6.1-sol' not found",
+                provider="ollama",
+                status_code=404,
+            )
+        return native_result(final_answer="ok")
+
+    install_fake_agent(monkeypatch, run)
+    controller, runtime, _, _ = build()
+
+    with pytest.raises(ModelProviderError, match="404"):
+        await controller.run("first")
+    result = await controller.run("second")
+
+    assert result.final_answer == "ok"
+    assert calls == ["first", "second"]
+    tasks = json.loads((runtime.context.session_dir / "tasks.json").read_text(encoding="utf-8"))  # type: ignore[operator]
+    assert [task["status"] for task in tasks] == ["failed", "completed"]
+    assert tasks[0]["result"] == {
+        "type": "ModelProviderError",
+        "message": "ollama 404: model or endpoint not found: model 'gpt-6.1-sol' not found",
+    }
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_any_exception_with_keyword_only_fields_can_be_saved(monkeypatch: pytest.MonkeyPatch) -> None:
+    class StrictError(RuntimeError):
+        def __init__(self, message: str, *, code: int) -> None:
+            super().__init__(message)
+            self.code = code
+
+    async def run(_request: TaskRequest) -> AgentLoopResult:
+        raise StrictError("strict", code=7)
+
+    install_fake_agent(monkeypatch, run)
+    controller, runtime, _, _ = build()
+
+    with pytest.raises(StrictError):
+        await controller.run("first")
+
+    tasks = json.loads((runtime.context.session_dir / "tasks.json").read_text(encoding="utf-8"))  # type: ignore[operator]
+    assert tasks[0]["result"] == {"type": "StrictError", "message": "strict"}
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_save_at_task_start_does_not_leave_the_session_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0, native_result(final_answer="ok")))
+    controller, runtime, _, _ = build()
+    await controller.start()
+    real_persist = runtime.context.persist
+    failures = iter([PermissionError("tasks.json is locked")])
+
+    def flaky_persist() -> None:
+        for error in failures:
+            raise error
+        real_persist()
+
+    monkeypatch.setattr(runtime.context, "persist", flaky_persist)
+
+    with pytest.raises(PermissionError):
+        await controller.run("first")
+    assert runtime.context.current_task is None and runtime.context.tasks == []
+    result = await controller.run("second")
+
+    assert result.final_answer == "ok"
+    await controller.set_model("gemma-4")  # not refused as "a task is running"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_save_at_task_end_keeps_the_task_outcome(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_fake_agent(monkeypatch, lambda _request: asyncio.sleep(0, native_result(final_answer="ok")))
+    controller, runtime, _, _ = build()
+    await controller.start()
+    real_persist = runtime.context.persist
+    calls = {"n": 0}
+
+    def persist_fails_at_the_end() -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:  # 1: task start, 2: task end
+            raise PermissionError("tasks.json is locked")
+        real_persist()
+
+    monkeypatch.setattr(runtime.context, "persist", persist_fails_at_the_end)
+
+    result = await controller.run("first")
+
+    assert result.final_answer == "ok"
+    assert runtime.context.current_task is None
+    assert runtime.context.tasks[0].status == "completed"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_save_after_a_failed_task_keeps_the_task_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.llm import ModelProviderError
+
+    async def run(_request: TaskRequest) -> AgentLoopResult:
+        raise ModelProviderError("ollama 404: model not found", provider="ollama", status_code=404)
+
+    install_fake_agent(monkeypatch, run)
+    controller, runtime, _, _ = build()
+    await controller.start()
+    failed: list[object] = []
+    runtime.context.events.subscribe("task.failed", lambda _name, record: failed.append(record))
+    real_persist = runtime.context.persist
+    calls = {"n": 0}
+
+    def persist_fails_at_the_end() -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:  # 1: task start, 2: task end
+            raise PermissionError("tasks.json is locked")
+        real_persist()
+
+    monkeypatch.setattr(runtime.context, "persist", persist_fails_at_the_end)
+
+    with pytest.raises(ModelProviderError, match="404"):
+        await controller.run("first")
+
+    assert runtime.context.current_task is None
+    assert runtime.context.tasks[0].status == "failed"
+    assert failed == [runtime.context.tasks[0]]
     await runtime.close()

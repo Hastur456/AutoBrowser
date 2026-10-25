@@ -7,9 +7,10 @@ the configured value only when explicitly supplied.
 from __future__ import annotations
 
 import argparse
+from typing import get_args
 
 from src.cli.subcommands import SUBCOMMANDS, session_id_completer
-from src.config import get_settings
+from src.config import LLMProvider, get_settings
 from src.version import PACKAGE_NAME, package_version
 
 
@@ -44,15 +45,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run interactive loop mode. Exit with quit, exit, or выход.",
     )
     parser.add_argument(
+        "--provider",
+        choices=get_args(LLMProvider),
+        default=None,
+        help=f"Chat model protocol for this run. Default: {settings.llm.provider} (llm.provider)",
+    )
+    parser.add_argument(
         "--model",
         default=settings.llm.model,
-        help=f"Ollama model name. Default: {settings.llm.model}",
+        help=f"Chat model id, as the provider expects it. Default: {settings.llm.model}",
     )
     parser.add_argument(
         "--temperature",
         type=float,
         default=settings.llm.temperature,
-        help=f"LLM temperature. Default: {settings.llm.temperature}",
+        help=(
+            f"LLM temperature. Default: {settings.llm.temperature} "
+            "(llm.temperature: null sends none, for reasoning models)"
+        ),
     )
     parser.add_argument(
         "--show-state",

@@ -1108,3 +1108,47 @@ async def test_reset_replaces_the_session_and_keeps_the_extra_sinks(
     await runtime.run_task("second")
     assert sink.records[-1].session_id == context.session_id
     assert "session.closed" in [record.type for record in sink.records]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("temperature, sent", [(0.1, 0.25), (None, None)])
+async def test_the_classifier_model_gets_no_temperature_when_the_session_sends_none(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    temperature: float | None,
+    sent: float | None,
+) -> None:
+    """``llm.temperature: null`` (reasoning models) must reach a separate classifier too."""
+
+    monkeypatch.chdir(tmp_path)
+    profile = tmp_path / "profile.yaml"
+    profile.write_text(
+        "permissions:\n"
+        "  approval_judge: classifier\n"
+        "  classifier_model: small:1b\n"
+        "  classifier_temperature: 0.25\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AUTOBROWSER_CONFIG_FILE", str(profile))
+    get_settings.cache_clear()
+    built: list[dict[str, Any]] = []
+
+    def recording_factory(**kwargs: Any) -> FakeLLM:
+        built.append(kwargs)
+        return FakeLLM()
+
+    runtime = SessionRuntime(
+        make_config(temperature=temperature),
+        llm_factory=recording_factory,
+        start_chrome_cdp=no_start,
+        wait_for_port=noop_wait,
+        mcp_runtime_factory=no_mcp_runtime,
+    )
+    await runtime.start()
+    try:
+        assert built == [
+            {"model": "test-model", "temperature": temperature},
+            {"model": "small:1b", "temperature": sent},
+        ]
+    finally:
+        await runtime.close()

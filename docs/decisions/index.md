@@ -4,6 +4,15 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-10-22 OpenAI-Compatible Chat Provider](2026-10-22-openai-compatible-chat-provider.md)
+  (Proposed, Russian): one `OpenAICompatChatModel` over Chat Completions for any compatible
+  service (OpenAI, aggregators such as OhMyLama/OpenRouter, local servers) chosen by config
+  only — no vendor names in code; `llm.provider: ollama | openai_compat` and a provider
+  registry as the default `llm_factory`; the `openai` SDK with explicit key/base URL and the
+  `OPENAI_*` environment neutralised; optional `temperature`, `max_tokens_param`,
+  `reasoning_effort`, `parallel_tool_calls`, `extra_headers`/`extra_body`, a 60 s call timeout
+  for both providers with no retries by default; `doctor --llm` network probe; neutral `ModelProviderError` and `ModelUsage` in `src/llm.py`. Extends the
+  LangChain-removal ADR on provider adapters.
 - [2026-10-19 Autonomous Test Pipeline](2026-10-19-autonomous-test-pipeline.md) (Proposed,
   Russian): one `scripts/ci.py` entry point with `gate` (hermetic, Windows + Linux: unit,
   scripted evals against baseline v2, cassette replay of recorded model/tool responses, TUI

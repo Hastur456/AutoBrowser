@@ -33,7 +33,8 @@ Browser interaction goes through the tools of the configured MCP servers (Playwr
 MCP by default). It runs as a long-lived interactive session (`main.py`, the
 `autobrowser` console script) — a Claude-Code-style inline terminal UI by default,
 plain line mode without a capable terminal, the old `cmd2` shell with `--classic` — over
-an Ollama-compatible chat model (default `gemma4:31b-cloud`). Control flow is
+Ollama or any OpenAI-compatible chat provider (`llm.provider`, default `ollama` with
+`gemma4:31b-cloud`; `docs/decisions/2026-10-22-openai-compatible-chat-provider.md`). Control flow is
 **engine-native** — there is no compiled graph. The explicit `AgentLoopEngine`
 owns the loop; see `docs/decisions/2026-08-31-native-agent-loop-engine.md` for
 the ADR that made it the sole runtime.
@@ -71,7 +72,11 @@ type-only TypedDicts in `src/state.py` for annotation; prompts are consolidated 
 
 Model access runs over the
 provider-neutral `ChatModel` contract in `src/llm.py`, implemented by thin adapters in
-`src/providers/` (e.g. `ollama.py`). Tools are neutral `Tool`/`ToolDef` objects in
+`src/providers/` (`ollama.py`, `openai_compat.py` for any Chat Completions service), chosen by
+`registry.build_chat_model` — the CLI's default `llm_factory`; only `src/cli/` imports
+`src.providers`, and no vendor names or URLs live in `src/`. Provider failures surface as the
+neutral `ModelProviderError`, token counts as `ModelResponse.usage` (in `model.responded`).
+Tools are neutral `Tool`/`ToolDef` objects in
 `src/contracts.py`. Conversation history is a provider-neutral `list[Message]`
 (`src/messages.py`) carried on `LoopState.messages` — shaped by the functional helpers in
 `src/harness/memory.py`, never by a checkpoint saver.
@@ -338,7 +343,8 @@ uv run pytest tests/ui tests/test_ui_feed.py   # terminal UI: render snapshots, 
 uv run main.py --no-mcp --task "inspect page" # dry run, no browser/MCP (dev checks)
 uv run main.py --continue                     # resume the latest session (state.json)
 uv run main.py -p "task" --output-format json # print mode: result only, exit 0/1/2/3/130
-uv run main.py doctor                         # paths, config source, node/npx, Chrome, terminal
+uv run main.py doctor                         # paths, config source, llm provider, node/npx, Chrome, terminal
+uv run main.py doctor --llm                   # + list the provider's models over the network
 uv run main.py --show-state --task "..."      # debug state per step
 
 uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error

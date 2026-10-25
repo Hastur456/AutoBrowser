@@ -67,7 +67,7 @@ from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import LoopState
 from src.agent_loop.execution.tools import PreparedToolCall, ToolBroker
-from src.agent_loop.model import ModelDriver
+from src.agent_loop.model import ModelDriver, response_usage
 from src.config import get_settings
 from src.contracts import (
     ApprovalAnswer,
@@ -392,9 +392,14 @@ class TurnController:
             [*messages, user_message(turn_prompt)],
             tools=self._model_tools,
         )
+        usage = response_usage(model_turn.response)
         self._emit(
             "model.responded",
-            {"phase": "agent", "metadata": dict(model_turn.metadata or {})},
+            {
+                "phase": "agent",
+                "metadata": dict(model_turn.metadata or {}),
+                **({"usage": usage} if usage else {}),
+            },
         )
 
         actions = list(model_turn.actions or [])
@@ -1084,7 +1089,8 @@ class AgentLoopEngine:
         )
         self._emit("model.requested", {"phase": "plan"})
         response = await self._resources.llm.complete([*messages, user_message(plan_prompt)])
-        self._emit("model.responded", {"phase": "plan"})
+        usage = response_usage(response)
+        self._emit("model.responded", {"phase": "plan", **({"usage": usage} if usage else {})})
 
         data = _json_object(_message_content(response))
         plan = _normalize_steps(data.get("steps"), state.task or "Complete the task.")

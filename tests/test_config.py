@@ -729,6 +729,103 @@ def test_the_example_config_file_reproduces_the_defaults(
 
 
 # --------------------------------------------------------------------------
+# The llm section: provider choice and the openai_compat fields
+# --------------------------------------------------------------------------
+
+
+def test_llm_provider_defaults(settings: Any) -> None:
+    llm = settings().llm
+
+    assert llm.provider == "ollama"
+    assert llm.temperature == 0.0
+    assert llm.timeout_seconds == 60.0
+    assert llm.max_retries == 0
+    assert llm.max_tokens_param == "max_completion_tokens"
+    assert llm.parallel_tool_calls is None
+    assert llm.extra_headers == {}
+    assert llm.extra_body == {}
+    assert llm.error_preview_chars == 300
+
+
+def test_llm_openai_compat_env_names_resolve(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_LLM__PROVIDER", "openai_compat")
+    monkeypatch.setenv("AUTOBROWSER_LLM__HOST", "http://localhost:1234/v1")
+    monkeypatch.setenv("AUTOBROWSER_LLM__MAX_RETRIES", "2")
+    monkeypatch.setenv("AUTOBROWSER_LLM__MAX_TOKENS_PARAM", "max_tokens")
+    monkeypatch.setenv("AUTOBROWSER_LLM__PARALLEL_TOOL_CALLS", "false")
+    monkeypatch.setenv("AUTOBROWSER_LLM__EXTRA_HEADERS", '{"X-Title": "AutoBrowser"}')
+    monkeypatch.setenv("AUTOBROWSER_LLM__EXTRA_BODY", '{"reasoning": {"max_tokens": 64}}')
+
+    llm = settings().llm
+
+    assert llm.provider == "openai_compat"
+    assert llm.max_retries == 2
+    assert llm.max_tokens_param == "max_tokens"
+    assert llm.parallel_tool_calls is False
+    assert llm.extra_headers == {"X-Title": "AutoBrowser"}
+    assert llm.extra_body == {"reasoning": {"max_tokens": 64}}
+
+
+@pytest.mark.parametrize("spelling", ["null", "None", " NULL "])
+def test_llm_nullable_scalars_accept_null_from_the_environment(
+    settings: Any, monkeypatch: pytest.MonkeyPatch, spelling: str
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_LLM__TEMPERATURE", spelling)
+    monkeypatch.setenv("AUTOBROWSER_LLM__TIMEOUT_SECONDS", spelling)
+    monkeypatch.setenv("AUTOBROWSER_LLM__PARALLEL_TOOL_CALLS", spelling)
+
+    llm = settings().llm
+
+    assert (llm.temperature, llm.timeout_seconds, llm.parallel_tool_calls) == (
+        None,
+        None,
+        None,
+    )
+
+
+def test_llm_temperature_null_in_yaml_means_not_sent(
+    settings: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _point_at(monkeypatch, _write_config(tmp_path, "llm:\n  temperature: null\n"))
+
+    assert settings().llm.temperature is None
+
+
+@pytest.mark.parametrize("host", [None, "", "   "])
+def test_openai_compat_requires_a_host(settings: Any, host: str | None) -> None:
+    with pytest.raises(ValueError, match="llm.host is required"):
+        settings(llm={"provider": "openai_compat", "host": host})
+
+
+def test_ollama_needs_no_host(settings: Any) -> None:
+    assert settings(llm={"provider": "ollama"}).llm.host is None
+
+
+@pytest.mark.parametrize("key", ["model", "messages", "temperature", "max_tokens", "stream"])
+def test_llm_extra_body_rejects_keys_with_a_typed_field(settings: Any, key: str) -> None:
+    with pytest.raises(ValueError, match="llm.extra_body may not set"):
+        settings(llm={"extra_body": {key: 1}})
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("provider", "anthropic"),
+        ("timeout_seconds", 0),
+        ("max_retries", -1),
+        ("max_retries", 11),
+        ("max_tokens_param", "max_output_tokens"),
+        ("error_preview_chars", 39),
+    ],
+)
+def test_llm_bounds_are_enforced(settings: Any, field: str, value: Any) -> None:
+    with pytest.raises(ValueError):
+        settings(llm={field: value})
+
+
+# --------------------------------------------------------------------------
 # The ui section
 # --------------------------------------------------------------------------
 

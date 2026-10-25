@@ -12,7 +12,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from src.contracts import ToolDef
-from src.llm import ChatModel, ModelResponse
+from src.llm import ChatModel, ModelProviderError, ModelResponse, ModelUsage
 from src.messages import (
     Message,
     ToolCall,
@@ -110,3 +110,45 @@ def test_chat_model_is_runtime_protocol() -> None:
 
     assert isinstance(Stub(), ChatModel)
     assert not isinstance(object(), ChatModel)
+
+
+def test_model_response_usage_is_optional() -> None:
+    assert ModelResponse(content="ok").usage is None
+
+    usage = ModelUsage(input_tokens=10, output_tokens=0, reasoning_tokens=None)
+    response = ModelResponse(content="ok", usage=usage)
+
+    assert response.usage is usage
+    # A reported zero is kept; an unreported field is left out.
+    assert usage.to_json_dict() == {"input_tokens": 10, "output_tokens": 0}
+    assert ModelUsage().to_json_dict() == {}
+
+
+def test_model_provider_error_carries_its_metadata() -> None:
+    error = ModelProviderError(
+        "openai_compat 429: slow down",
+        provider="openai_compat",
+        status_code=429,
+        retryable=True,
+    )
+
+    assert isinstance(error, RuntimeError)
+    assert str(error) == "openai_compat 429: slow down"
+    assert (error.provider, error.status_code, error.retryable) == ("openai_compat", 429, True)
+
+
+def test_model_provider_error_survives_copy_and_pickle() -> None:
+    """``asdict`` deep-copies a failed task's exception when the session is saved."""
+
+    import copy
+    import pickle
+
+    error = ModelProviderError("ollama 404: nope", provider="ollama", status_code=404, retryable=False)
+
+    error.add_note("while planning")
+
+    for clone in (copy.deepcopy(error), pickle.loads(pickle.dumps(error))):
+        assert isinstance(clone, ModelProviderError)
+        assert str(clone) == "ollama 404: nope"
+        assert (clone.provider, clone.status_code, clone.retryable) == ("ollama", 404, False)
+        assert clone.__notes__ == ["while planning"]

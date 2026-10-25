@@ -36,6 +36,8 @@ from src.ui.views import SessionView, StoredSessionView, TaskView
 
 #: ``picker_id`` of the ``/resume`` list.
 RESUME_PICKER = "resume"
+#: ``picker_id`` of the ``/model`` list; choosing runs ``/model <value>``.
+MODEL_PICKER = "model"
 
 THEMES = ("dark", "light", "mono")
 DETAILS = ("compact", "verbose")
@@ -51,6 +53,10 @@ class CommandResult:
     resume: str | None = None
     #: The stored sessions changed (``/reset`` stored the previous one): refresh caches.
     refresh_sessions: bool = False
+    #: A fresh session view (``/model`` switched the model): the front end shows it.
+    view: SessionView | None = None
+    #: The provider's model ids (``/model``): cached for ``/model <id>`` completion.
+    models: tuple[str, ...] | None = None
 
 
 class CommandHost(Protocol):
@@ -70,6 +76,8 @@ class CommandHost(Protocol):
     def locale(self) -> str: ...
     @property
     def stored_ids(self) -> Sequence[str]: ...
+    @property
+    def model_ids(self) -> Sequence[str]: ...
 
 
 @dataclass(frozen=True)
@@ -295,6 +303,65 @@ def _session_ids(host: CommandHost, prefix: str) -> Sequence[str]:
     return [session_id for session_id in host.stored_ids if session_id.startswith(word)]
 
 
+async def _model(host: CommandHost, args: str) -> CommandResult:
+    """``/model <id>`` switches at once; ``/model`` lists the provider's models to pick from."""
+
+    ru = host.locale == "ru"
+    name = args.strip()
+    if name:
+        try:
+            view = await host.bridge.run(lambda: host.controller.set_model(name))
+        except Exception as exc:  # noqa: BLE001 - busy, empty id, a model that cannot be built
+            return CommandResult(messages=(Notice(str(exc).strip("'\""), "warn"),))
+        text = (
+            f"модель: {view.model} — со следующей задачи"
+            if ru
+            else f"model: {view.model} — from the next task"
+        )
+        messages: list[UiMessage] = [Notice(text)]
+        if host.model_ids and name not in host.model_ids:
+            # Not refused: providers serve aliases they do not list.
+            unlisted = (
+                "этой модели нет в списке провайдера — если задача упадёт с ошибкой модели, выберите из /model"
+                if ru
+                else "the provider does not list this model — if the task fails on the model, pick one from /model"
+            )
+            messages.append(Notice(unlisted, "warn"))
+        return CommandResult(messages=tuple(messages), view=view)
+    hint = "назовите модель: /model <id>" if ru else "name the model: /model <id>"
+    try:
+        models = await host.bridge.run(host.controller.available_models)
+    except Exception as exc:  # noqa: BLE001 - provider unreachable, no catalog
+        reason = str(exc).strip("'\"")
+        return CommandResult(messages=(Notice(f"{reason} · {hint}", "warn"),))
+    if not models:
+        empty = "провайдер не вернул список моделей" if ru else "the provider listed no models"
+        return CommandResult(messages=(Notice(f"{empty} · {hint}", "warn"),), models=())
+    current = host.view.model if host.view is not None else ""
+    return CommandResult(messages=(model_picker(models, current, ru=ru),), models=tuple(models))
+
+
+def model_picker(models: Sequence[str], current: str, *, ru: bool) -> PickerShown:
+    """The ``/model`` list; the current model is marked."""
+
+    mark = "текущая" if ru else "current"
+    options = tuple(
+        PickerOption(value=model, label=sanitize_text(model), detail=mark if model == current else "")
+        for model in models
+    )
+    title = "Модель" if ru else "Model"
+    if current:
+        title = f"{title} · {'сейчас' if ru else 'now'} {sanitize_text(current)}"
+    return PickerShown(picker_id=MODEL_PICKER, title=title, options=options)
+
+
+def _model_names(host: CommandHost, prefix: str) -> Sequence[str]:
+    """Model ids for ``/model <id>``, from the list the last ``/model`` fetched."""
+
+    word = prefix.strip()
+    return [model for model in host.model_ids if model.startswith(word)]
+
+
 async def _permissions(host: CommandHost, _args: str) -> CommandResult:
     view = await host.bridge.call(host.controller.session_view)
     ru = host.locale == "ru"
@@ -374,6 +441,13 @@ def _choices(values: Iterable[str]) -> Callable[[CommandHost, str], Sequence[str
 COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("help", "/help", {"ru": "список команд и клавиш", "en": "commands and keys"}, _help),
     SlashCommand("status", "/status", {"ru": "состояние сессии", "en": "session status"}, _status),
+    SlashCommand(
+        "model",
+        "/model [id]",
+        {"ru": "выбрать модель (список провайдера или id)", "en": "choose the model (provider list or id)"},
+        _model,
+        complete_args=_model_names,
+    ),
     SlashCommand("tasks", "/tasks", {"ru": "задачи сессии", "en": "tasks of the session"}, _tasks),
     SlashCommand("cancel", "/cancel", {"ru": "прервать задачу", "en": "interrupt the task"}, _cancel),
     SlashCommand(
@@ -490,6 +564,8 @@ class SlashCompleter(Completer):
 
 __all__ = [
     "COMMANDS",
+    "MODEL_PICKER",
+    "RESUME_PICKER",
     "CommandHost",
     "CommandResult",
     "SlashCommand",

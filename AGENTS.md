@@ -38,7 +38,7 @@ engine-native execution loop. The CLI entry point is `main.py`. Core code lives 
 - `src/messages.py`: dependency-free provider-neutral chat `Message`/`ToolCall` types shared by the engine and providers.
 - `src/llm.py`: the provider-neutral `ChatModel`/`ModelResponse` chat contract. Model
   defaults live in `src/config.py` (`settings.llm`).
-- `src/providers/`: provider adapters (e.g. `ollama.py`) that implement `ChatModel` by mapping neutral `Message`/`ToolDef` objects to a backend wire format.
+- `src/providers/`: provider adapters that implement `ChatModel` by mapping neutral `Message`/`ToolDef` objects to a wire protocol — `ollama.py` (`/api/chat`) and `openai_compat.py` (any Chat Completions service) — plus `registry.py` (`build_chat_model`, picked by `llm.provider`; `probe_chat_provider` for `doctor --llm`). Only `src/cli/` imports this package; no vendor names or URLs live in `src/` (see `docs/decisions/2026-10-22-openai-compatible-chat-provider.md`).
 - `src/browser/`: provider-neutral browser contracts, canonical browser names, backend adapters, shared browser errors, and fake browser tools for tests.
 - `src/cli/`: the `autobrowser` entry point (`entry.py`), parser, bootstrap wiring that picks the front end, and the `cmd2` shell kept as `--classic`.
 - `src/ui/`: front ends over the session — `SessionController`, `RuntimeLoop`, the event feed projection, the inline terminal UI (`src/ui/tui/`), plain line mode and the launcher. Guide: `docs/development/terminal-ui.md`.
@@ -79,7 +79,7 @@ the terminal `AgentLoopResult` directly — and `AgentLoopEngine` is the sole ru
 
 Model access goes through the
 provider-neutral `ChatModel` contract in `src/llm.py`, implemented by thin provider adapters in
-`src/providers/` (for example `ollama.py`); tools are neutral `Tool`/`ToolDef` objects defined in
+`src/providers/` (`ollama.py`, `openai_compat.py`); tools are neutral `Tool`/`ToolDef` objects defined in
 `src/contracts.py`; and conversation history is carried as provider-neutral `Message` lists
 (`src/messages.py`, on `LoopState.messages`) with no checkpoint saver.
 
@@ -208,7 +208,7 @@ uv run main.py            # terminal UI; plain mode without a capable terminal
 uv run main.py --classic  # the cmd2 shell described below
 ```
 
-The terminal UI takes free-form tasks and slash commands (`/help`, `/status`, `/tasks`,
+The terminal UI takes free-form tasks and slash commands (`/help`, `/status`, `/model [id]`, `/tasks`,
 `/cancel`, `/mcp [reconnect <name>]`, `/history [N]`, `/memory`, `/permissions`, `/detail`,
 `/theme`, `/doctor`, `/resume`, `/clear` = new session (aliases `/reset`, `/new`), `/exit`); keys and terminals are listed in
 `docs/development/terminal-ui.md`.
@@ -259,4 +259,4 @@ Tests, evals and prompts use the exposed tool names (`browser_navigate`, `browse
 
 Recent history uses short messages and Conventional Commit-style prefixes such as `feat(agent): ...` and `fix(execute): ...`. Use imperative, scoped commit subjects when possible.
 
-Pull requests should describe the behavioral change, list tests run, mention MCP/Ollama assumptions, and include screenshots or logs only when UI or browser-observation behavior changes.
+Pull requests should describe the behavioral change, list tests run, mention MCP/model-provider assumptions, and include screenshots or logs only when UI or browser-observation behavior changes.

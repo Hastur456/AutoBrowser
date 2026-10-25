@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 from collections.abc import Awaitable, Callable, Iterator, MutableMapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
@@ -49,9 +50,17 @@ from src.harness.session_store import (
 )
 from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolRegistry
+from src.llm import ChatModel
 
 
-LLMFactory = Callable[..., Any]
+_LOG = logging.getLogger(__name__)
+
+#: ``llm_factory(model=..., temperature=...)``; the CLI passes the provider registry
+#: (``src.providers.registry.build_chat_model``), tests pass fakes.
+LLMFactory = Callable[..., ChatModel]
+#: ``model_catalog()``: the model ids the configured provider offers (``/model``); the CLI
+#: passes ``src.providers.registry.list_chat_models``. Raises when the provider cannot answer.
+ModelCatalog = Callable[[], Awaitable[Sequence[str]]]
 HarnessFactory = Callable[..., BrowserHarness]
 #: ``factory(cdp_port, errlog)``: ``errlog`` is the session's child-process stderr log.
 MCPRuntimeFactory = Callable[[int, TextIO], MCPRuntime]
@@ -111,7 +120,7 @@ class SessionConfig:
     """Configuration used to build and run a process-long AutoBrowser session."""
 
     model: str
-    temperature: float
+    temperature: float | None
     no_mcp: bool
     show_state: bool
     show_tools: bool
@@ -125,6 +134,8 @@ class SessionConfig:
     turn_cap: int
     #: Overrides ``settings.permissions.mode`` for this session; ``None`` keeps it.
     permission_mode: PermissionMode | None = None
+    #: Wire protocol of the chat model (``llm.provider`` or ``--provider``), for display.
+    provider: str = ""
 
     @classmethod
     def from_args(cls, args: Any) -> "SessionConfig":
@@ -145,6 +156,7 @@ class SessionConfig:
             cdp_timeout=args.cdp_timeout,
             turn_cap=args.turn_cap,
             permission_mode=getattr(args, "permission_mode", None),
+            provider=getattr(args, "provider", None) or get_settings().llm.provider,
         )
 
 
@@ -314,6 +326,18 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _task_snapshot(task: TaskRecord) -> dict[str, Any]:
+    """``asdict(task)`` without deep-copying ``result``: a failed task holds its exception,
+    and copying an exception rebuilds it from ``args`` alone, which breaks any exception with
+    keyword-only fields -- and with it every later save of the session."""
+
+    snapshot = {item.name: getattr(task, item.name) for item in fields(task)}
+    result = task.result
+    if is_dataclass(result) and not isinstance(result, type):
+        snapshot["result"] = asdict(result)
+    return snapshot
+
+
 def _restored_task(record: dict[str, Any]) -> TaskRecord:
     """A :class:`TaskRecord` from ``tasks.json``; a task left running by a crash is failed."""
 
@@ -371,6 +395,12 @@ def _build_session_event_sink(
             *extra_sinks,
         ]
     )
+
+
+def _valid_model_id(model: str) -> bool:
+    """A non-empty id of printable characters (no ESC, bidi or other control codes)."""
+
+    return bool(model) and model.isprintable()
 
 
 def _task_state_overrides(
@@ -563,15 +593,7 @@ class SessionContext:
         )
         self.workspace.initialize()
 
-        self.llm = llm_factory(
-            model=self.config.model,
-            temperature=self.config.temperature,
-        )
-        self.approval = ApprovalJudge.from_settings(
-            settings.permissions,
-            llm=self.llm,
-            llm_factory=llm_factory,
-        )
+        self.llm, self.approval = self._build_model(self.config, llm_factory)
         if self.config.no_mcp:
             self.tool_registry = ToolRegistry(session_tools)
         else:
@@ -629,6 +651,32 @@ class SessionContext:
         )
         self.events.emit("session.started", self)
 
+    def _build_model(
+        self, config: SessionConfig, llm_factory: LLMFactory
+    ) -> tuple[ChatModel, ApprovalJudge]:
+        """The session model of ``config`` and the approval judge over it (the classifier
+        reuses the session model unless ``permissions.classifier_model`` names another)."""
+
+        llm = llm_factory(model=config.model, temperature=config.temperature)
+        approval = ApprovalJudge.from_settings(
+            get_settings().permissions,
+            llm=llm,
+            llm_factory=llm_factory,
+            # A reasoning model rejects any temperature, the classifier's included.
+            send_temperature=config.temperature is not None,
+        )
+        return llm, approval
+
+    def use_model(self, config: SessionConfig, llm_factory: LLMFactory) -> None:
+        """Switch a started session to ``config.model``: a new model, approval judge and
+        harness model. The new model is built first, so a failure changes nothing; the
+        caller rebuilds the agent (:meth:`build_agent`) and persists."""
+
+        llm, approval = self._build_model(config, llm_factory)
+        self.llm, self.approval, self.config = llm, approval, config
+        if self.harness is not None:
+            self.harness.llm = llm
+
     def _prompt_resources(self) -> list[PromptResource]:
         """Prompt resources for this session: the browser rules iff a browser server is
         configured (``browser_mcp_server``), so a session without one sees no browser text."""
@@ -674,12 +722,21 @@ class SessionContext:
 
         now = datetime.now(UTC)
         record = TaskRecord(task=task, started_at=now, task_id=task_id or f"task-{uuid4().hex}")
+        previous_activity = self.metadata.last_activity
         self.current_task = task
         self.tasks.append(record)
+        self.metadata.last_activity = now
+        try:
+            self.persist()
+        except BaseException:
+            # The task never started: a session left "running" would refuse every later
+            # task, reset, resume and model switch until a restart.
+            self.tasks.remove(record)
+            self.current_task = None
+            self.metadata.last_activity = previous_activity
+            raise
         if self.memory_store is not None:
             self.memory_store.bind_task(record.task_id)
-        self.metadata.last_activity = now
-        self.persist()
         self.events.emit("task.started", record)
         return record
 
@@ -703,7 +760,7 @@ class SessionContext:
         self.current_task = None
         self.metadata.task_count += 1
         self.metadata.last_activity = now
-        self.persist()
+        self._persist_closed_task()
         self.events.emit("task.finished", record)
 
     def fail_task(self, record: TaskRecord, exception: BaseException) -> None:
@@ -727,7 +784,17 @@ class SessionContext:
         self.current_task = None
         self.metadata.task_count += 1
         self.metadata.last_activity = now
-        self.persist()
+        self._persist_closed_task()
+
+    def _persist_closed_task(self) -> None:
+        """Save after a task ended. The outcome is already recorded in memory (the next save
+        retries the files), so a failed write is logged instead of replacing the task's own
+        result or error and skipping its event."""
+
+        try:
+            self.persist()
+        except OSError:
+            _LOG.warning("the session files were not saved after a task ended", exc_info=True)
 
     def snapshot(self) -> dict[str, Any]:
         """Return a durable, JSON-compatible view of the session."""
@@ -747,7 +814,7 @@ class SessionContext:
                 "artifacts": workspace.artifacts if workspace else None,
             },
             "artifacts": [asdict(artifact) for artifact in self.artifacts.all()],
-            "tasks": [asdict(task) for task in self.tasks],
+            "tasks": [_task_snapshot(task) for task in self.tasks],
             "hooks": {
                 "enabled": isinstance(self.hooks, HookEngine),
                 "registry_sha256": self.hooks_registry_sha256,
@@ -888,6 +955,7 @@ class SessionRuntime:
         human_input: HumanInputCallback | None = None,
         event_sinks: Sequence[EventSink] = (),
         resume_from: Path | None = None,
+        model_catalog: ModelCatalog | None = None,
     ) -> None:
         self.config = config
         self._event_sinks = tuple(event_sinks)
@@ -898,6 +966,7 @@ class SessionRuntime:
             else SessionContext(config, event_sinks=self._event_sinks)
         )
         self._llm_factory = llm_factory
+        self._model_catalog = model_catalog
         self._start_chrome_cdp = start_chrome_cdp
         self._wait_for_port = wait_for_port
         self._mcp_runtime_factory = mcp_runtime_factory
@@ -947,6 +1016,45 @@ class SessionRuntime:
                 "WARNING: permission mode 'bypass' grants every approval; only deny rules "
                 "and always-ask rules still hold."
             )
+
+    async def list_models(self) -> list[str]:
+        """The model ids the provider offers, sorted; raises when there is no catalog or the
+        provider cannot answer (the caller shows the error)."""
+
+        if self._model_catalog is None:
+            raise RuntimeError("This session has no model catalog; name the model instead.")
+        # Ids are provider data shown on a terminal: drop any with control characters.
+        models = {str(model) for model in await self._model_catalog()}
+        return sorted(model for model in models if _valid_model_id(model))
+
+    async def set_model(self, model: str) -> None:
+        """Use ``model`` for the rest of the process: the next task, and the sessions
+        :meth:`reset` and :meth:`switch_to` open after it. A started session switches at
+        once (new model, approval judge and agent); one not started yet picks it up when it
+        starts. Refuses while a task is running."""
+
+        name = model.strip()
+        if not name:
+            raise ValueError("A model id is required.")
+        if not _valid_model_id(name):
+            raise ValueError("A model id may not contain control or non-printable characters.")
+        if self.context.current_task is not None:
+            raise RuntimeError("Cannot switch the model while a task is running.")
+        if name == self.config.model:
+            return
+        config = replace(self.config, model=name)
+        if not self.context.initialized:
+            self.context.config = config
+            self.config = config
+            return
+        self.context.use_model(config, self._llm_factory)
+        self.agent = self.context.build_agent(human_input=self._human_input)
+        self.config = config
+        # Last: the switch is complete either way, so a failed write is logged, not raised.
+        try:
+            self.context.persist()
+        except OSError:
+            _LOG.warning("model switched to %s, but the session files were not saved", name, exc_info=True)
 
     async def reset(self) -> SessionContext:
         """Close the session and replace it with a fresh, not yet started one.

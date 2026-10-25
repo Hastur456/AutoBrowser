@@ -8,7 +8,8 @@ the tools of the configured MCP servers (Playwright MCP by default).
 ## What It Does
 
 - Plans short browser tasks from natural-language instructions.
-- Uses an Ollama-compatible chat model through a provider-neutral adapter.
+- Uses Ollama or any OpenAI-compatible chat service (OpenAI, aggregators, LM Studio, vLLM)
+  through provider-neutral adapters (`llm.provider`).
 - Loads Playwright MCP tools and connects them to Chrome over CDP.
 - Wraps browser tools behind a provider boundary so Playwright-specific schema
   adaptation stays out of the executor.
@@ -30,7 +31,7 @@ the tools of the configured MCP servers (Playwright MCP by default).
   `pyproject.toml` / `uv.lock`)
 - Node.js 18+ for `npx @playwright/mcp`
 - Chrome or Chromium for browser-enabled runs
-- An Ollama-compatible chat model for normal CLI execution
+- A chat model for normal CLI execution: Ollama, or any OpenAI-compatible service
 
 The default model is `gemma4:31b-cloud`. Override it with `--model`.
 
@@ -96,7 +97,10 @@ Write Windows paths with forward slashes: `python-dotenv` decodes escape sequenc
 double-quoted values, so `"C:\temp"` silently becomes a tab character.
 
 `AUTOBROWSER_LLM__API_KEY` is passed to the provider as an `Authorization: Bearer` header;
-leave it unset for a local Ollama daemon. `AUTOBROWSER_LLM__HOST` is likewise optional.
+leave it unset for a local Ollama daemon. `AUTOBROWSER_LLM__HOST` is likewise optional for
+Ollama and required for `AUTOBROWSER_LLM__PROVIDER=openai_compat`; `config.example.yaml`
+has commented profiles for common services, and `autobrowser doctor --llm` checks the
+connection.
 
 Each of these can also be overridden from the command line with `--chrome-path`,
 `--user-data-dir`, and `--cdp-port`.
@@ -231,7 +235,7 @@ uv run pytest tests\test_prompts.py
 | `src/messages.py` | Dependency-free provider-neutral chat `Message`/`ToolCall` types shared by the engine and providers. |
 | `src/llm.py` | The provider-neutral `ChatModel`/`ModelResponse` chat contract. |
 | `src/config.py` | Project configuration with functionality to load configuration from environment variables and a YAML file. |
-| `src/providers/` | Provider adapters (e.g. `ollama.py`) that map neutral `Message`/`ToolDef` objects to a backend wire format. |
+| `src/providers/` | Provider adapters (`ollama.py`, `openai_compat.py`) that map neutral `Message`/`ToolDef` objects to a wire protocol, and `registry.py`, which picks one by `llm.provider`. |
 | `src/agent_loop/` | Runtime-facing action contracts and model parsing, events, trace replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary around the engine-native `AgentLoopEngine`. |
 | `src/browser/` | Browser tool-name helpers, error codes, request normalizer, permission resource resolver, and browser hooks. |
 | `src/harness/` | Session runtime, harness composition root, context, functional memory helpers, tools, policy, and telemetry boundaries. |
