@@ -171,9 +171,9 @@ uv run main.py doctor                   # пути, конфигурация, No
 ## Slash-команды
 
 `/help`, `/status`, `/model [id]`, `/tasks`, `/cancel`, `/mcp [reconnect <имя>]`, `/history [N]`, `/memory`,
-`/url`, `/replay [№ | id сессии]`, `/resume [№ | id]`, `/permissions`, `/detail compact|verbose`,
+`/skills`, `/url`, `/replay [№ | id сессии]`, `/resume [№ | id]`, `/permissions`, `/detail compact|verbose`,
 `/theme dark|light|mono`, `/doctor`, `/clear` (синонимы `/reset`, `/new`), `/exit`. Те же команды работают в
-plain-режиме. `/url` показывает адрес страницы, которую агент видел последней (без вызова
+plain-режиме. `/skills` перечисляет скиллы сессии (встроенные и ваши, отметки «всегда в промпте» и «заменяет встроенный», пропущенные с причиной); при выключенных скиллах — только встроенные always. `/url` показывает адрес страницы, которую агент видел последней (без вызова
 инструмента); `/replay` — ход последней задачи, задачи с номером из `/tasks` или другой
 сохранённой сессии.
 

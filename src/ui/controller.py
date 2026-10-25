@@ -37,6 +37,8 @@ from src.ui.views import (
     PastTask,
     ServerView,
     SessionView,
+    SkillsView,
+    SkillView,
     StoredSessionView,
     TaskOutcome,
     TaskStatus,
@@ -478,6 +480,24 @@ class SessionController:
     def memory_entries(self) -> list[MemoryEntry]:
         store = self._runtime.context.memory_store
         return list(store.entries()) if store is not None else []
+
+    def skills(self) -> SkillsView:
+        """The session's skills (read once at session start)."""
+
+        store = self._runtime.context.skill_store
+        if store is None:
+            return SkillsView(enabled=False)
+        return SkillsView(
+            enabled=store.settings.enabled,
+            skills=tuple(
+                SkillView(skill.name, skill.description, skill.source, skill.always)
+                for skill in store.skills()
+            ),
+            problems=tuple(
+                f"{problem.source}/{problem.path}: {problem.reason}" for problem in store.problems()
+            ),
+            shadowed=store.shadowed(),
+        )
 
     # ------------------------------------------------------------------ internals
 

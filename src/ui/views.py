@@ -131,6 +131,29 @@ class ServerView:
 
 
 @dataclass(frozen=True)
+class SkillView:
+    """One skill of the session as ``/skills`` shows it."""
+
+    name: str
+    description: str
+    #: ``builtin`` (the package) or ``user`` (the user's skills folder).
+    source: str
+    always: bool = False
+
+
+@dataclass(frozen=True)
+class SkillsView:
+    """The session's skills: whether the catalog is on, the visible skills, what was skipped."""
+
+    enabled: bool
+    skills: tuple[SkillView, ...] = ()
+    #: ``source/folder: reason`` of every skipped skill.
+    problems: tuple[str, ...] = ()
+    #: Built-in skill names the user's skills replace.
+    shadowed: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class TaskView:
     """One task of the session as ``/tasks`` shows it."""
 
@@ -173,6 +196,8 @@ __all__ = [
     "ServerView",
     "PastTask",
     "SessionView",
+    "SkillView",
+    "SkillsView",
     "StoredSessionView",
     "TaskOutcome",
     "TaskStatus",

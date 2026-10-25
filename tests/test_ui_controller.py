@@ -17,8 +17,12 @@ from src.harness.event_stream import EventBroadcaster
 from src.harness.session import SessionRuntime
 from src.messages import assistant_message, user_message
 from src.harness.session_store import SessionInUseError, SessionLock, save_state, session_in_use
+from src.config import SkillsSettings
+from src.harness.skills import SkillStore
 from src.ui.controller import SessionController, TaskBusyError
 from src.ui.runtime_loop import RuntimeLoop
+from src.ui.views import SkillsView
+from tests.test_skills import write_skill
 from tests.session_fakes import install_fake_agent
 from tests.test_harness_session import (
     llm_factory,
@@ -914,4 +918,30 @@ async def test_a_failed_save_after_a_failed_task_keeps_the_task_error(
     assert runtime.context.current_task is None
     assert runtime.context.tasks[0].status == "failed"
     assert failed == [runtime.context.tasks[0]]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_skills_view_reflects_the_session_store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    controller, runtime, _, _ = build()
+    assert controller.skills() == SkillsView(enabled=False)
+
+    write_skill(tmp_path / "builtin", "rules", metadata='metadata:\n  always: "true"')
+    write_skill(tmp_path / "user", "rules", description="Mine.")
+    write_skill(tmp_path / "user", "price-compare", description="Compare prices.")
+    write_skill(tmp_path / "user", "broken", frontmatter="name: broken")
+    runtime.context.skill_store = SkillStore.load(
+        SkillsSettings(enabled=True),
+        roots=[("builtin", tmp_path / "builtin"), ("user", tmp_path / "user")],
+    )
+
+    view = controller.skills()
+
+    assert view.enabled is True
+    assert [(skill.name, skill.source, skill.always) for skill in view.skills] == [
+        ("price-compare", "user", False),
+        ("rules", "user", False),
+    ]
+    assert view.shadowed == ("rules",)
+    assert view.problems == ("user/broken: description is missing",)
     await runtime.close()
