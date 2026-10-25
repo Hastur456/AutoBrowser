@@ -4,6 +4,15 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-10-26 Agent Skills](2026-10-26-agent-skills.md) (Proposed, Russian): skills in the
+  Agent Skills `SKILL.md` format (folder, `name`/`description` frontmatter, body, reference
+  files; AutoBrowser extensions only as string `metadata` keys `always`/`requires`/`title`);
+  progressive disclosure — a `Skills` catalog block, bodies and files loaded by the model with
+  the `readOnlyHint` harness tool `skill_view` (server `skills`); the model chooses, no matching
+  on task words or tool names; built-in and `<home>/skills/` sources only, user skills shadow
+  built-ins; no scripts in v1; kept apart from agent-written L4 procedures; the browser rules
+  become the first built-in `always` skill with an unchanged prompt; neutral `PromptSection`
+  replaces `PromptResource`; an off-by-default `skills` settings section.
 - [2026-10-22 OpenAI-Compatible Chat Provider](2026-10-22-openai-compatible-chat-provider.md)
   (Proposed, Russian): one `OpenAICompatChatModel` over Chat Completions for any compatible
   service (OpenAI, aggregators such as OhMyLama/OpenRouter, local servers) chosen by config

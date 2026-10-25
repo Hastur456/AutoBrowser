@@ -86,6 +86,11 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   usage, `llm.*` settings and service profiles (OhMyLama, OpenAI, OpenRouter, local servers),
   neutral provider errors, tests and rollout plan (Russian, Proposed; ADR
   [OpenAI-compatible provider](decisions/2026-10-22-openai-compatible-chat-provider.md)).
+- [Agent Skills Design](development/2026-10-26-agent-skills-design.md): proposed skills in
+  the Agent Skills `SKILL.md` format — catalog in the prompt, bodies and files loaded on demand
+  by the model with `skill_view`, built-in and `<home>/skills/` sources, the browser rules as
+  the first built-in `always` skill, `skills.*` settings, layering, tests and rollout plan
+  (Russian, Proposed; ADR [agent skills](decisions/2026-10-26-agent-skills.md)).
 - [Browser Provider Boundary ADR](decisions/2026-07-26-browser-provider-boundary.md):
   superseded record for the former Playwright adapter boundary.
 - [Task Memory Isolation ADR](decisions/2026-07-24-task-memory-isolation-and-session-persistence.md):

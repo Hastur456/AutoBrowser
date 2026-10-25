@@ -76,6 +76,7 @@
 | ProposedAction | Provider-neutral model action contract (`answer`/`tool_call`/`update_plan`/`ask_user`/`delegate`/`compact_memory`/`stop`) parsed from a model turn and mapped to `LoopState` updates by the engine. |
 | Provider adapter | Thin adapter that implements `ChatModel` by serializing neutral `Message`/`ToolDef` objects to a backend wire format and parsing the reply back into a `ModelResponse`. |
 | Provider registry | Proposed (ADR-2026-10-22): `build_chat_model()` in `src/providers/registry.py`, the default `llm_factory` that picks the adapter by `llm.provider` (or a `--provider` override bound in `src/cli/bootstrap.py`); only `src/cli/` imports `src.providers`. |
+| PromptSection | Proposed (ADR-2026-10-26): neutral fixed system block (`name`, `title`, `text`, `priority`) the composition root hands to `ContextAssembler(sections=...)`; replaces `PromptResource`, knows nothing about skills or files. |
 | Staged trust | Memory entry lifecycle `unverified → verified → stale` driven by the outcomes of the tasks that loaded the entry (`MemoryStore.record_outcome`) and a `stale_after_days` TTL; the user's entries never change. |
 | Task digest | One `[harness] Previous task digest` message (request, final answer, tool counts) replacing a finished task older than `memory.keep_recent_tasks` at the task boundary (`MemoryManager.digest_tasks`). |
 | Working notes | Task-local notes the model keeps through the optional `notes` tool argument (`memory.working_notes_max_chars`), stored on `LoopState.working_notes` and rendered as the `Working Notes` block. |
@@ -92,6 +93,11 @@
 | SessionRuntime | Process-lifetime coordinator that runs the session loop, delegates lifecycle state to `SessionContext`, and sends each task to `GoalRunner`. |
 | SessionState | Mutable mapping wrapper for shared session-level state that should not require a dedicated typed field yet. |
 | Settings | The pydantic-settings root in `src/config.py`, composed of eight config sections and read through `get_settings()`. A neutral leaf like `src/contracts.py`: it imports nothing from the loop, harness, or browser layers. |
+| Skill | Proposed (ADR-2026-10-26): a folder with an Agent Skills `SKILL.md` (YAML frontmatter `name`/`description`, markdown body) plus optional reference files, written by a human; built-in (`src/agent_loop/resources/skills/`) or user (`<home>/skills/`). Distinct from agent-written memory procedures. |
+| Skill catalog | Proposed (ADR-2026-10-26): the `Skills` system block (`SkillCatalog.render()`): one `name: description` line per visible skill, shown when `skills.enabled`; the model loads bodies itself with `skill_view`. |
+| `skill_view` | Proposed (ADR-2026-10-26): `readOnlyHint` harness tool of server `skills` (`src/harness/skill_tool.py`) returning a skill body or one file inside the skill folder; the engine never names it. |
+| Always skill | Proposed (ADR-2026-10-26): a skill with `metadata.always: "true"`, whose body is a fixed system block (`metadata.title`) in every turn regardless of `skills.enabled`; the browser rules are the first one (`requires: browser`). |
+| Session capability | Proposed (ADR-2026-10-26): a fixed word a session declares (`browser` iff a browser MCP server is configured) and a skill may require via `metadata.requires`; the only filter on which skills a session sees. |
 | State override channel | `TaskRequest.state_overrides`: the carried session state plus task-local resets handed to the next engine run. |
 | Stateful server | MCP server declared `stateful: true`; its reconnect is surfaced as `ServerConnectionLostError(stateful=True)` rather than hidden. |
 | Task boundary reset | Clearing task-local loop fields such as plan, final answer, errors, policy state, tool request/result, and retry counters before a new task starts. |
