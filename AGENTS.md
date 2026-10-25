@@ -160,6 +160,7 @@ uv run pytest tests\test_agent_loop_batch.py tests\test_agent_loop_export.py tes
 uv run pytest tests\test_context_assembler.py tests\test_goal_runner.py
 uv run pytest tests\test_harness_hooks.py tests\test_agent_loop_hooks.py tests\test_browser_hooks.py tests\test_builtin_hooks.py tests\test_command_hooks.py tests\test_hook_scripts.py
 uv run pytest tests\test_harness_memory.py tests\test_memory_store.py tests\test_memory_tool.py tests\test_memory_consolidation.py tests\test_working_notes.py tests\test_browser_memory.py tests\test_memory_boundaries.py
+uv run pytest tests\test_skills.py tests\test_skill_tool.py tests\test_session_skills.py tests\test_skill_boundaries.py
 uv run scripts/run_evals.py --memory-seed tests\evals\memory_seed   # evals with and without seed memory
 ```
 

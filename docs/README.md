@@ -11,6 +11,8 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   usage, and prompt-change workflow.
 - [Browser Agent Rules](development/browser-agent-rules.md): Playwright MCP
   interaction rules and search-flow debugging guidance.
+- [Agent Skills Guide](development/skills.md): `SKILL.md` skills — format, built-in and
+  your skills, the catalog and `skill_view`, enabling, debugging and tests.
 - [Lifecycle Hooks Guide](development/lifecycle-hooks.md): how hooks work, their
   architecture, configuration, Python and command hooks, and how to create, change,
   disable and test them.

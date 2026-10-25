@@ -126,8 +126,8 @@ imports nothing from `src/browser/`, and no module under `src/` except the user'
 - the browser layer reads text formats (`- Page URL:`, `[ref=…]`) from the latest output and
   the kept snapshots, never names;
 - arguments are filtered by the tool schema (`SchemaArgsNormalizer`);
-- prompt resources come from the session's configuration (`ContextAssembler(resources=…)`;
-  the browser rules iff a browser server is configured).
+- prompt sections come from the session's configuration (`ContextAssembler(sections=…)`;
+  the always-on browser-rules skill iff a browser server is configured).
 
 ## The Engine Loop
 
@@ -182,8 +182,8 @@ Every tunable lives in `src/config.py` — a pydantic-settings root read at call
 never imports it back). See
 `docs/decisions/2026-09-16-typed-settings-module.md` and the `.env.example` template.
 
-Names are `AUTOBROWSER_<SECTION>__<FIELD>` over eleven sections (`llm`, `browser`, `loop`,
-`observation`, `memory`, `events`, `storage`, `flags`, `hooks`, `permissions`, `ui`). Env outranks `.env` outranks the code
+Names are `AUTOBROWSER_<SECTION>__<FIELD>` over twelve sections (`llm`, `browser`, `loop`,
+`observation`, `memory`, `skills`, `events`, `storage`, `flags`, `hooks`, `permissions`, `ui`). Env outranks `.env` outranks the code
 defaults; an empty value means "not set"; sections are `frozen` with `extra="forbid"`.
 `AUTOBROWSER_LLM__API_KEY` is passed to the provider as an explicit `Authorization: Bearer`
 header — the vendor `OLLAMA_API_KEY` is no longer read. Adding a setting means updating
@@ -322,6 +322,31 @@ guide: `docs/development/memory.md`; ADR: `docs/decisions/2026-10-02-layered-age
   user files are never changed by the agent; review of writes is a user permission rule,
   never a shipped one.
 - Tests build `MemoryStore(tmp_path, MemorySettings(...))`, never `get_settings()`.
+
+## Skills
+
+Agent Skills `SKILL.md` folders (`docs/decisions/2026-10-26-agent-skills.md`; guide:
+`docs/development/skills.md`). Catalog and on-demand loading are **off by default**
+(`skills.enabled`).
+
+- `SkillStore`/`SkillCatalog` in `src/harness/skills.py` read the built-in root
+  (`src/agent_loop/resources/skills/`) and, when enabled, `<storage.root_dir>/<skills.dir>/`
+  once per session; a user skill shadows a built-in one; a broken skill is skipped
+  (`skills.invalid`), never failing startup. Extensions are string `metadata` keys `always`,
+  `requires` (only `browser`, declared by the session iff a browser server is configured),
+  `title`.
+- `skill_view` (`readOnlyHint`, `server: skills`) in `src/harness/skill_tool.py` returns a body
+  or a file inside the skill folder; nothing in a skill is executed.
+- The session hands `ContextAssembler(sections=…)` neutral `PromptSection`s: the `Skills`
+  catalog (when enabled) and the always-on bodies — the browser rules are the built-in
+  `browser-agent-rules` skill, sent whether or not skills are enabled.
+  `get_system_prompt()` is the agent prompt plus these sections (the `Tool Inventory` block is
+  never sent: tools go as native schemas).
+- The engine and the assembler never import the skill modules or name the tool
+  (`tests/test_skill_boundaries.py`); only the session, evals and `doctor` do. Skills are the
+  human's: no content policy, never written by the agent (memory procedures are the agent's).
+- Tests build `SkillStore.load(SkillsSettings(...), roots=[...])` over `tmp_path`, never
+  `get_settings()`.
 
 ## Feature Flags (env vars)
 
