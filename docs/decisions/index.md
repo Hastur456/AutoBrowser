@@ -4,7 +4,7 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
-- [2026-10-26 Agent Skills](2026-10-26-agent-skills.md) (Proposed, Russian): skills in the
+- [2026-10-26 Agent Skills](2026-10-26-agent-skills.md) (Accepted, Russian): skills in the
   Agent Skills `SKILL.md` format (folder, `name`/`description` frontmatter, body, reference
   files; AutoBrowser extensions only as string `metadata` keys `always`/`requires`/`title`);
   progressive disclosure — a `Skills` catalog block, bodies and files loaded by the model with

@@ -1,6 +1,6 @@
 # ADR-2026-10-26: Скиллы агента по модели Agent Skills
 
-Status: Proposed
+Status: Accepted
 Date: 2026-10-26
 Replaces: `PromptResource` / `browser_agent_rules_resource()` (`src/agent_loop/skills.py`) — не
 отдельный ADR
