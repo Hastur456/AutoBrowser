@@ -15,15 +15,14 @@ import yaml
 from src.llm import ModelResponse
 from src.messages import Message
 
-from src.agent_loop.context import ContextAssembler
+from src.agent_loop.context import ContextAssembler, PromptSection
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.agent_loop.execution.loop import Agent
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.replay import TraceSummary, print_action_sequence, summarize_trace
-from src.agent_loop.skills import browser_agent_rules_resource
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
 from src.browser.permissions import BrowserResourceResolver
-from src.config import PermissionsSettings
+from src.config import PermissionsSettings, SkillsSettings
 from src.contracts import (
     ApprovalAnswer,
     PermissionVerdict,
@@ -35,6 +34,12 @@ from src.contracts import (
 from src.harness.permissions import PermissionEngine
 from src.harness.normalization import SchemaArgsNormalizer
 from src.harness.runtime import BrowserHarness
+from src.harness.skills import (
+    BROWSER_CAPABILITY,
+    SkillStore,
+    always_sections,
+    builtin_skills_root,
+)
 from src.harness.tools import ToolRegistry
 
 _INVALID_REF_PATTERN = re.compile(
@@ -368,6 +373,18 @@ def _scripted_human(answers: list[str]) -> Any:
     return answer
 
 
+def _browser_sections() -> list[PromptSection]:
+    """The built-in always-on skills of a browser session, from the code-default skill
+    settings (never the developer's config or skills folder)."""
+
+    store = SkillStore.load(
+        SkillsSettings(),
+        roots=[("builtin", builtin_skills_root())],
+        capabilities={BROWSER_CAPABILITY},
+    )
+    return always_sections(store)
+
+
 async def run_scenario(scenario: EvalScenario, *, memory: Any | None = None) -> EvalResult:
     """Run one scenario against the engine-native execution loop.
 
@@ -383,8 +400,8 @@ async def run_scenario(scenario: EvalScenario, *, memory: Any | None = None) -> 
     llm = FakeChatModel(responses=scenario.model_responses)
     harness = BrowserHarness(
         llm=llm,
-        # A browser scenario: the same prompt resources a session with a browser server gets.
-        context_assembler=ContextAssembler(resources=[browser_agent_rules_resource()]),
+        # A browser scenario: the same always-on skills a session with a browser server gets.
+        context_assembler=ContextAssembler(sections=_browser_sections()),
         # Same schema normalizer the real session wires (see src/harness/mcp_setup.py).
         tool_registry=ToolRegistry(
             providers=[provider], normalizers=[SchemaArgsNormalizer(), provider]

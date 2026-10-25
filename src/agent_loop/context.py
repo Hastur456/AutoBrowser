@@ -19,7 +19,6 @@ from src.agent_loop.prompts import (
     PLANNER_SYSTEM_PROMPT,
     PLANNER_USER_PROMPT,
 )
-from src.agent_loop.skills import PromptResource
 from src.config import get_settings
 from src.harness.tools import tool_name
 
@@ -53,6 +52,22 @@ class ContextBlock:
 
 
 @dataclass(frozen=True)
+class PromptSection:
+    """A fixed system block the composition root chose for this session.
+
+    Rendered under ``title`` on every turn. The session builds these from its skills (the
+    always-on bodies, the skill catalog); the assembler never reads files or skills.
+    """
+
+    #: Stable id (a skill name, ``skills`` for the catalog); recorded as the block source.
+    name: str
+    #: Heading of the context block.
+    title: str
+    text: str
+    priority: int = 45
+
+
+@dataclass(frozen=True)
 class AssembledContext:
     """Ordered context blocks and their rendered prompt views."""
 
@@ -66,20 +81,20 @@ class ContextAssembler:
 
     This is the sanctioned prompt-assembly boundary for the engine-native loop:
     it knows the agent system prompt and the agent/planner prompts, so the engine
-    never imports prompt resources itself. ``resources`` are the prompt resources the
-    composition root chose for this session (the browser rules when a browser server is
-    configured); each is rendered as a system block on every turn. Nothing here inspects
-    tool names, state keys or task words to decide that.
+    never imports prompt resources itself. ``sections`` are the fixed system blocks the
+    composition root chose for this session (the always-on skills such as the browser rules
+    when a browser server is configured, the skill catalog); each is rendered on every turn.
+    Nothing here inspects tool names, state keys or task words to decide that.
     """
 
     def __init__(
         self,
         system_prompt: str | None = None,
         *,
-        resources: Sequence[PromptResource] = (),
+        sections: Sequence[PromptSection] = (),
     ) -> None:
         self._system_prompt = system_prompt or AGENT_SYSTEM_PROMPT
-        self._resources = tuple(resources)
+        self._sections = tuple(sections)
 
     def get_system_prompt(self) -> str:
         """Return the system prompt injected into durable message history."""
@@ -232,15 +247,15 @@ class ContextAssembler:
                     source="tool_registry",
                 )
             )
-        for resource in self._resources:
+        for section in self._sections:
             blocks.append(
                 ContextBlock(
-                    name=resource.title,
+                    name=section.title,
                     role="system",
-                    content=resource.load(),
-                    priority=45,
-                    source=f"resource:{resource.name}",
-                    metadata={"resource": resource.name},
+                    content=section.text,
+                    priority=section.priority,
+                    source=f"section:{section.name}",
+                    metadata={"section": section.name},
                 )
             )
         return blocks
@@ -305,4 +320,5 @@ __all__ = [
     "ContextAssembler",
     "ContextBlock",
     "ContextRole",
+    "PromptSection",
 ]

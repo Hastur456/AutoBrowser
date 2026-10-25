@@ -40,6 +40,10 @@ EventType = Literal[
     "memory.outcome",
     "memory.consolidated",
     "memory.consolidation_failed",
+    # Agent skills (src/harness/skills.py).
+    "skills.loaded",
+    "skills.invalid",
+    "skills.shadowed",
 ]
 
 SENSITIVE_KEY_MARKERS = (

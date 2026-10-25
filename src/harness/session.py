@@ -20,13 +20,12 @@ from src.agent_loop.events import (
     EventSink,
     JsonlEventSink,
 )
-from src.agent_loop.context import ContextAssembler
+from src.agent_loop.context import ContextAssembler, PromptSection
 from src.agent_loop.execution.approval import ApprovalJudge
 from src.agent_loop.execution.loop import Agent, AgentLoopResult, HumanInputCallback
 from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalLimits, GoalRunner
-from src.agent_loop.skills import PromptResource, browser_agent_rules_resource
 from src.config import get_settings
 from src.contracts import PermissionMode, TaskRequest
 from src.harness.hooks import HookEngine, NullHookEngine, registry_digest
@@ -38,6 +37,12 @@ from src.harness.memory import MemoryManager, NullMemoryContext
 from src.harness.memory_consolidation import MemoryConsolidator
 from src.harness.memory_store import MemoryContext, MemoryStore
 from src.harness.memory_tool import memory_tools
+from src.harness.skills import (
+    BROWSER_CAPABILITY,
+    SkillStore,
+    always_sections,
+    skill_roots,
+)
 from src.harness.runtime import BrowserHarness
 from src.harness.session_store import (
     RESUMED_STATE_KEYS,
@@ -485,6 +490,9 @@ class SessionContext:
     memory_store: MemoryStore | None = None
     #: Renders the ``Memory`` context block for the engine (``EngineResources.memory``).
     memory: MemoryContext | NullMemoryContext = field(default_factory=NullMemoryContext)
+    #: The session's skills (``settings.skills``), read once in :meth:`initialize` after MCP
+    #: starts (a skill may require the browser capability).
+    skill_store: SkillStore | None = None
     chrome_process: Any | None = None
     #: Open while MCP runs: the stderr log of the stdio servers (:data:`CHILD_STDERR_LOG_NAME`).
     child_stderr: TextIO | None = None
@@ -634,7 +642,7 @@ class SessionContext:
         self.harness = harness_factory(
             llm=self.llm,
             tool_registry=self.tool_registry,
-            context_assembler=ContextAssembler(resources=self._prompt_resources()),
+            context_assembler=ContextAssembler(sections=self._prompt_sections(settings)),
             telemetry=self.telemetry,
             event_emitter=self.event_emitter,
             compress_tools=self.config.compress_tools,
@@ -677,13 +685,34 @@ class SessionContext:
         if self.harness is not None:
             self.harness.llm = llm
 
-    def _prompt_resources(self) -> list[PromptResource]:
-        """Prompt resources for this session: the browser rules iff a browser server is
+    def _capabilities(self) -> frozenset[str]:
+        """What skills may require of this session: ``browser`` iff a browser server is
         configured (``browser_mcp_server``), so a session without one sees no browser text."""
 
         if self.mcp is not None and self.mcp.browser_server:
-            return [browser_agent_rules_resource()]
-        return []
+            return frozenset({BROWSER_CAPABILITY})
+        return frozenset()
+
+    def _prompt_sections(self, settings: Any) -> list[PromptSection]:
+        """Read the session's skills and return their fixed system blocks: the always-on
+        bodies (the browser rules in a browser session), whether or not skills are enabled."""
+
+        self.skill_store = SkillStore.load(
+            settings.skills,
+            roots=skill_roots(settings.skills, settings.storage),
+            capabilities=self._capabilities(),
+            on_event=self.emit_skill_event,
+        )
+        return always_sections(self.skill_store)
+
+    def emit_skill_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        """Forward a skills event (``skills.*``) to the session's event stream."""
+
+        self.event_emitter.emit(
+            event_type,  # type: ignore[arg-type]
+            source="harness.skills",
+            payload=payload,
+        )
 
     def _initialize_memory(self, settings: Any) -> None:
         """Build the persistent memory store and its context renderer (or switch them off)."""

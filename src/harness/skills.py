@@ -42,6 +42,7 @@ from typing import Any, Literal
 
 import yaml
 
+from src.agent_loop.context import PromptSection
 from src.config import SkillsSettings, StorageSettings
 
 #: ``(event_type, payload)``; the session forwards it to its ``EventEmitter``.
@@ -259,6 +260,25 @@ class SkillCatalog:
         return text[:budget]
 
 
+def always_sections(store: SkillStore) -> list[PromptSection]:
+    """One fixed system block per always-on skill (body under its heading), by name."""
+
+    return [
+        PromptSection(name=skill.name, title=skill.heading, text=skill.body)
+        for skill in store.always()
+    ]
+
+
+def catalog_section(store: SkillStore) -> list[PromptSection]:
+    """The ``Skills`` catalog block, or nothing when no skill is visible."""
+
+    text = SkillCatalog(store).render()
+    if not text:
+        return []
+    # After the Tool Inventory (40), before the always-on bodies (45).
+    return [PromptSection(name=SKILLS_SERVER, title=CATALOG_BLOCK_TITLE, text=text, priority=44)]
+
+
 def builtin_skills_root() -> Path:
     """The package directory of the built-in skills (found outside the checkout too)."""
 
@@ -380,6 +400,8 @@ __all__ = [
     "SKILLS_SERVER",
     "SKILL_FILE",
     "VIEW_TOOL",
+    "always_sections",
+    "catalog_section",
     "Skill",
     "SkillCatalog",
     "SkillEventCallback",
