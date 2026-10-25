@@ -1,6 +1,6 @@
 # ADR-2026-10-22: OpenAI-совместимый провайдер чат-моделей
 
-Status: Proposed
+Status: Accepted
 Date: 2026-10-22
 Extends: [ADR-2026-09-03: Drop the LangChain/LangGraph/LangSmith Dependency Stack](2026-09-03-drop-langchain-stack-provider-neutral-model.md)
 — в части провайдерских адаптеров

@@ -84,7 +84,7 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [OpenAI-Compatible Provider Design](development/2026-10-22-openai-compat-provider-design.md):
   proposed Chat Completions adapter next to Ollama — wire mapping of messages, tool calls and
   usage, `llm.*` settings and service profiles (OhMyLama, OpenAI, OpenRouter, local servers),
-  neutral provider errors, tests and rollout plan (Russian, Proposed; ADR
+  neutral provider errors, tests and rollout plan (Russian, Accepted; ADR
   [OpenAI-compatible provider](decisions/2026-10-22-openai-compatible-chat-provider.md)).
 - [Agent Skills Design](development/2026-10-26-agent-skills-design.md): proposed skills in
   the Agent Skills `SKILL.md` format — catalog in the prompt, bodies and files loaded on demand
