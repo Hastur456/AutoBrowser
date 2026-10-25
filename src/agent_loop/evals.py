@@ -402,9 +402,11 @@ async def run_scenario(
 
     ``memory`` is an explicit ``Memory`` block renderer (a ``MemoryContext`` over a seed
     directory); evals never read the developer's memory or its settings. ``skills`` is an
-    explicit store run as an enabled session would: the catalog, ``skill_view`` and the
-    always-on bodies; without it, only the built-in always-on bodies (skills off).
+    explicit store run as a session would run it: with ``enabled`` and a visible skill, the
+    catalog and ``skill_view``; the always-on bodies either way. Without it, the built-in
+    always-on bodies only (skills off).
     """
+    skills_on = skills is not None and skills.settings.enabled and bool(skills.skills())
 
     sink = InMemoryEventSink()
     session_id = f"eval-{uuid4().hex}"
@@ -417,14 +419,14 @@ async def run_scenario(
         # A browser scenario: the same always-on skills a session with a browser server gets.
         context_assembler=ContextAssembler(
             sections=(
-                catalog_section(skills) + always_sections(skills)
+                (catalog_section(skills) if skills_on else []) + always_sections(skills)
                 if skills is not None
                 else _browser_sections()
             )
         ),
         # Same schema normalizer the real session wires (see src/harness/mcp_setup.py).
         tool_registry=ToolRegistry(
-            list(skill_tools(skills)) if skills is not None else None,
+            list(skill_tools(skills)) if skills is not None and skills_on else None,
             providers=[provider],
             normalizers=[SchemaArgsNormalizer(), provider],
         ),

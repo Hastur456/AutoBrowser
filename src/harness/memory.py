@@ -82,13 +82,17 @@ class MemoryManager:
         messages = list(state.get("messages") or [])
         task = str(state.get("task", "") or "Complete the task.").strip()
         task_id = str(state.get("task_id", "") or "").strip()
+        prompt = system_prompt if system_prompt is not None else self._system_prompt()
         if not any(message.role == "system" for message in messages):
-            prompt = (
-                system_prompt
-                if system_prompt is not None
-                else self._system_prompt()
-            )
             messages.insert(0, system_message(prompt))
+        elif (
+            system_prompt is not None
+            and messages[0].role == "system"
+            and str(messages[0].content) != prompt
+        ):
+            # A resumed session carries the system message of the run that wrote it; the
+            # session's prompt (its skills, the tools they name) may have changed since.
+            messages[0] = system_message(prompt)
 
         if task_id:
             request_content = f"{USER_REQUEST_PREFIX} ({task_id}):\n{task}"

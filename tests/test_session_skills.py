@@ -14,8 +14,10 @@ import pytest
 
 from src.agent_loop.prompts import AGENT_SYSTEM_PROMPT
 from src.config import Settings, SkillsSettings, StorageSettings
+from src.harness.memory import ensure_message_history
 from src.harness.session import SessionContext
 from src.harness.skills import VIEW_TOOL
+from src.messages import system_message, user_message
 from tests.test_harness_session import (
     FakeHarness,
     FakeMCPRuntime,
@@ -162,3 +164,14 @@ async def test_a_user_skill_replaces_the_built_in_browser_rules(
     assert "# Browser Agent Rules" not in prompt
     assert context.skill_store is not None and context.skill_store.shadowed() == ("browser-agent-rules",)
     await context.close()
+
+
+def test_a_resumed_history_gets_the_current_system_prompt() -> None:
+    stale = [system_message("old prompt with a Skills catalog"), user_message("hi")]
+
+    refreshed = ensure_message_history({"messages": stale, "task": "t"}, system_prompt="new prompt")
+    kept = ensure_message_history({"messages": stale, "task": "t"})
+
+    assert refreshed[0].content == "new prompt"
+    assert "hi" in [message.content for message in refreshed]
+    assert kept[0].content == "old prompt with a Skills catalog"  # no explicit prompt: untouched

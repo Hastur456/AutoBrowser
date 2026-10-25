@@ -370,3 +370,38 @@ def test_the_catalog_fits_its_budget_and_says_what_it_left_out(tmp_path: Path) -
     shown = [line for line in text.splitlines() if line.startswith("- ")]
     assert 0 < len(shown) < 10
     assert text.endswith(f"... {10 - len(shown)} more skills not shown")
+
+
+def test_a_skill_md_with_a_utf8_bom_is_read(tmp_path: Path) -> None:
+    folder = tmp_path / "bom"
+    folder.mkdir()
+    (folder / "SKILL.md").write_bytes("---\nname: bom\ndescription: Saved by PowerShell.\n---\nBody\n".encode("utf-8-sig"))
+    (folder / "ref.md").write_bytes("Ref\n".encode("utf-8-sig"))
+
+    store = load(tmp_path)
+
+    assert [skill.name for skill in store.skills()] == ["bom"]
+    assert store.read_file("bom", "ref.md") == ("Ref\n", False)
+
+
+def test_an_unreadable_skills_folder_is_a_problem_not_a_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_skill(tmp_path / "builtin", "good")
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    original = Path.iterdir
+
+    def iterdir(self: Path) -> Any:
+        if self == locked:
+            raise PermissionError("access denied")
+        return original(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+
+    store = SkillStore.load(ENABLED, roots=[("builtin", tmp_path / "builtin"), ("user", locked)])
+
+    assert [skill.name for skill in store.skills()] == ["good"]
+    (problem,) = store.problems()
+    assert (problem.source, problem.path) == ("user", "locked")
+    assert "cannot read the skills folder" in problem.reason

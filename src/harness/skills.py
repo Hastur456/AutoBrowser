@@ -157,7 +157,12 @@ class SkillStore:
                 )
 
         for source, root in roots:
-            for read, folder in enumerate(_skill_folders(root)):
+            try:
+                folders = _skill_folders(root)
+            except OSError as exc:
+                skip(SkillProblem(source, root.name, f"cannot read the skills folder: {exc}"))
+                continue
+            for read, folder in enumerate(folders):
                 rel = folder.name
                 if read >= settings.max_skills:
                     skip(SkillProblem(source, rel, f"more than skills.max_skills ({settings.max_skills}) skills"))
@@ -224,7 +229,7 @@ class SkillStore:
             raise SkillFileError(f"{relative} does not exist in the skill {skill.name}.")
         limit = self._settings.file_max_chars
         try:
-            with target.open(encoding="utf-8", errors="strict") as handle:
+            with target.open(encoding="utf-8-sig", errors="strict") as handle:
                 text = handle.read(limit + 1)
         except UnicodeDecodeError as exc:
             raise SkillFileError(f"{relative} is not a UTF-8 text file.") from exc
@@ -317,7 +322,8 @@ def _skill_folders(root: Path) -> list[Path]:
 
 def _read_skill(folder: Path, source: SkillSource, settings: SkillsSettings) -> Skill:
     path = folder / SKILL_FILE
-    with path.open(encoding="utf-8", errors="strict") as handle:
+    # utf-8-sig: Windows editors and PowerShell 5.1 write a BOM before the frontmatter.
+    with path.open(encoding="utf-8-sig", errors="strict") as handle:
         text = handle.read(settings.file_max_chars + 1)
     if len(text) > settings.file_max_chars:
         raise ValueError(f"{SKILL_FILE} is longer than skills.file_max_chars ({settings.file_max_chars})")

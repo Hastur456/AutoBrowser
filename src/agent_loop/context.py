@@ -55,7 +55,8 @@ class ContextBlock:
 class PromptSection:
     """A fixed system block the composition root chose for this session.
 
-    Rendered under ``title`` on every turn. The session builds these from its skills (the
+    Rendered under ``title`` into :meth:`ContextAssembler.get_system_prompt`, the system
+    message of the session's history. The session builds these from its skills (the
     always-on bodies, the skill catalog); the assembler never reads files or skills.
     """
 
@@ -83,7 +84,9 @@ class ContextAssembler:
     it knows the agent system prompt and the agent/planner prompts, so the engine
     never imports prompt resources itself. ``sections`` are the fixed system blocks the
     composition root chose for this session (the always-on skills such as the browser rules
-    when a browser server is configured, the skill catalog); each is rendered on every turn.
+    when a browser server is configured, the skill catalog); they reach the model through
+    :meth:`get_system_prompt`, the system message of the history (``assemble`` lists them too,
+    for inspection; its ``system_prompt`` is not what the model gets).
     Nothing here inspects tool names, state keys or task words to decide that.
     """
 
