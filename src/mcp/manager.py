@@ -221,6 +221,8 @@ class MCPManager:
         self._resource_index: dict[str, list[str]] = {}
         self._catalog_version = 0
         self._closed = False
+        #: Set by :meth:`shutdown`; cuts a startup backoff short.
+        self._shutting_down = asyncio.Event()
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -239,6 +241,7 @@ class MCPManager:
         """
 
         self._closed = False
+        self._shutting_down.clear()
         servers = list(self._servers.values())
         results = await asyncio.gather(*(self._start_server(s) for s in servers), return_exceptions=True)
         for managed, result in zip(servers, results, strict=True):
@@ -266,7 +269,9 @@ class MCPManager:
                     attempts,
                     _describe(exc),
                 )
-                await asyncio.sleep(policy.delay_for(attempt))
+                # A shutdown ends the wait at once; the next _connect then raises.
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self._shutting_down.wait(), policy.delay_for(attempt))
 
     async def add_server(self, name: str, config: Any, *, connect: bool = True) -> None:
         """Register a server at runtime (no harness restart, no new code)."""
@@ -319,6 +324,7 @@ class MCPManager:
         """Close every connection in parallel, each bounded by ``timeout``."""
 
         self._closed = True
+        self._shutting_down.set()
         await asyncio.gather(
             *(self._close(s, self._timeout(timeout)) for s in list(self._servers.values())),
             return_exceptions=True,

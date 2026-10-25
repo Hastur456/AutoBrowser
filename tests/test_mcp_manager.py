@@ -423,3 +423,43 @@ def test_startup_attempts_one_keeps_a_failed_start_failed(tmp_path: Path) -> Non
         await manager.shutdown()
 
     run(scenario())
+
+
+def _always_failing(marker: Path) -> str:
+    return f"import sys\nopen({str(marker)!r}, 'a').write('x')\nsys.exit(1)\n"
+
+
+def test_reconnect_disabled_means_a_single_start_attempt(tmp_path: Path) -> None:
+    marker = tmp_path / "attempts"
+
+    async def scenario() -> None:
+        config = fake(args=["-c", _always_failing(marker)], reconnect={"enabled": False, "startup_attempts": 3})
+        manager = MCPManager({"fake": config})
+        await manager.start()
+        assert manager.status()["fake"].state is ConnectionState.FAILED
+        assert marker.read_text() == "x"
+        await manager.shutdown()
+
+    run(scenario())
+
+
+def test_shutdown_during_the_startup_backoff_stops_the_retry(tmp_path: Path) -> None:
+    marker = tmp_path / "attempts"
+
+    async def scenario() -> None:
+        config = fake(
+            args=["-c", _always_failing(marker)],
+            reconnect={"base_delay_s": 30.0, "startup_attempts": 2},
+        )
+        manager = MCPManager({"fake": config})
+        starting = asyncio.create_task(manager.start())
+        await wait_until(lambda: marker.exists())
+        await asyncio.sleep(0.2)  # inside the 30 s backoff now
+        started = time.monotonic()
+        await manager.shutdown()
+        await asyncio.wait_for(starting, timeout=5)
+        assert time.monotonic() - started < 5
+        assert marker.read_text() == "x"  # no second spawn
+        assert manager.status()["fake"].state is not ConnectionState.READY
+
+    run(scenario())
