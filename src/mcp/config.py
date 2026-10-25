@@ -46,6 +46,10 @@ class ReconnectPolicy(BaseModel):
 
     enabled: bool = True
     max_attempts: int = Field(default=5, ge=1)
+    #: Connection attempts at manager start, the first included. A freshly spawned process
+    #: can fail transiently (``npx`` installing or updating a package on its first run);
+    #: retried after :meth:`delay_for`. ``enabled: false`` means one attempt.
+    startup_attempts: int = Field(default=2, ge=1)
     base_delay_s: float = Field(default=1.0, ge=0.0)
     max_delay_s: float = Field(default=30.0, ge=0.0)
 

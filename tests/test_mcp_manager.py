@@ -378,3 +378,48 @@ def test_stdio_server_stderr_goes_to_the_errlog(tmp_path: Path) -> None:
     run(scenario())
 
     assert "fake server says hello" in log_path.read_text(encoding="utf-8")
+
+
+def test_a_server_failing_its_first_start_is_retried(tmp_path: Path) -> None:
+    """Like ``npx`` on its first run: the first process dies before initialize, the next works."""
+
+    marker = tmp_path / "started-once"
+    flaky = (
+        "import os, runpy, sys\n"
+        f"marker = {str(marker)!r}\n"
+        "if not os.path.exists(marker):\n"
+        "    open(marker, 'w').close()\n"
+        "    sys.exit(1)\n"
+        f"sys.argv = [{FAKE_SERVER!r}]\n"
+        f"runpy.run_path({FAKE_SERVER!r}, run_name='__main__')\n"
+    )
+
+    async def scenario() -> None:
+        manager = MCPManager({"fake": fake(args=["-c", flaky])})
+        await manager.start()
+        assert manager.status()["fake"].state is ConnectionState.READY
+        assert marker.exists()
+        await manager.shutdown()
+
+    run(scenario())
+
+
+def test_startup_attempts_one_keeps_a_failed_start_failed(tmp_path: Path) -> None:
+    marker = tmp_path / "started-once"
+    flaky = (
+        "import os, sys\n"
+        f"marker = {str(marker)!r}\n"
+        "open(marker, 'a').write('x')\n"
+        "sys.exit(1)\n"
+    )
+
+    async def scenario() -> None:
+        manager = MCPManager(
+            {"fake": fake(args=["-c", flaky], reconnect={"base_delay_s": 0.05, "startup_attempts": 1})}
+        )
+        await manager.start()
+        assert manager.status()["fake"].state is ConnectionState.FAILED
+        assert marker.read_text() == "x"
+        await manager.shutdown()
+
+    run(scenario())

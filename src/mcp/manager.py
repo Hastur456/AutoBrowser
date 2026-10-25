@@ -240,10 +240,33 @@ class MCPManager:
 
         self._closed = False
         servers = list(self._servers.values())
-        results = await asyncio.gather(*(self._connect(s) for s in servers), return_exceptions=True)
+        results = await asyncio.gather(*(self._start_server(s) for s in servers), return_exceptions=True)
         for managed, result in zip(servers, results, strict=True):
             if isinstance(result, BaseException):
                 logger.warning("MCP server %s failed to start: %s", managed.name, _describe(result))
+
+    async def _start_server(self, managed: ManagedServer) -> None:
+        """Connect one server at start, retrying a failure up to ``reconnect.startup_attempts``."""
+
+        policy = managed.config.reconnect
+        attempts = policy.startup_attempts if policy.enabled else 1
+        for attempt in range(1, attempts + 1):
+            try:
+                await self._connect(managed)
+                return
+            except ServerClosedError:
+                raise
+            except Exception as exc:
+                if attempt == attempts or self._closed:
+                    raise
+                logger.info(
+                    "MCP server %s start attempt %d/%d failed: %s; retrying",
+                    managed.name,
+                    attempt,
+                    attempts,
+                    _describe(exc),
+                )
+                await asyncio.sleep(policy.delay_for(attempt))
 
     async def add_server(self, name: str, config: Any, *, connect: bool = True) -> None:
         """Register a server at runtime (no harness restart, no new code)."""
