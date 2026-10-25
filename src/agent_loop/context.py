@@ -97,9 +97,17 @@ class ContextAssembler:
         self._sections = tuple(sections)
 
     def get_system_prompt(self) -> str:
-        """Return the system prompt injected into durable message history."""
+        """Return the system prompt injected into durable message history.
 
-        return self._system_prompt
+        The agent system prompt followed by the session's sections (the skill catalog, the
+        always-on skills), in priority order. The ``Tool Inventory`` block is not part of it:
+        the model gets the tools as native tool schemas.
+        """
+
+        sections = self.render(self._section_blocks())
+        if not sections:
+            return self._system_prompt
+        return f"{self._system_prompt}\n\n{sections}"
 
     def assemble(
         self,
@@ -247,18 +255,27 @@ class ContextAssembler:
                     source="tool_registry",
                 )
             )
-        for section in self._sections:
-            blocks.append(
-                ContextBlock(
-                    name=section.title,
-                    role="system",
-                    content=section.text,
-                    priority=section.priority,
-                    source=f"section:{section.name}",
-                    metadata={"section": section.name},
-                )
-            )
+        blocks.extend(self._section_blocks())
         return blocks
+
+    def _section_blocks(self) -> list[ContextBlock]:
+        """The session's sections as system blocks, in priority order."""
+
+        blocks = [
+            ContextBlock(
+                name=section.title,
+                role="system",
+                content=section.text,
+                priority=section.priority,
+                source=f"section:{section.name}",
+                metadata={"section": section.name},
+            )
+            for section in self._sections
+        ]
+        return sorted(
+            (block for block in blocks if not block.is_empty()),
+            key=lambda block: (block.priority, block.name, block.source),
+        )
 
 
 def _memory_block(memory: str) -> ContextBlock:

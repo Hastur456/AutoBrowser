@@ -37,10 +37,12 @@ from src.harness.memory import MemoryManager, NullMemoryContext
 from src.harness.memory_consolidation import MemoryConsolidator
 from src.harness.memory_store import MemoryContext, MemoryStore
 from src.harness.memory_tool import memory_tools
+from src.harness.skill_tool import skill_tools
 from src.harness.skills import (
     BROWSER_CAPABILITY,
     SkillStore,
     always_sections,
+    catalog_section,
     skill_roots,
 )
 from src.harness.runtime import BrowserHarness
@@ -575,7 +577,7 @@ class SessionContext:
             mode=self.config.permission_mode,
         )
         self._initialize_memory(settings)
-        session_tools = (
+        session_tools: list[Any] = (
             memory_tools(self.memory_store)
             if self.memory_store is not None and settings.memory.tool_enabled
             else []
@@ -603,6 +605,7 @@ class SessionContext:
 
         self.llm, self.approval = self._build_model(self.config, llm_factory)
         if self.config.no_mcp:
+            session_tools += self._load_skills(settings)
             self.tool_registry = ToolRegistry(session_tools)
         else:
             mcp: MCPRuntime | None = None
@@ -629,6 +632,7 @@ class SessionContext:
                 self._close_child_stderr()
                 raise
             self.mcp = mcp
+            session_tools += self._load_skills(settings)
             # The MCP tool source is live: rediscovery (list_changed) and servers going
             # down / coming back are reflected on the next registry read.
             self.tool_registry = ToolRegistry(
@@ -693,9 +697,10 @@ class SessionContext:
             return frozenset({BROWSER_CAPABILITY})
         return frozenset()
 
-    def _prompt_sections(self, settings: Any) -> list[PromptSection]:
-        """Read the session's skills and return their fixed system blocks: the always-on
-        bodies (the browser rules in a browser session), whether or not skills are enabled."""
+    def _load_skills(self, settings: Any) -> list[Any]:
+        """Read the session's skills (once MCP runs, so the capabilities are known) and
+        return the skill tools to register: ``skill_view`` when skills are enabled and at
+        least one is visible."""
 
         self.skill_store = SkillStore.load(
             settings.skills,
@@ -703,7 +708,19 @@ class SessionContext:
             capabilities=self._capabilities(),
             on_event=self.emit_skill_event,
         )
-        return always_sections(self.skill_store)
+        if settings.skills.enabled and self.skill_store.skills():
+            return list(skill_tools(self.skill_store))
+        return []
+
+    def _prompt_sections(self, settings: Any) -> list[PromptSection]:
+        """The session's fixed system blocks: the skill catalog when skills are enabled, and
+        the always-on bodies (the browser rules in a browser session) either way."""
+
+        store = self.skill_store
+        if store is None:
+            return []
+        catalog = catalog_section(store) if settings.skills.enabled else []
+        return catalog + always_sections(store)
 
     def emit_skill_event(self, event_type: str, payload: dict[str, Any]) -> None:
         """Forward a skills event (``skills.*``) to the session's event stream."""

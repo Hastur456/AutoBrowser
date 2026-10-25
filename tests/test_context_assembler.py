@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from src.agent_loop.context import AssembledContext, ContextAssembler, ContextBlock, PromptSection
 from src.agent_loop.evals import _browser_sections
+from src.agent_loop.prompts import AGENT_SYSTEM_PROMPT
 
 
 @dataclass
@@ -238,3 +239,11 @@ def test_working_notes_render_after_the_action_history() -> None:
     names = [block.name for block in context.blocks]
     assert names.index("Working Notes") == names.index("Action History") + 1
     assert "Working Notes:\nKettle A: 1990" in context.turn_prompt
+
+
+def test_the_system_prompt_sent_to_the_model_carries_the_sections_but_not_the_tool_inventory() -> None:
+    (section,) = _browser_sections()
+
+    assert BROWSER.get_system_prompt() == f"{AGENT_SYSTEM_PROMPT}\n\nBrowser Rules:\n{section.text.strip()}"
+    assert ContextAssembler().get_system_prompt() == AGENT_SYSTEM_PROMPT
+    assert "Tool Inventory" not in BROWSER.get_system_prompt()
