@@ -43,7 +43,7 @@ Replaces: `PromptResource` / `browser_agent_rules_resource()` (`src/agent_loop/s
    скиллом `browser-agent-rules` (`always`, `requires: browser`, `title: Browser Rules`) в
    `src/agent_loop/resources/skills/browser-agent-rules/SKILL.md`; тело байт-в-байт прежнее,
    промпт не меняется. Пользователь по-прежнему правит правила сам.
-5. **Источники.** Встроенные (пакет) и пользовательские — только `skills.user_dir`
+5. **Источники.** Встроенные (пакет) и пользовательские — только `skills.dir`
    (по умолчанию `<home>/skills/`). Рабочая папка и репозиторий не сканируются. Пользовательский
    скилл с именем встроенного заменяет его (`skills.shadowed`). Недействительный скилл
    пропускается с `skills.invalid` и не валит старт; недействительный встроенный — ошибка тестов.
@@ -62,8 +62,8 @@ Replaces: `PromptResource` / `browser_agent_rules_resource()` (`src/agent_loop/s
    (новый `tests/test_skill_boundaries.py`). Скиллы читаются один раз при старте сессии —
    системный промпт стабилен.
 9. **Настройки.** Новая секция `skills` в `src/config.py`: `enabled` (по умолчанию `false`),
-   `user_dir`, `catalog_max_chars`, `description_max_chars`, `body_max_chars`,
-   `file_max_chars`, `always_max_chars`, `max_skills`; с `.env.example`,
+   `dir`, `max_skills`, `catalog_max_chars`, `description_max_chars`, `body_max_chars`,
+   `file_max_chars`, `always_max_chars`; с `.env.example`,
    `config.example.yaml`, `tests/test_config.py`. Выключенные скиллы дают ровно нынешний промпт
    (`always`-скиллы работают всегда); включение добавляет каталог, `skill_view` и
    пользовательские скиллы. Тесты строят хранилище из явных `SkillsSettings`, никогда из

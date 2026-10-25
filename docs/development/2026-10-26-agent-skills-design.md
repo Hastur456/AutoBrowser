@@ -252,7 +252,7 @@ flowchart LR
 | Источник | Корень | Включён |
 | --- | --- | --- |
 | Встроенные | `src/agent_loop/resources/skills/` (пакетные данные, через `importlib.resources`) | всегда |
-| Пользовательские | `skills.user_dir`; относительный путь — относительно `home_dir()`; по умолчанию `<home>/skills` | только при `skills.enabled` |
+| Пользовательские | `skills.dir`; относительный путь — относительно `storage.root_dir` (как `memory.dir`); по умолчанию `<home>/skills` | только при `skills.enabled` |
 
 Рабочая папка и корень репозитория не сканируются (решение 5). Встроенные скиллы остаются в
 `src/agent_loop/resources/`, рядом с нынешним файлом правил, чтобы не менять упаковку.
@@ -390,7 +390,7 @@ class SkillStore:
     def problems(self) -> tuple[SkillProblem, ...]: ...
 
 def builtin_skills_root() -> Path: ...
-def user_skills_root(settings: SkillsSettings) -> Path: ...
+def user_skills_root(skills: SkillsSettings, storage: StorageSettings) -> Path: ...
 
 class SkillCatalog:
     def __init__(self, store: SkillStore, settings: SkillsSettings) -> None: ...
@@ -416,7 +416,7 @@ initialize():
   ... MCP запущен, известно mcp.browser_server ...
   capabilities = {"browser"} if browser server else {}
   roots = [("builtin", builtin_skills_root())]
-        + ([("user", user_skills_root(s))] if s.enabled else [])
+        + ([("user", user_skills_root(s, storage))] if s.enabled else [])
   skill_store = SkillStore.load(s, roots=roots, capabilities=capabilities, on_event=…)
   session_tools += skill_tools(skill_store) if s.enabled and skill_store.skills() else []
   sections = [PromptSection("skills", "Skills", SkillCatalog(...).render(), 44)] if enabled
@@ -441,7 +441,7 @@ initialize():
 | Поле | Тип, границы | Умолчание | Смысл |
 | --- | --- | --- | --- |
 | `enabled` | bool | `false` | Каталог, `skill_view` и пользовательские скиллы. `always`-скиллы работают и без него. |
-| `user_dir` | Path | `skills` | Папка пользовательских скиллов; относительный путь — от `home_dir()`. |
+| `dir` | str | `skills` | Папка пользовательских скиллов; относительный путь — от `storage.root_dir` (по умолчанию это home), как у `memory.dir`. |
 | `catalog_max_chars` | int ≥ 1 | 4000 | Потолок блока `Skills`. |
 | `description_max_chars` | int ≥ 1 | 1024 | Символов описания в каталоге. |
 | `body_max_chars` | int ≥ 1 | 20000 | Потолок ответа `skill_view` с телом. |

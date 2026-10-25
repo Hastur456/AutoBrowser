@@ -1283,3 +1283,49 @@ def test_storage_paths_are_anchored_at_the_home(settings: Any, tmp_path: Path) -
     with pytest.warns(FutureWarning, match="old working-directory default"):
         legacy = settings(storage={"root_dir": ".autobrowser"}).storage.root_dir
     assert legacy == home
+
+
+# --------------------------------------------------------------------------
+# The skills section
+# --------------------------------------------------------------------------
+
+
+def test_skills_defaults(settings: Any) -> None:
+    skills = settings().skills
+
+    assert skills.enabled is False
+    assert skills.dir == "skills"
+    assert skills.max_skills == 100
+    assert skills.catalog_max_chars == 4_000
+    assert skills.description_max_chars == 1_024
+    assert skills.body_max_chars == 20_000
+    assert skills.file_max_chars == 20_000
+    assert skills.always_max_chars == 12_000
+
+
+def test_skills_env_names_resolve(settings: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AUTOBROWSER_SKILLS__ENABLED", "true")
+    monkeypatch.setenv("AUTOBROWSER_SKILLS__DIR", "my-skills")
+    monkeypatch.setenv("AUTOBROWSER_SKILLS__CATALOG_MAX_CHARS", "500")
+
+    skills = settings().skills
+
+    assert (skills.enabled, skills.dir, skills.catalog_max_chars) == (True, "my-skills", 500)
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("dir", ""),
+        ("max_skills", 0),
+        ("catalog_max_chars", 0),
+        ("description_max_chars", 0),
+        ("body_max_chars", 0),
+        ("file_max_chars", 0),
+        ("always_max_chars", 0),
+        ("unknown", 1),
+    ],
+)
+def test_skills_bounds_are_enforced(settings: Any, field: str, value: Any) -> None:
+    with pytest.raises(ValueError):
+        settings(skills={field: value})
