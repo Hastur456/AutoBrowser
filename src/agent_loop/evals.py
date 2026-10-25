@@ -34,11 +34,13 @@ from src.contracts import (
 from src.harness.permissions import PermissionEngine
 from src.harness.normalization import SchemaArgsNormalizer
 from src.harness.runtime import BrowserHarness
+from src.harness.skill_tool import skill_tools
 from src.harness.skills import (
     BROWSER_CAPABILITY,
     SkillStore,
     always_sections,
     builtin_skills_root,
+    catalog_section,
 )
 from src.harness.tools import ToolRegistry
 
@@ -373,23 +375,35 @@ def _scripted_human(answers: list[str]) -> Any:
     return answer
 
 
-def _browser_sections() -> list[PromptSection]:
-    """The built-in always-on skills of a browser session, from the code-default skill
-    settings (never the developer's config or skills folder)."""
+def builtin_skill_store(settings: SkillsSettings | None = None) -> SkillStore:
+    """The built-in skills of a browser session, from explicit (by default the code-default)
+    skill settings — never the developer's config or skills folder."""
 
-    store = SkillStore.load(
-        SkillsSettings(),
+    return SkillStore.load(
+        settings or SkillsSettings(),
         roots=[("builtin", builtin_skills_root())],
         capabilities={BROWSER_CAPABILITY},
     )
-    return always_sections(store)
 
 
-async def run_scenario(scenario: EvalScenario, *, memory: Any | None = None) -> EvalResult:
+def _browser_sections() -> list[PromptSection]:
+    """The built-in always-on skills of a browser session."""
+
+    return always_sections(builtin_skill_store())
+
+
+async def run_scenario(
+    scenario: EvalScenario,
+    *,
+    memory: Any | None = None,
+    skills: SkillStore | None = None,
+) -> EvalResult:
     """Run one scenario against the engine-native execution loop.
 
     ``memory`` is an explicit ``Memory`` block renderer (a ``MemoryContext`` over a seed
-    directory); evals never read the developer's memory or its settings.
+    directory); evals never read the developer's memory or its settings. ``skills`` is an
+    explicit store run as an enabled session would: the catalog, ``skill_view`` and the
+    always-on bodies; without it, only the built-in always-on bodies (skills off).
     """
 
     sink = InMemoryEventSink()
@@ -401,10 +415,18 @@ async def run_scenario(scenario: EvalScenario, *, memory: Any | None = None) -> 
     harness = BrowserHarness(
         llm=llm,
         # A browser scenario: the same always-on skills a session with a browser server gets.
-        context_assembler=ContextAssembler(sections=_browser_sections()),
+        context_assembler=ContextAssembler(
+            sections=(
+                catalog_section(skills) + always_sections(skills)
+                if skills is not None
+                else _browser_sections()
+            )
+        ),
         # Same schema normalizer the real session wires (see src/harness/mcp_setup.py).
         tool_registry=ToolRegistry(
-            providers=[provider], normalizers=[SchemaArgsNormalizer(), provider]
+            list(skill_tools(skills)) if skills is not None else None,
+            providers=[provider],
+            normalizers=[SchemaArgsNormalizer(), provider],
         ),
         event_emitter=emitter,
     )

@@ -7,8 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from src.agent_loop.evals import builtin_skill_store, run_scenario
 from src.config import SkillsSettings
 from src.harness.skills import SkillStore, builtin_skills_root
+from tests.evals.runner import load_scenarios
 
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = ROOT / "src" / "agent_loop" / "execution"
@@ -66,3 +68,14 @@ def test_every_built_in_skill_is_valid() -> None:
     assert store.problems() == ()
     assert [skill.name for skill in store.skills()] == ["browser-agent-rules"]
     assert [skill.name for skill in store.always()] == ["browser-agent-rules"]
+
+
+@pytest.mark.asyncio
+async def test_enabled_skills_do_not_change_any_eval_outcome() -> None:
+    store = builtin_skill_store(SkillsSettings(enabled=True))
+    for scenario in load_scenarios():
+        plain = await run_scenario(scenario)
+        with_skills = await run_scenario(scenario, skills=store)
+
+        assert with_skills.metrics() == plain.metrics(), scenario.name
+        assert with_skills.prompt_chars > plain.prompt_chars, scenario.name
