@@ -11,7 +11,8 @@ on:
 
 concurrency:
   group: gate-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push supersedes a pull request run; every commit on main keeps its own result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -20,17 +21,20 @@ jobs:
   gate:
     runs-on: windows-latest
     timeout-minutes: 30
-    env:
-      PYTHONUTF8: "1"
-      PYTHONHASHSEED: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
         with:
+          # Matches the uv_build range in pyproject.toml, so uv builds with its bundled
+          # backend and keeps the lock format; bump both together.
+          version: "0.12.21"
           enable-cache: true
       - name: Install the locked environment
         run: uv sync --locked
       - name: Tests (offline, without live and bench)
         run: uv run pytest
       - name: Evals against the baseline
+        # The report is UTF-8 JSON; the runner's console code page may not encode it.
+        env:
+          PYTHONIOENCODING: utf-8
         run: uv run scripts/run_evals.py --baseline tests/evals/baselines/agent_loop_v1.json --memory-seed tests/evals/memory_seed

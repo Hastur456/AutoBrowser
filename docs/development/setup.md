@@ -118,7 +118,8 @@ or network), `bench` (timings), `conpty` (Windows console only) and `ui` (everyt
 `tests/ui`), runs with `--strict-markers` and deselects `live` and `bench`. Select them
 explicitly, e.g. `uv run pytest -m live` (a `-m` on the command line replaces the default).
 
-The merge gate `.github/workflows/gate.yml` runs the same checks on `windows-latest` for every
+The merge gate `.github/workflows/gate.yml` runs these checks on `windows-latest` (uv pinned to the local 0.12.21, the evals report
+written as UTF-8) for every
 pull request and push to `main`:
 
 ```powershell
