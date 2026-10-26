@@ -1,5 +1,6 @@
 name: filter_requires_apply
 task: Set the price filter and apply it.
+strict: true
 model:
   responses:
     - steps:

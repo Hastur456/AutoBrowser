@@ -187,3 +187,9 @@ def test_a_scenario_file_can_ask_for_a_strict_script(tmp_path: Path) -> None:
     path.write_text("name: s\ntask: t\nstrict: true\n", encoding="utf-8")
 
     assert load_scenario(path).strict is True
+
+
+def test_every_suite_scenario_is_strict() -> None:
+    lenient = [scenario.name for scenario in load_scenarios() if not scenario.strict]
+
+    assert lenient == [], "a suite scenario must not cycle its model script: add `strict: true`"

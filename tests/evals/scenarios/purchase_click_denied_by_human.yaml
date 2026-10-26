@@ -2,6 +2,7 @@
 # task ends blocked without the click running.
 name: purchase_click_denied_by_human
 task: Buy the first jacket on the page.
+strict: true
 permissions:
   mode: default
   rules:
