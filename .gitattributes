@@ -1,0 +1,4 @@
+# Byte-compared test data stays LF in every checkout, whatever core.autocrlf says, so a
+# Windows clone and a Linux clone compare the same bytes.
+tests/**/__snapshots__/** text eol=lf
+tests/pipeline/cassettes/*.json text eol=lf

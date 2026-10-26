@@ -148,6 +148,14 @@ uv run pytest
 
 Run targeted tests with `uv run pytest tests\path\to_test.py`.
 
+The default run is offline: `pyproject.toml` registers the markers `live` (real model, browser
+or network), `bench` (timings), `conpty` (Windows console only) and `ui` (everything under
+`tests/ui`), runs with `--strict-markers` and deselects `live` and `bench`. Select them
+explicitly, e.g. `uv run pytest -m live` (a `-m` on the command line replaces the default).
+The merge gate `.github/workflows/gate.yml` runs `uv sync --locked`, `uv run pytest` and
+`scripts/run_evals.py` against `tests/evals/baselines/agent_loop_v1.json` (with and without
+`tests/evals/memory_seed`) on `windows-latest`.
+
 Useful focused test commands:
 
 ```powershell
