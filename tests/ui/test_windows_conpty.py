@@ -19,7 +19,10 @@ import pytest
 winpty = pytest.importorskip("winpty", reason="pywinpty is Windows-only")
 pyte = pytest.importorskip("pyte")
 
-pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="ConPTY is Windows-only")
+pytestmark = [
+    pytest.mark.conpty,
+    pytest.mark.skipif(sys.platform != "win32", reason="ConPTY is Windows-only"),
+]
 
 ROOT = Path(__file__).resolve().parents[2]
 COLUMNS, ROWS = 100, 30

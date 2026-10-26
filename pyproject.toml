@@ -101,7 +101,7 @@ dependencies = [
     "python-dotenv==1.2.1",
     "python-json-logger==4.0.0",
     "python-multipart==0.0.21",
-    "pywin32==311",
+    "pywin32==311 ; sys_platform == 'win32'",
     "pywin32-ctypes==0.2.3",
     "pyyaml==6.0.3",
     "redis==7.1.0",
@@ -135,6 +135,16 @@ dependencies = [
 # Tests import the app as ``src.*``; ``uv run pytest`` (unlike ``python -m pytest``) does not put
 # the repo root on sys.path by itself.
 pythonpath = ["."]
+# The default run is the offline gate: ``live`` and ``bench`` tests run only when asked for
+# (``-m live``, ``-m bench``; a later ``-m`` replaces this one). ``--strict-markers`` makes a
+# misspelled marker an error instead of an always-selected test.
+addopts = ["--strict-markers", "-m", "not live and not bench"]
+markers = [
+    "live: needs a real model, browser or network; excluded from the default run",
+    "bench: measures timings; excluded from the default run",
+    "conpty: drives a real Windows console (ConPTY); skipped elsewhere",
+    "ui: terminal UI tests (tests/ui)",
+]
 
 [project.scripts]
 autobrowser = "src.cli.entry:main"
