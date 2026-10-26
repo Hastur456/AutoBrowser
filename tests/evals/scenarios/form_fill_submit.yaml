@@ -1,0 +1,43 @@
+name: form_fill_submit
+task: Subscribe test@example.com to the newsletter on https://news.example/subscribe.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the subscription page, status: pending}
+    - {id: 2, description: Fill in the email and submit, status: pending}
+    - {id: 3, description: Confirm the subscription, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://news.example/subscribe'}, reason: Open the subscription page.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Find the email field.}
+  - decision: tool_call
+    tool_request: {name: browser_type, args: {ref: e3, text: test@example.com}, reason: Enter the email.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e4}, reason: Submit the form.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Check the result.}
+  - decision: done
+    final_answer: Subscribed test@example.com; the page confirms the subscription.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://news.example/subscribe
+    - heading "Newsletter" [ref=e2]
+    - textbox "Email" [ref=e3]
+    - button "Subscribe" [ref=e4]
+  - |-
+    - Page URL: https://news.example/subscribe
+    - textbox "Email" [ref=e3]: test@example.com
+    - button "Subscribe" [ref=e4]
+  - |-
+    - Page URL: https://news.example/subscribe/done
+    - heading "You are subscribed" [ref=e7]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - Subscribed
+  max_tool_calls: 5
+  max_repeated_actions: 0
+  max_policy_blocks: 0

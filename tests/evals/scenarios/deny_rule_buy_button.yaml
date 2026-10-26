@@ -1,0 +1,44 @@
+name: deny_rule_buy_button
+task: Buy the cheapest USB cable on https://shop.example/cables.
+strict: true
+permissions:
+  mode: dont_ask
+  rules:
+  - id: purchases
+    decision: deny
+    tool: browser_click
+    target: (?i)buy|купить
+    reason: Purchases are disabled for this agent.
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the cables page, status: pending}
+    - {id: 2, description: Find the cheapest cable, status: pending}
+    - {id: 3, description: Buy it, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://shop.example/cables'}, reason: Open the cables page.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Find the cheapest cable.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e6}, reason: Buy the cheapest cable.}
+  - decision: done
+    final_answer: 'Found the cheapest cable (USB-C 1m, $4.99) but did not buy it: purchases are disabled by policy.'
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://shop.example/cables
+    - listitem "USB-C 1m — $4.99" [ref=e5]
+    - button "Buy now" [ref=e6]
+    - listitem "USB-C 2m — $7.99" [ref=e7]
+    - button "Buy now" [ref=e8]
+  - |-
+    - Page URL: https://shop.example/checkout
+    - heading "Checkout" [ref=e10]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - did not buy
+  max_tool_calls: 2
+  max_repeated_actions: 0
+  max_policy_blocks: 1

@@ -1,0 +1,39 @@
+name: cyrillic_search_ru
+task: Найди на https://kniga.example книгу «Мастер и Маргарита» и назови цену.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Открыть магазин, status: pending}
+    - {id: 2, description: Найти книгу, status: pending}
+    - {id: 3, description: Назвать цену, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://kniga.example'}, reason: Открыть магазин.}
+  - decision: tool_call
+    tool_request: {name: browser_type, args: {ref: e2, text: Мастер и Маргарита}, reason: Ввести название.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Найти.}
+  - decision: done
+    final_answer: «Мастер и Маргарита» стоит 590 ₽.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://kniga.example/
+    - searchbox "Поиск по каталогу" [ref=e2]
+    - button "Найти" [ref=e3]
+  - |-
+    - Page URL: https://kniga.example/
+    - searchbox "Поиск по каталогу" [ref=e2]: Мастер и Маргарита
+    - button "Найти" [ref=e3]
+  - |-
+    - Page URL: https://kniga.example/search?q=мастер
+    - link "Мастер и Маргарита — М. Булгаков" [ref=e6]
+    - text "590 ₽" [ref=e7]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - 590 ₽
+  max_tool_calls: 3
+  max_repeated_actions: 0
+  max_policy_blocks: 0

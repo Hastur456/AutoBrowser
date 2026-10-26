@@ -1,0 +1,26 @@
+name: server_error_stop_failed
+task: Check today's exchange rate on https://rates.example.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the rates page, status: pending}
+    - {id: 2, description: Read the rate, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://rates.example'}, reason: Open the rates page.}
+  - decision: stop
+    status: failed
+    message: The site returns 500 Internal Server Error, so the rate is unavailable.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://rates.example/
+    - heading "500 Internal Server Error" [ref=e1]
+assertions:
+  expected_terminal_status: blocked
+  final_answer_contains:
+  - '500'
+  max_tool_calls: 1
+  max_repeated_actions: 0
+  max_policy_blocks: 0

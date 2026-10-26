@@ -1,0 +1,41 @@
+name: hover_reveal_menu_then_click
+task: On https://corp.example open the Careers page from the Company menu.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the site, status: pending}
+    - {id: 2, description: Open the Company menu, status: pending}
+    - {id: 3, description: Go to Careers, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://corp.example'}, reason: Open the site.}
+  - decision: tool_call
+    tool_request: {name: browser_hover, args: {ref: e3}, reason: Reveal the Company menu.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e6}, reason: Open Careers.}
+  - decision: done
+    final_answer: Opened the Careers page; it lists 4 open positions.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://corp.example/
+    - link "Home" [ref=e2]
+    - button "Company" [ref=e3]
+    - link "Contact" [ref=e4]
+  - |-
+    - Page URL: https://corp.example/
+    - button "Company" [ref=e3]
+    - menuitem "About" [ref=e5]
+    - menuitem "Careers" [ref=e6]
+  - |-
+    - Page URL: https://corp.example/careers
+    - heading "Careers" [ref=e8]
+    - text "4 open positions" [ref=e9]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - Careers
+  max_tool_calls: 3
+  max_repeated_actions: 0
+  max_policy_blocks: 0

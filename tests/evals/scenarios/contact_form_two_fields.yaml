@@ -1,0 +1,47 @@
+name: contact_form_two_fields
+task: Send the message 'Is the store open on Sunday?' as Anna via the contact form at https://bakery.example/contact.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the contact form, status: pending}
+    - {id: 2, description: Fill name and message, status: pending}
+    - {id: 3, description: Send, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://bakery.example/contact'}, reason: Open the contact form.}
+  - decision: tool_call
+    tool_request: {name: browser_type, args: {ref: e2, text: Anna}, reason: Enter the name.}
+  - decision: tool_call
+    tool_request: {name: browser_type, args: {ref: e3, text: 'Is the store open on Sunday?'}, reason: Enter the message.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e4}, reason: Send the message.}
+  - decision: done
+    final_answer: Message sent; the page says 'Thanks, we will reply soon'.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://bakery.example/contact
+    - textbox "Name" [ref=e2]
+    - textbox "Message" [ref=e3]
+    - button "Send" [ref=e4]
+  - |-
+    - Page URL: https://bakery.example/contact
+    - textbox "Name" [ref=e2]: Anna
+    - textbox "Message" [ref=e3]
+    - button "Send" [ref=e4]
+  - |-
+    - Page URL: https://bakery.example/contact
+    - textbox "Name" [ref=e2]: Anna
+    - textbox "Message" [ref=e3]: Is the store open on Sunday?
+    - button "Send" [ref=e4]
+  - |-
+    - Page URL: https://bakery.example/contact/sent
+    - heading "Thanks, we will reply soon" [ref=e6]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - Message sent
+  max_tool_calls: 4
+  max_repeated_actions: 0
+  max_policy_blocks: 0

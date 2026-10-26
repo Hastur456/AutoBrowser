@@ -1,0 +1,27 @@
+name: url_with_query_and_fragment
+task: Open https://maps.example/search?q=café&lang=fr#results and name the first place.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the search URL, status: pending}
+    - {id: 2, description: Name the first place, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://maps.example/search?q=café&lang=fr#results'}, reason: Open the search URL.}
+  - decision: done
+    final_answer: The first place is Café de l'Époque.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://maps.example/search?q=caf%C3%A9&lang=fr#results
+    - heading "Résultats" [ref=e1]
+    - link "Café de l'Époque" [ref=e2]
+    - link "Le Petit Café" [ref=e3]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - Café de l'Époque
+  max_tool_calls: 1
+  max_repeated_actions: 0
+  max_policy_blocks: 0

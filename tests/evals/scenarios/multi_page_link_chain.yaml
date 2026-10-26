@@ -1,0 +1,44 @@
+name: multi_page_link_chain
+task: Starting from https://wiki.example, go to Rivers and then to the Volga article and report its length.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the wiki, status: pending}
+    - {id: 2, description: Go to Rivers, status: pending}
+    - {id: 3, description: Open Volga, status: pending}
+    - {id: 4, description: Report the length, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://wiki.example'}, reason: Open the wiki.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Open the Rivers category.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e12}, reason: Open the Volga article.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Find the length in the article.}
+  - decision: done
+    final_answer: The Volga is 3530 km long.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://wiki.example/
+    - link "Mountains" [ref=e2]
+    - link "Rivers" [ref=e3]
+    - link "Lakes" [ref=e4]
+  - |-
+    - Page URL: https://wiki.example/rivers
+    - heading "Rivers" [ref=e10]
+    - link "Danube" [ref=e11]
+    - link "Volga" [ref=e12]
+  - |-
+    - Page URL: https://wiki.example/rivers/volga
+    - heading "Volga" [ref=e20]
+    - text "Length: 3530 km" [ref=e21]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - '3530'
+  max_tool_calls: 4
+  max_repeated_actions: 0
+  max_policy_blocks: 0

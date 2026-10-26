@@ -1,0 +1,42 @@
+name: ask_denied_by_human_blocked
+task: Buy the 4K monitor on https://shop.example/monitors/4k.
+strict: true
+permissions:
+  mode: default
+  rules:
+  - id: purchases
+    decision: ask
+    tool: browser_click
+    target: (?i)buy|place order|купить
+  - id: allow_rest
+    decision: allow
+    tool: .*
+human:
+  answers:
+  - deny
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the page, status: pending}
+    - {id: 2, description: Buy the monitor, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://shop.example/monitors/4k'}, reason: Open the page.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Find the buy button.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Buy the monitor.}
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://shop.example/monitors/4k
+    - heading "27\" 4K Monitor — $399" [ref=e2]
+    - button "Buy now" [ref=e3]
+  - |-
+    - Page URL: https://shop.example/orders/9001
+    - heading "Order confirmed" [ref=e5]
+assertions:
+  expected_terminal_status: blocked
+  max_tool_calls: 2
+  max_repeated_actions: 0
+  max_policy_blocks: 0

@@ -1,0 +1,43 @@
+name: ref_from_next_snapshot
+task: Accept the cookie banner on https://media.example and open the Videos section.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the site, status: pending}
+    - {id: 2, description: Accept cookies, status: pending}
+    - {id: 3, description: Open Videos, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://media.example'}, reason: Open the site.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e9}, reason: Open Videos.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Ref not found; re-read the page.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e2}, reason: Accept cookies first.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e9}, reason: Open Videos.}
+  - decision: done
+    final_answer: Accepted cookies and opened the Videos section.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://media.example/
+    - dialog "Cookies" [ref=e1]
+    - button "Accept" [ref=e2]
+    - button "Reject" [ref=e3]
+  - |-
+    - Page URL: https://media.example/
+    - link "News" [ref=e8]
+    - link "Videos" [ref=e9]
+  - |-
+    - Page URL: https://media.example/videos
+    - heading "Videos" [ref=e15]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - Videos
+  max_tool_calls: 5
+  max_repeated_actions: 0
+  max_policy_blocks: 0

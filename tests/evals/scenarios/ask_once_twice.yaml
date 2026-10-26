@@ -1,0 +1,56 @@
+name: ask_once_twice
+task: Buy the A5 and the A4 notebooks on https://stationery.example.
+strict: true
+permissions:
+  mode: default
+  rules:
+  - id: purchases
+    decision: ask
+    tool: browser_click
+    target: (?i)buy|place order|купить
+  - id: allow_rest
+    decision: allow
+    tool: .*
+human:
+  answers:
+  - once
+  - once
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the shop, status: pending}
+    - {id: 2, description: Buy A5, status: pending}
+    - {id: 3, description: Buy A4, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://stationery.example'}, reason: Open the shop.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Find the notebooks.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Buy the A5 notebook.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Find the A4 notebook.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e5}, reason: Buy the A4 notebook.}
+  - decision: done
+    final_answer: 'Bought both notebooks: A5 and A4.'
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://stationery.example/
+    - button "Buy A5" [ref=e3]
+    - button "Buy A4" [ref=e5]
+  - |-
+    - Page URL: https://stationery.example/
+    - status "A5 added to order" [ref=e7]
+    - button "Buy A4" [ref=e5]
+  - |-
+    - Page URL: https://stationery.example/
+    - status "A4 added to order" [ref=e8]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - both notebooks
+  max_tool_calls: 5
+  max_repeated_actions: 0
+  max_policy_blocks: 0

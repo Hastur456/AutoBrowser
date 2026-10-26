@@ -1,0 +1,19 @@
+name: no_tool_unit_conversion
+task: How many meters are in 5.2 kilometers? No browsing needed.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Convert kilometers to meters, status: pending}
+  - decision: done
+    final_answer: 5.2 kilometers is 5200 meters.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - '5200'
+  max_tool_calls: 0
+  max_repeated_actions: 0
+  max_policy_blocks: 0

@@ -1,0 +1,27 @@
+name: turn_cap_alternating_clicks
+task: Find the hidden FAQ answer about refunds on https://help.example.
+strict: true
+turn_cap: 3
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open help, status: pending}
+    - {id: 2, description: Find the refund answer, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://help.example'}, reason: Open help.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e2}, reason: Open General.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Open Billing.}
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://help.example/
+    - tab "General" [ref=e2]
+    - tab "Billing" [ref=e3]
+assertions:
+  expected_terminal_status: blocked
+  max_tool_calls: 3
+  max_repeated_actions: 0
+  max_policy_blocks: 0

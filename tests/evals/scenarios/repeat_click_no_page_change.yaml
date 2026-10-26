@@ -1,0 +1,41 @@
+name: repeat_click_no_page_change
+task: Load more comments on https://blog.example/post/7 until all are shown.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the post, status: pending}
+    - {id: 2, description: Load all comments, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://blog.example/post/7'}, reason: Open the post.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e5}, reason: Load more comments.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e5}, reason: Load more comments.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e5}, reason: Load more comments.}
+  - steps:
+    - {id: 1, description: Report the comments shown, status: pending}
+  - decision: done
+    final_answer: The 'Load more' button no longer changes the page; 3 comments are shown.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://blog.example/post/7
+    - heading "Post 7" [ref=e2]
+    - article "Comment 1" [ref=e3]
+    - button "Load more" [ref=e5]
+  - |-
+    - Page URL: https://blog.example/post/7
+    - article "Comment 1" [ref=e3]
+    - article "Comment 2" [ref=e4]
+    - article "Comment 3" [ref=e6]
+    - button "Load more" [ref=e5]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - Load more
+  max_tool_calls: 3
+  max_repeated_actions: 1
+  max_policy_blocks: 0

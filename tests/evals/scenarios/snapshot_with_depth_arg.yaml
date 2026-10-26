@@ -1,0 +1,32 @@
+name: snapshot_with_depth_arg
+task: List the top-level sections of https://portal.example.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the portal, status: pending}
+    - {id: 2, description: List the sections, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://portal.example'}, reason: Open the portal.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {depth: 2}, reason: Read only the top-level structure.}
+  - decision: done
+    final_answer: 'Sections: News, Projects, Team.'
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://portal.example/
+    - navigation "Main" [ref=e1]
+    - link "News" [ref=e2]
+    - link "Projects" [ref=e3]
+    - link "Team" [ref=e4]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - News
+  - Projects
+  - Team
+  max_tool_calls: 2
+  max_repeated_actions: 0
+  max_policy_blocks: 0

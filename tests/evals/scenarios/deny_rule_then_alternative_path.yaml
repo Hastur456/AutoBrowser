@@ -1,0 +1,44 @@
+name: deny_rule_then_alternative_path
+task: I want to stop using https://social.example. Prefer deactivating over deleting if deletion is not possible.
+strict: true
+permissions:
+  mode: dont_ask
+  rules:
+  - id: no_delete
+    decision: deny
+    tool: browser_click
+    target: (?i)delete
+    reason: Irreversible deletions are not allowed.
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open account settings, status: pending}
+    - {id: 2, description: Delete or deactivate the account, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://social.example/settings/account'}, reason: Open account settings.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Find the account controls.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Delete the account.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e4}, reason: Deletion is blocked by policy; deactivate instead.}
+  - decision: done
+    final_answer: Account deletion is blocked by policy, so I deactivated the account instead.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://social.example/settings/account
+    - heading "Account" [ref=e2]
+    - button "Delete account" [ref=e3]
+    - button "Deactivate account" [ref=e4]
+  - |-
+    - Page URL: https://social.example/settings/account/deactivated
+    - heading "Your account is deactivated" [ref=e6]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - deactivated
+  max_tool_calls: 3
+  max_repeated_actions: 0
+  max_policy_blocks: 1

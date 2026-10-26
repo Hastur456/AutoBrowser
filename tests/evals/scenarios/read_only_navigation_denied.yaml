@@ -1,0 +1,32 @@
+name: read_only_navigation_denied
+task: Open https://shop.example/sale and list the discounted items.
+strict: true
+permissions:
+  mode: read_only
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the sale page, status: pending}
+    - {id: 2, description: List the discounted items, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://shop.example/sale'}, reason: Open the sale page.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Navigation is not allowed; read the current page instead.}
+  - decision: done
+    final_answer: 'Could not open the sale page: navigation is not allowed in read-only mode. The current page shows no sale items.'
+browser:
+  snapshots:
+  - |-
+    - Page URL: https://shop.example/
+    - heading "Shop" [ref=e1]
+    - link "Sale" [ref=e2]
+  - |-
+    - Page URL: https://shop.example/sale
+    - listitem "Jacket A −30%" [ref=e5]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - read-only
+  max_tool_calls: 1
+  max_repeated_actions: 0
+  max_policy_blocks: 1

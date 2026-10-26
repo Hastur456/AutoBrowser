@@ -1,0 +1,38 @@
+name: deny_rule_by_domain
+task: Click 'Confirm transfer' on the current page.
+strict: true
+permissions:
+  mode: dont_ask
+  rules:
+  - id: no_bank
+    decision: deny
+    tool: browser_(click|type)
+    domains:
+    - bank.example
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Find the button, status: pending}
+    - {id: 2, description: Confirm the transfer, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Find the button.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Confirm the transfer.}
+  - decision: done
+    final_answer: 'Did not confirm the transfer: actions on bank.example are blocked by policy.'
+browser:
+  snapshots:
+  - |-
+    - Page URL: https://bank.example/transfer/confirm
+    - heading "Confirm transfer of €200" [ref=e2]
+    - button "Confirm transfer" [ref=e3]
+  - |-
+    - Page URL: https://bank.example/transfer/done
+    - heading "Transfer sent" [ref=e5]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - blocked by policy
+  max_tool_calls: 1
+  max_repeated_actions: 0
+  max_policy_blocks: 1

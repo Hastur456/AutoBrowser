@@ -1,0 +1,38 @@
+name: bypass_mode_skips_ask
+task: Place the order in the current cart.
+strict: true
+permissions:
+  mode: bypass
+  rules:
+  - id: purchases
+    decision: ask
+    tool: browser_click
+    target: (?i)buy|place order
+human:
+  answers: []
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Place the order, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Find the order button.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Place the order.}
+  - decision: done
+    final_answer: Order placed; confirmation number A-1029.
+browser:
+  snapshots:
+  - |-
+    - Page URL: https://shop.example/cart
+    - text "Total: $18.00" [ref=e2]
+    - button "Place order" [ref=e3]
+  - |-
+    - Page URL: https://shop.example/orders/A-1029
+    - heading "Order A-1029 placed" [ref=e5]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - A-1029
+  max_tool_calls: 2
+  max_repeated_actions: 0
+  max_policy_blocks: 0

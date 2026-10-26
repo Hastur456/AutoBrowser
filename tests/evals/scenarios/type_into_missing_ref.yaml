@@ -1,0 +1,43 @@
+name: type_into_missing_ref
+task: Log the weight 72.5 in the tracker at https://health.example/log.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the tracker, status: pending}
+    - {id: 2, description: Enter the weight, status: pending}
+    - {id: 3, description: Save, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://health.example/log'}, reason: Open the tracker.}
+  - decision: tool_call
+    tool_request: {name: browser_type, args: {ref: e5, text: '72.5'}, reason: Enter the weight.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Field ref not found; re-read the form.}
+  - decision: tool_call
+    tool_request: {name: browser_type, args: {ref: e3, text: '72.5'}, reason: Enter the weight in the correct field.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e4}, reason: Save the entry.}
+  - decision: done
+    final_answer: Saved the entry 72.5 kg.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://health.example/log
+    - heading "Log entry" [ref=e2]
+    - spinbutton "Weight, kg" [ref=e3]
+    - button "Save" [ref=e4]
+  - |-
+    - Page URL: https://health.example/log
+    - spinbutton "Weight, kg" [ref=e3]: "72.5"
+    - button "Save" [ref=e4]
+  - |-
+    - Page URL: https://health.example/log/saved
+    - text "Saved: 72.5 kg" [ref=e7]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - '72.5'
+  max_tool_calls: 5
+  max_repeated_actions: 0
+  max_policy_blocks: 0

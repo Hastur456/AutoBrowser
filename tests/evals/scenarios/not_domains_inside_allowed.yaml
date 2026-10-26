@@ -1,0 +1,38 @@
+name: not_domains_inside_allowed
+task: Open the 'Vacation request' form from the current page.
+strict: true
+permissions:
+  mode: dont_ask
+  rules:
+  - id: only_intranet
+    decision: deny
+    tool: browser_click
+    not_domains:
+    - intranet.example
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the form, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Find the form link.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Open the Vacation request form.}
+  - decision: done
+    final_answer: Opened the Vacation request form.
+browser:
+  snapshots:
+  - |-
+    - Page URL: https://intranet.example/hr
+    - heading "HR" [ref=e1]
+    - link "Payslips" [ref=e2]
+    - link "Vacation request" [ref=e3]
+  - |-
+    - Page URL: https://intranet.example/hr/vacation
+    - heading "Vacation request" [ref=e6]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - Vacation request
+  max_tool_calls: 2
+  max_repeated_actions: 0
+  max_policy_blocks: 0
