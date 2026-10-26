@@ -1,7 +1,7 @@
 # Автономный пайплайн тестирования AutoBrowser: регрессии, бенчмарки, решение по Langfuse
 
 Статус: Proposed (проект). Шаг 2 плана (usage) и часть шага 1 сделаны веткой провайдеров;
-состояние на 2026-10-23 и порядок старта — §1.3.
+состояние на 2026-10-23 и порядок старта — §1.3. Шаг 0 и минимальный гейт сделаны 2026-10-27.
 Дата: 2026-10-19
 Ветка: `ref/new-gui-design`
 ADR (Proposed):
@@ -136,9 +136,20 @@ ADR (Proposed):
   `error_preview_chars`, `temperature: null`. Нет `PipelineSettings`, `storage.ci_dir`,
   `llm.seed` и цен `llm.input_price_per_mtok`/`output_price_per_mtok`, без которых `cost`
   остаётся «неизвестно».
-- **Шаги 0 и 3–15 не начаты.** `pywin32==311` по-прежнему без маркера платформы (P10):
-  `uv sync` на Linux-раннере упадёт. Маркеров pytest нет (P11), `.gitattributes` нет. `pyte`
-  и `pywinpty` (с маркером `win32`) уже в зависимостях — их принёс TUI.
+- **Шаги 3–15 не начаты.**
+- **Шаг 0 — сделан 2026-10-27** (P10, P11 закрыты):
+  - `pywin32==311 ; sys_platform == 'win32'`. В `uv.lock` у Linux-ветки нет пакетов без
+    колеса или sdist. Живой `uv sync --locked` на Linux не проверялся.
+  - Маркеры `live`, `bench`, `conpty`, `ui`, `--strict-markers` и
+    `addopts = -m "not live and not bench"` заданы в `pyproject.toml`. `ui` вешает
+    `tests/ui/conftest.py`, `conpty` — `tests/ui/test_windows_conpty.py`.
+  - `.gitattributes` — строки из §5.1.
+  - `syrupy` в группу `dev` не добавлен: снимки TUI сделаны без него, а группа `dev` с
+    `pyte` и `pywinpty` уже есть.
+- **Минимальный гейт (рекомендация 1) — сделан 2026-10-27.** `.github/workflows/gate.yml`
+  запускается на `windows-latest`: `uv sync --locked`, `uv run pytest`, затем
+  `scripts/run_evals.py` против `agent_loop_v1.json` без `tests/evals/memory_seed` и с ним.
+  Ветку `ubuntu-latest` добавит шаг 13.
 
 **Что устарело в §1.**
 - P7 решена: адаптер Ollama отдаёт `prompt_eval_count`, `eval_count`, `total_duration` и

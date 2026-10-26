@@ -113,6 +113,20 @@ Run the full test suite:
 uv run pytest
 ```
 
+The default run is offline: `pyproject.toml` registers the markers `live` (real model, browser
+or network), `bench` (timings), `conpty` (Windows console only) and `ui` (everything under
+`tests/ui`), runs with `--strict-markers` and deselects `live` and `bench`. Select them
+explicitly, e.g. `uv run pytest -m live` (a `-m` on the command line replaces the default).
+
+The merge gate `.github/workflows/gate.yml` runs the same checks on `windows-latest` for every
+pull request and push to `main`:
+
+```powershell
+uv sync --locked
+uv run pytest
+uv run scripts/run_evals.py --baseline tests/evals/baselines/agent_loop_v1.json --memory-seed tests/evals/memory_seed
+```
+
 Run a targeted file:
 
 ```powershell
