@@ -182,8 +182,8 @@ Every tunable lives in `src/config.py` — a pydantic-settings root read at call
 never imports it back). See
 `docs/decisions/2026-09-16-typed-settings-module.md` and the `.env.example` template.
 
-Names are `AUTOBROWSER_<SECTION>__<FIELD>` over twelve sections (`llm`, `browser`, `loop`,
-`observation`, `memory`, `skills`, `events`, `storage`, `flags`, `hooks`, `permissions`, `ui`). Env outranks `.env` outranks the code
+Names are `AUTOBROWSER_<SECTION>__<FIELD>` over thirteen sections (`llm`, `browser`, `loop`,
+`observation`, `memory`, `skills`, `events`, `storage`, `flags`, `hooks`, `permissions`, `ui`, `pipeline`). Env outranks `.env` outranks the code
 defaults; an empty value means "not set"; sections are `frozen` with `extra="forbid"`.
 `AUTOBROWSER_LLM__API_KEY` is passed to the provider as an explicit `Authorization: Bearer`
 header — the vendor `OLLAMA_API_KEY` is no longer read. Adding a setting means updating
@@ -373,7 +373,7 @@ uv run main.py doctor --llm                   # + list the provider's models ove
 uv run main.py --show-state --task "..."      # debug state per step
 
 uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
-uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
+uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v2.json
 uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
 ```
 

@@ -1329,3 +1329,22 @@ def test_skills_env_names_resolve(settings: Any, monkeypatch: pytest.MonkeyPatch
 def test_skills_bounds_are_enforced(settings: Any, field: str, value: Any) -> None:
     with pytest.raises(ValueError):
         settings(skills={field: value})
+
+
+# --------------------------------------------------------------------------
+# The pipeline section: tolerances of the regression tools
+# --------------------------------------------------------------------------
+
+
+def test_pipeline_defaults_and_env_override(settings: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert settings().pipeline.request_chars_tolerance == 0.10
+
+    monkeypatch.setenv("AUTOBROWSER_PIPELINE__REQUEST_CHARS_TOLERANCE", "0.25")
+
+    assert settings().pipeline.request_chars_tolerance == 0.25
+
+
+@pytest.mark.parametrize("value", [-0.01, 10.5])
+def test_pipeline_bounds_are_enforced(settings: Any, value: float) -> None:
+    with pytest.raises(ValueError):
+        settings(pipeline={"request_chars_tolerance": value})

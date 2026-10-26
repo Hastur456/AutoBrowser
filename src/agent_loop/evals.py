@@ -16,6 +16,7 @@ import yaml
 from src.llm import ModelResponse
 from src.messages import Message
 
+from src.agent_loop.comparison import Finding
 from src.agent_loop.context import ContextAssembler, PromptSection
 from src.agent_loop.events import EventEmitter, EventRecord, InMemoryEventSink
 from src.agent_loop.execution.loop import Agent
@@ -647,6 +648,10 @@ async def collect_eval_metrics(
     return runs
 
 
+#: The problem line of a strict scenario that ran out of scripted model responses.
+SCRIPT_EXHAUSTED_PROBLEM = "the strict model script ran out of responses"
+
+
 def check_scenario_result(scenario: EvalScenario, result: EvalResult) -> list[str]:
     """The configured scenario expectations the result misses, as readable lines."""
 
@@ -654,7 +659,7 @@ def check_scenario_result(scenario: EvalScenario, result: EvalResult) -> list[st
     assertions = scenario.assertions
     problems: list[str] = []
     if result.script_exhausted:
-        problems.append("the strict model script ran out of responses")
+        problems.append(SCRIPT_EXHAUSTED_PROBLEM)
     if summary.terminal_status != assertions.expected_terminal_status:
         problems.append(
             f"terminal_status: expected {assertions.expected_terminal_status!r},"
@@ -674,6 +679,27 @@ def check_scenario_result(scenario: EvalScenario, result: EvalResult) -> list[st
     if summary.trace_complete is not True:
         problems.append("trace_complete: the trace has no goal.started or no terminal event")
     return problems
+
+
+def run_findings(runs: Sequence[ScenarioRun], *, suite: str) -> list[Finding]:
+    """Comparison findings of the runs themselves, before any baseline is consulted.
+
+    An exhausted strict script is ``script_exhausted``; every other failed scenario assertion
+    is a ``regression`` of the ``assertions`` metric.
+    """
+
+    findings: list[Finding] = []
+    for run in runs:
+        if run.result.script_exhausted:
+            findings.append(
+                Finding("script_exhausted", suite, run.name, message=SCRIPT_EXHAUSTED_PROBLEM)
+            )
+        for problem in run.problems:
+            if problem != SCRIPT_EXHAUSTED_PROBLEM:
+                findings.append(
+                    Finding("regression", suite, run.name, metric="assertions", message=problem)
+                )
+    return findings
 
 
 def assert_scenario_result(scenario: EvalScenario, result: EvalResult) -> None:
@@ -698,8 +724,10 @@ __all__ = [
     "ScriptExhaustedError",
     "action_signature",
     "assert_scenario_result",
+    "SCRIPT_EXHAUSTED_PROBLEM",
     "check_scenario_result",
     "collect_eval_metrics",
     "load_scenario",
+    "run_findings",
     "run_scenario",
 ]

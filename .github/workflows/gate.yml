@@ -37,4 +37,4 @@ jobs:
         # The report is UTF-8 JSON; the runner's console code page may not encode it.
         env:
           PYTHONIOENCODING: utf-8
-        run: uv run scripts/run_evals.py --baseline tests/evals/baselines/agent_loop_v1.json --memory-seed tests/evals/memory_seed
+        run: uv run scripts/run_evals.py --baseline tests/evals/baselines/agent_loop_v2.json --memory-seed tests/evals/memory_seed

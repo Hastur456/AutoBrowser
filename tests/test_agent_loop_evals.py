@@ -17,12 +17,14 @@ from src.agent_loop.evals import (
     load_scenario,
     run_scenario,
 )
+from src.agent_loop.comparison import compare, deterministic_rules, load_baseline
 from src.agent_loop.events import EventEmitter, InMemoryEventSink
 from src.contracts import ToolDef
 from src.messages import Message, ToolCall
-from tests.evals.runner import load_scenarios
+from src.config import PipelineSettings
+from tests.evals.runner import load_scenarios, seed_memory
 
-BASELINE_PATH = Path("tests/evals/baselines/agent_loop_v1.json")
+BASELINE_PATH = Path("tests/evals/baselines/agent_loop_v2.json")
 PLAN = {"steps": [{"id": 1, "description": "Do the task", "status": "pending"}]}
 SNAPSHOT = {"decision": "tool_call", "tool_request": {"name": "browser_snapshot", "args": {}}}
 
@@ -53,17 +55,32 @@ async def test_eval_scenarios_pass_configured_assertions(scenario) -> None:
 
 @pytest.mark.asyncio
 async def test_eval_scenarios_match_baseline() -> None:
-    baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
-    results = {}
-    for scenario in load_scenarios():
-        result = await run_scenario(scenario)
-        results[scenario.name] = {
-            key: value
-            for key, value in result.metrics().items()
-            if key != "final_answer"
-        }
+    baseline = load_baseline(BASELINE_PATH)
+    runs = await collect_eval_metrics(load_scenarios())
+    results = {run.name: run.result.baseline_metrics() for run in runs}
 
-    assert results == baseline
+    report = compare(
+        results, baseline.scenarios, deterministic_rules(PipelineSettings()), suite="agent_loop"
+    )
+
+    assert not report.failed, "\n".join(finding.describe() for finding in report.findings)
+
+
+@pytest.mark.asyncio
+async def test_eval_scenarios_with_memory_match_the_memory_block() -> None:
+    baseline = load_baseline(BASELINE_PATH)
+    assert baseline.scenarios_with_memory is not None
+    runs = await collect_eval_metrics(load_scenarios(), memory_factory=seed_memory)
+    results = {run.name: run.result.baseline_metrics() for run in runs}
+
+    report = compare(
+        results,
+        baseline.scenarios_with_memory,
+        deterministic_rules(PipelineSettings()),
+        suite="agent_loop+memory",
+    )
+
+    assert not report.failed, "\n".join(finding.describe() for finding in report.findings)
 
 
 @pytest.mark.asyncio

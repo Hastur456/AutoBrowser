@@ -125,7 +125,7 @@ pull request and push to `main`:
 ```powershell
 uv sync --locked
 uv run pytest
-uv run scripts/run_evals.py --baseline tests/evals/baselines/agent_loop_v1.json --memory-seed tests/evals/memory_seed
+uv run scripts/run_evals.py --baseline tests/evals/baselines/agent_loop_v2.json --memory-seed tests/evals/memory_seed
 ```
 
 Run a targeted file:
@@ -249,7 +249,7 @@ uv run scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.j
 Compare deterministic fake-browser eval scenarios with the baseline:
 
 ```powershell
-uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
+uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v2.json
 ```
 
 ## Development Guidelines

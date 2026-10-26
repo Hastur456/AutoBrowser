@@ -153,7 +153,7 @@ or network), `bench` (timings), `conpty` (Windows console only) and `ui` (everyt
 `tests/ui`), runs with `--strict-markers` and deselects `live` and `bench`. Select them
 explicitly, e.g. `uv run pytest -m live` (a `-m` on the command line replaces the default).
 The merge gate `.github/workflows/gate.yml` runs `uv sync --locked`, `uv run pytest` and
-`scripts/run_evals.py` against `tests/evals/baselines/agent_loop_v1.json` (with and without
+`scripts/run_evals.py` against `tests/evals/baselines/agent_loop_v2.json` (with and without
 `tests/evals/memory_seed`) on `windows-latest`.
 
 Useful focused test commands:
@@ -207,7 +207,7 @@ uv run scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.j
 Run deterministic fake-browser eval baselines:
 
 ```powershell
-uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v1.json
+uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v2.json
 ```
 
 Start the interactive terminal UI with:
