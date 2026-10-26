@@ -403,9 +403,12 @@ Focused test groups are grouped by area in `AGENTS.md` / `docs/development/setup
 - Update `docs/diagrams/` when engine phases, loop boundaries, session lifecycle, harness
   injection, policy routing, or MCP integration change. Add superseding ADRs; don't rewrite
   historical ones.
-- **Review every implementation.** After any change to code (`src/`, `tests/`, `scripts/`,
-  `main.py`) and before reporting the work as done, committing or opening a PR, run the
-  user-level `code-reviewer` subagent (`~/.claude/agents/code-reviewer.md`) over the change
-  without waiting to be asked. It only reports findings; fix the confirmed ones yourself, tell
-  the user about any you leave unfixed (with the reason), and re-run the reviewer after
-  non-trivial fixes. Doc-only changes don't need it.
+- **Review substantial implementations, once.** Don't run the `code-reviewer` subagent on
+  every small change. Run it unasked only for substantial code changes: new or changed
+  behavior in `src/`, `scripts/` or `main.py`, or a multi-step feature. Run it once over the
+  whole batch at the end, before reporting the work as done or committing, not after each
+  step. Skip it for small or mechanical changes: dependency or lock bumps, pytest markers and
+  config, CI/workflow files, `.gitattributes`, one-liners, test-only tweaks and docs. In
+  those cases run it only when the user asks. It only reports findings. Fix the confirmed
+  ones yourself, and tell the user about any you leave unfixed and why. Re-run it only after
+  non-trivial fixes.
