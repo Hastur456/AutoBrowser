@@ -227,6 +227,9 @@ context-mode switch (and its `legacy` rollback path) was removed.
 
 ## Batch, Export, Replay, And Evals
 
+The [Testing Pipeline Guide](testing-pipeline.md) walks through a live Golden Set run end to end:
+prerequisites, where the answers and traces land, and how to read the grades.
+
 Run JSONL Golden Set scenarios through fresh `SessionRuntime` instances:
 
 ```powershell

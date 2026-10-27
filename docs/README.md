@@ -9,6 +9,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   loop shape, runtime boundaries, and browser semantics.
 - [Development Setup](development/setup.md): environment setup, tests, CLI
   usage, and prompt-change workflow.
+- [Testing Pipeline Guide](development/testing-pipeline.md): the offline gate (tests, scripted
+  evals, the v2 baseline) and the live Golden Set run — prerequisites, command, where the
+  answers and traces land, reading grades, writing `expected`.
 - [Browser Agent Rules](development/browser-agent-rules.md): Playwright MCP
   interaction rules and search-flow debugging guidance.
 - [Agent Skills Guide](development/skills.md): `SKILL.md` skills — format, built-in and

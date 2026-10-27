@@ -30,6 +30,7 @@
 | ContextAssembler | The sole prompt-construction boundary in `src/agent_loop/context.py`: builds the durable system prompt, the per-turn user prompt, and the planner prompt from ordered `ContextBlock`s. |
 | Direct search URL fallback | Navigating directly to a site's search results URL when UI search controls do not make progress. |
 | EngineResources | Bundled runtime collaborators (`llm`, `tool_registry`, `tool_normalizers`, `context`, `events`, `hooks`, `permissions`, `approval`, `memory`) built from `BrowserHarness` (plus the session's `HookEngine`, `PermissionEngine`, `ApprovalJudge` and `MemoryContext`) and passed to `AgentLoopEngine`. |
+| Eval baseline | Committed metric record per scripted eval scenario (`tests/evals/baselines/agent_loop_v2.json`, schema v2, with a `scenarios_with_memory` block) that `scripts/run_evals.py` compares a hermetic run against; rewritten only by `--write-baseline`. |
 | EventRecord | Durable JSON-safe event envelope for session, goal, engine, model, action, policy, tool, observation, and terminal lifecycle events. |
 | Executor | Engine phase that resolves and invokes approved tool requests through `ToolBroker`/`ToolRegistry`. |
 | Export row | JSONL task-level analytics row produced by `scripts/export_sessions.py` from persisted session, task, event, feedback, and batch metadata. |
@@ -39,6 +40,8 @@
 | GoalLimits | Frozen time budgets of one goal run (`timeout_seconds`, `progress_timeout_seconds`), built from `LoopSettings` by `GoalLimits.from_settings()`. |
 | GoalRunResult | Frozen terminal object returned by `GoalRunner`: the `TaskRequest`, the `AgentLoopResult` and the explicit terminal `GoalStatus`. |
 | GoalStatus | Terminal goal lifecycle status (`completed`/`failed`/`cancelled`/`blocked`) returned by `GoalRunner` in `GoalRunResult`, derived from the engine's `CompletionStatus`. |
+| Golden Set | Real-site task scenarios in `tests/golden/tasks.jsonl`, run live with `scripts/run_batch.py` and graded by their final answer against an `expected` mapping of checks. |
+| Grader | A generic check of a final answer's text (`contains`, `regex`, `items`, `numbers_at_most`, …) in `src/agent_loop/graders.py`; a key without one is reported as `ungraded`. |
 | Harness | Runtime layer around the engine; owns infrastructure that should not be hardcoded into loop code. |
 | Hook | Deterministic check registered in `hooks.registry` (`src/harness/hooks.py`) that can deny/ask/rewrite a tool call, rewrite its output, add model context, or reject a premature completion at a fixed lifecycle point. Disabled by default. |
 | Hook event | One lifecycle point a hook runs on (`goal_start`, `pre_tool_use`, `permission_request`, `post_tool_use`, `post_tool_use_failure`, `stop`, `goal_end`), and the neutral `HookEvent` object handed to it. |
