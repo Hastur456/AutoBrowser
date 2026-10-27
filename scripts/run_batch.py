@@ -171,6 +171,8 @@ def _add_session_defaults(parser: argparse.ArgumentParser) -> None:
         show_tools=False,
         json=False,
         compress_tools=False,
+        # Inert since the engine-native loop is the only runtime, but SessionConfig reads it.
+        agent_loop=settings.flags.agent_loop,
         cdp_timeout=settings.browser.cdp_timeout_seconds,
         # Nobody answers approvals in a batch: a configured ``default`` mode becomes
         # ``dont_ask`` (approvals are non-terminal denies), even when run from a terminal.

@@ -216,3 +216,19 @@ def test_main_exits_1_only_for_a_failed_grade_or_scenario_under_grade(
 
     assert run_batch_script.main(argv) == expected_code
     assert received["grade"] is grade
+
+
+def test_the_parsed_args_build_a_real_session(tmp_path: Path) -> None:
+    """The real session builder reads every attribute it needs from run_batch's parser."""
+
+    from src.cli.bootstrap import build_session
+
+    args = run_batch_script.build_parser().parse_args(
+        ["--tasks", str(tmp_path / "tasks.jsonl"), "--no-mcp"]
+    )
+
+    session = build_session(args)
+
+    assert session.config.no_mcp is True
+    # Nobody answers approvals in a batch: the default mode runs as dont_ask.
+    assert session.config.permission_mode == "dont_ask"
