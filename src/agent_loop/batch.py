@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
+from src.agent_loop.graders import grade_answer
 from src.config import get_settings
 
 
@@ -32,12 +33,24 @@ class BatchScenario:
         }
 
 
+class BatchTaskResult(Protocol):
+    """The part of a task result batch execution reads (``AgentLoopResult`` has it)."""
+
+    @property
+    def status(self) -> str:
+        """Terminal status of the task: ``done``, ``blocked`` or ``cancelled``."""
+
+    @property
+    def final_answer(self) -> str | None:
+        """The task's final answer."""
+
+
 class BatchSessionRuntime(Protocol):
     """SessionRuntime subset needed by batch execution."""
 
     context: Any
 
-    async def run_task(self, task: str) -> Any:
+    async def run_task(self, task: str) -> BatchTaskResult:
         """Run one task inside the current session."""
 
     async def close(self) -> None:
@@ -69,8 +82,17 @@ async def run_batch(
     batch_id: str | None = None,
     config: Mapping[str, Any] | None = None,
     continue_on_error: bool = False,
+    grade: bool = False,
 ) -> dict[str, Any]:
-    """Run Golden Set scenarios with one fresh SessionRuntime per scenario."""
+    """Run Golden Set scenarios with one fresh SessionRuntime per scenario.
+
+    Each ``run_index.jsonl`` row records the terminal status of every task and the final
+    answer of the scenario's last task. With ``grade``, it also holds the grade of that answer
+    against the scenario's ``expected`` mapping (:func:`~src.agent_loop.graders.grade_answer`):
+    a scenario that raised, or a task that did not end ``done`` (a ``blocked`` answer quotes
+    the page it stopped on, so its text must not be graded), grades as failed; a scenario
+    without ``expected`` as ungraded. The result then counts the grades.
+    """
 
     tasks_file = Path(tasks_path)
     scenarios = load_batch_scenarios(tasks_file)
@@ -96,43 +118,56 @@ async def run_batch(
     run_index_path = batch_dir / "run_index.jsonl"
     run_index_path.write_text("", encoding="utf-8")
     status = "completed"
+    grade_counts = {"passed": 0, "failed": 0, "ungraded": 0}
 
     try:
         for scenario in scenarios:
             row_started_at = _now_iso()
             session = session_factory()
+            final_answer: str | None = None
+            task_statuses: list[str] = []
             try:
                 for task in scenario.tasks:
-                    await session.run_task(task)
+                    result = await session.run_task(task)
+                    task_statuses.append(str(result.status))
+                    final_answer = result.final_answer
             except Exception as exc:
                 status = "failed"
-                _append_jsonl(
-                    run_index_path,
-                    _run_index_row(
-                        batch_id=batch_id,
-                        scenario=scenario,
-                        session=session,
-                        status="failed",
-                        started_at=row_started_at,
-                        finished_at=_now_iso(),
-                        error=_exception_payload(exc),
-                    ),
+                row = _run_index_row(
+                    batch_id=batch_id,
+                    scenario=scenario,
+                    session=session,
+                    status="failed",
+                    started_at=row_started_at,
+                    finished_at=_now_iso(),
+                    error=_exception_payload(exc),
+                    final_answer=None,
+                    task_statuses=task_statuses,
                 )
+                if grade:
+                    row["grade"] = _failed_run_grade(
+                        f"the scenario failed: {type(exc).__name__}: {exc}"
+                    )
+                    grade_counts["failed"] += 1
+                _append_jsonl(run_index_path, row)
                 if not continue_on_error:
                     raise
             else:
-                _append_jsonl(
-                    run_index_path,
-                    _run_index_row(
-                        batch_id=batch_id,
-                        scenario=scenario,
-                        session=session,
-                        status="completed",
-                        started_at=row_started_at,
-                        finished_at=_now_iso(),
-                        error=None,
-                    ),
+                row = _run_index_row(
+                    batch_id=batch_id,
+                    scenario=scenario,
+                    session=session,
+                    status="completed",
+                    started_at=row_started_at,
+                    finished_at=_now_iso(),
+                    error=None,
+                    final_answer=final_answer,
+                    task_statuses=task_statuses,
                 )
+                if grade:
+                    row["grade"] = _grade(scenario, final_answer, task_statuses)
+                    grade_counts[row["grade"]["status"]] += 1
+                _append_jsonl(run_index_path, row)
             finally:
                 await session.close()
     finally:
@@ -148,7 +183,41 @@ async def run_batch(
         "status": status,
         "scenario_count": len(scenarios),
         "task_count": sum(len(scenario.tasks) for scenario in scenarios),
+        **({"grades": grade_counts} if grade else {}),
     }
+
+
+def _grade(
+    scenario: BatchScenario,
+    final_answer: str | None,
+    task_statuses: list[str],
+) -> dict[str, Any]:
+    unfinished = [
+        f"task {index} of {len(task_statuses)} ended {status!r}"
+        for index, status in enumerate(task_statuses, start=1)
+        if status != "done"
+    ]
+    if unfinished:
+        return _failed_run_grade("; ".join(unfinished))
+    if scenario.expected is None:
+        return {"status": "ungraded", "checks": []}
+    if not isinstance(scenario.expected, Mapping):
+        # A typo such as "expected": "Python" must not silently stop the scenario's checks.
+        return {
+            "status": "failed",
+            "checks": [
+                {
+                    "key": "expected",
+                    "status": "failed",
+                    "message": f"expected must be a mapping of checks, not {scenario.expected!r}",
+                }
+            ],
+        }
+    return grade_answer(final_answer or "", scenario.expected).to_json_dict()
+
+
+def _failed_run_grade(message: str) -> dict[str, Any]:
+    return {"status": "failed", "checks": [{"key": "run", "status": "failed", "message": message}]}
 
 
 def _batch_scenario_from_payload(
@@ -191,6 +260,8 @@ def _run_index_row(
     started_at: str,
     finished_at: str,
     error: dict[str, str] | None,
+    final_answer: str | None,
+    task_statuses: list[str],
 ) -> dict[str, Any]:
     return {
         "batch_id": batch_id,
@@ -204,6 +275,8 @@ def _run_index_row(
         "started_at": started_at,
         "finished_at": finished_at,
         "error": error,
+        "task_statuses": list(task_statuses),
+        "final_answer": final_answer,
     }
 
 
@@ -242,6 +315,7 @@ __all__ = [
     "BatchScenario",
     "BatchSessionFactory",
     "BatchSessionRuntime",
+    "BatchTaskResult",
     "load_batch_scenarios",
     "run_batch",
 ]

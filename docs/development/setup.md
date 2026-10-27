@@ -233,6 +233,25 @@ Run JSONL Golden Set scenarios through fresh `SessionRuntime` instances:
 uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
 ```
 
+Every `run_index.jsonl` row records the final answer of the scenario's last task. `--grade`
+also grades it against the scenario's `expected` mapping (`src/agent_loop/graders.py`) and
+exits 1 when a grade or a scenario fails. A task that did not end `done` fails the grade: a
+`blocked` answer quotes the page it stopped on. Use it with `--continue-on-error`, otherwise
+the first scenario that raises stops the batch:
+
+```powershell
+uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --continue-on-error --grade
+```
+
+The `expected` keys are generic checks of the answer text, with no knowledge of the site:
+`contains`/`not_contains` (case-insensitive), `regex`, `items`/`min_items`/`max_items` (a
+numbered answer counts its numbering run 1, 2, 3…, otherwise the largest bullet list; table
+body rows count too; an unnumbered bullet list cannot tell items from one item's attributes,
+so pair a count with a per-item check such as a repeated price `regex`) and
+`numbers_at_most`/`numbers_at_least` (every number in the answer, at least one; `120 000`,
+`1,299.99` and `1 299,99` are one number, URLs and list ordinals are skipped). Any other key,
+such as `fields`, is reported as `ungraded` and never fails a grade.
+
 Export persisted session task rows:
 
 ```powershell

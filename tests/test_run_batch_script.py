@@ -187,3 +187,32 @@ def _fake_session_from_args(args: argparse.Namespace) -> FakeSession:
             cdp_port=args.cdp_port,
         )
     )
+
+
+@pytest.mark.parametrize(
+    "result, grade, expected_code",
+    [
+        ({"status": "completed", "grades": {"passed": 2, "failed": 0, "ungraded": 1}}, True, 0),
+        ({"status": "completed", "grades": {"passed": 1, "failed": 1, "ungraded": 0}}, True, 1),
+        ({"status": "failed", "grades": {"passed": 0, "failed": 1, "ungraded": 0}}, True, 1),
+        ({"status": "failed"}, False, 0),
+    ],
+)
+def test_main_exits_1_only_for_a_failed_grade_or_scenario_under_grade(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    result: dict[str, Any],
+    grade: bool,
+    expected_code: int,
+) -> None:
+    received: dict[str, Any] = {}
+
+    async def fake_run_batch_from_args(args: argparse.Namespace) -> dict[str, Any]:
+        received["grade"] = args.grade
+        return result
+
+    monkeypatch.setattr(run_batch_script, "run_batch_from_args", fake_run_batch_from_args)
+    argv = ["--tasks", str(tmp_path / "tasks.jsonl"), "--no-mcp", *(["--grade"] if grade else [])]
+
+    assert run_batch_script.main(argv) == expected_code
+    assert received["grade"] is grade

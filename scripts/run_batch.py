@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Run AutoBrowser Golden Set scenarios from a JSONL file."""
+"""Run AutoBrowser Golden Set scenarios from a JSONL file.
+
+``--grade`` grades the final answer of every scenario's last task against its ``expected``
+mapping (src/agent_loop/graders.py) and exits 1 when a grade or a scenario fails; use it with
+``--continue-on-error`` so every scenario gets a grade. Without ``--continue-on-error`` the
+first scenario that raises stops the batch with a traceback (exit 1, no summary); otherwise,
+without ``--grade``, the exit code is 0.
+"""
 
 from __future__ import annotations
 
@@ -40,6 +47,7 @@ async def run_batch_from_args(
         session_factory=session_factory,
         continue_on_error=args.continue_on_error,
         config=_batch_config(args),
+        grade=args.grade,
     )
 
 
@@ -57,6 +65,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--continue-on-error",
         action="store_true",
         help="Continue running remaining tasks after a task failure.",
+    )
+    parser.add_argument(
+        "--grade",
+        action="store_true",
+        help="Grade each scenario's final answer against its expected mapping; exit 1 on a failure.",
     )
     parser.add_argument(
         "--model",
@@ -104,6 +117,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     result = asyncio.run(run_batch_from_args(args))
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    if args.grade and (result.get("status") == "failed" or result.get("grades", {}).get("failed")):
+        return 1
     return 0
 
 

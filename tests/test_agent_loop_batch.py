@@ -16,7 +16,9 @@ class FakeBatchSession:
         session_id: str,
         *,
         fail_on: set[str] | None = None,
+        blocked_on: set[str] | None = None,
     ) -> None:
+        self.blocked_on = blocked_on or set()
         self.context = SimpleNamespace(
             session_id=session_id,
             session_dir=Path(".autobrowser") / "sessions" / session_id,
@@ -27,7 +29,7 @@ class FakeBatchSession:
         self.ran_tasks: list[str] = []
         self.closed = False
 
-    async def run_task(self, task: str) -> dict[str, str]:
+    async def run_task(self, task: str) -> SimpleNamespace:
         if self.context.state.get("closed"):
             raise AssertionError("state leaked from a closed session")
         self.ran_tasks.append(task)
@@ -36,7 +38,10 @@ class FakeBatchSession:
         self.context.tasks.append(SimpleNamespace(task_id=task_id))
         if task in self.fail_on:
             raise RuntimeError(f"failed: {task}")
-        return {"final_answer": f"done: {task}"}
+        if task in self.blocked_on:
+            # A guard terminal quotes the last observation, page text included.
+            return SimpleNamespace(status="blocked", final_answer=f"Blocked: limit. Page: {task}")
+        return SimpleNamespace(status="done", final_answer=f"done: {task}")
 
     async def close(self) -> None:
         self.closed = True
@@ -44,14 +49,21 @@ class FakeBatchSession:
 
 
 class FakeSessionFactory:
-    def __init__(self, *, fail_on: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        fail_on: set[str] | None = None,
+        blocked_on: set[str] | None = None,
+    ) -> None:
         self.fail_on = fail_on or set()
+        self.blocked_on = blocked_on or set()
         self.sessions: list[FakeBatchSession] = []
 
     def __call__(self) -> FakeBatchSession:
         session = FakeBatchSession(
             f"session-{len(self.sessions) + 1}",
             fail_on=self.fail_on,
+            blocked_on=self.blocked_on,
         )
         self.sessions.append(session)
         return session
@@ -312,6 +324,95 @@ async def test_run_batch_records_failure_closes_and_reraises(tmp_path: Path) -> 
     assert rows[0]["status"] == "failed"
     assert rows[0]["error"] == {"type": "RuntimeError", "message": "failed: fail"}
     assert batch["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_run_batch_records_the_final_answer_of_the_last_task(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["first", "second"]}])
+
+    result = await run_batch(
+        tasks_path=tasks_path, session_factory=FakeSessionFactory(), batches_dir=tmp_path / "b"
+    )
+
+    (row,) = _read_jsonl(Path(result["run_index_path"]))
+    assert row["final_answer"] == "done: second"
+    assert row["task_statuses"] == ["done", "done"]
+    assert "grade" not in row
+    assert "grades" not in result
+
+
+@pytest.mark.asyncio
+async def test_run_batch_grades_each_scenario_when_asked(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(
+        tasks_path,
+        [
+            {"scenario_id": "pass", "tasks": ["report"], "expected": {"contains": "report"}},
+            {"scenario_id": "fail", "tasks": ["report"], "expected": {"contains": "absent"}},
+            {"scenario_id": "open", "tasks": ["report"], "expected": {"fields": ["x"]}},
+            {"scenario_id": "none", "tasks": ["report"]},
+            {"scenario_id": "typo", "tasks": ["report"], "expected": "report"},
+            {"scenario_id": "crash", "tasks": ["boom"], "expected": {"contains": "boom"}},
+        ],
+    )
+
+    result = await run_batch(
+        tasks_path=tasks_path,
+        session_factory=FakeSessionFactory(fail_on={"boom"}),
+        batches_dir=tmp_path / "b",
+        continue_on_error=True,
+        grade=True,
+    )
+
+    rows = {row["scenario_id"]: row for row in _read_jsonl(Path(result["run_index_path"]))}
+    assert {name: row["grade"]["status"] for name, row in rows.items()} == {
+        "pass": "passed",
+        "fail": "failed",
+        "open": "ungraded",
+        "none": "ungraded",
+        "typo": "failed",
+        "crash": "failed",
+    }
+    assert rows["crash"]["grade"]["checks"][0]["key"] == "run"
+    assert rows["crash"]["final_answer"] is None
+    assert rows["typo"]["grade"]["checks"][0]["key"] == "expected"
+    assert result["grades"] == {"passed": 1, "failed": 3, "ungraded": 2}
+
+
+@pytest.mark.asyncio
+async def test_a_task_that_did_not_end_done_fails_the_grade(tmp_path: Path) -> None:
+    """A blocked answer quotes the page; its text must not pass the checks."""
+
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(
+        tasks_path,
+        [
+            {"scenario_id": "last", "tasks": ["open Python"], "expected": {"contains": "Python"}},
+            {
+                "scenario_id": "middle",
+                "tasks": ["open Python", "report"],
+                "expected": {"contains": "report"},
+            },
+        ],
+    )
+
+    result = await run_batch(
+        tasks_path=tasks_path,
+        session_factory=FakeSessionFactory(blocked_on={"open Python"}),
+        batches_dir=tmp_path / "b",
+        grade=True,
+    )
+
+    rows = {row["scenario_id"]: row for row in _read_jsonl(Path(result["run_index_path"]))}
+    assert rows["last"]["task_statuses"] == ["blocked"]
+    assert rows["last"]["grade"]["status"] == "failed"
+    assert rows["last"]["grade"]["checks"] == [
+        {"key": "run", "status": "failed", "message": "task 1 of 1 ended 'blocked'"}
+    ]
+    assert rows["middle"]["task_statuses"] == ["blocked", "done"]
+    assert rows["middle"]["grade"]["status"] == "failed"
+    assert result["grades"] == {"passed": 0, "failed": 2, "ungraded": 0}
 
 
 def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
