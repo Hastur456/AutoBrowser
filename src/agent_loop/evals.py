@@ -137,8 +137,11 @@ class _FakeBrowserTools:
         async def browser_click(
             ref: str | None = None,
             target: str | None = None,
+            element: str | None = None,
         ) -> str:
             """Click an element in the fake browser."""
+
+            _ = element
 
             resolved_ref = self._require_ref(ref=ref, target=target)
             self._assert_ref_exists(resolved_ref)
@@ -149,8 +152,11 @@ class _FakeBrowserTools:
             text: str,
             ref: str | None = None,
             target: str | None = None,
+            element: str | None = None,
         ) -> str:
             """Type text into an element in the fake browser."""
+
+            _ = element
 
             resolved_ref = self._require_ref(ref=ref, target=target)
             self._assert_ref_exists(resolved_ref)
@@ -160,8 +166,11 @@ class _FakeBrowserTools:
         async def browser_hover(
             ref: str | None = None,
             target: str | None = None,
+            element: str | None = None,
         ) -> str:
             """Hover an element in the fake browser."""
+
+            _ = element
 
             resolved_ref = self._require_ref(ref=ref, target=target)
             self._assert_ref_exists(resolved_ref)
@@ -177,6 +186,7 @@ class _FakeBrowserTools:
                 {
                     "ref": {"type": "string"},
                     "target": {"type": "string"},
+                    "element": {"type": "string"},
                 },
             ),
             self._tool(
@@ -185,6 +195,7 @@ class _FakeBrowserTools:
                     "text": {"type": "string"},
                     "ref": {"type": "string"},
                     "target": {"type": "string"},
+                    "element": {"type": "string"},
                 },
                 required=("text",),
             ),
@@ -193,6 +204,7 @@ class _FakeBrowserTools:
                 {
                     "ref": {"type": "string"},
                     "target": {"type": "string"},
+                    "element": {"type": "string"},
                 },
             ),
         ]
@@ -205,7 +217,11 @@ class _FakeBrowserTools:
         required: Sequence[str] = (),
         read_only: bool = False,
     ) -> Tool:
-        """Wrap one async fake-browser function into a neutral ``Tool``."""
+        """Wrap one async fake-browser function into a neutral ``Tool``.
+
+        The schema is closed (``additionalProperties: false``) like the real Playwright MCP
+        schemas, so :class:`SchemaArgsNormalizer` drops arguments a tool does not declare.
+        """
 
         return Tool(
             name=func.__name__,
@@ -214,6 +230,7 @@ class _FakeBrowserTools:
                 "type": "object",
                 "properties": dict(properties),
                 **({"required": list(required)} if required else {}),
+                "additionalProperties": False,
             },
             func=func,
             annotations={"readOnlyHint": True} if read_only else None,
@@ -304,6 +321,12 @@ class FakeChatModel:
         self._index += 1
         return ModelResponse(content=content, finish_reason="stop")
 
+    @property
+    def unused_responses(self) -> int:
+        """Scripted responses no call has reached yet."""
+
+        return max(len(self._responses) - self._index, 0)
+
 
 def _request_chars(messages: Sequence[Message], tools: Sequence[Any]) -> int:
     """Size of one model request: message contents, their tool calls and the tool schemas."""
@@ -331,6 +354,8 @@ class EvalAssertions:
     max_tool_calls: int | None = None
     max_repeated_actions: int | None = None
     max_policy_blocks: int | None = None
+    #: Most tool calls that may finish with ``status: error``.
+    max_errors: int | None = None
 
 
 @dataclass(frozen=True)
@@ -367,6 +392,8 @@ class EvalResult:
     request_chars: int = 0
     #: A strict scenario asked the model for more responses than it scripts.
     script_exhausted: bool = False
+    #: Scripted model responses the run never reached.
+    unused_responses: int = 0
     #: Tool calls that finished with ``status: error``.
     error_count: int = 0
     #: Approval prompts raised (``approval.requested``).
@@ -469,6 +496,7 @@ def load_scenario(path: Path) -> EvalScenario:
             max_tool_calls=assertions.get("max_tool_calls"),
             max_repeated_actions=assertions.get("max_repeated_actions"),
             max_policy_blocks=assertions.get("max_policy_blocks"),
+            max_errors=assertions.get("max_errors"),
         ),
         turn_cap=int(data.get("turn_cap", 25) or 25),
         permissions=PermissionsSettings(**{"mode": "dont_ask", **(data.get("permissions") or {})}),
@@ -615,6 +643,7 @@ async def run_scenario(
         prompt_chars=llm.prompt_chars,
         request_chars=llm.request_chars,
         script_exhausted=llm.exhausted,
+        unused_responses=llm.unused_responses,
         error_count=_tool_error_count(events),
         approval_request_count=_event_count(events, "approval.requested"),
         observation_count=_event_count(events, "observation.compiled"),
@@ -660,6 +689,10 @@ def check_scenario_result(scenario: EvalScenario, result: EvalResult) -> list[st
     problems: list[str] = []
     if result.script_exhausted:
         problems.append(SCRIPT_EXHAUSTED_PROBLEM)
+    elif scenario.strict and result.unused_responses:
+        problems.append(
+            f"{result.unused_responses} scripted model responses were never used"
+        )
     if summary.terminal_status != assertions.expected_terminal_status:
         problems.append(
             f"terminal_status: expected {assertions.expected_terminal_status!r},"
@@ -672,6 +705,7 @@ def check_scenario_result(scenario: EvalScenario, result: EvalResult) -> list[st
         ("tool_call_count", summary.tool_call_count, assertions.max_tool_calls),
         ("repeated_action_count", summary.repeated_action_count, assertions.max_repeated_actions),
         ("policy_block_count", summary.policy_block_count, assertions.max_policy_blocks),
+        ("error_count", result.error_count, assertions.max_errors),
     )
     for metric, actual, limit in limits:
         if limit is not None and actual > limit:

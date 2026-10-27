@@ -30,8 +30,6 @@ model:
           element: Buy button
           ref: e5
         reason: Buy the jacket.
-    - decision: done
-      final_answer: Bought.
 browser:
   snapshots:
     - |-

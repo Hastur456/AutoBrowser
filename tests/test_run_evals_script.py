@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from scripts import run_evals as run_evals_script
 
-BASELINE_PATH = Path("tests/evals/baselines/agent_loop_v2.json")
-V1_BASELINE_PATH = Path("tests/evals/baselines/agent_loop_v1.json")
+ROOT = Path(__file__).resolve().parents[1]
+BASELINE_PATH = ROOT / "tests" / "evals" / "baselines" / "agent_loop_v2.json"
+V1_BASELINE_PATH = ROOT / "tests" / "evals" / "baselines" / "agent_loop_v1.json"
 
 
 def _main(monkeypatch: pytest.MonkeyPatch, *args: str) -> int:
@@ -59,3 +63,48 @@ def test_write_baseline_creates_a_baseline_the_next_run_matches(
     assert document["schema_version"] == 2
     assert "scenarios_with_memory" not in document
     assert _main(monkeypatch, "--baseline", str(path)) == 0
+
+
+def _run_script(env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "run_evals.py"), *args],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=300,
+    )
+
+
+def test_the_script_hides_a_personal_profile(tmp_path: Path) -> None:
+    profile = tmp_path / "personal.yaml"
+    profile.write_text("memory:\n  working_notes_max_chars: 1500\n", encoding="utf-8")
+    env = {
+        **os.environ,
+        "AUTOBROWSER_CONFIG_FILE": str(profile),
+        "AUTOBROWSER_LOOP__MAX_INEFFECTIVE_ACTIONS": "5",
+        "PYTHONIOENCODING": "utf-8",
+    }
+
+    completed = _run_script(env)
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def test_the_script_takes_the_tolerance_from_the_pipeline_environment(tmp_path: Path) -> None:
+    document = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    row = document["scenarios"]["search_basic"]
+    row["request_chars"] = int(row["request_chars"] * 0.95)
+    path = tmp_path / "baseline.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+    default = _run_script(env, "--baseline", str(path))
+    strict = _run_script(
+        {**env, "AUTOBROWSER_PIPELINE__REQUEST_CHARS_TOLERANCE": "0.01"}, "--baseline", str(path)
+    )
+
+    assert default.returncode == 0, default.stdout
+    assert strict.returncode == 1
+    assert "search_basic.request_chars: regression" in strict.stdout

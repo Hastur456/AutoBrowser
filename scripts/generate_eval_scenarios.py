@@ -79,7 +79,7 @@ SCENARIOS = []
 
 
 def add(name, task, responses, snapshots, status, contains=None, max_tools=None, max_rep=0,
-        max_blocks=0, permissions=None, human=None, turn_cap=None, uncertain=None):
+        max_blocks=0, permissions=None, human=None, turn_cap=None, uncertain=None, max_errors=None):
     s = {"name": name, "task": task, "strict": True}
     if turn_cap:
         s["turn_cap"] = turn_cap
@@ -95,6 +95,8 @@ def add(name, task, responses, snapshots, status, contains=None, max_tools=None,
     a["max_tool_calls"] = max_tools
     a["max_repeated_actions"] = max_rep
     a["max_policy_blocks"] = max_blocks
+    if max_errors is not None:
+        a["max_errors"] = max_errors
     s["assertions"] = a
     if uncertain:
         UNCERTAIN[name] = uncertain
@@ -215,7 +217,7 @@ add("extra_args_dropped",
      nav("https://status.example", "Open the status page.", wait_until="networkidle", timeout_ms=5000),
      done("All systems are operational.")],
     [BLANK, page("https://status.example/", 'heading "All systems operational" [ref=e1]')],
-    "completed", ["operational"], 1)
+    "completed", ["operational"], 1, max_errors=0)
 
 # =====================================================================
 # 2. Error recovery
@@ -570,17 +572,22 @@ add("bypass_mode_skips_ask",
         {"id": "purchases", "decision": "ask", "tool": "browser_click", "target": "(?i)buy|place order"}]},
     human=[])
 
-add("default_mode_allow_rule_no_ask",
+# An ask rule whose target does not match the click must not ask: no answer is scripted, so
+# an ask would be denied and block the task.
+add("default_mode_unmatched_ask_rule_no_ask",
     "Open the 'Pricing' page from https://saas.example.",
     [plan("Open the site", "Open Pricing"),
      nav("https://saas.example", "Open the site."),
+     snapc("Find the Pricing link."),
      click("e3", "Open Pricing."),
      done("Opened the Pricing page.")],
     [BLANK,
      page("https://saas.example/", 'link "Features" [ref=e2]', 'link "Pricing" [ref=e3]'),
      page("https://saas.example/pricing", 'heading "Pricing" [ref=e5]')],
-    "completed", ["Pricing"], 2,
-    permissions={"mode": "default", "rules": [ALLOW_REST]}, human=[])
+    "completed", ["Pricing"], 3,
+    permissions={"mode": "default", "rules": [
+        {"id": "purchases", "decision": "ask", "tool": "browser_click", "target": "(?i)buy|checkout"},
+        ALLOW_REST]}, human=[])
 
 # =====================================================================
 # 5. Explicit model stops

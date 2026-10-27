@@ -165,6 +165,9 @@ def test_a_baseline_document_round_trips_through_load_baseline(tmp_path: Path) -
         json.dumps({"a": {"tool_call_count": 1}}),
         json.dumps({"schema_version": 2, "scenarios": []}),
         json.dumps({"schema_version": 2, "scenarios": {}, "scenarios_with_memory": {"a": 1}}),
+        json.dumps({"schema_version": 2, "scenarios": {"a": {"request_chars": float("nan")}}}),
+        json.dumps({"schema_version": 2, "scenarios": {"a": {"request_chars": float("inf")}}}),
+        json.dumps({"schema_version": 2, "scenarios": {"a": {"tool_call_count": -1}}}),
     ],
 )
 def test_a_malformed_baseline_is_a_baseline_error(tmp_path: Path, content: str) -> None:

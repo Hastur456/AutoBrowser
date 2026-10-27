@@ -193,3 +193,51 @@ def test_every_suite_scenario_is_strict() -> None:
     lenient = [scenario.name for scenario in load_scenarios() if not scenario.strict]
 
     assert lenient == [], "a suite scenario must not cycle its model script: add `strict: true`"
+
+
+@pytest.mark.asyncio
+async def test_a_strict_script_with_unreached_responses_fails_the_scenario() -> None:
+    done = {"decision": "done", "final_answer": "Done."}
+    strict = _scenario([PLAN, done, done], strict=True)
+    lenient = _scenario([PLAN, done, done])
+
+    (strict_run,) = await collect_eval_metrics([strict])
+    (lenient_run,) = await collect_eval_metrics([lenient])
+
+    assert strict_run.problems == ("1 scripted model responses were never used",)
+    assert lenient_run.problems == ()
+
+
+@pytest.mark.asyncio
+async def test_max_errors_bounds_the_failed_tool_calls() -> None:
+    click = {"decision": "tool_call", "tool_request": {"name": "browser_click", "args": {"ref": "e99"}}}
+    scenario = EvalScenario(
+        name="inline",
+        task="Click.",
+        model_responses=[json.dumps(r) for r in (PLAN, click, {"decision": "done", "final_answer": "x"})],
+        browser_snapshots=['- textbox "Search" ref=e8'],
+        assertions=EvalAssertions(max_errors=0),
+        strict=True,
+    )
+
+    (run,) = await collect_eval_metrics([scenario])
+
+    assert run.result.error_count == 1
+    assert run.problems == ("error_count: 1 exceeds the limit 0",)
+
+
+@pytest.mark.asyncio
+async def test_the_closed_fake_schemas_drop_undeclared_arguments() -> None:
+    navigate = {
+        "decision": "tool_call",
+        "tool_request": {
+            "name": "browser_navigate",
+            "args": {"url": "https://example.test", "wait_until": "load"},
+        },
+    }
+    scenario = _scenario([PLAN, navigate, {"decision": "done", "final_answer": "x"}], strict=True)
+
+    result = await run_scenario(scenario)
+
+    assert result.error_count == 0
+    assert result.summary.terminal_status == "completed"

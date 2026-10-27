@@ -16,6 +16,7 @@ See docs/development/2026-10-19-autonomous-test-pipeline-design.md §4.3.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -133,6 +134,15 @@ def load_baseline(path: Path) -> Baseline:
     memory = data.get(MEMORY_BLOCK)
     if not _is_block(scenarios) or (memory is not None and not _is_block(memory)):
         raise BaselineError(f"{path}: every block must map scenario names to metric records")
+    for block_name, block in ((SCENARIOS_BLOCK, scenarios), (MEMORY_BLOCK, memory or {})):
+        for name, row in block.items():
+            for metric, value in row.items():
+                # Every numeric metric is a count or a size; NaN would make no change fail.
+                if _is_number(value) and not (math.isfinite(value) and value >= 0):
+                    raise BaselineError(
+                        f"{path}: {block_name}.{name}.{metric} must be a finite number >= 0,"
+                        f" not {value!r}"
+                    )
     return Baseline(
         schema_version=BASELINE_SCHEMA_VERSION,
         suite=str(data.get("suite", "") or ""),

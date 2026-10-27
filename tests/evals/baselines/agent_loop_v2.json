@@ -11,7 +11,7 @@
       "observation_count": 1,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 66985,
+      "request_chars": 63911,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -25,7 +25,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 160169,
+      "request_chars": 150947,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -39,7 +39,7 @@
       "observation_count": 4,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 136464,
+      "request_chars": 128779,
       "terminal_status": "blocked",
       "tool_call_count": 4,
       "trace_complete": true
@@ -53,7 +53,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 90002,
+      "request_chars": 85391,
       "terminal_status": "blocked",
       "tool_call_count": 2,
       "trace_complete": true
@@ -67,7 +67,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 113170,
+      "request_chars": 107022,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -81,7 +81,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 159922,
+      "request_chars": 150700,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -95,7 +95,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 160678,
+      "request_chars": 151456,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -109,7 +109,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 89581,
+      "request_chars": 84970,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -123,7 +123,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 90226,
+      "request_chars": 85615,
       "terminal_status": "blocked",
       "tool_call_count": 2,
       "trace_complete": true
@@ -137,7 +137,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 112536,
+      "request_chars": 106388,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -151,7 +151,7 @@
       "observation_count": 4,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 137149,
+      "request_chars": 129464,
       "terminal_status": "completed",
       "tool_call_count": 4,
       "trace_complete": true
@@ -165,7 +165,7 @@
       "observation_count": 1,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 89825,
+      "request_chars": 85214,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -179,23 +179,23 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 113150,
+      "request_chars": 107002,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
     },
-    "default_mode_allow_rule_no_ask": {
-      "action_signature": "sha256:6907ac1e3102ee7ae441e3cae60a1e0f3a6d35c4137dc407468072eccceee3a1",
+    "default_mode_unmatched_ask_rule_no_ask": {
+      "action_signature": "sha256:49f8c3f46c18c900d9771f87805515ce1b2448bb6c08d0f892bc501d9a6e537e",
       "approval_request_count": 0,
       "error_count": 0,
       "final_answer": "Opened the Pricing page.",
-      "model_turn_count": 4,
-      "observation_count": 2,
+      "model_turn_count": 5,
+      "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 89680,
+      "request_chars": 106667,
       "terminal_status": "completed",
-      "tool_call_count": 2,
+      "tool_call_count": 3,
       "trace_complete": true
     },
     "deny_rule_buy_button": {
@@ -207,7 +207,7 @@
       "observation_count": 2,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 113309,
+      "request_chars": 107161,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -221,7 +221,7 @@
       "observation_count": 1,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 89764,
+      "request_chars": 85153,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -235,7 +235,7 @@
       "observation_count": 3,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 137195,
+      "request_chars": 129510,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -249,7 +249,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 158583,
+      "request_chars": 149361,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -263,7 +263,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 113020,
+      "request_chars": 106872,
       "terminal_status": "blocked",
       "tool_call_count": 3,
       "trace_complete": true
@@ -271,13 +271,13 @@
     "extra_args_dropped": {
       "action_signature": "sha256:f869ca9051865a9cda11f1c61261af525b10d78afbf423895c1ceff8ef7a5ae3",
       "approval_request_count": 0,
-      "error_count": 1,
+      "error_count": 0,
       "final_answer": "All systems are operational.",
       "model_turn_count": 3,
       "observation_count": 1,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 67283,
+      "request_chars": 64093,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -291,7 +291,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 158554,
+      "request_chars": 149332,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -305,7 +305,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 160866,
+      "request_chars": 151644,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -319,7 +319,7 @@
       "observation_count": 4,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 136573,
+      "request_chars": 128888,
       "terminal_status": "completed",
       "tool_call_count": 4,
       "trace_complete": true
@@ -333,7 +333,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 112955,
+      "request_chars": 106807,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -347,7 +347,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 90220,
+      "request_chars": 85609,
       "terminal_status": "blocked",
       "tool_call_count": 2,
       "trace_complete": true
@@ -361,7 +361,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 89886,
+      "request_chars": 85275,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -375,7 +375,7 @@
       "observation_count": 4,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 136807,
+      "request_chars": 129122,
       "terminal_status": "completed",
       "tool_call_count": 4,
       "trace_complete": true
@@ -389,7 +389,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 90253,
+      "request_chars": 85642,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -403,7 +403,7 @@
       "observation_count": 0,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 44251,
+      "request_chars": 42714,
       "terminal_status": "completed",
       "tool_call_count": 0,
       "trace_complete": true
@@ -417,7 +417,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 89799,
+      "request_chars": 85188,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -431,7 +431,7 @@
       "observation_count": 1,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 89491,
+      "request_chars": 84880,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -445,7 +445,7 @@
       "observation_count": 4,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 136673,
+      "request_chars": 128988,
       "terminal_status": "blocked",
       "tool_call_count": 4,
       "trace_complete": true
@@ -459,7 +459,7 @@
       "observation_count": 1,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 66801,
+      "request_chars": 63727,
       "terminal_status": "blocked",
       "tool_call_count": 1,
       "trace_complete": true
@@ -473,7 +473,7 @@
       "observation_count": 1,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 89546,
+      "request_chars": 84935,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -487,7 +487,7 @@
       "observation_count": 1,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 89798,
+      "request_chars": 85187,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -501,7 +501,7 @@
       "observation_count": 1,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 89775,
+      "request_chars": 85164,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -515,7 +515,7 @@
       "observation_count": 0,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 66867,
+      "request_chars": 63793,
       "terminal_status": "completed",
       "tool_call_count": 0,
       "trace_complete": true
@@ -529,7 +529,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 159914,
+      "request_chars": 150692,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -543,7 +543,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 1,
-      "request_chars": 158815,
+      "request_chars": 151130,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -557,7 +557,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 1,
-      "request_chars": 159721,
+      "request_chars": 150499,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -571,7 +571,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 1,
-      "request_chars": 159628,
+      "request_chars": 151943,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -585,7 +585,7 @@
       "observation_count": 4,
       "policy_block_count": 0,
       "repeated_action_count": 1,
-      "request_chars": 136740,
+      "request_chars": 129055,
       "terminal_status": "completed",
       "tool_call_count": 4,
       "trace_complete": true
@@ -599,7 +599,7 @@
       "observation_count": 4,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 136956,
+      "request_chars": 129271,
       "terminal_status": "completed",
       "tool_call_count": 4,
       "trace_complete": true
@@ -613,7 +613,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 112678,
+      "request_chars": 106530,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -627,7 +627,7 @@
       "observation_count": 1,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 66923,
+      "request_chars": 63849,
       "terminal_status": "blocked",
       "tool_call_count": 1,
       "trace_complete": true
@@ -641,7 +641,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 89998,
+      "request_chars": 85387,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -655,7 +655,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 89701,
+      "request_chars": 85090,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -669,7 +669,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 1,
-      "request_chars": 160033,
+      "request_chars": 150811,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -683,7 +683,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 112421,
+      "request_chars": 106273,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -697,7 +697,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 89818,
+      "request_chars": 85207,
       "terminal_status": "blocked",
       "tool_call_count": 3,
       "trace_complete": true
@@ -711,7 +711,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 1,
-      "request_chars": 90040,
+      "request_chars": 85429,
       "terminal_status": "blocked",
       "tool_call_count": 3,
       "trace_complete": true
@@ -725,7 +725,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 159359,
+      "request_chars": 150137,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -739,7 +739,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 160055,
+      "request_chars": 150833,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -753,7 +753,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 157647,
+      "request_chars": 149962,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -767,7 +767,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 90077,
+      "request_chars": 85466,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -781,7 +781,7 @@
       "observation_count": 0,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 44253,
+      "request_chars": 42716,
       "terminal_status": "blocked",
       "tool_call_count": 0,
       "trace_complete": true
@@ -795,7 +795,7 @@
       "observation_count": 1,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 67221,
+      "request_chars": 64147,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -811,7 +811,7 @@
       "observation_count": 1,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 68670,
+      "request_chars": 65596,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -825,7 +825,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 164096,
+      "request_chars": 154874,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -839,7 +839,7 @@
       "observation_count": 4,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 139846,
+      "request_chars": 132161,
       "terminal_status": "blocked",
       "tool_call_count": 4,
       "trace_complete": true
@@ -853,7 +853,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 92248,
+      "request_chars": 87637,
       "terminal_status": "blocked",
       "tool_call_count": 2,
       "trace_complete": true
@@ -867,7 +867,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 115977,
+      "request_chars": 109829,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -881,7 +881,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 163865,
+      "request_chars": 154643,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -895,7 +895,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 164621,
+      "request_chars": 155399,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -909,7 +909,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 91827,
+      "request_chars": 87216,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -923,7 +923,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 92472,
+      "request_chars": 87861,
       "terminal_status": "blocked",
       "tool_call_count": 2,
       "trace_complete": true
@@ -937,7 +937,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 115341,
+      "request_chars": 109193,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -951,7 +951,7 @@
       "observation_count": 4,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 140515,
+      "request_chars": 132830,
       "terminal_status": "completed",
       "tool_call_count": 4,
       "trace_complete": true
@@ -965,7 +965,7 @@
       "observation_count": 1,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 92073,
+      "request_chars": 87462,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -979,23 +979,23 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 115955,
+      "request_chars": 109807,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
     },
-    "default_mode_allow_rule_no_ask": {
-      "action_signature": "sha256:6907ac1e3102ee7ae441e3cae60a1e0f3a6d35c4137dc407468072eccceee3a1",
+    "default_mode_unmatched_ask_rule_no_ask": {
+      "action_signature": "sha256:49f8c3f46c18c900d9771f87805515ce1b2448bb6c08d0f892bc501d9a6e537e",
       "approval_request_count": 0,
       "error_count": 0,
       "final_answer": "Opened the Pricing page.",
-      "model_turn_count": 4,
-      "observation_count": 2,
+      "model_turn_count": 5,
+      "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 91924,
+      "request_chars": 109474,
       "terminal_status": "completed",
-      "tool_call_count": 2,
+      "tool_call_count": 3,
       "trace_complete": true
     },
     "deny_rule_buy_button": {
@@ -1007,7 +1007,7 @@
       "observation_count": 2,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 116118,
+      "request_chars": 109970,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -1021,7 +1021,7 @@
       "observation_count": 1,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 92012,
+      "request_chars": 87401,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -1035,7 +1035,7 @@
       "observation_count": 3,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 140569,
+      "request_chars": 132884,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -1049,7 +1049,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 162510,
+      "request_chars": 153288,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -1063,7 +1063,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 115826,
+      "request_chars": 109678,
       "terminal_status": "blocked",
       "tool_call_count": 3,
       "trace_complete": true
@@ -1071,13 +1071,13 @@
     "extra_args_dropped": {
       "action_signature": "sha256:f869ca9051865a9cda11f1c61261af525b10d78afbf423895c1ceff8ef7a5ae3",
       "approval_request_count": 0,
-      "error_count": 1,
+      "error_count": 0,
       "final_answer": "All systems are operational.",
       "model_turn_count": 3,
       "observation_count": 1,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 68966,
+      "request_chars": 65776,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -1091,7 +1091,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 162481,
+      "request_chars": 153259,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -1105,7 +1105,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 164797,
+      "request_chars": 155575,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -1119,7 +1119,7 @@
       "observation_count": 4,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 139946,
+      "request_chars": 132261,
       "terminal_status": "completed",
       "tool_call_count": 4,
       "trace_complete": true
@@ -1133,7 +1133,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 115760,
+      "request_chars": 109612,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -1147,7 +1147,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 92469,
+      "request_chars": 87858,
       "terminal_status": "blocked",
       "tool_call_count": 2,
       "trace_complete": true
@@ -1161,7 +1161,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 92130,
+      "request_chars": 87519,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -1175,7 +1175,7 @@
       "observation_count": 4,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 140175,
+      "request_chars": 132490,
       "terminal_status": "completed",
       "tool_call_count": 4,
       "trace_complete": true
@@ -1189,7 +1189,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 92499,
+      "request_chars": 87888,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -1203,7 +1203,7 @@
       "observation_count": 0,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 45373,
+      "request_chars": 43836,
       "terminal_status": "completed",
       "tool_call_count": 0,
       "trace_complete": true
@@ -1217,7 +1217,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 92049,
+      "request_chars": 87438,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -1231,7 +1231,7 @@
       "observation_count": 1,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 91741,
+      "request_chars": 87130,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -1245,7 +1245,7 @@
       "observation_count": 4,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 140044,
+      "request_chars": 132359,
       "terminal_status": "blocked",
       "tool_call_count": 4,
       "trace_complete": true
@@ -1259,7 +1259,7 @@
       "observation_count": 1,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 68486,
+      "request_chars": 65412,
       "terminal_status": "blocked",
       "tool_call_count": 1,
       "trace_complete": true
@@ -1273,7 +1273,7 @@
       "observation_count": 1,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 91794,
+      "request_chars": 87183,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -1287,7 +1287,7 @@
       "observation_count": 1,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 92046,
+      "request_chars": 87435,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -1301,7 +1301,7 @@
       "observation_count": 1,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 92021,
+      "request_chars": 87410,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -1315,7 +1315,7 @@
       "observation_count": 0,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 68550,
+      "request_chars": 65476,
       "terminal_status": "completed",
       "tool_call_count": 0,
       "trace_complete": true
@@ -1329,7 +1329,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 163844,
+      "request_chars": 154622,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -1343,7 +1343,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 1,
-      "request_chars": 162742,
+      "request_chars": 155057,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -1357,7 +1357,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 1,
-      "request_chars": 163649,
+      "request_chars": 154427,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -1371,7 +1371,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 1,
-      "request_chars": 163561,
+      "request_chars": 155876,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -1385,7 +1385,7 @@
       "observation_count": 4,
       "policy_block_count": 0,
       "repeated_action_count": 1,
-      "request_chars": 140106,
+      "request_chars": 132421,
       "terminal_status": "completed",
       "tool_call_count": 4,
       "trace_complete": true
@@ -1399,7 +1399,7 @@
       "observation_count": 4,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 140325,
+      "request_chars": 132640,
       "terminal_status": "completed",
       "tool_call_count": 4,
       "trace_complete": true
@@ -1413,7 +1413,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 115483,
+      "request_chars": 109335,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -1427,7 +1427,7 @@
       "observation_count": 1,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 68606,
+      "request_chars": 65532,
       "terminal_status": "blocked",
       "tool_call_count": 1,
       "trace_complete": true
@@ -1441,7 +1441,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 92246,
+      "request_chars": 87635,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -1455,7 +1455,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 91945,
+      "request_chars": 87334,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -1469,7 +1469,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 1,
-      "request_chars": 163963,
+      "request_chars": 154741,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -1483,7 +1483,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 115226,
+      "request_chars": 109078,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -1497,7 +1497,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 92062,
+      "request_chars": 87451,
       "terminal_status": "blocked",
       "tool_call_count": 3,
       "trace_complete": true
@@ -1511,7 +1511,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 1,
-      "request_chars": 92284,
+      "request_chars": 87673,
       "terminal_status": "blocked",
       "tool_call_count": 3,
       "trace_complete": true
@@ -1525,7 +1525,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 163291,
+      "request_chars": 154069,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -1539,7 +1539,7 @@
       "observation_count": 5,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 163986,
+      "request_chars": 154764,
       "terminal_status": "completed",
       "tool_call_count": 5,
       "trace_complete": true
@@ -1553,7 +1553,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 161574,
+      "request_chars": 153889,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true
@@ -1567,7 +1567,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 92321,
+      "request_chars": 87710,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -1581,7 +1581,7 @@
       "observation_count": 0,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 45375,
+      "request_chars": 43838,
       "terminal_status": "blocked",
       "tool_call_count": 0,
       "trace_complete": true
@@ -1595,7 +1595,7 @@
       "observation_count": 1,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 68904,
+      "request_chars": 65830,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true

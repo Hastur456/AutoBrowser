@@ -12,6 +12,11 @@ DIR (``tests/evals/memory_seed`` is the shipped seed) and compares it with the b
 ``--write-baseline`` is the explicit way to update the baseline: it prints the findings against
 the current file, then writes the run's metrics there (keeping the memory block when no seed is
 given). It refuses while a scenario assertion fails. CI never writes a baseline.
+
+The run is hermetic: the personal ``config.yaml``, ``.env`` and ``AUTOBROWSER_*`` variables
+are hidden (``tests/evals/runner.isolate_settings``), so the metrics are those of the code
+defaults on every machine. Only ``AUTOBROWSER_PIPELINE__*`` (the comparison tolerances) is
+kept.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ import argparse
 import asyncio
 import json
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,10 +42,10 @@ from src.agent_loop.comparison import (
     load_baseline,
 )
 from src.agent_loop.evals import ScenarioRun, collect_eval_metrics, run_findings
-from src.config import PipelineSettings
-from tests.evals.runner import load_scenarios, seed_memory
+from src.config import PipelineSettings, get_settings
+from tests.evals.runner import isolate_settings, load_scenarios, seed_memory
 
-DEFAULT_BASELINE = Path("tests/evals/baselines/agent_loop_v2.json")
+DEFAULT_BASELINE = ROOT / "tests" / "evals" / "baselines" / "agent_loop_v2.json"
 SUITE = "agent_loop"
 MEMORY_SUITE = "agent_loop+memory"
 
@@ -95,8 +101,7 @@ def main() -> int:
         help="Write the run's metrics to --baseline after printing the findings.",
     )
     args = parser.parse_args()
-    # The comparison tolerances come from code defaults, never from a personal profile.
-    settings = PipelineSettings()
+    settings = get_settings().pipeline
 
     baseline: Baseline | None = None
     try:
@@ -154,4 +159,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    with tempfile.TemporaryDirectory(prefix="autobrowser-evals-") as home:
+        isolate_settings(Path(home))
+        raise SystemExit(main())
