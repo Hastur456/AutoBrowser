@@ -114,8 +114,10 @@ uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --continue-on-error
   Without it the first such scenario stops the batch with a traceback (exit `1`, no summary).
 - Do not pass `--no-mcp`: without MCP there is no browser.
 - Useful options: `--model NAME` (another model for this run), `--turn-cap N`,
-  `--chrome-path`, `--user-data-dir`, `--cdp-port`. Each scenario gets its own fresh session, its
-  own Chrome profile (`<user-data-dir>-scenario-N`) and the next free CDP port.
+  `--chrome-path`, `--cdp-port`. Each scenario gets its own fresh session, the next free CDP
+  port and a fresh Chrome profile in `<home>/batches/<batch_id>/profiles/scenario-N`, so no
+  cookie or login carries over; the profiles are deleted when the batch ends. Your own
+  `browser.user_data_dir` profile is never used by a batch.
 - To run some scenarios only, copy their lines into another JSONL file and pass it to `--tasks`.
 
 A full run takes a while: the Ozon scenarios are multi-step tasks on a heavy site.
