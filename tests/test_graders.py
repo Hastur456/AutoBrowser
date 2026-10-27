@@ -246,3 +246,14 @@ def test_the_golden_price_check_reads_ruble_spellings_but_not_words() -> None:
     assert re.search(pattern, "A — 74 990 р.\nB — 80 000 RUB\nC — 90 000 Руб.")
     assert re.search(pattern, "A — 1 ₽\nB — 2 рублей\nC — 3 руб")
     assert not re.search(pattern, "Куртка-рубашка 1\nКуртка-рубашка 2\nКуртка-рубашка 3")
+
+
+def test_every_golden_scenario_is_unique_and_graded() -> None:
+    golden = Path(__file__).parent / "golden" / "tasks.jsonl"
+    scenarios = load_batch_scenarios(golden)
+    ids = [scenario.scenario_id for scenario in scenarios]
+
+    assert len(ids) == len(set(ids))
+    for scenario in scenarios:
+        checks = grade_answer("", scenario.expected).checks
+        assert any(check.status != "ungraded" for check in checks), scenario.scenario_id

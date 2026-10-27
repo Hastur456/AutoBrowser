@@ -71,6 +71,20 @@ one fresh session, with an `expected` mapping of checks of the final answer.
 {"scenario_id":"wikipedia-python","tasks":["Открой Википедию.","Найди статью про язык программирования Python.","Открой статью.","Выведи первый абзац статьи."],"expected":{"contains":"Python"},"tags":["wikipedia","extract"]}
 ```
 
+The set has 18 scenarios. Each one exercises a capability of the agent:
+
+| Group | Scenarios | Sites | Stability |
+|---|---|---|---|
+| Navigation, extraction, comparison, lists | `books-*` | `books.toscrape.com` (scraping sandbox) | stable content, no anti-bot |
+| Pagination, JavaScript-rendered page, tag filter, login form | `quotes-*` | `quotes.toscrape.com` (sandbox; any login works) | stable |
+| Form fill and submit | `httpbin-form-submit` | `httpbin.org/forms/post` (echoes the posted fields) | stable |
+| Search, facts, a follow-up task in the same session, English | `wikipedia-*` | Wikipedia | stable facts, layout may change |
+| Repository facts | `github-*` | GitHub | stable facts, rate limits possible |
+| Shopping search, filters, sorting, comparison tables | `ozon-*`, `compare-rtx5070` | Ozon | live catalog: anti-bot, prices and results change |
+
+The sandbox scenarios are the reference: a failure there points at the agent. A failure on Ozon
+or GitHub needs a look at the trace first.
+
 ### 1. Prerequisites
 
 Check the environment first:
