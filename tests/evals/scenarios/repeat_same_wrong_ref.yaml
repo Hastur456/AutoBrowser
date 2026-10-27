@@ -1,0 +1,37 @@
+name: repeat_same_wrong_ref
+task: Open the Settings tab on https://app.example/dashboard.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the dashboard, status: pending}
+    - {id: 2, description: Open Settings, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://app.example/dashboard'}, reason: Open the dashboard.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e9}, reason: Open Settings.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e9}, reason: Open Settings.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Re-read the page.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e4}, reason: Open Settings.}
+  - decision: done
+    final_answer: Opened the Settings tab.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://app.example/dashboard
+    - tab "Overview" [ref=e3]
+    - tab "Settings" [ref=e4]
+  - |-
+    - Page URL: https://app.example/dashboard/settings
+    - heading "Settings" [ref=e10]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - Settings
+  max_tool_calls: 5
+  max_repeated_actions: 1
+  max_policy_blocks: 0

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
-from collections.abc import Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Sequence
+from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -15,11 +16,17 @@ import yaml
 from src.llm import ModelResponse
 from src.messages import Message
 
+from src.agent_loop.comparison import Finding
 from src.agent_loop.context import ContextAssembler, PromptSection
-from src.agent_loop.events import EventEmitter, InMemoryEventSink
+from src.agent_loop.events import EventEmitter, EventRecord, InMemoryEventSink
 from src.agent_loop.execution.loop import Agent
 from src.agent_loop.execution.resources import EngineResources
-from src.agent_loop.replay import TraceSummary, print_action_sequence, summarize_trace
+from src.agent_loop.replay import (
+    TraceSummary,
+    iter_action_sequence,
+    print_action_sequence,
+    summarize_trace,
+)
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
 from src.browser.permissions import BrowserResourceResolver
 from src.config import PermissionsSettings, SkillsSettings
@@ -30,6 +37,7 @@ from src.contracts import (
     Tool,
     ToolRequest,
     ToolResult,
+    goal_status_from_completion,
 )
 from src.harness.permissions import PermissionEngine
 from src.harness.normalization import SchemaArgsNormalizer
@@ -129,8 +137,11 @@ class _FakeBrowserTools:
         async def browser_click(
             ref: str | None = None,
             target: str | None = None,
+            element: str | None = None,
         ) -> str:
             """Click an element in the fake browser."""
+
+            _ = element
 
             resolved_ref = self._require_ref(ref=ref, target=target)
             self._assert_ref_exists(resolved_ref)
@@ -141,8 +152,11 @@ class _FakeBrowserTools:
             text: str,
             ref: str | None = None,
             target: str | None = None,
+            element: str | None = None,
         ) -> str:
             """Type text into an element in the fake browser."""
+
+            _ = element
 
             resolved_ref = self._require_ref(ref=ref, target=target)
             self._assert_ref_exists(resolved_ref)
@@ -152,8 +166,11 @@ class _FakeBrowserTools:
         async def browser_hover(
             ref: str | None = None,
             target: str | None = None,
+            element: str | None = None,
         ) -> str:
             """Hover an element in the fake browser."""
+
+            _ = element
 
             resolved_ref = self._require_ref(ref=ref, target=target)
             self._assert_ref_exists(resolved_ref)
@@ -169,6 +186,7 @@ class _FakeBrowserTools:
                 {
                     "ref": {"type": "string"},
                     "target": {"type": "string"},
+                    "element": {"type": "string"},
                 },
             ),
             self._tool(
@@ -177,6 +195,7 @@ class _FakeBrowserTools:
                     "text": {"type": "string"},
                     "ref": {"type": "string"},
                     "target": {"type": "string"},
+                    "element": {"type": "string"},
                 },
                 required=("text",),
             ),
@@ -185,6 +204,7 @@ class _FakeBrowserTools:
                 {
                     "ref": {"type": "string"},
                     "target": {"type": "string"},
+                    "element": {"type": "string"},
                 },
             ),
         ]
@@ -197,7 +217,11 @@ class _FakeBrowserTools:
         required: Sequence[str] = (),
         read_only: bool = False,
     ) -> Tool:
-        """Wrap one async fake-browser function into a neutral ``Tool``."""
+        """Wrap one async fake-browser function into a neutral ``Tool``.
+
+        The schema is closed (``additionalProperties: false``) like the real Playwright MCP
+        schemas, so :class:`SchemaArgsNormalizer` drops arguments a tool does not declare.
+        """
 
         return Tool(
             name=func.__name__,
@@ -206,6 +230,7 @@ class _FakeBrowserTools:
                 "type": "object",
                 "properties": dict(properties),
                 **({"required": list(required)} if required else {}),
+                "additionalProperties": False,
             },
             func=func,
             annotations={"readOnlyHint": True} if read_only else None,
@@ -248,19 +273,33 @@ class _FakeBrowserTools:
         return bool(_REF_VALUE_PATTERN.fullmatch(value))
 
 
+class ScriptExhaustedError(IndexError):
+    """A strict :class:`FakeChatModel` was asked for more responses than its script has."""
+
+
 class FakeChatModel:
     """Deterministic provider-neutral model returning scenario responses in order.
 
     ``complete`` replays the next scripted response verbatim as ``content``
     (plan- and agent-turn JSON alike), so the eval scenarios drive the engine
     over the neutral ``ChatModel`` contract end to end.
+
+    By default the script cycles, so an extra model call gets the first response again.
+    ``strict=True`` raises :class:`ScriptExhaustedError` instead and sets ``exhausted``: an
+    engine change that adds a model call then fails the scenario rather than replaying a
+    plan as an agent turn.
     """
 
-    def __init__(self, responses: list[str]) -> None:
+    def __init__(self, responses: list[str], *, strict: bool = False) -> None:
         self._responses = list(responses)
         self._index = 0
+        self._strict = strict
+        #: True once a strict script ran out of responses.
+        self.exhausted = False
         #: Characters of every prompt sent (message contents), for prompt-size comparisons.
         self.prompt_chars = 0
+        #: Characters of every request: messages with their tool calls plus the tool schemas.
+        self.request_chars = 0
 
     async def complete(
         self,
@@ -272,10 +311,38 @@ class FakeChatModel:
         if not self._responses:
             raise IndexError("FakeChatModel has no scripted responses.")
         self.prompt_chars += sum(len(str(message.content or "")) for message in messages)
-        # Cycle through the scripted responses for deterministic replay.
-        content = self._responses[self._index]
-        self._index = (self._index + 1) % len(self._responses)
+        self.request_chars += _request_chars(messages, tools)
+        if self._strict and self._index >= len(self._responses):
+            self.exhausted = True
+            raise ScriptExhaustedError(
+                f"FakeChatModel script exhausted after {len(self._responses)} responses."
+            )
+        content = self._responses[self._index % len(self._responses)]
+        self._index += 1
         return ModelResponse(content=content, finish_reason="stop")
+
+    @property
+    def unused_responses(self) -> int:
+        """Scripted responses no call has reached yet."""
+
+        return max(len(self._responses) - self._index, 0)
+
+
+def _request_chars(messages: Sequence[Message], tools: Sequence[Any]) -> int:
+    """Size of one model request: message contents, their tool calls and the tool schemas."""
+
+    total = 0
+    for message in messages:
+        total += len(str(message.content or ""))
+        if message.tool_calls:
+            total += len(_canonical_json([call.to_dict() for call in message.tool_calls]))
+    for tool in tools:
+        total += len(_canonical_json(asdict(tool) if is_dataclass(tool) else str(tool)))
+    return total
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
 
 
 @dataclass(frozen=True)
@@ -287,6 +354,8 @@ class EvalAssertions:
     max_tool_calls: int | None = None
     max_repeated_actions: int | None = None
     max_policy_blocks: int | None = None
+    #: Most tool calls that may finish with ``status: error``.
+    max_errors: int | None = None
 
 
 @dataclass(frozen=True)
@@ -305,6 +374,8 @@ class EvalScenario:
     )
     #: Scripted human answers to approval prompts, in order (then ``deny``).
     human_answers: list[str] = field(default_factory=list)
+    #: Fail on a model call past the script instead of cycling (see :class:`FakeChatModel`).
+    strict: bool = False
 
 
 @dataclass(frozen=True)
@@ -317,8 +388,25 @@ class EvalResult:
     final_state: dict[str, Any]
     #: Characters of all model prompts; not part of :meth:`metrics` (the baseline).
     prompt_chars: int = 0
+    #: Characters of all model requests, tool schemas included (see ``_request_chars``).
+    request_chars: int = 0
+    #: A strict scenario asked the model for more responses than it scripts.
+    script_exhausted: bool = False
+    #: Scripted model responses the run never reached.
+    unused_responses: int = 0
+    #: Tool calls that finished with ``status: error``.
+    error_count: int = 0
+    #: Approval prompts raised (``approval.requested``).
+    approval_request_count: int = 0
+    #: Observations compiled after tool calls (``observation.compiled``).
+    observation_count: int = 0
+    #: ``sha256:`` of the proposed calls as ``(tool, sorted argument keys)``, see
+    #: :func:`action_signature`.
+    action_signature: str = ""
 
     def metrics(self) -> dict[str, Any]:
+        """The v1 baseline metrics (``agent_loop_v1.json`` plus ``final_answer``)."""
+
         return {
             "terminal_status": self.summary.terminal_status,
             "final_answer": self.summary.final_answer,
@@ -328,6 +416,61 @@ class EvalResult:
             "repeated_action_count": self.summary.repeated_action_count,
             "trace_complete": self.summary.trace_complete,
         }
+
+    def baseline_metrics(self) -> dict[str, Any]:
+        """The v2 baseline record: v1 metrics plus outcome counters, the action signature and
+        the request size. ``final_answer`` has its whitespace normalized."""
+
+        return {
+            **self.metrics(),
+            "final_answer": " ".join(self.summary.final_answer.split()),
+            "approval_request_count": self.approval_request_count,
+            "error_count": self.error_count,
+            "observation_count": self.observation_count,
+            "action_signature": self.action_signature,
+            "request_chars": self.request_chars,
+        }
+
+
+@dataclass(frozen=True)
+class ScenarioRun:
+    """One scenario run collected by :func:`collect_eval_metrics`."""
+
+    scenario: EvalScenario
+    result: EvalResult
+    #: Failed configured assertions, empty when the scenario met them all.
+    problems: tuple[str, ...] = ()
+
+    @property
+    def name(self) -> str:
+        return self.scenario.name
+
+
+def action_signature(events: Sequence[EventRecord]) -> str:
+    """``sha256:`` over the proposed calls as ``(tool, sorted argument keys)``.
+
+    Argument values are left out (the scenario fixes them); the keys catch a changed schema
+    or normalization even when every counter stays the same.
+    """
+
+    sequence = [[action.name, sorted(action.args)] for action in iter_action_sequence(list(events))]
+    digest = hashlib.sha256(_canonical_json(sequence).encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
+def _tool_error_count(events: Sequence[EventRecord]) -> int:
+    count = 0
+    for event in events:
+        if event.type != "tool.finished":
+            continue
+        result = event.payload.get("tool_result")
+        if isinstance(result, dict) and result.get("status") == "error":
+            count += 1
+    return count
+
+
+def _event_count(events: Sequence[EventRecord], event_type: str) -> int:
+    return sum(1 for event in events if event.type == event_type)
 
 
 def load_scenario(path: Path) -> EvalScenario:
@@ -353,10 +496,12 @@ def load_scenario(path: Path) -> EvalScenario:
             max_tool_calls=assertions.get("max_tool_calls"),
             max_repeated_actions=assertions.get("max_repeated_actions"),
             max_policy_blocks=assertions.get("max_policy_blocks"),
+            max_errors=assertions.get("max_errors"),
         ),
         turn_cap=int(data.get("turn_cap", 25) or 25),
         permissions=PermissionsSettings(**{"mode": "dont_ask", **(data.get("permissions") or {})}),
         human_answers=[str(item) for item in (data.get("human") or {}).get("answers") or []],
+        strict=bool(data.get("strict", False)),
     )
 
 
@@ -413,7 +558,7 @@ async def run_scenario(
     task_id = f"task-{uuid4().hex}"
     emitter = EventEmitter(sink, session_id=session_id)
     provider = _FakeBrowserTools(scenario.browser_snapshots)
-    llm = FakeChatModel(responses=scenario.model_responses)
+    llm = FakeChatModel(responses=scenario.model_responses, strict=scenario.strict)
     harness = BrowserHarness(
         llm=llm,
         # A browser scenario: the same always-on skills a session with a browser server gets.
@@ -474,7 +619,8 @@ async def run_scenario(
             "final_answer": str(result.final_answer or ""),
             "decision": str(result.status or ""),
         }
-        terminal = "blocked" if result.status == "blocked" else "completed"
+        # The same mapping GoalRunner uses, so ``cancelled`` stays ``cancelled``.
+        terminal = goal_status_from_completion(result.status) or "failed"
         emitter.emit(
             f"goal.{terminal}",
             source="agent_loop.evals",
@@ -495,34 +641,106 @@ async def run_scenario(
         action_sequence=print_action_sequence(events),
         final_state=final_state,
         prompt_chars=llm.prompt_chars,
+        request_chars=llm.request_chars,
+        script_exhausted=llm.exhausted,
+        unused_responses=llm.unused_responses,
+        error_count=_tool_error_count(events),
+        approval_request_count=_event_count(events, "approval.requested"),
+        observation_count=_event_count(events, "observation.compiled"),
+        action_signature=action_signature(events),
     )
+
+
+async def collect_eval_metrics(
+    scenarios: Sequence[EvalScenario],
+    *,
+    memory_factory: Callable[[], Any] | None = None,
+) -> list[ScenarioRun]:
+    """Run every scenario and check its assertions without raising.
+
+    A failed assertion or an exhausted script is reported on the returned
+    :class:`ScenarioRun` rather than raised, so a caller can report every scenario.
+    ``memory_factory`` builds a fresh ``Memory`` block renderer per scenario.
+    """
+
+    runs: list[ScenarioRun] = []
+    for scenario in scenarios:
+        memory = memory_factory() if memory_factory is not None else None
+        result = await run_scenario(scenario, memory=memory)
+        runs.append(
+            ScenarioRun(
+                scenario=scenario,
+                result=result,
+                problems=tuple(check_scenario_result(scenario, result)),
+            )
+        )
+    return runs
+
+
+#: The problem line of a strict scenario that ran out of scripted model responses.
+SCRIPT_EXHAUSTED_PROBLEM = "the strict model script ran out of responses"
+
+
+def check_scenario_result(scenario: EvalScenario, result: EvalResult) -> list[str]:
+    """The configured scenario expectations the result misses, as readable lines."""
+
+    summary = result.summary
+    assertions = scenario.assertions
+    problems: list[str] = []
+    if result.script_exhausted:
+        problems.append(SCRIPT_EXHAUSTED_PROBLEM)
+    elif scenario.strict and result.unused_responses:
+        problems.append(
+            f"{result.unused_responses} scripted model responses were never used"
+        )
+    if summary.terminal_status != assertions.expected_terminal_status:
+        problems.append(
+            f"terminal_status: expected {assertions.expected_terminal_status!r},"
+            f" got {summary.terminal_status!r}"
+        )
+    for expected_text in assertions.final_answer_contains:
+        if expected_text not in summary.final_answer:
+            problems.append(f"final_answer does not contain {expected_text!r}")
+    limits = (
+        ("tool_call_count", summary.tool_call_count, assertions.max_tool_calls),
+        ("repeated_action_count", summary.repeated_action_count, assertions.max_repeated_actions),
+        ("policy_block_count", summary.policy_block_count, assertions.max_policy_blocks),
+        ("error_count", result.error_count, assertions.max_errors),
+    )
+    for metric, actual, limit in limits:
+        if limit is not None and actual > limit:
+            problems.append(f"{metric}: {actual} exceeds the limit {limit}")
+    if summary.trace_complete is not True:
+        problems.append("trace_complete: the trace has no goal.started or no terminal event")
+    return problems
+
+
+def run_findings(runs: Sequence[ScenarioRun], *, suite: str) -> list[Finding]:
+    """Comparison findings of the runs themselves, before any baseline is consulted.
+
+    An exhausted strict script is ``script_exhausted``; every other failed scenario assertion
+    is a ``regression`` of the ``assertions`` metric.
+    """
+
+    findings: list[Finding] = []
+    for run in runs:
+        if run.result.script_exhausted:
+            findings.append(
+                Finding("script_exhausted", suite, run.name, message=SCRIPT_EXHAUSTED_PROBLEM)
+            )
+        for problem in run.problems:
+            if problem != SCRIPT_EXHAUSTED_PROBLEM:
+                findings.append(
+                    Finding("regression", suite, run.name, metric="assertions", message=problem)
+                )
+    return findings
 
 
 def assert_scenario_result(scenario: EvalScenario, result: EvalResult) -> None:
     """Assert configured scenario expectations with compact trace diagnostics."""
 
-    metrics = result.metrics()
-    action_sequence = result.action_sequence
-    expected_status = scenario.assertions.expected_terminal_status
-    assert result.summary.terminal_status == expected_status, action_sequence
-    for expected_text in scenario.assertions.final_answer_contains:
-        assert expected_text in result.summary.final_answer, action_sequence
-    if scenario.assertions.max_tool_calls is not None:
-        assert result.summary.tool_call_count <= scenario.assertions.max_tool_calls, (
-            metrics,
-            action_sequence,
-        )
-    if scenario.assertions.max_repeated_actions is not None:
-        assert (
-            result.summary.repeated_action_count
-            <= scenario.assertions.max_repeated_actions
-        ), (metrics, action_sequence)
-    if scenario.assertions.max_policy_blocks is not None:
-        assert result.summary.policy_block_count <= scenario.assertions.max_policy_blocks, (
-            metrics,
-            action_sequence,
-        )
-    assert result.summary.trace_complete is True, action_sequence
+    problems = check_scenario_result(scenario, result)
+    assert not problems, "\n".join([*problems, str(result.metrics()), result.action_sequence])
 
 
 def _json_response(response: Any) -> str:
@@ -535,7 +753,15 @@ __all__ = [
     "EvalAssertions",
     "EvalResult",
     "EvalScenario",
+    "FakeChatModel",
+    "ScenarioRun",
+    "ScriptExhaustedError",
+    "action_signature",
     "assert_scenario_result",
+    "SCRIPT_EXHAUSTED_PROBLEM",
+    "check_scenario_result",
+    "collect_eval_metrics",
     "load_scenario",
+    "run_findings",
     "run_scenario",
 ]

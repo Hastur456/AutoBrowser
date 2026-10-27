@@ -1,0 +1,41 @@
+name: not_found_stop_failed
+task: Find the product 'Zeta-9 drone' on https://gadgets.example and report its price.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the site, status: pending}
+    - {id: 2, description: Search for the product, status: pending}
+    - {id: 3, description: Report the price, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://gadgets.example'}, reason: Open the site.}
+  - decision: tool_call
+    tool_request: {name: browser_type, args: {ref: e2, text: Zeta-9 drone}, reason: Enter the product name.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Search.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Read the results.}
+  - decision: stop
+    status: failed
+    message: No product named 'Zeta-9 drone' exists on gadgets.example; the search returned 0 results.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://gadgets.example/
+    - searchbox "Search" [ref=e2]
+    - button "Go" [ref=e3]
+  - |-
+    - Page URL: https://gadgets.example/
+    - searchbox "Search" [ref=e2]: Zeta-9 drone
+    - button "Go" [ref=e3]
+  - |-
+    - Page URL: https://gadgets.example/search?q=Zeta-9+drone
+    - heading "0 results" [ref=e5]
+assertions:
+  expected_terminal_status: blocked
+  final_answer_contains:
+  - 0 results
+  max_tool_calls: 4
+  max_repeated_actions: 0
+  max_policy_blocks: 0

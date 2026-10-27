@@ -1,5 +1,6 @@
 name: dynamic_search_input
 task: Open dynamic search input and search for boots.
+strict: true
 model:
   responses:
     - steps:

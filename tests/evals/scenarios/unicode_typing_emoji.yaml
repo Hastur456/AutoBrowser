@@ -1,0 +1,35 @@
+name: unicode_typing_emoji
+task: 'Отправь сообщение «Привет, мир! 👋 Цена: 1 000 ₽ — ок?» в чат на текущей странице.'
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Ввести сообщение, status: pending}
+    - {id: 2, description: Отправить, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_type, args: {ref: e2, text: 'Привет, мир! 👋 Цена: 1 000 ₽ — ок?'}, reason: Ввести сообщение.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Отправить.}
+  - decision: done
+    final_answer: 'Сообщение «Привет, мир! 👋 Цена: 1 000 ₽ — ок?» отправлено.'
+browser:
+  snapshots:
+  - |-
+    - Page URL: https://chat.example/room/5
+    - textbox "Сообщение" [ref=e2]
+    - button "Отправить" [ref=e3]
+  - |-
+    - Page URL: https://chat.example/room/5
+    - textbox "Сообщение" [ref=e2]: Привет, мир! 👋 Цена: 1 000 ₽ — ок?
+    - button "Отправить" [ref=e3]
+  - |-
+    - Page URL: https://chat.example/room/5
+    - log "Сообщения" [ref=e5]
+    - text "Вы: Привет, мир! 👋 Цена: 1 000 ₽ — ок?" [ref=e6]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - 👋
+  max_tool_calls: 2
+  max_repeated_actions: 0
+  max_policy_blocks: 0

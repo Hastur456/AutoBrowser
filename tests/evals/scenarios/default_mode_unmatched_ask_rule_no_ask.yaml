@@ -1,0 +1,45 @@
+name: default_mode_unmatched_ask_rule_no_ask
+task: Open the 'Pricing' page from https://saas.example.
+strict: true
+permissions:
+  mode: default
+  rules:
+  - id: purchases
+    decision: ask
+    tool: browser_click
+    target: (?i)buy|checkout
+  - id: allow_rest
+    decision: allow
+    tool: .*
+human:
+  answers: []
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the site, status: pending}
+    - {id: 2, description: Open Pricing, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://saas.example'}, reason: Open the site.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Find the Pricing link.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Open Pricing.}
+  - decision: done
+    final_answer: Opened the Pricing page.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://saas.example/
+    - link "Features" [ref=e2]
+    - link "Pricing" [ref=e3]
+  - |-
+    - Page URL: https://saas.example/pricing
+    - heading "Pricing" [ref=e5]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - Pricing
+  max_tool_calls: 3
+  max_repeated_actions: 0
+  max_policy_blocks: 0

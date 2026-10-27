@@ -1,0 +1,35 @@
+name: special_chars_in_labels
+task: Accept the 'Terms & Conditions' and press '<Next>' on the current page.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Accept the terms, status: pending}
+    - {id: 2, description: Continue, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e2}, reason: Accept the Terms & Conditions.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Press <Next>.}
+  - decision: done
+    final_answer: 'Accepted ''Terms & Conditions'' and moved to step 2 of 3: "Shipping".'
+browser:
+  snapshots:
+  - |-
+    - Page URL: https://form.example/step1?ref=a&b=c
+    - checkbox "I agree to the Terms & Conditions (v2.1) — 100% read" [ref=e2]
+    - button "<Next>" [ref=e3]
+    - link "Questions? Call +1 (555) 010-0199 / email: help@form.example" [ref=e4]
+  - |-
+    - Page URL: https://form.example/step1?ref=a&b=c
+    - checkbox "I agree to the Terms & Conditions (v2.1) — 100% read" [checked] [ref=e2]
+    - button "<Next>" [ref=e3]
+  - |-
+    - Page URL: https://form.example/step2
+    - heading "Step 2 of 3: \"Shipping\"" [ref=e6]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - '"Shipping"'
+  max_tool_calls: 2
+  max_repeated_actions: 0
+  max_policy_blocks: 0

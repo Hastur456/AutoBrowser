@@ -1,5 +1,6 @@
 name: search_basic
 task: Search for jackets and report the first visible result.
+strict: true
 model:
   responses:
     - steps:

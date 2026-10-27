@@ -1,5 +1,6 @@
 name: stale_ref_recovery
 task: Open the current result after recovering from a stale ref.
+strict: true
 model:
   responses:
     - steps:

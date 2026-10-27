@@ -1,0 +1,37 @@
+name: not_domains_outside_denied
+task: Click 'Sign up' on the current page.
+strict: true
+permissions:
+  mode: dont_ask
+  rules:
+  - id: only_intranet
+    decision: deny
+    tool: browser_click
+    not_domains:
+    - intranet.example
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Click Sign up, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Find the button.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e2}, reason: Click Sign up.}
+  - decision: done
+    final_answer: 'Did not click: clicks are only allowed on intranet.example, and this page is on promo.example.'
+browser:
+  snapshots:
+  - |-
+    - Page URL: https://promo.example/landing
+    - heading "Join now" [ref=e1]
+    - button "Sign up" [ref=e2]
+  - |-
+    - Page URL: https://promo.example/signup
+    - heading "Create account" [ref=e4]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - intranet.example
+  max_tool_calls: 1
+  max_repeated_actions: 0
+  max_policy_blocks: 1

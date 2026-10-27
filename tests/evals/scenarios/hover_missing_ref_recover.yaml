@@ -1,0 +1,37 @@
+name: hover_missing_ref_recover
+task: Read the tooltip on the 'Fees' icon at https://bank-info.example/pricing.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open pricing, status: pending}
+    - {id: 2, description: Hover the Fees icon, status: pending}
+    - {id: 3, description: Read the tooltip, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://bank-info.example/pricing'}, reason: Open pricing.}
+  - decision: tool_call
+    tool_request: {name: browser_hover, args: {ref: e7}, reason: Show the Fees tooltip.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Ref not found; re-read the page.}
+  - decision: tool_call
+    tool_request: {name: browser_hover, args: {ref: e4}, reason: Show the Fees tooltip.}
+  - decision: done
+    final_answer: The tooltip says transfers within the country are free.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://bank-info.example/pricing
+    - heading "Pricing" [ref=e2]
+    - img "Fees info" [ref=e4]
+  - |-
+    - Page URL: https://bank-info.example/pricing
+    - img "Fees info" [ref=e4]
+    - tooltip "Domestic transfers are free" [ref=e5]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - free
+  max_tool_calls: 4
+  max_repeated_actions: 0
+  max_policy_blocks: 0

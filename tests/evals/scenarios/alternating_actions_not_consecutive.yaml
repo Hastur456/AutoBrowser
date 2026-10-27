@@ -1,0 +1,46 @@
+name: alternating_actions_not_consecutive
+task: Compare the two tabs 'Monthly' and 'Yearly' on https://saas.example/pricing.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open pricing, status: pending}
+    - {id: 2, description: Read both tabs, status: pending}
+    - {id: 3, description: Compare, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://saas.example/pricing'}, reason: Open pricing.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Open Monthly.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e4}, reason: Open Yearly.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Back to Monthly.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e4}, reason: Back to Yearly.}
+  - decision: done
+    final_answer: Monthly is $10, Yearly is $100 (two months free).
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://saas.example/pricing
+    - tab "Monthly" [ref=e3]
+    - tab "Yearly" [ref=e4]
+    - text "$10 / month" [ref=e5]
+  - |-
+    - Page URL: https://saas.example/pricing
+    - tab "Monthly" [ref=e3]
+    - tab "Yearly" [ref=e4]
+    - text "$10 / month" [ref=e5]
+  - |-
+    - Page URL: https://saas.example/pricing
+    - tab "Monthly" [ref=e3]
+    - tab "Yearly" [ref=e4]
+    - text "$100 / year" [ref=e5]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - $100
+  max_tool_calls: 5
+  max_repeated_actions: 0
+  max_policy_blocks: 0

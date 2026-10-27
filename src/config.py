@@ -1685,6 +1685,28 @@ class UiSettings(_Section):
         return storage.root_dir / self.log_file
 
 
+class PipelineSettings(_Section):
+    """Regression and benchmark tolerances of the test pipeline.
+
+    Read only by the comparison tools (``src/agent_loop/comparison.py``, the eval scripts);
+    the agent runtime never reads this section. See
+    docs/development/2026-10-19-autonomous-test-pipeline-design.md §4.8.
+    """
+
+    request_chars_tolerance: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=10.0,
+            description=(
+                "Relative change of an eval's request_chars (prompt plus tool schemas) "
+                "against the baseline that is still accepted; a larger growth is a "
+                "regression, a larger drop an improvement."
+            ),
+        ),
+    ] = 0.10
+
+
 def _resolve_config_path() -> Path | None:
     """Return the YAML file to load, if any.
 
@@ -1784,6 +1806,7 @@ class Settings(BaseSettings):
     hooks: HooksSettings = Field(default_factory=HooksSettings)
     permissions: PermissionsSettings = Field(default_factory=PermissionsSettings)
     ui: UiSettings = Field(default_factory=UiSettings)
+    pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
     #: Name of the ``mcp_servers`` entry that provides browser tools (exposed unprefixed).
     #: ``None`` falls back to ``"playwright"`` when such an entry exists.
@@ -1867,6 +1890,7 @@ __all__ = [
     "ObservationSettings",
     "PermissionRule",
     "PermissionsSettings",
+    "PipelineSettings",
     "Settings",
     "StorageSettings",
     "TOOL_HOOK_EVENTS",

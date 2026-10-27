@@ -1,0 +1,34 @@
+name: repeat_snapshot_loop
+task: Wait until the order status on https://shop.example/orders/55 changes from Processing.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the order, status: pending}
+    - {id: 2, description: Watch the status, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://shop.example/orders/55'}, reason: Open the order.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Check the status.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Check the status again.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Check the status again.}
+  - steps:
+    - {id: 1, description: Report the status, status: pending}
+  - decision: done
+    final_answer: The status is still Processing; it did not change.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://shop.example/orders/55
+    - heading "Order 55" [ref=e1]
+    - text "Status: Processing" [ref=e2]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - Processing
+  max_tool_calls: 3
+  max_repeated_actions: 1
+  max_policy_blocks: 0

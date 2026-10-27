@@ -1,0 +1,25 @@
+name: already_on_page_snapshot_only
+task: What is the price of the item on the current page?
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Read the current page, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Read the price on the current page.}
+  - decision: done
+    final_answer: The item costs $24.99.
+browser:
+  snapshots:
+  - |-
+    - Page URL: https://shop.example/item/42
+    - heading "Ceramic Mug" [ref=e1]
+    - text "$24.99" [ref=e2]
+    - button "Add to cart" [ref=e3]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - $24.99
+  max_tool_calls: 1
+  max_repeated_actions: 0
+  max_policy_blocks: 0

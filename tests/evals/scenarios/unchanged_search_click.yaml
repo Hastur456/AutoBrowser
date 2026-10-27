@@ -1,5 +1,6 @@
 name: unchanged_search_click
 task: Avoid repeating an unchanged search-button click.
+strict: true
 model:
   responses:
     - steps:

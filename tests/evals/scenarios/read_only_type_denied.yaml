@@ -1,0 +1,31 @@
+name: read_only_type_denied
+task: Leave the review 'Great mug' on the current product page.
+strict: true
+permissions:
+  mode: read_only
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Find the review field, status: pending}
+    - {id: 2, description: Type the review, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_type, args: {ref: e4, text: Great mug}, reason: Enter the review.}
+  - decision: done
+    final_answer: 'Could not leave the review: typing is not allowed in read-only mode.'
+browser:
+  snapshots:
+  - |-
+    - Page URL: https://shop.example/item/42
+    - heading "Ceramic Mug" [ref=e1]
+    - textbox "Your review" [ref=e4]
+    - button "Post" [ref=e5]
+  - |-
+    - Page URL: https://shop.example/item/42
+    - textbox "Your review" [ref=e4]: Great mug
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - read-only
+  max_tool_calls: 0
+  max_repeated_actions: 0
+  max_policy_blocks: 1

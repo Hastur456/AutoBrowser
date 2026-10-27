@@ -1,0 +1,29 @@
+name: navigate_read_heading
+task: Open https://docs.example/changelog and tell me the latest version number.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the changelog, status: pending}
+    - {id: 2, description: Read the latest version, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://docs.example/changelog'}, reason: Open the changelog.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Read the version headings.}
+  - decision: done
+    final_answer: The latest version is 3.4.1.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://docs.example/changelog
+    - heading "Changelog" [ref=e1]
+    - heading "3.4.1 (2026-10-01)" [ref=e2]
+    - heading "3.4.0 (2026-09-12)" [ref=e3]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - 3.4.1
+  max_tool_calls: 2
+  max_repeated_actions: 0
+  max_policy_blocks: 0

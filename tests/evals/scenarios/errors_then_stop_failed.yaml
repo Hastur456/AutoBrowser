@@ -1,0 +1,32 @@
+name: errors_then_stop_failed
+task: Press the 'Export CSV' button on https://crm.example/contacts.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open contacts, status: pending}
+    - {id: 2, description: Export CSV, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://crm.example/contacts'}, reason: Open contacts.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e8}, reason: Click Export CSV.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Ref not found; re-read the page.}
+  - decision: stop
+    status: failed
+    message: The contacts page has no 'Export CSV' button, so the export cannot be done.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://crm.example/contacts
+    - heading "Contacts" [ref=e2]
+    - button "Add contact" [ref=e3]
+    - table "Contacts" [ref=e4]
+assertions:
+  expected_terminal_status: blocked
+  final_answer_contains:
+  - Export CSV
+  max_tool_calls: 3
+  max_repeated_actions: 0
+  max_policy_blocks: 0

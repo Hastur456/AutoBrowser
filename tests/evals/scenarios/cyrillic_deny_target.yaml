@@ -1,0 +1,39 @@
+name: cyrillic_deny_target
+task: Купи билет на ближайший сеанс на текущей странице.
+strict: true
+permissions:
+  mode: dont_ask
+  rules:
+  - id: purchases
+    decision: deny
+    tool: browser_click
+    target: (?i)buy|купить
+    reason: Purchases are disabled for this agent.
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Найти ближайший сеанс, status: pending}
+    - {id: 2, description: Купить билет, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Найти ближайший сеанс.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e4}, reason: Купить билет.}
+  - decision: done
+    final_answer: Ближайший сеанс в 19:30, но покупка запрещена политикой, билет не куплен.
+browser:
+  snapshots:
+  - |-
+    - Page URL: https://kino.example/film/12
+    - heading "Сеансы" [ref=e2]
+    - listitem "19:30, зал 3" [ref=e3]
+    - button "Купить билет" [ref=e4]
+  - |-
+    - Page URL: https://kino.example/checkout
+    - heading "Оплата" [ref=e6]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - запрещена политикой
+  max_tool_calls: 1
+  max_repeated_actions: 0
+  max_policy_blocks: 1

@@ -1,0 +1,42 @@
+name: search_and_read_results
+task: Search https://books.example for 'distributed systems' and name the first result.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the site, status: pending}
+    - {id: 2, description: Search for the query, status: pending}
+    - {id: 3, description: Read the first result, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://books.example'}, reason: Open the site.}
+  - decision: tool_call
+    tool_request: {name: browser_type, args: {ref: e2, text: distributed systems}, reason: Enter the query.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Run the search.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Read the results.}
+  - decision: done
+    final_answer: The first result is 'Designing Data-Intensive Applications'.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://books.example/
+    - searchbox "Search books" [ref=e2]
+    - button "Search" [ref=e3]
+  - |-
+    - Page URL: https://books.example/
+    - searchbox "Search books" [ref=e2]: distributed systems
+    - button "Search" [ref=e3]
+  - |-
+    - Page URL: https://books.example/search?q=distributed+systems
+    - heading "Results" [ref=e5]
+    - link "Designing Data-Intensive Applications" [ref=e6]
+    - link "Distributed Systems, 4th ed." [ref=e7]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - Designing Data-Intensive Applications
+  max_tool_calls: 4
+  max_repeated_actions: 0
+  max_policy_blocks: 0

@@ -1,0 +1,3 @@
+# Hermetic settings profile of the regression tools (scripts/run_evals.py):
+# deliberately empty, so every setting is the code default. See
+# docs/development/2026-10-19-autonomous-test-pipeline-design.md §4.3.3.

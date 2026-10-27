@@ -1,0 +1,46 @@
+name: ask_once_approved
+task: Buy one pack of AA batteries on https://shop.example/batteries.
+strict: true
+permissions:
+  mode: default
+  rules:
+  - id: purchases
+    decision: ask
+    tool: browser_click
+    target: (?i)buy|place order|купить
+  - id: allow_rest
+    decision: allow
+    tool: .*
+human:
+  answers:
+  - once
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the page, status: pending}
+    - {id: 2, description: Buy the batteries, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://shop.example/batteries'}, reason: Open the page.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Find the batteries.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e4}, reason: Buy one pack.}
+  - decision: done
+    final_answer: 'Bought one pack of AA batteries; order #7781 confirmed.'
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://shop.example/batteries
+    - listitem "AA batteries, 8 pack — $6.50" [ref=e3]
+    - button "Buy now" [ref=e4]
+  - |-
+    - Page URL: https://shop.example/orders/7781
+    - heading "Order #7781 confirmed" [ref=e6]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - '#7781'
+  max_tool_calls: 3
+  max_repeated_actions: 0
+  max_policy_blocks: 0

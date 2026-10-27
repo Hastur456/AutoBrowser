@@ -1,0 +1,31 @@
+name: captcha_stop_blocked
+task: Get the tracking status of parcel RX123 on https://post.example/track.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open tracking, status: pending}
+    - {id: 2, description: Enter the number, status: pending}
+    - {id: 3, description: Read the status, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://post.example/track'}, reason: Open tracking.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Inspect the page.}
+  - decision: stop
+    status: blocked
+    message: The tracking page shows a CAPTCHA that I must not solve; please complete it manually.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://post.example/track
+    - heading "Are you a robot?" [ref=e1]
+    - checkbox "I am not a robot" [ref=e2]
+    - button "Continue" [ref=e3]
+assertions:
+  expected_terminal_status: blocked
+  final_answer_contains:
+  - CAPTCHA
+  max_tool_calls: 2
+  max_repeated_actions: 0
+  max_policy_blocks: 0

@@ -1,0 +1,33 @@
+name: click_before_navigate_recover
+task: Open https://tickets.example and click 'Today'.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the site, status: pending}
+    - {id: 2, description: Click Today, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e2}, reason: Click Today.}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://tickets.example'}, reason: The current page is blank; open the site first.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e2}, reason: Click Today.}
+  - decision: done
+    final_answer: Opened today's schedule.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://tickets.example/
+    - link "Today" [ref=e2]
+    - link "Tomorrow" [ref=e3]
+  - |-
+    - Page URL: https://tickets.example/today
+    - heading "Schedule for today" [ref=e5]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - today
+  max_tool_calls: 3
+  max_repeated_actions: 0
+  max_policy_blocks: 0

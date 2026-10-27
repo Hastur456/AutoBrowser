@@ -1,0 +1,44 @@
+name: repeat_type_same_text
+task: Enter the promo code AUTUMN26 at https://shop.example/cart and apply it.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the cart, status: pending}
+    - {id: 2, description: Enter the code, status: pending}
+    - {id: 3, description: Apply it, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://shop.example/cart'}, reason: Open the cart.}
+  - decision: tool_call
+    tool_request: {name: browser_type, args: {ref: e3, text: AUTUMN26}, reason: Enter the code.}
+  - decision: tool_call
+    tool_request: {name: browser_type, args: {ref: e3, text: AUTUMN26}, reason: Enter the code again.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e4}, reason: Apply the code.}
+  - decision: done
+    final_answer: Applied AUTUMN26; total is now $45.00.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://shop.example/cart
+    - textbox "Promo code" [ref=e3]
+    - button "Apply" [ref=e4]
+  - |-
+    - Page URL: https://shop.example/cart
+    - textbox "Promo code" [ref=e3]: AUTUMN26
+    - button "Apply" [ref=e4]
+  - |-
+    - Page URL: https://shop.example/cart
+    - textbox "Promo code" [ref=e3]: AUTUMN26
+    - button "Apply" [ref=e4]
+  - |-
+    - Page URL: https://shop.example/cart
+    - text "Code applied. Total: $45.00" [ref=e6]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - AUTUMN26
+  max_tool_calls: 4
+  max_repeated_actions: 1
+  max_policy_blocks: 0

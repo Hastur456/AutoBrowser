@@ -1,0 +1,27 @@
+name: turn_cap_snapshot_loop
+task: Wait for the build on https://ci.example/builds/314 to finish.
+strict: true
+turn_cap: 3
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the build, status: pending}
+    - {id: 2, description: Wait for it to finish, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://ci.example/builds/314'}, reason: Open the build.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Check whether the build finished.}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Check whether the build finished again.}
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://ci.example/builds/314
+    - heading "Build #314" [ref=e1]
+    - text "Status: running" [ref=e2]
+assertions:
+  expected_terminal_status: blocked
+  max_tool_calls: 3
+  max_repeated_actions: 1
+  max_policy_blocks: 0

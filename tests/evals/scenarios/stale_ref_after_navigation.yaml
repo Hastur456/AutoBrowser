@@ -1,0 +1,42 @@
+name: stale_ref_after_navigation
+task: On https://forum.example open the 'Announcements' board and then the pinned thread.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the forum, status: pending}
+    - {id: 2, description: Open Announcements, status: pending}
+    - {id: 3, description: Open the pinned thread, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://forum.example'}, reason: Open the forum.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Open Announcements.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Open the pinned thread (using the ref from the previous page).}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: The ref was stale; refresh the page structure.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e14}, reason: Open the pinned thread.}
+  - decision: done
+    final_answer: Opened the pinned thread 'Forum rules (read first)'.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://forum.example/
+    - link "General" [ref=e2]
+    - link "Announcements" [ref=e3]
+  - |-
+    - Page URL: https://forum.example/announcements
+    - heading "Announcements" [ref=e13]
+    - link "Forum rules (read first)" [ref=e14]
+  - |-
+    - Page URL: https://forum.example/announcements/1
+    - heading "Forum rules (read first)" [ref=e20]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - Forum rules
+  max_tool_calls: 5
+  max_repeated_actions: 1
+  max_policy_blocks: 0

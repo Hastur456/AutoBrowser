@@ -1,7 +1,8 @@
 # Автономный пайплайн тестирования AutoBrowser: регрессии, бенчмарки, решение по Langfuse
 
 Статус: Proposed (проект). Шаг 2 плана (usage) и часть шага 1 сделаны веткой провайдеров;
-состояние на 2026-10-23 и порядок старта — §1.3. Шаг 0 и минимальный гейт сделаны 2026-10-27.
+состояние на 2026-10-23 и порядок старта — §1.3. Шаг 0 и минимальный гейт сделаны 2026-10-27,
+шаги 3–5 — 2026-10-28.
 Дата: 2026-10-19
 Ветка: `ref/new-gui-design`
 ADR (Proposed):
@@ -136,7 +137,24 @@ ADR (Proposed):
   `error_preview_chars`, `temperature: null`. Нет `PipelineSettings`, `storage.ci_dir`,
   `llm.seed` и цен `llm.input_price_per_mtok`/`output_price_per_mtok`, без которых `cost`
   остаётся «неизвестно».
-- **Шаги 3–15 не начаты.**
+- **Шаги 6–15 не начаты.**
+- **Шаги 3–5 — сделаны 2026-10-28** (P3–P6 закрыты, P12 — для evals):
+  - eval-харнесс (`src/agent_loop/evals.py`): статус через `goal_status_from_completion`,
+    `FakeChatModel(strict)` (исчерпание и неиспользованные ответы — провал), `request_chars`,
+    метрики baseline v2, `collect_eval_metrics`/`run_findings` без исключений, проверка
+    `max_errors`. Фейковые инструменты закрыты `additionalProperties: false`, как схемы
+    Playwright MCP, и принимают `element`;
+  - `src/agent_loop/comparison.py`: только правила `exact` и `ratio`; живые правила
+    (`upper_bound`, доля успехов) придут с живыми стадиями. Из `PipelineSettings` пока только
+    `request_chars_tolerance` — остальные поля §4.8 добавляются вместе с их потребителями;
+  - `scripts/run_evals.py`: baseline v2 (`agent_loop_v2.json`, блок `scenarios_with_memory`),
+    находки построчно, коды 0/1/2, явное `--write-baseline`. Прогон герметичен:
+    `tests/evals/runner.isolate_settings` прячет личный `config.yaml`, `.env` и
+    `AUTOBROWSER_*` (кроме `AUTOBROWSER_PIPELINE__*`), профиль — пустой
+    `tests/pipeline/hermetic.yaml`;
+  - сверх плана: 50 сгенерированных strict-сценариев и их генератор
+    `scripts/generate_eval_scenarios.py` (YAML — его вывод, расхождение ловит
+    `tests/test_generate_eval_scenarios.py`). Все 57 сценариев — strict.
 - **Шаг 0 — сделан 2026-10-27** (P10, P11 закрыты):
   - `pywin32==311 ; sys_platform == 'win32'`. В `uv.lock` у Linux-ветки нет пакетов без
     колеса или sdist. Живой `uv sync --locked` на Linux не проверялся.

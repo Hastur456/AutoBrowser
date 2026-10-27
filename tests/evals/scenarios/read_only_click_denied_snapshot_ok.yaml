@@ -1,0 +1,33 @@
+name: read_only_click_denied_snapshot_ok
+task: Add the mug on the current page to the cart.
+strict: true
+permissions:
+  mode: read_only
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Read the page, status: pending}
+    - {id: 2, description: Add to cart, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Find the Add to cart button.}
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {ref: e3}, reason: Add the mug to the cart.}
+  - decision: done
+    final_answer: 'Could not add the mug to the cart: clicking is not allowed in read-only mode.'
+browser:
+  snapshots:
+  - |-
+    - Page URL: https://shop.example/item/42
+    - heading "Ceramic Mug" [ref=e1]
+    - text "$24.99" [ref=e2]
+    - button "Add to cart" [ref=e3]
+  - |-
+    - Page URL: https://shop.example/cart
+    - text "1 item in cart" [ref=e5]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - read-only
+  max_tool_calls: 1
+  max_repeated_actions: 0
+  max_policy_blocks: 1

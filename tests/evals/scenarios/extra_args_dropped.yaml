@@ -1,0 +1,26 @@
+name: extra_args_dropped
+task: Open https://status.example and report whether all systems are operational.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the status page, status: pending}
+    - {id: 2, description: Report the status, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://status.example', wait_until: networkidle, timeout_ms: 5000}, reason: Open the status page.}
+  - decision: done
+    final_answer: All systems are operational.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://status.example/
+    - heading "All systems operational" [ref=e1]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains:
+  - operational
+  max_tool_calls: 1
+  max_repeated_actions: 0
+  max_policy_blocks: 0
+  max_errors: 0
