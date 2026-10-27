@@ -402,8 +402,9 @@ ui:
   shutdown_timeout_seconds: 5.0                 # (default) stopping a task / loop / client
 
 # ---------------------------------------------------------------------------
-# Regression tolerances of the eval tools (scripts/run_evals.py); the agent
-# runtime never reads this section.
+# Regression tolerances of the eval tools; the agent runtime never reads this
+# section. scripts/run_evals.py runs hermetically (it hides this file and every
+# .env), so for it set them as AUTOBROWSER_PIPELINE__* environment variables.
 pipeline:
   request_chars_tolerance: 0.1                  # (default) accepted request_chars change, relative
 

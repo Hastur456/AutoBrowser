@@ -181,3 +181,13 @@ def test_a_malformed_baseline_is_a_baseline_error(tmp_path: Path, content: str) 
 def test_a_missing_baseline_is_a_baseline_error(tmp_path: Path) -> None:
     with pytest.raises(BaselineError):
         load_baseline(tmp_path / "absent.json")
+
+
+def test_an_integer_too_large_for_a_float_is_accepted_as_finite(tmp_path: Path) -> None:
+    path = tmp_path / "baseline.json"
+    path.write_text(
+        '{"schema_version": 2, "scenarios": {"a": {"request_chars": 1' + "0" * 400 + "}}}",
+        encoding="utf-8",
+    )
+
+    assert load_baseline(path).scenarios["a"]["request_chars"] == 10**400

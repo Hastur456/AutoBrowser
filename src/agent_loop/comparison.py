@@ -138,7 +138,8 @@ def load_baseline(path: Path) -> Baseline:
         for name, row in block.items():
             for metric, value in row.items():
                 # Every numeric metric is a count or a size; NaN would make no change fail.
-                if _is_number(value) and not (math.isfinite(value) and value >= 0):
+                finite = not isinstance(value, float) or math.isfinite(value)
+                if _is_number(value) and not (finite and value >= 0):
                     raise BaselineError(
                         f"{path}: {block_name}.{name}.{metric} must be a finite number >= 0,"
                         f" not {value!r}"
