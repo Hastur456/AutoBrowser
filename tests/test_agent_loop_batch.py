@@ -484,7 +484,7 @@ async def test_run_batch_records_metrics_from_the_session_trace(tmp_path: Path) 
     assert result["metrics"]["input_tokens"] == 100
     report = Path(result["report_path"]).read_text(encoding="utf-8")
     assert Path(result["report_path"]).parent == Path(result["batch_dir"])
-    assert "| s1 | passed | 1/1 |" in report
+    assert "| s1 | passed | passed | 1/1 |" in report
 
 
 @pytest.mark.asyncio

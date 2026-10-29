@@ -119,6 +119,8 @@ uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --continue-on-error
   cookie or login carries over; the profiles are deleted when the batch ends. Your own
   `browser.user_data_dir` profile is never used by a batch.
 - To run some scenarios only, copy their lines into another JSONL file and pass it to `--tasks`.
+- `--no-history` keeps an experiment out of the run history (see
+  [Comparing runs](#6-comparing-runs)).
 
 A full run takes a while: the Ozon scenarios are multi-step tasks on a heavy site.
 
@@ -144,19 +146,63 @@ the run:
 }
 ```
 
-Open **`report.md`** first: a table with one row per scenario (grade, tasks done, time, model
-calls, tokens in and out, model time, tool calls, tool time, tool errors, permission blocks), a
-total row, and then every failed scenario with its failed checks, its final answer and the path
-of its trace.
+Open **`report.md`** first. Under the header it states the provenance of the run (commit with a
+`(dirty)` mark, model, a short settings fingerprint and the settings sections that differ from
+the code defaults) and splits the failures: "Agent failures: N · Infra failures: M · Passed: K".
+Then a table with one row per scenario (grade, failure kind, tasks done, time, model calls,
+tokens in and out, model time, tool calls, tool time, tool errors, permission blocks), a total
+row, and every failed scenario grouped by failure kind, with its failed checks, its final answer
+and links to its trace. Infra kinds come last, with the advice to rerun them.
 
-`<home>/batches/<batch_id>/`:
+`<home>/batches/<batch_id>/` holds everything about the run, traces included, so it can be
+archived or shared on its own:
 
 | File | What is in it |
 |---|---|
 | `report.md` | the readable report described above |
-| `run_index.jsonl` | one row per scenario: `scenario_id`, `status` (`completed` or `failed` when it raised), `task_statuses` (`done`/`blocked`/`cancelled` per task), `final_answer` of the last task, `grade` with every check, `metrics`, `error`, `started_at`/`finished_at`, `session_id`/`session_dir` |
-| `batch.json` | run metadata: the model and options, start and end time, overall status |
+| `run_index.jsonl` | one row per scenario (contract below) |
+| `batch.json` | run metadata and provenance (contract below) |
 | `tasks.jsonl` | a copy of the input set |
+| `traces/<name>.events.jsonl` | a copy of the scenario's full trace |
+| `traces/<name>.txt` | the same trace, readable: per task its text, its outcome (`status`, `stop_reason`, `failure_kind`) and its action sequence |
+| `compare.md` | written by `scripts/compare_batches.py` into the newer of two compared runs |
+
+`<name>` is the scenario id with every character outside `[A-Za-z0-9._-]` replaced by `_`
+(`-2`, `-3` on a collision). A scenario that raised before its session wrote a trace has no
+trace files.
+
+`run_index.jsonl` row, `schema_version` 1:
+
+| Key | Meaning |
+|---|---|
+| `schema_version` | `1` |
+| `batch_id`, `scenario_id`, `session_id`, `session_dir` | identifiers |
+| `status` | `completed`, or `failed` when the scenario raised |
+| `tasks`, `expected`, `tags` | the scenario as written in the tasks file |
+| `task_statuses` | `done`/`blocked`/`cancelled` per task that returned |
+| `final_answer` | the answer of the last task |
+| `grade` | with `--grade`: `status` and one check per `expected` key |
+| `failure_kind` | one word for the scenario ([Failure kinds](#failure-kinds)) |
+| `task_outcomes` | per task: `task_id`, `status`, `stop_reason`, `error_type`, `permission_denies`, `failure_kind` |
+| `metrics` | figures from the trace (table below) |
+| `error` | `{type, message}` when the scenario raised |
+| `started_at`, `finished_at` | ISO timestamps |
+| `trace_path`, `trace_text_path` | `traces/<name>.events.jsonl` and `traces/<name>.txt`, relative to the batch directory; `null` without a trace |
+
+`batch.json`, `schema_version` 1: `batch_id`, `started_at`/`finished_at`, `status`, `config`
+(the CLI options), `tasks_path`, `scenario_count`, `task_count` and `provenance`:
+
+| Key | What makes two runs comparable |
+|---|---|
+| `git.commit`, `git.branch`, `git.dirty` | the checkout the run used (`null` without git) |
+| `model`, `provider` | the chat model of the run |
+| `tasks_sha256` | sha256 of the tasks file with CRLF normalized to LF: the version of the Golden Set |
+| `settings_sha256` | sha256 of the redacted effective settings (no secret reaches it) |
+| `non_default_sections` | settings sections that differ from the code defaults, e.g. `["llm", "permissions"]` |
+| `python`, `platform` | interpreter version and `sys.platform` |
+
+Every session of a batch carries the labels `autobrowser.batch.id`, `autobrowser.scenario.id`
+and `vcs.ref.head.revision` (the commit) in its `session.started` event.
 
 `<home>/sessions/<session_id>/` (one session per scenario):
 
@@ -186,7 +232,31 @@ The `metrics` of a row come from the scenario's `events.jsonl` (`src/agent_loop/
 
 Traces written before token counts were exempted from redaction hold `[REDACTED]` instead of the
 counts, so older runs show no tokens. Not there yet (later steps of the plan): latency
-percentiles, cost in money, comparison with earlier runs.
+percentiles, cost in money.
+
+#### Failure kinds
+
+"Failed" mixes unrelated causes: a provider outage is not an agent regression. Every task and
+scenario gets one `failure_kind` (`src/agent_loop/failures.py`), derived from its goal events,
+the `stop_reason` they carry, permission denies and the grade, never from the site:
+
+| Kind | When |
+|---|---|
+| `passed` | every task ended `done` and the grade passed |
+| `provider_error` | infra: the model provider failed (`ModelProviderError`) |
+| `timeout` | infra: the task or the progress watchdog timed out |
+| `permission_denied` | an approval was refused, or a permission deny made an unfinished task fail |
+| `guard_limit` | a loop limit ended the task: turn cap, replans, consecutive failures, a stalled plan |
+| `agent_stopped` | the model gave up (`stop`); why is in its answer: an anti-bot page, a login wall |
+| `grade_failed` | every task ended `done`, but the answer failed a check |
+| `error` | any other exception, a missing terminal event, or a cancellation from outside |
+| `ungraded` | every task ended `done` and nothing was checked |
+
+The first task whose kind is not `passed` decides the scenario; when all passed, the grade does.
+A scenario that raised is classified by its exception unless a task already failed. The engine's
+`stop_reason` values: `answered`, `model_stop`, `turn_cap`, `max_replans`,
+`consecutive_failures`, `no_plan_advance`, `approval_denied`, `approval_hook_denied`,
+`goal_hook_denied`, `no_action`, `invalid_decision`, `cancelled`.
 
 ### 4. Reading the grades
 
@@ -234,6 +304,51 @@ Known limits, and how the set works around them:
 - Whether every item has a title and a price (`fields`) cannot be checked deterministically. It
   stays `ungraded` until an LLM judge is decided (open question Q7 of the design).
 
+### 6. Comparing runs
+
+Every batch appends one row per scenario to `<home>/batches/history.jsonl`: `schema_version`,
+`batch_id`, `started_at`, `git` (`commit`, `dirty`), `model`, `tasks_sha256`, `settings_sha256`,
+`scenario_id`, `grade_status`, `failure_kind` and the metrics as top-level keys. The file keeps
+the newest `pipeline.history_max_rows` rows (default 50 000); `--no-history` skips the append.
+
+```powershell
+uv run scripts/compare_batches.py                      # latest run vs the previous comparable one
+uv run scripts/compare_batches.py <batch_a> <batch_b>  # ids or directories; b is the newer
+uv run scripts/compare_batches.py --json               # machine output
+uv run scripts/compare_batches.py --perf-gate          # also fail on slower/costlier scenarios
+```
+
+Two runs are comparable when they ran the same Golden Set (`tasks_sha256`); a different settings
+fingerprint or model is printed as a warning. Per scenario present in both runs:
+
+| Before → after | Finding |
+|---|---|
+| `passed` → an agent kind | `regression` |
+| an agent kind → `passed` | `fixed` |
+| anything → `provider_error`/`timeout` | `inconclusive`: rerun it |
+| any other change | `changed` |
+| in one run only | `added` / `removed` |
+
+For scenarios passed in both, growth of `duration_ms` (`slower`), `model_calls` or
+`input_tokens` (`costlier`) past `pipeline.batch_metric_tolerance` (default 0.25, i.e. +25 %) is
+reported. A single live run is noisy, so these fail the command only with `--perf-gate`.
+
+Exit codes: `0` no regression; `1` at least one `regression`; `2` unreadable input, different
+Golden Sets or no previous comparable run; `3` only slower/costlier findings under `--perf-gate`.
+The findings also go to `compare.md` in the newer batch directory.
+
+The rows are plain JSONL, so DuckDB queries them directly:
+
+```sql
+SELECT scenario_id, failure_kind, metrics.duration_ms
+FROM read_json_auto('~/.autobrowser/batches/*/run_index.jsonl')
+WHERE failure_kind NOT IN ('passed', 'provider_error', 'timeout');
+
+SELECT scenario_id, count(*) AS runs, count_if(failure_kind = 'passed') AS passed
+FROM read_json_auto('~/.autobrowser/batches/history.jsonl')
+GROUP BY scenario_id ORDER BY passed;
+```
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
@@ -242,4 +357,6 @@ Known limits, and how the set works around them:
 | `run_evals.py` reports `request_chars: regression` | the prompt or the tool schemas grew past the tolerance; rewrite the baseline if intended |
 | every Golden Set scenario fails at once | the model is not reachable (`doctor --llm`) or Chrome/Playwright MCP did not start |
 | one Ozon scenario `failed` with `run` | a task ended `blocked`: open the trace for a CAPTCHA, an anti-bot page or a guard limit |
+| many scenarios `provider_error` or `timeout` | the provider is overloaded or down; rerun them, `compare_batches.py` calls them `inconclusive` |
+| `compare_batches.py` exits `2` | the runs used different tasks files, or there is no earlier run of the same set |
 | `items` fails on an answer that looks right | the answer's shape (a list split by bold names, a transposed table); see the limits above |
