@@ -86,3 +86,11 @@ def test_an_ungraded_run_shows_no_grades() -> None:
     assert "Grades:" not in report
     assert "| books | — | 2/2 |" in report
     assert "## Failed scenarios" not in report
+
+
+def test_the_report_lists_the_trace_of_every_scenario() -> None:
+    report = render_batch_report(METADATA, [_row("books", PASSED), _row("ozon", FAILED)], graded=True)
+
+    traces = report.split("## Traces", 1)[1]
+    assert "- books: `sessions/books`" in traces
+    assert "- ozon: `sessions/ozon`" in traces

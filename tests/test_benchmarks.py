@@ -109,3 +109,15 @@ def test_an_empty_trace_has_no_tasks() -> None:
     assert metrics["tasks"] == 0
     assert metrics["input_tokens"] is None
     assert metrics["time_to_first_tool_ms"] is None
+
+
+def test_a_failed_goal_is_not_a_tool_error() -> None:
+    events = [
+        _event(0, "goal.started"),
+        _event(0.1, "model.requested", phase="plan"),
+        _event(60, "goal.failed", error={"type": "ModelProviderError", "message": "timed out"}),
+    ]
+
+    metrics = summarize_run(events)
+
+    assert (metrics.tool_calls, metrics.tool_errors) == (0, 0)

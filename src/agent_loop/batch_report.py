@@ -113,6 +113,10 @@ def render_batch_report(
             lines += [f"> {line}" for line in str(answer).splitlines()] if answer else [f"> {_NONE}"]
             if row.get("session_dir"):
                 lines += ["", f"Trace: `{row['session_dir']}`"]
+    traced = [row for row in rows if row.get("session_dir")]
+    if traced:
+        lines += ["", "## Traces", "", "Each scenario's session; its `events.jsonl` is the full trace.", ""]
+        lines += [f"- {row.get('scenario_id', '')}: `{row['session_dir']}`" for row in traced]
     return "\n".join(lines) + "\n"
 
 

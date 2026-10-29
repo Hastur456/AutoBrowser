@@ -161,10 +161,22 @@ def summarize_run(events: Iterable[EventRecord]) -> RunMetrics:
         model_ms=sum(sum(values) for timing in timings for values in timing.model_latency_ms.values()),
         tool_calls=sum(len(timing.tool_latency_ms) for timing in timings),
         tool_ms=sum(sum(timing.tool_latency_ms) for timing in timings),
-        tool_errors=sum(count.error_count for count in counts),
+        tool_errors=sum(1 for task in tasks for event in task if _is_tool_error(event)),
         policy_blocks=sum(count.policy_block_count for count in counts),
         time_to_first_tool_ms=timings[0].time_to_first_tool_ms if timings else None,
     )
+
+
+def _is_tool_error(event: EventRecord) -> bool:
+    """A tool call that finished with an error (a failed goal is not a tool error)."""
+
+    if event.type != "tool.finished":
+        return False
+    result = event.payload.get("tool_result")
+    if not isinstance(result, Mapping):
+        return False
+    status = str(result.get("status") or "").lower()
+    return bool(result.get("error")) or status in {"error", "failed", "failure"}
 
 
 def _first_time(events: Sequence[EventRecord], matches: Any) -> datetime | None:
