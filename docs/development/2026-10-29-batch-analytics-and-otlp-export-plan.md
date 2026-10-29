@@ -25,8 +25,23 @@ without the conversation that produced it. Read §0 first, then work through §7
     local files and verdict.
 - **Order.** Prerequisite P0, then Part A (steps A1–A7), then Part B (steps B1–B6). Part B
   reuses A1 (`stop_reason`) and A3 (session labels).
-- **Branches.** Part A on `feat/batch-analytics`, Part B on `feat/otlp-export`, each cut
-  from `main` after the previous one is merged.
+- **Branches.** Strictly sequential: each branch is cut from `main` after the previous one is
+  merged (a pull request per branch; the `gate` check must be green before merging).
+
+  | # | Branch | Content | Starts after |
+  |---|---|---|---|
+  | 1 | `feat/golden-graders` | step 7 of the parent plan (graders, `run_batch --grade`), the 18-scenario Golden Set, batch metrics and `report.md`, batch profiles in the batch folder, UTF-8 config reading, this plan | already exists: push, PR, merge (P0) |
+  | 2 | `feat/batch-analytics` | Part A (A1–A7) | branch 1 merged |
+  | 3 | `feat/otlp-export` | Part B (B1–B6); needs A1 `stop_reason` and A3 session labels | branch 2 merged |
+  | 4 | `feat/cassettes` | parent plan steps 8–9: cassette replay and recording | branch 3 merged |
+  | 5 | `feat/ci-orchestrator` | parent plan step 10 (`scripts/ci.py`, stages, report) together with the rest of step 6 (statistics, A/B, history verdict) | branch 4 merged |
+  | 6 | `feat/live-stages` | parent plan step 11: fixture site, `live_local`/`live_web`/`bench_live` | branch 5 merged |
+  | 7 | `ci/nightly` | parent plan step 13: `nightly.yml`, required checks, `ci-history` | branch 6 merged; needs an answer to Q2 of the parent design (where nightly runs) |
+
+  Branches 4–7 follow the parent design, not this plan: it is a design document with open
+  questions (Q1–Q9), so stop and ask at each of them instead of guessing. Starting branch 3
+  from branch 2 before it is merged is possible after A3, but then every change to branch 2
+  needs a rebase of branch 3 — avoid it.
 - **Project rules that apply to every step** (from `CLAUDE.md`):
   - Every tunable is a field of `src/config.py`, mirrored in `.env.example` and
     `config.example.yaml`, and checked by `tests/test_config.py`. No module constants for
