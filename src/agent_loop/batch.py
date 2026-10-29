@@ -11,8 +11,12 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
+from src.agent_loop.batch_report import REPORT_FILE_NAME, render_batch_report, total_metrics
+from src.agent_loop.benchmarks import summarize_run
 from src.agent_loop.graders import grade_answer
+from src.agent_loop.replay import load_events
 from src.config import get_settings
+from src.harness.session_store import EVENTS_FILE_NAME
 
 
 @dataclass(frozen=True)
@@ -119,6 +123,7 @@ async def run_batch(
     run_index_path.write_text("", encoding="utf-8")
     status = "completed"
     grade_counts = {"passed": 0, "failed": 0, "ungraded": 0}
+    rows: list[dict[str, Any]] = []
 
     try:
         for scenario in scenarios:
@@ -126,6 +131,7 @@ async def run_batch(
             session = session_factory()
             final_answer: str | None = None
             task_statuses: list[str] = []
+            row: dict[str, Any] | None = None
             try:
                 for task in scenario.tasks:
                     result = await session.run_task(task)
@@ -149,7 +155,6 @@ async def run_batch(
                         f"the scenario failed: {type(exc).__name__}: {exc}"
                     )
                     grade_counts["failed"] += 1
-                _append_jsonl(run_index_path, row)
                 if not continue_on_error:
                     raise
             else:
@@ -167,13 +172,20 @@ async def run_batch(
                 if grade:
                     row["grade"] = _grade(scenario, final_answer, task_statuses)
                     grade_counts[row["grade"]["status"]] += 1
-                _append_jsonl(run_index_path, row)
             finally:
                 await session.close()
+                if row is not None:
+                    # After close: the session's trace is complete on disk.
+                    row["metrics"] = _run_metrics(session, row)
+                    rows.append(row)
+                    _append_jsonl(run_index_path, row)
     finally:
         metadata["finished_at"] = _now_iso()
         metadata["status"] = status
         _write_json(batch_dir / "batch.json", metadata)
+        (batch_dir / REPORT_FILE_NAME).write_text(
+            render_batch_report(metadata, rows, graded=grade), encoding="utf-8"
+        )
 
     return {
         "batch_id": batch_id,
@@ -183,8 +195,23 @@ async def run_batch(
         "status": status,
         "scenario_count": len(scenarios),
         "task_count": sum(len(scenario.tasks) for scenario in scenarios),
+        "report_path": str(batch_dir / REPORT_FILE_NAME),
+        "metrics": total_metrics(rows),
         **({"grades": grade_counts} if grade else {}),
     }
+
+
+def _run_metrics(session: BatchSessionRuntime, row: Mapping[str, Any]) -> dict[str, Any]:
+    """Wall time of the scenario plus the figures of its session trace (when there is one)."""
+
+    started = datetime.fromisoformat(str(row["started_at"]))
+    finished = datetime.fromisoformat(str(row["finished_at"]))
+    metrics: dict[str, Any] = {"duration_ms": int((finished - started).total_seconds() * 1000)}
+    session_dir = _session_dir(session)
+    trace = Path(session_dir) / EVENTS_FILE_NAME if session_dir else None
+    if trace is not None and trace.is_file():
+        metrics.update(summarize_run(load_events(trace)).to_json_dict())
+    return metrics
 
 
 def _grade(

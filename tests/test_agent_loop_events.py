@@ -433,3 +433,12 @@ def test_agent_trace_projects_structured_goal_terminals(tmp_path: Path) -> None:
             "turns": 2,
         },
     ]
+
+
+def test_token_counts_survive_redaction_but_token_strings_do_not() -> None:
+    usage = {"input_tokens": 1200, "output_tokens": 85, "cached_input_tokens": 0}
+
+    assert redact_json_safe({"usage": usage}) == {"usage": usage}
+    assert redact_json_safe({"access_tokens": "abc123"}) == {"access_tokens": REDACTED_VALUE}
+    assert redact_json_safe({"token": 1234}) == {"token": REDACTED_VALUE}
+    assert redact_json_safe({"refresh_tokens": True}) == {"refresh_tokens": REDACTED_VALUE}

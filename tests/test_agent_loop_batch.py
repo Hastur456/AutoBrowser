@@ -415,6 +415,88 @@ async def test_a_task_that_did_not_end_done_fails_the_grade(tmp_path: Path) -> N
     assert result["grades"] == {"passed": 0, "failed": 2, "ungraded": 0}
 
 
+def _write_trace(session_dir: Path) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from src.agent_loop.events import EventRecord
+
+    t0 = datetime(2026, 10, 28, tzinfo=UTC)
+    events = [
+        ("goal.started", 0.0, {}),
+        ("model.requested", 0.1, {"phase": "plan"}),
+        ("model.responded", 1.1, {"phase": "plan", "usage": {"input_tokens": 100, "output_tokens": 7}}),
+        ("tool.started", 1.2, {}),
+        ("tool.finished", 1.7, {"tool_result": {"status": "success"}}),
+        ("goal.completed", 2.0, {"status": "completed"}),
+    ]
+    session_dir.mkdir(parents=True)
+    _write_jsonl(
+        session_dir / "events.jsonl",
+        [
+            EventRecord(
+                type=kind,  # type: ignore[arg-type]
+                source="test",
+                payload=payload,
+                timestamp=t0 + timedelta(seconds=at),
+                task_id="task-1",
+            ).to_json_dict()
+            for kind, at, payload in events
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_batch_records_metrics_from_the_session_trace(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["report"], "expected": {"contains": "report"}}])
+    factory = FakeSessionFactory()
+
+    def build() -> FakeBatchSession:
+        session = factory()
+        session.context.session_dir = tmp_path / "sessions" / session.context.session_id
+        _write_trace(session.context.session_dir)
+        return session
+
+    result = await run_batch(
+        tasks_path=tasks_path, session_factory=build, batches_dir=tmp_path / "b", grade=True
+    )
+
+    (row,) = _read_jsonl(Path(result["run_index_path"]))
+    metrics = row["metrics"]
+    assert isinstance(metrics["duration_ms"], int)
+    assert {key: metrics[key] for key in ("tasks", "model_calls", "input_tokens", "output_tokens", "model_ms", "tool_calls", "tool_ms")} == {
+        "tasks": 1,
+        "model_calls": 1,
+        "input_tokens": 100,
+        "output_tokens": 7,
+        "model_ms": 1000,
+        "tool_calls": 1,
+        "tool_ms": 500,
+    }
+    assert result["metrics"]["input_tokens"] == 100
+    report = Path(result["report_path"]).read_text(encoding="utf-8")
+    assert Path(result["report_path"]).parent == Path(result["batch_dir"])
+    assert "| s1 | passed | 1/1 |" in report
+
+
+@pytest.mark.asyncio
+async def test_a_scenario_without_a_trace_still_gets_its_wall_time(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["boom"]}])
+
+    result = await run_batch(
+        tasks_path=tasks_path,
+        session_factory=FakeSessionFactory(fail_on={"boom"}),
+        batches_dir=tmp_path / "b",
+        continue_on_error=True,
+    )
+
+    (row,) = _read_jsonl(Path(result["run_index_path"]))
+    assert set(row["metrics"]) == {"duration_ms"}
+    assert row["status"] == "failed"
+    assert Path(result["report_path"]).is_file()
+
+
 def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [json.dumps(record) for record in records]

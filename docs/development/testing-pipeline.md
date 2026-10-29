@@ -125,25 +125,36 @@ A full run takes a while: the Ozon scenarios are multi-step tasks on a heavy sit
 ### 3. Where the results land
 
 The console prints a summary, and the files go to the AutoBrowser home (`~/.autobrowser`, or
-`AUTOBROWSER_HOME`, or your `storage.root_dir`). The summary names the exact paths:
+`AUTOBROWSER_HOME`, or your `storage.root_dir`). The summary names the exact paths and adds up
+the run:
 
 ```json
 {
   "batch_id": "batch-…",
   "batch_dir": "C:\\Users\\you\\.autobrowser\\batches\\batch-…",
+  "report_path": "…\\report.md",
   "run_index_path": "…\\run_index.jsonl",
   "status": "completed",
-  "scenario_count": 5,
-  "task_count": 27,
-  "grades": {"passed": 3, "failed": 1, "ungraded": 1}
+  "scenario_count": 18,
+  "task_count": 61,
+  "grades": {"passed": 14, "failed": 3, "ungraded": 1},
+  "metrics": {"duration_ms": 1520000, "tasks": 61, "model_calls": 420, "input_tokens": 3100000,
+              "output_tokens": 61000, "model_ms": 980000, "tool_calls": 260, "tool_ms": 310000,
+              "tool_errors": 9, "policy_blocks": 0}
 }
 ```
+
+Open **`report.md`** first: a table with one row per scenario (grade, tasks done, time, model
+calls, tokens in and out, model time, tool calls, tool time, tool errors, permission blocks), a
+total row, and then every failed scenario with its failed checks, its final answer and the path
+of its trace.
 
 `<home>/batches/<batch_id>/`:
 
 | File | What is in it |
 |---|---|
-| `run_index.jsonl` | one row per scenario: `scenario_id`, `status` (`completed` or `failed` when it raised), `task_statuses` (`done`/`blocked`/`cancelled` per task), `final_answer` of the last task, `grade` with every check, `error`, `started_at`/`finished_at`, `session_id`/`session_dir` |
+| `report.md` | the readable report described above |
+| `run_index.jsonl` | one row per scenario: `scenario_id`, `status` (`completed` or `failed` when it raised), `task_statuses` (`done`/`blocked`/`cancelled` per task), `final_answer` of the last task, `grade` with every check, `metrics`, `error`, `started_at`/`finished_at`, `session_id`/`session_dir` |
 | `batch.json` | run metadata: the model and options, start and end time, overall status |
 | `tasks.jsonl` | a copy of the input set |
 
@@ -161,9 +172,21 @@ Replay one scenario's trace as a compact action sequence:
 uv run scripts/replay_trace.py <session_dir>\events.jsonl
 ```
 
-There is no aggregated metrics report per run yet (total tokens, latency by phase, cost): that is
-step 6 of the pipeline plan. Today the per-call token counts and durations are in `events.jsonl`,
-and the scenario time is `finished_at - started_at` in `run_index.jsonl`.
+The `metrics` of a row come from the scenario's `events.jsonl` (`src/agent_loop/benchmarks.py`):
+
+| Metric | Meaning |
+|---|---|
+| `duration_ms` | wall time of the scenario, session start included |
+| `tasks` | tasks that reached the agent |
+| `model_calls`, `model_ms` | model calls (plan, agent and approval phases) and their summed latency |
+| `input_tokens`, `output_tokens` | summed token counts the provider reported; `null` (`—` in the report) when it reported none |
+| `tool_calls`, `tool_ms` | tool calls and their summed latency |
+| `tool_errors`, `policy_blocks` | failed tool calls; calls a permission rule, hook or policy blocked |
+| `time_to_first_tool_ms` | of the first task: from the task start to the first tool call |
+
+Traces written before token counts were exempted from redaction hold `[REDACTED]` instead of the
+counts, so older runs show no tokens. Not there yet (later steps of the plan): latency
+percentiles, cost in money, comparison with earlier runs.
 
 ### 4. Reading the grades
 
