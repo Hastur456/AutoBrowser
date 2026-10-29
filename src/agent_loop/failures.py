@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from src.agent_loop.benchmarks import split_by_task
 from src.agent_loop.events import EventRecord
+from src.contracts import goal_status_from_completion
 
 FailureKind = Literal[
     "passed",
@@ -95,6 +96,13 @@ def classify_task(events: Sequence[EventRecord]) -> TaskOutcome:
     )
 
 
+def outcome_from_result(task_id: str, completion_status: str, stop_reason: str) -> TaskOutcome:
+    """Outcome of a task known only from its result (``AgentLoopResult``), without a trace."""
+
+    status = goal_status_from_completion(completion_status) or completion_status  # type: ignore[arg-type]
+    return TaskOutcome(task_id, status, stop_reason, "", 0, _ended_kind(status, stop_reason, 0))
+
+
 def classify_tasks(events: Iterable[EventRecord]) -> list[TaskOutcome]:
     """Classify every task of a session trace, in the order the tasks started."""
 
@@ -105,19 +113,22 @@ def classify_scenario(
     outcomes: Sequence[TaskOutcome],
     grade_status: str | None,
     *,
-    error_type: str = "",
+    error_type: str | None = None,
 ) -> FailureKind:
-    """Kind of a scenario: its first failed task, else its grade.
+    """Kind of a scenario: its first failed task, else how it raised, else its grade.
 
-    A scenario that raised before any task ended (no outcomes) is classified by the
-    ``error_type`` of the exception the batch recorded.
+    ``error_type`` is the type of the exception the batch recorded for a scenario that
+    raised (``None`` when it did not): a scenario that raised before any task failed in its
+    trace is classified by it, never by the grade of an answer it did not finish.
     """
 
-    if not outcomes:
-        return error_kind(error_type)
     for outcome in outcomes:
         if outcome.failure_kind != "passed":
             return outcome.failure_kind
+    if error_type is not None:
+        return error_kind(error_type)
+    if not outcomes:
+        return "error"
     if grade_status == "failed":
         return "grade_failed"
     if grade_status == "passed":
@@ -158,4 +169,5 @@ __all__ = [
     "classify_task",
     "classify_tasks",
     "error_kind",
+    "outcome_from_result",
 ]

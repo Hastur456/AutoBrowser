@@ -14,6 +14,7 @@ from src.agent_loop.failures import (
     classify_scenario,
     classify_task,
     classify_tasks,
+    outcome_from_result,
 )
 from src.llm import ModelProviderError
 
@@ -198,3 +199,26 @@ def test_a_scenario_that_raised_before_any_task_uses_its_error_type(error_type: 
 
 def test_only_provider_errors_and_timeouts_are_infra_kinds() -> None:
     assert INFRA_KINDS == frozenset({"provider_error", "timeout"})
+
+
+def test_a_scenario_that_raised_after_passing_tasks_uses_its_error_type() -> None:
+    outcomes = [_outcome("passed", "t1")]
+
+    assert classify_scenario(outcomes, "failed", error_type="ModelProviderError") == "provider_error"
+
+
+@pytest.mark.parametrize(
+    ("status", "reason", "goal_status", "kind"),
+    [
+        ("done", "answered", "completed", "passed"),
+        ("blocked", "turn_cap", "blocked", "guard_limit"),
+        ("blocked", "", "blocked", "agent_stopped"),
+        ("cancelled", "model_stop", "cancelled", "agent_stopped"),
+    ],
+)
+def test_a_task_result_without_a_trace_still_gets_a_kind(
+    status: str, reason: str, goal_status: str, kind: str
+) -> None:
+    outcome = outcome_from_result("t1", status, reason)
+
+    assert (outcome.status, outcome.stop_reason, outcome.failure_kind) == (goal_status, reason, kind)

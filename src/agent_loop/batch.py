@@ -2,21 +2,34 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
+from pydantic import BaseModel
+
 from src.agent_loop.batch_report import REPORT_FILE_NAME, render_batch_report, total_metrics
 from src.agent_loop.benchmarks import summarize_run
+from src.agent_loop.events import EventRecord, redact_json_safe
+from src.agent_loop.failures import (
+    TaskOutcome,
+    classify_scenario,
+    classify_tasks,
+    outcome_from_result,
+)
 from src.agent_loop.graders import grade_answer
 from src.agent_loop.replay import load_events
-from src.config import get_settings
+from src.config import Settings, get_settings
 from src.harness.session_store import EVENTS_FILE_NAME
+
+#: Version of the ``batch.json`` and ``run_index.jsonl`` row formats.
+SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -48,6 +61,8 @@ class BatchTaskResult(Protocol):
     def final_answer(self) -> str | None:
         """The task's final answer."""
 
+    # ``stop_reason`` (``AgentLoopResult.stop_reason``) is read when present, not required.
+
 
 class BatchSessionRuntime(Protocol):
     """SessionRuntime subset needed by batch execution."""
@@ -61,7 +76,8 @@ class BatchSessionRuntime(Protocol):
         """Release session resources."""
 
 
-BatchSessionFactory = Callable[[], BatchSessionRuntime]
+#: Builds the fresh session of one scenario (the scenario names it, e.g. in session labels).
+BatchSessionFactory = Callable[[BatchScenario], BatchSessionRuntime]
 
 
 def load_batch_scenarios(path: Path) -> list[BatchScenario]:
@@ -87,6 +103,7 @@ async def run_batch(
     config: Mapping[str, Any] | None = None,
     continue_on_error: bool = False,
     grade: bool = False,
+    provenance: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run Golden Set scenarios with one fresh SessionRuntime per scenario.
 
@@ -96,6 +113,11 @@ async def run_batch(
     a scenario that raised, or a task that did not end ``done`` (a ``blocked`` answer quotes
     the page it stopped on, so its text must not be graded), grades as failed; a scenario
     without ``expected`` as ungraded. The result then counts the grades.
+
+    Every row also carries the ``failure_kind`` of the scenario and the ``task_outcomes`` it
+    was derived from (:mod:`src.agent_loop.failures`), read from the session trace, or from
+    the task results when the session left no trace. ``provenance`` (commit, model, settings
+    fingerprint; built by the caller) is recorded in ``batch.json``.
     """
 
     tasks_file = Path(tasks_path)
@@ -109,6 +131,7 @@ async def run_batch(
 
     started_at = _now_iso()
     metadata: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
         "batch_id": batch_id,
         "started_at": started_at,
         "finished_at": None,
@@ -116,6 +139,7 @@ async def run_batch(
         "tasks_path": str(tasks_file),
         "scenario_count": len(scenarios),
         "task_count": sum(len(scenario.tasks) for scenario in scenarios),
+        "provenance": dict(provenance or {}),
     }
     _write_json(batch_dir / "batch.json", metadata)
 
@@ -128,14 +152,16 @@ async def run_batch(
     try:
         for scenario in scenarios:
             row_started_at = _now_iso()
-            session = session_factory()
+            session = session_factory(scenario)
             final_answer: str | None = None
             task_statuses: list[str] = []
+            stop_reasons: list[str] = []
             row: dict[str, Any] | None = None
             try:
                 for task in scenario.tasks:
                     result = await session.run_task(task)
                     task_statuses.append(str(result.status))
+                    stop_reasons.append(str(getattr(result, "stop_reason", "") or ""))
                     final_answer = result.final_answer
             except Exception as exc:
                 status = "failed"
@@ -176,7 +202,14 @@ async def run_batch(
                 await session.close()
                 if row is not None:
                     # After close: the session's trace is complete on disk.
-                    row["metrics"] = _run_metrics(session, row)
+                    events = _session_events(session)
+                    row["metrics"] = _run_metrics(events, row)
+                    outcomes = (
+                        classify_tasks(events)
+                        if events is not None
+                        else _result_outcomes(session, task_statuses, stop_reasons)
+                    )
+                    _add_outcomes(row, outcomes)
                     rows.append(row)
                     _append_jsonl(run_index_path, row)
     finally:
@@ -201,17 +234,74 @@ async def run_batch(
     }
 
 
-def _run_metrics(session: BatchSessionRuntime, row: Mapping[str, Any]) -> dict[str, Any]:
+def settings_provenance(settings: Settings) -> dict[str, Any]:
+    """Fingerprint of the effective settings and the sections that differ from the code.
+
+    ``settings_sha256`` hashes the redacted settings, so no secret reaches it;
+    ``non_default_sections`` names the sections a profile or the environment changed.
+    """
+
+    dumped = redact_json_safe(settings.model_dump(mode="json"))
+    canonical = json.dumps(dumped, sort_keys=True, ensure_ascii=False)
+    sections = sorted(
+        name
+        for name in type(settings).model_fields
+        if isinstance(value := getattr(settings, name), BaseModel) and value != type(value)()
+    )
+    return {
+        "settings_sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        "non_default_sections": sections,
+    }
+
+
+def _session_events(session: BatchSessionRuntime) -> list[EventRecord] | None:
+    """The session's trace, or ``None`` when it left none (it raised before writing one)."""
+
+    session_dir = _session_dir(session)
+    trace = Path(session_dir) / EVENTS_FILE_NAME if session_dir else None
+    if trace is None or not trace.is_file():
+        return None
+    return load_events(trace)
+
+
+def _run_metrics(events: list[EventRecord] | None, row: Mapping[str, Any]) -> dict[str, Any]:
     """Wall time of the scenario plus the figures of its session trace (when there is one)."""
 
     started = datetime.fromisoformat(str(row["started_at"]))
     finished = datetime.fromisoformat(str(row["finished_at"]))
     metrics: dict[str, Any] = {"duration_ms": int((finished - started).total_seconds() * 1000)}
-    session_dir = _session_dir(session)
-    trace = Path(session_dir) / EVENTS_FILE_NAME if session_dir else None
-    if trace is not None and trace.is_file():
-        metrics.update(summarize_run(load_events(trace)).to_json_dict())
+    if events is not None:
+        metrics.update(summarize_run(events).to_json_dict())
     return metrics
+
+
+def _result_outcomes(
+    session: BatchSessionRuntime,
+    task_statuses: Sequence[str],
+    stop_reasons: Sequence[str],
+) -> list[TaskOutcome]:
+    """Outcomes of the tasks that returned a result, for a session without a trace."""
+
+    records = list(getattr(session.context, "tasks", None) or [])
+    return [
+        outcome_from_result(
+            str(getattr(records[index], "task_id", "") or "") if index < len(records) else "",
+            status,
+            reason,
+        )
+        for index, (status, reason) in enumerate(zip(task_statuses, stop_reasons, strict=True))
+    ]
+
+
+def _add_outcomes(row: dict[str, Any], outcomes: Sequence[TaskOutcome]) -> None:
+    error = row.get("error")
+    row["schema_version"] = SCHEMA_VERSION
+    row["task_outcomes"] = [asdict(outcome) for outcome in outcomes]
+    row["failure_kind"] = classify_scenario(
+        outcomes,
+        (row.get("grade") or {}).get("status"),
+        error_type=str(error.get("type") or "") if error else None,
+    )
 
 
 def _grade(
@@ -339,10 +429,12 @@ def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
 
 
 __all__ = [
+    "SCHEMA_VERSION",
     "BatchScenario",
     "BatchSessionFactory",
     "BatchSessionRuntime",
     "BatchTaskResult",
     "load_batch_scenarios",
     "run_batch",
+    "settings_provenance",
 ]

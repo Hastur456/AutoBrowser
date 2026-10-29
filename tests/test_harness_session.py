@@ -1152,3 +1152,35 @@ async def test_the_classifier_model_gets_no_temperature_when_the_session_sends_n
         ]
     finally:
         await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_session_labels_ride_on_the_session_started_event(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    runtime = make_runtime(labels={"autobrowser.batch.id": "batch-1"})
+
+    await runtime.start()
+    await runtime.close()
+
+    assert runtime.context.session_dir is not None
+    started = read_typed_events(runtime.context.session_dir)[0]
+    assert started["type"] == "session.started"
+    assert started["payload"]["labels"] == {"autobrowser.batch.id": "batch-1"}
+
+
+def test_session_config_reads_labels_from_the_args() -> None:
+    from types import SimpleNamespace
+
+    config = make_config()
+    fields = {name: getattr(config, name) for name in ("model", "temperature", "no_mcp")}
+    fields.update(
+        show_state=False, show_tools=False, json=False, compress_tools=False, agent_loop=False,
+        chrome_path="chrome.exe", user_data_dir="profile", cdp_port=9555, cdp_timeout=1.0,
+        turn_cap=10,
+    )
+
+    assert SessionConfig.from_args(SimpleNamespace(**fields, labels={"k": "v"})).labels == {"k": "v"}
+    assert SessionConfig.from_args(SimpleNamespace(**fields)).labels == {}
