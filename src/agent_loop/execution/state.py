@@ -105,6 +105,8 @@ class LoopState:
     # Explicit terminal status ("done"/"blocked"/"cancelled") set by whoever ends the run;
     # empty while the loop continues.
     completion_status: str = ""
+    # Machine-readable terminal reason (a ``StopReason``) set beside ``completion_status``.
+    stop_reason: str = ""
     error: str = ""
 
     def apply(self, updates: Mapping[str, Any]) -> LoopState:

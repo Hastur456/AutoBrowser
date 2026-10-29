@@ -110,6 +110,8 @@ class AgentLoopResult:
     session_state: dict[str, Any]
     state: LoopState
     turns: int = 0
+    #: Machine-readable terminal reason (a ``StopReason``); empty only for foreign results.
+    stop_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -360,7 +362,11 @@ class TurnController:
 
         # Defensive: an unexpected decision must not spin forever.
         state = state.apply(
-            blocked_response(state, f"Blocked: unexpected loop decision '{decision}'.")
+            blocked_response(
+                state,
+                f"Blocked: unexpected loop decision '{decision}'.",
+                stop_reason="invalid_decision",
+            )
         )
         return TurnResult(state=state, status="blocked")
 
@@ -405,7 +411,9 @@ class TurnController:
         actions = list(model_turn.actions or [])
         if not actions:
             # ActionParser always returns >=1 action; this is a defensive terminal only.
-            return blocked_response(state, "Blocked: the model returned no actionable step.")
+            return blocked_response(
+                state, "Blocked: the model returned no actionable step.", stop_reason="no_action"
+            )
         update = self._classify_action(state, actions[0], messages)
         # Only a successful completion *from the model* is checked; guard terminals (limits)
         # and blocked/cancelled stops are never second-guessed.
@@ -479,6 +487,7 @@ class TurnController:
                 state,
                 str(action.get("final_answer", "") or ""),
                 messages=messages,
+                stop_reason="answered",
             )
 
         if kind == "tool_call":
@@ -529,13 +538,14 @@ class TurnController:
             message = str(action.get("message", "") or "")
             status = str(action.get("status", "") or "blocked")
             if status == "done":
-                return done_response(state, message, messages=messages)
+                return done_response(state, message, messages=messages, stop_reason="model_stop")
             if status == "cancelled":
                 return done_response(
                     state,
                     f"Cancelled: {message}" if message else "Cancelled.",
                     messages=messages,
                     status="cancelled",
+                    stop_reason="model_stop",
                 )
             # A failed or blocked stop is an honest "the task was not achieved".
             if status == "failed":
@@ -544,12 +554,14 @@ class TurnController:
                     f"Failed: {message}" if message else "Failed.",
                     messages=messages,
                     status="blocked",
+                    stop_reason="model_stop",
                 )
             return done_response(
                 state,
                 f"Blocked: {message}" if message else "Blocked.",
                 messages=messages,
                 status="blocked",
+                stop_reason="model_stop",
             )
 
         return replan_response("Unrecognized proposed action.")
@@ -717,7 +729,8 @@ class TurnController:
                 f"Blocked: approval hook denied {denied}: "
                 f"{hook_outcome.reason or 'no reason given'}"
             )
-            return state.apply(blocked_response(state, reason)), "blocked", False
+            update = blocked_response(state, reason, stop_reason="approval_hook_denied")
+            return state.apply(update), "blocked", False
         if hook_outcome.decision == "allow":
             self._emit_approval_resolved("allow", by="hook", scope="once")
             return state, None, False
@@ -728,7 +741,8 @@ class TurnController:
         if answer == "deny":
             self._emit_approval_resolved("deny", by="human", scope="once")
             reason = f"Blocked: human approval was denied for {denied}."
-            return state.apply(blocked_response(state, reason)), "blocked", False
+            update = blocked_response(state, reason, stop_reason="approval_denied")
+            return state.apply(update), "blocked", False
         scope = "once"
         if answer == "session" and verdict.grant_key is not None and not verdict.always_ask:
             self._permissions.grant(verdict.grant_key)
@@ -1002,6 +1016,7 @@ class AgentLoopEngine:
                             f"Blocked: reached the maximum of {turn_cap} agent turns "
                             "without a final answer."
                         ),
+                        stop_reason="turn_cap",
                     )
                 )
                 final_status = "blocked"
@@ -1036,7 +1051,8 @@ class AgentLoopEngine:
             reason = outcome.reason or "a goal_start hook denied the task."
             # Seed the real system prompt first, as the planner would have.
             state = state.apply({"messages": self._history(state)})
-            return state.apply(blocked_response(state, f"Blocked: {reason}")), True
+            update = blocked_response(state, f"Blocked: {reason}", stop_reason="goal_hook_denied")
+            return state.apply(update), True
         note = _harness_note([outcome.additional_context])
         if note is not None:
             state = state.apply({"messages": [*self._history(state), note]})
@@ -1064,6 +1080,7 @@ class AgentLoopEngine:
             session_state=state.to_session_state(),
             state=state,
             turns=turns,
+            stop_reason=state.stop_reason,
         )
 
     async def _run_hooks(self, event: HookEvent) -> HookOutcome:

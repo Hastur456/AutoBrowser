@@ -85,7 +85,12 @@ class GoalRunner:
             self._emit(
                 "goal.cancelled",
                 request,
-                {"task": request.task, "status": "cancelled", "reason": CANCELLED_REASON},
+                {
+                    "task": request.task,
+                    "status": "cancelled",
+                    "reason": CANCELLED_REASON,
+                    "stop_reason": "cancelled",
+                },
             )
             raise
         except Exception as exc:
@@ -108,6 +113,7 @@ class GoalRunner:
                 "status": status,
                 "final_answer": str(result.final_answer or ""),
                 "turns": result.turns,
+                **({"stop_reason": result.stop_reason} if result.stop_reason else {}),
             },
         )
         return GoalRunResult(request=request, result=result, status=status)
