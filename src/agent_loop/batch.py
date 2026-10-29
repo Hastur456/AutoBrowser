@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
@@ -14,7 +15,12 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
-from src.agent_loop.batch_report import REPORT_FILE_NAME, render_batch_report, total_metrics
+from src.agent_loop.batch_report import (
+    REPORT_FILE_NAME,
+    render_batch_report,
+    render_trace_text,
+    total_metrics,
+)
 from src.agent_loop.benchmarks import summarize_run
 from src.agent_loop.events import EventRecord, redact_json_safe
 from src.agent_loop.failures import (
@@ -30,6 +36,9 @@ from src.harness.session_store import EVENTS_FILE_NAME
 
 #: Version of the ``batch.json`` and ``run_index.jsonl`` row formats.
 SCHEMA_VERSION = 1
+#: Subdirectory of a batch directory holding a copy and a readable version of every trace.
+TRACES_DIR_NAME = "traces"
+_UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9._-]")
 
 
 @dataclass(frozen=True)
@@ -148,6 +157,7 @@ async def run_batch(
     status = "completed"
     grade_counts = {"passed": 0, "failed": 0, "ungraded": 0}
     rows: list[dict[str, Any]] = []
+    trace_names: set[str] = set()
 
     try:
         for scenario in scenarios:
@@ -202,7 +212,8 @@ async def run_batch(
                 await session.close()
                 if row is not None:
                     # After close: the session's trace is complete on disk.
-                    events = _session_events(session)
+                    trace = _session_trace(session)
+                    events = load_events(trace) if trace is not None else None
                     row["metrics"] = _run_metrics(events, row)
                     outcomes = (
                         classify_tasks(events)
@@ -210,6 +221,9 @@ async def run_batch(
                         else _result_outcomes(session, task_statuses, stop_reasons)
                     )
                     _add_outcomes(row, outcomes)
+                    row.update(
+                        _keep_trace(batch_dir, scenario.scenario_id, trace, events, outcomes, trace_names)
+                    )
                     rows.append(row)
                     _append_jsonl(run_index_path, row)
     finally:
@@ -254,14 +268,49 @@ def settings_provenance(settings: Settings) -> dict[str, Any]:
     }
 
 
-def _session_events(session: BatchSessionRuntime) -> list[EventRecord] | None:
-    """The session's trace, or ``None`` when it left none (it raised before writing one)."""
+def _session_trace(session: BatchSessionRuntime) -> Path | None:
+    """The session's trace file, or ``None`` when it left none (it raised before writing one)."""
 
     session_dir = _session_dir(session)
     trace = Path(session_dir) / EVENTS_FILE_NAME if session_dir else None
-    if trace is None or not trace.is_file():
-        return None
-    return load_events(trace)
+    return trace if trace is not None and trace.is_file() else None
+
+
+def _keep_trace(
+    batch_dir: Path,
+    scenario_id: str,
+    trace: Path | None,
+    events: list[EventRecord] | None,
+    outcomes: Sequence[TaskOutcome],
+    used_names: set[str],
+) -> dict[str, str | None]:
+    """Copy the trace into ``traces/`` beside a readable version; paths are batch-relative."""
+
+    if trace is None or events is None:
+        return {"trace_path": None, "trace_text_path": None}
+    name = _trace_name(scenario_id, used_names)
+    traces_dir = batch_dir / TRACES_DIR_NAME
+    traces_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(trace, traces_dir / f"{name}.events.jsonl")
+    (traces_dir / f"{name}.txt").write_text(
+        render_trace_text(scenario_id, events, outcomes), encoding="utf-8"
+    )
+    return {
+        "trace_path": f"{TRACES_DIR_NAME}/{name}.events.jsonl",
+        "trace_text_path": f"{TRACES_DIR_NAME}/{name}.txt",
+    }
+
+
+def _trace_name(scenario_id: str, used_names: set[str]) -> str:
+    """A file-safe name for the scenario, unique within the batch (case-insensitively)."""
+
+    base = _UNSAFE_NAME_CHARS.sub("_", scenario_id) or "_"
+    name, suffix = base, 1
+    while name.casefold() in used_names:
+        suffix += 1
+        name = f"{base}-{suffix}"
+    used_names.add(name.casefold())
+    return name
 
 
 def _run_metrics(events: list[EventRecord] | None, row: Mapping[str, Any]) -> dict[str, Any]:
@@ -430,6 +479,7 @@ def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
 
 __all__ = [
     "SCHEMA_VERSION",
+    "TRACES_DIR_NAME",
     "BatchScenario",
     "BatchSessionFactory",
     "BatchSessionRuntime",

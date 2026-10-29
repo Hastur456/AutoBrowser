@@ -3,12 +3,20 @@
 A pure renderer over the ``run_index.jsonl`` rows: one table row per scenario (grade, tasks
 done, time, model calls, tokens, model and tool time, tool errors, permission blocks), a total
 row, then every scenario whose grade failed with its failed checks and final answer.
+:func:`render_trace_text` renders the readable trace kept beside the copied ``events.jsonl``.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from src.agent_loop.benchmarks import split_by_task
+from src.agent_loop.replay import print_action_sequence
+
+if TYPE_CHECKING:
+    from src.agent_loop.events import EventRecord
+    from src.agent_loop.failures import TaskOutcome
 
 REPORT_FILE_NAME = "report.md"
 
@@ -111,13 +119,53 @@ def render_batch_report(
             answer = row.get("final_answer")
             lines += ["", "Final answer:", ""]
             lines += [f"> {line}" for line in str(answer).splitlines()] if answer else [f"> {_NONE}"]
-            if row.get("session_dir"):
-                lines += ["", f"Trace: `{row['session_dir']}`"]
-    traced = [row for row in rows if row.get("session_dir")]
+            if row.get("trace_text_path") or row.get("session_dir"):
+                lines += ["", f"Trace: {_trace_links(row)}"]
+    traced = [row for row in rows if row.get("trace_text_path") or row.get("session_dir")]
     if traced:
-        lines += ["", "## Traces", "", "Each scenario's session; its `events.jsonl` is the full trace.", ""]
-        lines += [f"- {row.get('scenario_id', '')}: `{row['session_dir']}`" for row in traced]
+        lines += [
+            "",
+            "## Traces",
+            "",
+            "Each scenario's readable trace in `traces/` (beside a copy of its `events.jsonl`,"
+            " the full trace) and its session.",
+            "",
+        ]
+        lines += [f"- {row.get('scenario_id', '')}: {_trace_links(row)}" for row in traced]
     return "\n".join(lines) + "\n"
+
+
+def render_trace_text(
+    scenario_id: str,
+    events: Sequence[EventRecord],
+    outcomes: Sequence[TaskOutcome],
+) -> str:
+    """A readable trace: per task its text, outcome and action sequence."""
+
+    lines = [f"# Scenario: {scenario_id}"]
+    for index, task_events in enumerate(split_by_task(events)):
+        outcome = outcomes[index] if index < len(outcomes) else None
+        task = next(
+            (str(e.payload.get("task") or "") for e in task_events if e.type == "goal.started"),
+            "",
+        )
+        lines += ["", f"## Task {index + 1}: {task or _NONE}"]
+        if outcome is not None:
+            lines.append(
+                f"status: {outcome.status} · stop_reason: {outcome.stop_reason or _NONE}"
+                f" · failure_kind: {outcome.failure_kind}"
+            )
+        lines += ["", print_action_sequence(list(task_events))]
+    return "\n".join(lines) + "\n"
+
+
+def _trace_links(row: Mapping[str, Any]) -> str:
+    links: list[str] = []
+    if row.get("trace_text_path"):
+        links.append(f"[{row['trace_text_path']}]({row['trace_text_path']})")
+    if row.get("session_dir"):
+        links.append(f"session `{row['session_dir']}`")
+    return " · ".join(links)
 
 
 def _table_row(name: str, grade: str, done: str, metrics: Mapping[str, Any]) -> str:

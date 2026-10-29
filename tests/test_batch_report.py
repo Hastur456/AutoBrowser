@@ -77,7 +77,7 @@ def test_failed_scenarios_list_their_failed_checks_and_answer() -> None:
     assert "- `regex`: no match for ['x']" in failures
     assert "`items`" not in failures
     assert "> Line one\n> Line two" in failures
-    assert "Trace: `sessions/ozon`" in failures
+    assert "Trace: session `sessions/ozon`" in failures
 
 
 def test_an_ungraded_run_shows_no_grades() -> None:
@@ -92,5 +92,15 @@ def test_the_report_lists_the_trace_of_every_scenario() -> None:
     report = render_batch_report(METADATA, [_row("books", PASSED), _row("ozon", FAILED)], graded=True)
 
     traces = report.split("## Traces", 1)[1]
-    assert "- books: `sessions/books`" in traces
-    assert "- ozon: `sessions/ozon`" in traces
+    assert "- books: session `sessions/books`" in traces
+    assert "- ozon: session `sessions/ozon`" in traces
+
+
+def test_the_report_links_the_readable_trace_before_the_session() -> None:
+    row = {**_row("ozon", FAILED), "trace_text_path": "traces/ozon.txt"}
+
+    report = render_batch_report(METADATA, [row], graded=True)
+
+    link = "[traces/ozon.txt](traces/ozon.txt) · session `sessions/ozon`"
+    assert f"Trace: {link}" in report.split("## Failed scenarios", 1)[1]
+    assert f"- ozon: {link}" in report.split("## Traces", 1)[1]

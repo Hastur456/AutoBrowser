@@ -430,7 +430,7 @@ def _write_trace(session_dir: Path) -> None:
 
     t0 = datetime(2026, 10, 28, tzinfo=UTC)
     events = [
-        ("goal.started", 0.0, {}),
+        ("goal.started", 0.0, {"task": "Report the price."}),
         ("model.requested", 0.1, {"phase": "plan"}),
         ("model.responded", 1.1, {"phase": "plan", "usage": {"input_tokens": 100, "output_tokens": 7}}),
         ("tool.started", 1.2, {}),
@@ -619,6 +619,84 @@ def test_the_settings_fingerprint_never_holds_a_secret() -> None:
     second = Settings.model_construct(llm=LLMSettings(api_key="secret-two"))
 
     assert settings_provenance(first)["settings_sha256"] == settings_provenance(second)["settings_sha256"]
+
+
+def _traced_factory(tmp_path: Path) -> Any:
+    factory = FakeSessionFactory()
+
+    def build(scenario: BatchScenario) -> FakeBatchSession:
+        session = factory(scenario)
+        session.context.session_dir = tmp_path / "sessions" / session.context.session_id
+        _write_trace(session.context.session_dir)
+        return session
+
+    return build
+
+
+@pytest.mark.asyncio
+async def test_the_batch_folder_holds_each_scenario_trace(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["report"]}])
+
+    result = await run_batch(
+        tasks_path=tasks_path, session_factory=_traced_factory(tmp_path), batches_dir=tmp_path / "b"
+    )
+
+    batch_dir = Path(result["batch_dir"])
+    (row,) = _read_jsonl(Path(result["run_index_path"]))
+    assert row["trace_path"] == "traces/s1.events.jsonl"
+    assert row["trace_text_path"] == "traces/s1.txt"
+    copied = (batch_dir / row["trace_path"]).read_bytes()
+    assert copied == (tmp_path / "sessions" / "session-1" / "events.jsonl").read_bytes()
+    text = (batch_dir / row["trace_text_path"]).read_text(encoding="utf-8")
+    assert "## Task 1: Report the price." in text
+    assert "status: completed · stop_reason: answered · failure_kind: passed" in text
+    assert "goal.started: Report the price." in text
+    report = Path(result["report_path"]).read_text(encoding="utf-8")
+    assert "[traces/s1.txt](traces/s1.txt)" in report
+
+
+@pytest.mark.asyncio
+async def test_trace_names_are_sanitized_and_unique(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(
+        tasks_path,
+        [
+            {"scenario_id": "shop/cart: 1", "tasks": ["a"]},
+            {"scenario_id": "shop_cart__1", "tasks": ["b"]},
+            {"scenario_id": "Ok.name-1", "tasks": ["c"]},
+        ],
+    )
+
+    result = await run_batch(
+        tasks_path=tasks_path, session_factory=_traced_factory(tmp_path), batches_dir=tmp_path / "b"
+    )
+
+    rows = _read_jsonl(Path(result["run_index_path"]))
+    assert [row["trace_text_path"] for row in rows] == [
+        "traces/shop_cart__1.txt",
+        "traces/shop_cart__1-2.txt",
+        "traces/Ok.name-1.txt",
+    ]
+    assert all((Path(result["batch_dir"]) / row["trace_path"]).is_file() for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_a_scenario_without_a_trace_has_no_trace_files(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["boom"]}])
+
+    result = await run_batch(
+        tasks_path=tasks_path,
+        session_factory=FakeSessionFactory(fail_on={"boom"}),
+        batches_dir=tmp_path / "b",
+        continue_on_error=True,
+    )
+
+    (row,) = _read_jsonl(Path(result["run_index_path"]))
+    assert row["trace_path"] is None
+    assert row["trace_text_path"] is None
+    assert not (Path(result["batch_dir"]) / "traces").exists()
 
 
 def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
