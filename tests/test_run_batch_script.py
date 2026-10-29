@@ -45,8 +45,6 @@ async def test_run_batch_from_args_passes_session_factory_and_batch_options(
             "7",
             "--chrome-path",
             "chrome-test.exe",
-            "--user-data-dir",
-            "profile-test",
             "--cdp-port",
             "9555",
         ]
@@ -86,12 +84,14 @@ async def test_run_batch_from_args_passes_session_factory_and_batch_options(
         "no_mcp": True,
         "turn_cap": 7,
         "chrome_path": "chrome-test.exe",
-        "user_data_dir": "profile-test",
         "cdp_port": 9555,
     }
+    batch_id = calls["batch_kwargs"]["batch_id"]
+    profile = Path(calls["session_args"][0].user_data_dir)
     assert len(calls["session_args"]) == 1
     assert calls["session_args"][0] is not args
-    assert calls["session_args"][0].user_data_dir.endswith("profile-test-scenario-1")
+    assert profile.parts[-3:] == (batch_id, "profiles", "scenario-1")
+    assert not profile.parent.exists()  # deleted when the batch ends
     assert calls["session_args"][0].cdp_port == 9555
     assert args.temperature == 0.0
     assert args.show_state is False
@@ -113,8 +113,6 @@ def test_session_factory_uses_distinct_profile_dirs_and_ports(
             "test-model",
             "--chrome-path",
             "chrome.exe",
-            "--user-data-dir",
-            "profile",
             "--cdp-port",
             "9555",
         ]
@@ -129,13 +127,14 @@ def test_session_factory_uses_distinct_profile_dirs_and_ports(
     factory = run_batch_script._session_factory(
         args,
         session_builder,  # type: ignore[arg-type]
+        Path("batches") / "batch-1" / "profiles",
     )
 
     first = factory()
     second = factory()
 
-    assert first.config.user_data_dir.endswith("profile-scenario-1")
-    assert second.config.user_data_dir.endswith("profile-scenario-2")
+    assert Path(first.config.user_data_dir) == Path("batches/batch-1/profiles/scenario-1")
+    assert Path(second.config.user_data_dir) == Path("batches/batch-1/profiles/scenario-2")
     assert first.config.cdp_port == 9556
     assert second.config.cdp_port == 9557
     assert [item.cdp_port for item in received_args] == [9556, 9557]
@@ -187,3 +186,50 @@ def _fake_session_from_args(args: argparse.Namespace) -> FakeSession:
             cdp_port=args.cdp_port,
         )
     )
+
+
+@pytest.mark.parametrize(
+    "result, grade, expected_code",
+    [
+        ({"status": "completed", "grades": {"passed": 2, "failed": 0, "ungraded": 1}}, True, 0),
+        ({"status": "completed", "grades": {"passed": 1, "failed": 1, "ungraded": 0}}, True, 1),
+        ({"status": "failed", "grades": {"passed": 0, "failed": 1, "ungraded": 0}}, True, 1),
+        ({"status": "failed"}, False, 0),
+    ],
+)
+def test_main_exits_1_only_for_a_failed_grade_or_scenario_under_grade(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    result: dict[str, Any],
+    grade: bool,
+    expected_code: int,
+) -> None:
+    received: dict[str, Any] = {}
+
+    async def fake_run_batch_from_args(args: argparse.Namespace) -> dict[str, Any]:
+        received["grade"] = args.grade
+        return result
+
+    monkeypatch.setattr(run_batch_script, "run_batch_from_args", fake_run_batch_from_args)
+    argv = ["--tasks", str(tmp_path / "tasks.jsonl"), "--no-mcp", *(["--grade"] if grade else [])]
+
+    assert run_batch_script.main(argv) == expected_code
+    assert received["grade"] is grade
+
+
+def test_the_parsed_args_build_a_real_session(tmp_path: Path) -> None:
+    """The real session builder reads every attribute it needs from run_batch's parser."""
+
+    from src.cli.bootstrap import build_session
+
+    args = run_batch_script.build_parser().parse_args(
+        ["--tasks", str(tmp_path / "tasks.jsonl"), "--no-mcp"]
+    )
+
+    factory = run_batch_script._session_factory(args, build_session, tmp_path / "profiles")
+    session = factory()
+
+    assert session.config.no_mcp is True
+    assert Path(session.config.user_data_dir) == tmp_path / "profiles" / "scenario-1"
+    # Nobody answers approvals in a batch: the default mode runs as dont_ask.
+    assert session.config.permission_mode == "dont_ask"

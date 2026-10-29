@@ -1348,3 +1348,28 @@ def test_pipeline_defaults_and_env_override(settings: Any, monkeypatch: pytest.M
 def test_pipeline_bounds_are_enforced(settings: Any, value: float) -> None:
     with pytest.raises(ValueError):
         settings(pipeline={"request_chars_tolerance": value})
+
+
+def test_the_config_file_is_read_as_utf8(
+    settings: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Non-ASCII values survive whatever the locale encoding is (cp1251 on a Russian Windows)."""
+
+    reason = "Клик выглядит как оплата ({tool})."
+    profile = tmp_path / "config.yaml"
+    profile.write_text(
+        "permissions:\n"
+        "  rules:\n"
+        "    - id: purchases\n"
+        "      decision: ask\n"
+        "      tool: browser_click\n"
+        f'      reason: "{reason}"\n',
+        encoding="utf-8",
+    )
+    _point_at(monkeypatch, profile)
+
+    (rule,) = settings().permissions.rules
+
+    assert rule.reason == reason

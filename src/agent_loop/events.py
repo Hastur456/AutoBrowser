@@ -248,7 +248,7 @@ class EventEmitter:
 def redact_json_safe(value: Any, *, key: str | None = None) -> Any:
     """Return a redacted JSON-compatible value."""
 
-    if key is not None and _is_sensitive_key(key):
+    if key is not None and _is_sensitive_key(key) and not _is_token_count(key, value):
         return REDACTED_VALUE
     if isinstance(value, datetime):
         return value.isoformat()
@@ -279,6 +279,17 @@ def redact_json_safe(value: Any, *, key: str | None = None) -> Any:
 def _is_sensitive_key(key: str) -> bool:
     normalized = key.lower()
     return any(marker in normalized for marker in SENSITIVE_KEY_MARKERS)
+
+
+def _is_token_count(key: str, value: Any) -> bool:
+    """A model token count (``input_tokens: 1200`` in ``model.responded`` usage): an integer
+    under a ``*_tokens`` key is accounting, not a credential, so it survives redaction."""
+
+    return (
+        key.lower().endswith("_tokens")
+        and isinstance(value, int)
+        and not isinstance(value, bool)
+    )
 
 
 def _project_agent_trace_record(record: EventRecord) -> dict[str, Any] | None:

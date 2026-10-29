@@ -68,6 +68,28 @@ def test_the_engine_imports_nothing_from_the_browser_layer(path: Path) -> None:
     assert not browser_imports, f"{path.name} imports {browser_imports}"
 
 
+#: Test-pipeline analytics: they read eval results and answers, the engine never needs them.
+PIPELINE_MODULES = {
+    "src.agent_loop.batch_report",
+    "src.agent_loop.benchmarks",
+    "src.agent_loop.comparison",
+    "src.agent_loop.graders",
+}
+
+
+@pytest.mark.parametrize("path", ENGINE_MODULES, ids=lambda path: path.name)
+def test_the_engine_imports_no_pipeline_analytics(path: Path) -> None:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+
+    imported = set(_imported_modules(tree))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported.update(f"{node.module}.{alias.name}" for alias in node.names)
+    pipeline_imports = sorted(imported & PIPELINE_MODULES)
+
+    assert not pipeline_imports, f"{path.name} imports {pipeline_imports}"
+
+
 @pytest.mark.parametrize("path", ENGINE_MODULES, ids=lambda path: path.name)
 def test_the_engine_names_no_browser_tools(path: Path) -> None:
     found = BROWSER_TOOL_NAME.findall(path.read_text(encoding="utf-8"))

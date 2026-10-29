@@ -1748,7 +1748,9 @@ class _YamlFileSettingsSource(YamlConfigSettingsSource):
         # ``settings_cls``, so both are captured here for ``_read_file``.
         self._settings_cls = settings_cls
         self.config_path = path
-        super().__init__(settings_cls, yaml_file=path)
+        # UTF-8 explicitly: without it the file is read in the locale encoding (cp1251 on
+        # a Russian Windows), and every non-ASCII value turns into mojibake.
+        super().__init__(settings_cls, yaml_file=path, yaml_file_encoding="utf-8")
 
     def _read_file(self, file_path: Path) -> dict[str, Any]:
         try:

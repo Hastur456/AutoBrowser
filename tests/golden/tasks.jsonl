@@ -1,9 +1,35 @@
-{"scenario_id":"ozon-autumn-jackets","tasks":["Открой сайт Ozon.","Найди осенние куртки.","Дождись загрузки результатов поиска.","Выведи первые пять товаров с названием и ценой."],"expected":{"count":5,"fields":["title","price"]},"tags":["shopping","search","extract"]}
+{"scenario_id":"ozon-autumn-jackets","tasks":["Открой сайт Ozon.","Найди осенние куртки.","Дождись загрузки результатов поиска.","Выведи первые пять товаров с названием и ценой."],"expected":{"items":5,"regex":"(?si)(?:(?:₽|\\bруб(?:\\.|л|\\b)|\\bр\\.|\\brub\\b).*){5}","fields":["title","price"]},"tags":["shopping","search","extract"]}
 
-{"scenario_id":"ozon-gaming-laptops","tasks":["Открой сайт Ozon.","Найди игровые ноутбуки.","Установи максимальную цену 120000 рублей.","Отсортируй результаты по возрастанию цены.","Выведи первые три товара с названием и ценой."],"expected":{"count":3,"max_price":120000},"tags":["shopping","filters","sorting"]}
+{"scenario_id":"ozon-gaming-laptops","tasks":["Открой сайт Ozon.","Найди игровые ноутбуки.","Установи максимальную цену 120000 рублей.","Отсортируй результаты по возрастанию цены.","Выведи первые три товара с названием и ценой."],"expected":{"items":3,"regex":"(?si)(?:(?:₽|\\bруб(?:\\.|л|\\b)|\\bр\\.|\\brub\\b).*){3}","numbers_at_most":120000},"tags":["shopping","filters","sorting"]}
 
-{"scenario_id":"github-langgraph","tasks":["Открой GitHub.","Найди репозиторий LangGraph.","Открой страницу репозитория.","Выведи количество звезд.","Выведи количество форков.","Выведи ссылку на репозиторий."],"expected":{"fields":["stars","forks","url"]},"tags":["github","search","extract"]}
+{"scenario_id":"github-langgraph","tasks":["Открой GitHub.","Найди репозиторий LangGraph.","Открой страницу репозитория.","Выведи количество звезд.","Выведи количество форков.","Выведи ссылку на репозиторий."],"expected":{"regex":"(?i)github\\.com/langchain-ai/langgraph","fields":["stars","forks","url"]},"tags":["github","search","extract"]}
 
 {"scenario_id":"wikipedia-python","tasks":["Открой Википедию.","Найди статью про язык программирования Python.","Открой статью.","Выведи первый абзац статьи."],"expected":{"contains":"Python"},"tags":["wikipedia","extract"]}
 
-{"scenario_id":"compare-rtx5070","tasks":["Открой сайт Ozon.","Найди RTX 5070.","Открой первую карточку товара.","Запомни цену и объем видеопамяти.","Вернись к результатам поиска.","Открой вторую карточку товара.","Запомни цену и объем видеопамяти.","Сравни оба товара и выведи результат в виде таблицы."],"expected":{"count":2,"fields":["price","memory"]},"tags":["shopping","comparison","multistep"]}
+{"scenario_id":"compare-rtx5070","tasks":["Открой сайт Ozon.","Найди RTX 5070.","Открой первую карточку товара.","Запомни цену и объем видеопамяти.","Вернись к результатам поиска.","Открой вторую карточку товара.","Запомни цену и объем видеопамяти.","Сравни оба товара и выведи результат в виде таблицы."],"expected":{"min_items":2,"fields":["price","memory"]},"tags":["shopping","comparison","multistep"]}
+
+{"scenario_id":"books-price-lookup","tasks":["Открой https://books.toscrape.com.","Найди книгу «A Light in the Attic» и открой её страницу.","Выведи цену книги и её UPC."],"expected":{"contains":["51.77","a897fe39b1053632"]},"tags":["sandbox","navigation","extract"]}
+
+{"scenario_id":"books-category-count","tasks":["Открой https://books.toscrape.com.","Перейди в категорию Travel.","Выведи, сколько книг в этой категории."],"expected":{"regex":"\\b11\\b"},"tags":["sandbox","navigation","extract"]}
+
+{"scenario_id":"books-cheapest-in-category","tasks":["Открой категорию Travel на https://books.toscrape.com.","Найди самую дешёвую книгу в этой категории и выведи её название и цену."],"expected":{"contains":["Little Dribbling","23.21"]},"tags":["sandbox","comparison","extract"]}
+
+{"scenario_id":"books-list-extraction","tasks":["Открой категорию Mystery на https://books.toscrape.com.","Выведи первые пять книг на странице с названием и ценой нумерованным списком."],"expected":{"items":5,"regex":"(?s)(?:£.*){5}"},"tags":["sandbox","extract","list"]}
+
+{"scenario_id":"quotes-pagination","tasks":["Открой https://quotes.toscrape.com.","Перейди на вторую страницу цитат.","Выведи автора первой цитаты на этой странице."],"expected":{"contains":"Marilyn Monroe"},"tags":["sandbox","pagination","extract"]}
+
+{"scenario_id":"quotes-js-rendered","tasks":["Открой https://quotes.toscrape.com/js/.","Выведи автора первой цитаты на странице."],"expected":{"contains":"Albert Einstein"},"tags":["sandbox","javascript","extract"]}
+
+{"scenario_id":"quotes-tag-filter","tasks":["Открой https://quotes.toscrape.com.","Открой цитаты с тегом humor.","Выведи авторов первых двух цитат."],"expected":{"contains":["Jane Austen","Steve Martin"]},"tags":["sandbox","filters","extract"]}
+
+{"scenario_id":"quotes-login","tasks":["Открой https://quotes.toscrape.com/login.","Войди с логином demo и паролем demo.","Проверь, что вход выполнен, и выведи текст ссылки в правом верхнем углу страницы."],"expected":{"contains":"Logout"},"tags":["sandbox","form","auth"]}
+
+{"scenario_id":"httpbin-form-submit","tasks":["Открой https://httpbin.org/forms/post.","Заполни имя клиента «Ivan Petrov», выбери размер пиццы Medium и топпинг Cheese.","Отправь форму и выведи поля, которые вернул сервер."],"expected":{"contains":["Ivan Petrov","medium","cheese"]},"tags":["form","submit","extract"]}
+
+{"scenario_id":"wikipedia-moscow-founded","tasks":["Открой русскую Википедию.","Найди статью «Москва».","Выведи год первого упоминания Москвы в летописи."],"expected":{"contains":"1147"},"tags":["wikipedia","search","extract"]}
+
+{"scenario_id":"wikipedia-solar-system-session","tasks":["Открой статью «Солнечная система» в русской Википедии.","Перечисли планеты Солнечной системы из этой статьи нумерованным списком."],"expected":{"items":8,"contains":["Меркурий","Нептун"]},"tags":["wikipedia","session","list"]}
+
+{"scenario_id":"wikipedia-en-python-designer","tasks":["Open the English Wikipedia.","Find the article about the Python programming language.","Report who designed the language."],"expected":{"contains":"Guido van Rossum"},"tags":["wikipedia","english","extract"]}
+
+{"scenario_id":"github-repo-license","tasks":["Открой https://github.com/psf/requests.","Выведи, под какой лицензией распространяется этот репозиторий."],"expected":{"regex":"(?i)apache"},"tags":["github","extract"]}

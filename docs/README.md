@@ -9,6 +9,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   loop shape, runtime boundaries, and browser semantics.
 - [Development Setup](development/setup.md): environment setup, tests, CLI
   usage, and prompt-change workflow.
+- [Testing Pipeline Guide](development/testing-pipeline.md): the offline gate (tests, scripted
+  evals, the v2 baseline) and the live Golden Set run — prerequisites, command, where the
+  answers and traces land, reading grades, writing `expected`.
 - [Browser Agent Rules](development/browser-agent-rules.md): Playwright MCP
   interaction rules and search-flow debugging guidance.
 - [Agent Skills Guide](development/skills.md): `SKILL.md` skills — format, built-in and
@@ -83,6 +86,11 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   and the decision not to add Langfuse (Russian, Proposed; ADRs
   [pipeline](decisions/2026-10-19-autonomous-test-pipeline.md) and
   [Langfuse](decisions/2026-10-19-langfuse-observability.md)).
+- [Batch Analytics and OTLP Trace Export Plan](development/2026-10-29-batch-analytics-and-otlp-export-plan.md):
+  self-contained implementation plan — `stop_reason` and `failure_kind`, the batch data
+  contract with provenance, traces in the batch folder, run history and
+  `compare_batches.py` (Part A); the opt-in OTLP exporter for Phoenix/Langfuse (Part B); the
+  identifiers that link both.
 - [OpenAI-Compatible Provider Design](development/2026-10-22-openai-compat-provider-design.md):
   proposed Chat Completions adapter next to Ollama — wire mapping of messages, tool calls and
   usage, `llm.*` settings and service profiles (OhMyLama, OpenAI, OpenRouter, local servers),
