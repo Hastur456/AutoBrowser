@@ -279,6 +279,12 @@ def settings_provenance(settings: Settings) -> dict[str, Any]:
     }
 
 
+def tasks_sha256(path: Path) -> str:
+    """Hash of a tasks file, the same for a Windows (CRLF) and a Linux (LF) checkout."""
+
+    return hashlib.sha256(Path(path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
 def _session_trace(session: BatchSessionRuntime) -> Path | None:
     """The session's trace file, or ``None`` when it left none (it raised before writing one)."""
 
@@ -498,4 +504,5 @@ __all__ = [
     "load_batch_scenarios",
     "run_batch",
     "settings_provenance",
+    "tasks_sha256",
 ]

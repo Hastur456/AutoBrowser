@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from scripts import run_batch as run_batch_script
-from src.agent_loop.batch import BatchScenario
+from src.agent_loop.batch import BatchScenario, tasks_sha256
 
 GIT = {"commit": "a" * 40, "branch": "main", "dirty": False}
 
@@ -107,7 +107,7 @@ async def test_run_batch_from_args_passes_session_factory_and_batch_options(
     provenance = calls["batch_kwargs"]["provenance"]
     assert provenance["git"] == GIT
     assert provenance["model"] == "test-model"
-    assert provenance["tasks_sha256"] == run_batch_script._tasks_sha256(tasks_path)
+    assert provenance["tasks_sha256"] == tasks_sha256(tasks_path)
     assert {"provider", "settings_sha256", "non_default_sections", "python", "platform"} <= set(provenance)
     assert args.temperature == 0.0
     assert args.show_state is False
@@ -263,8 +263,8 @@ def test_the_tasks_hash_ignores_line_endings(tmp_path: Path) -> None:
     lf.write_bytes(b'{"a": 1}\n{"b": 2}\n')
     crlf.write_bytes(b'{"a": 1}\r\n{"b": 2}\r\n')
 
-    assert run_batch_script._tasks_sha256(lf) == run_batch_script._tasks_sha256(crlf)
-    assert len(run_batch_script._tasks_sha256(lf)) == 64
+    assert tasks_sha256(lf) == tasks_sha256(crlf)
+    assert len(tasks_sha256(lf)) == 64
 
 
 def test_no_history_skips_the_history(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import copy
-import hashlib
 import json
 import platform
 import shutil
@@ -33,7 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.agent_loop.batch import BatchScenario, run_batch, settings_provenance
+from src.agent_loop.batch import BatchScenario, run_batch, settings_provenance, tasks_sha256
 from src.cli.bootstrap import build_session
 from src.config import get_settings
 from src.harness.session import SessionRuntime
@@ -177,7 +176,7 @@ def _provenance(args: argparse.Namespace) -> dict[str, Any]:
         "git": _git_info(),
         "model": args.model,
         "provider": getattr(args, "provider", None) or settings.llm.provider,
-        "tasks_sha256": _tasks_sha256(Path(args.tasks)),
+        "tasks_sha256": tasks_sha256(Path(args.tasks)),
         **settings_provenance(settings),
         "python": platform.python_version(),
         "platform": sys.platform,
@@ -201,12 +200,6 @@ def _git_info() -> dict[str, Any]:
         }
     except (OSError, subprocess.SubprocessError):
         return {"commit": None, "branch": None, "dirty": None}
-
-
-def _tasks_sha256(path: Path) -> str:
-    """Hash of the tasks file, the same for a Windows (CRLF) and a Linux (LF) checkout."""
-
-    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
 def _next_available_port(start: int) -> int:

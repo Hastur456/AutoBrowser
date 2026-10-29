@@ -408,6 +408,7 @@ ui:
 pipeline:
   request_chars_tolerance: 0.1                  # (default) accepted request_chars change, relative
   history_max_rows: 50000                       # (default) rows kept in batches/history.jsonl
+  batch_metric_tolerance: 0.25                  # (default) accepted metric growth between batch runs
 
 # ---------------------------------------------------------------------------
 # Deterministic lifecycle hooks around the agent loop (src/harness/hooks.py).
