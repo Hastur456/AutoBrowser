@@ -73,6 +73,7 @@ PIPELINE_MODULES = {
     "src.agent_loop.batch_report",
     "src.agent_loop.benchmarks",
     "src.agent_loop.comparison",
+    "src.agent_loop.failures",
     "src.agent_loop.graders",
 }
 
