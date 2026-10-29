@@ -699,6 +699,75 @@ async def test_a_scenario_without_a_trace_has_no_trace_files(tmp_path: Path) -> 
     assert not (Path(result["batch_dir"]) / "traces").exists()
 
 
+@pytest.mark.asyncio
+async def test_every_run_appends_its_scenarios_to_the_history(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["a"]}, {"scenario_id": "s2", "tasks": ["b"]}])
+
+    for batch_id in ("batch-1", "batch-2"):
+        await run_batch(
+            tasks_path=tasks_path,
+            session_factory=FakeSessionFactory(),
+            batches_dir=tmp_path / "b",
+            batch_id=batch_id,
+        )
+
+    history = _read_jsonl(tmp_path / "b" / "history.jsonl")
+    assert [(row["batch_id"], row["scenario_id"]) for row in history] == [
+        ("batch-1", "s1"),
+        ("batch-1", "s2"),
+        ("batch-2", "s1"),
+        ("batch-2", "s2"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_batch_that_stopped_part_way_still_records_its_history(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["boom"]}, {"scenario_id": "s2", "tasks": ["b"]}])
+
+    with pytest.raises(RuntimeError):
+        await run_batch(
+            tasks_path=tasks_path,
+            session_factory=FakeSessionFactory(fail_on={"boom"}),
+            batches_dir=tmp_path / "b",
+        )
+
+    history = _read_jsonl(tmp_path / "b" / "history.jsonl")
+    assert [(row["scenario_id"], row["failure_kind"]) for row in history] == [("s1", "error")]
+
+
+@pytest.mark.asyncio
+async def test_history_can_be_skipped(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["a"]}])
+
+    await run_batch(
+        tasks_path=tasks_path,
+        session_factory=FakeSessionFactory(),
+        batches_dir=tmp_path / "b",
+        history=False,
+    )
+
+    assert not (tmp_path / "b" / "history.jsonl").exists()
+
+
+@pytest.mark.asyncio
+async def test_the_history_is_rotated_to_its_row_limit(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": f"s{n}", "tasks": ["a"]} for n in range(3)])
+
+    await run_batch(
+        tasks_path=tasks_path,
+        session_factory=FakeSessionFactory(),
+        batches_dir=tmp_path / "b",
+        history_max_rows=2,
+    )
+
+    history = _read_jsonl(tmp_path / "b" / "history.jsonl")
+    assert [row["scenario_id"] for row in history] == ["s1", "s2"]
+
+
 def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [json.dumps(record) for record in records]

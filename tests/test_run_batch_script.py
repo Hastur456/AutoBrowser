@@ -84,6 +84,7 @@ async def test_run_batch_from_args_passes_session_factory_and_batch_options(
     assert "session" not in calls["batch_kwargs"]
     assert callable(calls["batch_kwargs"]["session_factory"])
     assert calls["batch_kwargs"]["continue_on_error"] is True
+    assert calls["batch_kwargs"]["history"] is True
     assert calls["batch_kwargs"]["config"] == {
         "model": "test-model",
         "no_mcp": True,
@@ -264,6 +265,25 @@ def test_the_tasks_hash_ignores_line_endings(tmp_path: Path) -> None:
 
     assert run_batch_script._tasks_sha256(lf) == run_batch_script._tasks_sha256(crlf)
     assert len(run_batch_script._tasks_sha256(lf)) == 64
+
+
+def test_no_history_skips_the_history(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(run_batch_script, "_git_info", lambda: dict(GIT))
+    args = run_batch_script.build_parser().parse_args(
+        ["--tasks", str(tmp_path / "tasks.jsonl"), "--no-mcp", "--no-history"]
+    )
+    (tmp_path / "tasks.jsonl").write_text('{"scenario_id":"s1","tasks":["a"]}\n', encoding="utf-8")
+    received: dict[str, Any] = {}
+
+    async def batch_runner(**kwargs: Any) -> dict[str, Any]:
+        received.update(kwargs)
+        return {}
+
+    import asyncio
+
+    asyncio.run(run_batch_script.run_batch_from_args(args, batch_runner=batch_runner))
+
+    assert received["history"] is False
 
 
 def test_git_info_reads_the_checkout() -> None:

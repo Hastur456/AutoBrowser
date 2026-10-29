@@ -71,6 +71,7 @@ async def run_batch_from_args(
             config=_batch_config(args),
             grade=args.grade,
             provenance=provenance,
+            history=not args.no_history,
         )
     finally:
         # The profiles are scratch state; a file Chrome still holds stays in the batch dir.
@@ -96,6 +97,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--grade",
         action="store_true",
         help="Grade each scenario's final answer against its expected mapping; exit 1 on a failure.",
+    )
+    parser.add_argument(
+        "--no-history",
+        action="store_true",
+        help="Do not append this run to the batch history (for experiments).",
     )
     parser.add_argument(
         "--model",

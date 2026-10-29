@@ -1706,6 +1706,18 @@ class PipelineSettings(_Section):
         ),
     ] = 0.10
 
+    history_max_rows: Annotated[
+        int,
+        Field(
+            ge=100,
+            le=10_000_000,
+            description=(
+                "Rows kept in the batch run history (<storage.batches_dir>/history.jsonl, "
+                "one row per scenario per run); past it the oldest rows are dropped."
+            ),
+        ),
+    ] = 50_000
+
 
 def _resolve_config_path() -> Path | None:
     """Return the YAML file to load, if any.

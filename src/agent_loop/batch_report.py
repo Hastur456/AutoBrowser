@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 REPORT_FILE_NAME = "report.md"
 
 #: Summed metrics of a run, in table order.
-_SUMMED = (
+SUMMED_METRICS = (
     "duration_ms",
     "tasks",
     "model_calls",
@@ -40,7 +40,7 @@ def total_metrics(rows: Sequence[Mapping[str, Any]]) -> dict[str, int | None]:
     """The metrics of every row added up; a metric no row reported stays ``None``."""
 
     totals: dict[str, int | None] = {}
-    for key in _SUMMED:
+    for key in SUMMED_METRICS:
         values = [
             value
             for row in rows

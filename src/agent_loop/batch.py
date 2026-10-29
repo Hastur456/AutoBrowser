@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 
+from src.agent_loop.batch_history import HISTORY_FILE_NAME, append_history, history_rows
 from src.agent_loop.batch_report import (
     REPORT_FILE_NAME,
     render_batch_report,
@@ -113,6 +114,8 @@ async def run_batch(
     continue_on_error: bool = False,
     grade: bool = False,
     provenance: Mapping[str, Any] | None = None,
+    history: bool = True,
+    history_max_rows: int | None = None,
 ) -> dict[str, Any]:
     """Run Golden Set scenarios with one fresh SessionRuntime per scenario.
 
@@ -126,7 +129,9 @@ async def run_batch(
     Every row also carries the ``failure_kind`` of the scenario and the ``task_outcomes`` it
     was derived from (:mod:`src.agent_loop.failures`), read from the session trace, or from
     the task results when the session left no trace. ``provenance`` (commit, model, settings
-    fingerprint; built by the caller) is recorded in ``batch.json``.
+    fingerprint; built by the caller) is recorded in ``batch.json``. With ``history``, the
+    rows are appended to ``<batches_dir>/history.jsonl`` (also when the batch stopped part-way),
+    which keeps its newest ``history_max_rows`` (default ``pipeline.history_max_rows``) rows.
     """
 
     tasks_file = Path(tasks_path)
@@ -233,6 +238,12 @@ async def run_batch(
         (batch_dir / REPORT_FILE_NAME).write_text(
             render_batch_report(metadata, rows, graded=grade), encoding="utf-8"
         )
+        if history:
+            append_history(
+                Path(batches_dir) / HISTORY_FILE_NAME,
+                history_rows(metadata, rows),
+                history_max_rows or get_settings().pipeline.history_max_rows,
+            )
 
     return {
         "batch_id": batch_id,
