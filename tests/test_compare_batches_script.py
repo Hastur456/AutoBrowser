@@ -19,6 +19,8 @@ def _batch(
     *,
     tasks: str = "t",
     duration_ms: int = 10_000,
+    finished: bool = True,
+    config: dict[str, Any] | None = None,
 ) -> Path:
     batch_dir = root / batch_id
     batch_dir.mkdir(parents=True)
@@ -26,6 +28,8 @@ def _batch(
         "schema_version": 1,
         "batch_id": batch_id,
         "started_at": started_at,
+        "finished_at": started_at if finished else None,
+        "config": config or {},
         "provenance": {"tasks_sha256": tasks, "settings_sha256": "s", "model": "m"},
     }
     (batch_dir / "batch.json").write_text(json.dumps(meta), encoding="utf-8")
@@ -135,3 +139,51 @@ def test_an_older_batch_without_provenance_gets_its_hash_from_its_tasks_copy(tmp
     (newer / "batch.json").write_text(json.dumps(meta), encoding="utf-8")
 
     assert _run(tmp_path, "batch-a", "batch-b") == 0
+
+
+def test_an_answer_with_unicode_line_separators_does_not_break_the_comparison(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _batch(tmp_path, "batch-a", "2026-10-29T10:00:00+00:00", [("s1", "passed")])
+    newer = _batch(tmp_path, "batch-b", "2026-10-29T11:00:00+00:00", [("s1", "guard_limit")])
+    row = {"scenario_id": "s1", "failure_kind": "guard_limit", "final_answer": "page\u2028text\x85"}
+    (newer / "run_index.jsonl").write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    code = _run(tmp_path)
+
+    assert code == 1
+    assert "regression: s1 passed -> guard_limit" in capsys.readouterr().out
+
+
+def test_auto_pick_skips_a_running_or_aborted_batch(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _batch(tmp_path, "batch-a", "2026-10-29T09:00:00+00:00", [("s1", "passed")])
+    newer = _batch(tmp_path, "batch-b", "2026-10-29T10:00:00+00:00", [("s1", "passed")])
+    running = _batch(tmp_path, "batch-running", "2026-10-29T11:00:00+00:00", [], finished=False)
+
+    code = _run(tmp_path)
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "batch-a -> batch-b" in captured.out
+    assert "batch-running" in captured.err and "not finished" in captured.err
+    assert (newer / "compare.md").is_file()
+    assert not (running / "compare.md").exists()
+
+
+def test_auto_pick_warns_about_an_unreadable_batch(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _batch(tmp_path, "batch-a", "2026-10-29T09:00:00+00:00", [("s1", "passed")])
+    _batch(tmp_path, "batch-b", "2026-10-29T10:00:00+00:00", [("s1", "passed")])
+    broken = tmp_path / "batch-broken"
+    broken.mkdir()
+    (broken / "batch.json").write_text("{not json", encoding="utf-8")
+
+    assert _run(tmp_path) == 0
+    assert "batch-broken" in capsys.readouterr().err
+
+
+def test_different_cli_options_are_a_warning(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _batch(tmp_path, "batch-a", "2026-10-29T10:00:00+00:00", [("s1", "passed")], config={"turn_cap": 50})
+    _batch(tmp_path, "batch-b", "2026-10-29T11:00:00+00:00", [("s1", "passed")], config={"turn_cap": 10})
+
+    assert _run(tmp_path, "batch-a", "batch-b") == 0
+    assert "warning: options differ" in capsys.readouterr().out

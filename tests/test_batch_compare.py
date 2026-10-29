@@ -163,3 +163,12 @@ def test_findings_describe_themselves_and_render_as_markdown() -> None:
     payload = comparison.to_json_dict()
     assert payload["exit_code"] == 1
     assert payload["findings"][0]["kind"] == "regression"
+
+
+def test_different_cli_options_are_a_warning() -> None:
+    meta_a = {**_meta("a"), "config": {"turn_cap": 50, "model": "m"}}
+    meta_b = {**_meta("b"), "config": {"turn_cap": 10, "model": "m"}}
+
+    comparison = compare_batches(meta_a, [_row("s1", "passed")], meta_b, [_row("s1", "passed")], SETTINGS)
+
+    assert comparison.warnings == ["options differ: turn_cap 50 -> 10"]

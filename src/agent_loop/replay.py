@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from src.agent_loop.events import EventRecord
+from src.agent_loop.events import EventRecord, read_jsonl_lines
 
 
 @dataclass(frozen=True)
@@ -39,9 +39,7 @@ def load_events(path: Path) -> list[EventRecord]:
     """Load typed event records from a JSONL trace file."""
 
     records: list[EventRecord] = []
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
+    for line in read_jsonl_lines(Path(path)):
         records.append(EventRecord.from_json_dict(json.loads(line)))
     return records
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import shutil
 from collections.abc import Callable, Mapping, Sequence
@@ -34,6 +35,8 @@ from src.agent_loop.graders import grade_answer
 from src.agent_loop.replay import load_events
 from src.config import Settings, get_settings
 from src.harness.session_store import EVENTS_FILE_NAME
+
+logger = logging.getLogger(__name__)
 
 #: Version of the ``batch.json`` and ``run_index.jsonl`` row formats.
 SCHEMA_VERSION = 1
@@ -94,7 +97,9 @@ def load_batch_scenarios(path: Path) -> list[BatchScenario]:
     """Load Golden Set scenarios from JSONL, one object per non-empty line."""
 
     scenarios: list[BatchScenario] = []
-    for line_number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
+    for line_number, line in enumerate(
+        Path(path).read_text(encoding="utf-8").split("\n"), 1
+    ):
         if not line.strip():
             continue
         payload = json.loads(line)
@@ -239,11 +244,16 @@ async def run_batch(
             render_batch_report(metadata, rows, graded=grade), encoding="utf-8"
         )
         if history:
-            append_history(
-                Path(batches_dir) / HISTORY_FILE_NAME,
-                history_rows(metadata, rows),
-                history_max_rows or get_settings().pipeline.history_max_rows,
-            )
+            try:
+                append_history(
+                    Path(batches_dir) / HISTORY_FILE_NAME,
+                    history_rows(metadata, rows),
+                    history_max_rows or get_settings().pipeline.history_max_rows,
+                )
+            except OSError as exc:
+                # The batch folder already holds the run; a locked history (a reader, an
+                # antivirus) must not mask the batch's own result or exception.
+                logger.warning("Could not append the batch run to the history: %s", exc)
 
     return {
         "batch_id": batch_id,

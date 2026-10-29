@@ -300,3 +300,29 @@ def test_git_info_is_null_without_git(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(run_batch_script.subprocess, "run", missing)
 
     assert run_batch_script._git_info() == {"commit": None, "branch": None, "dirty": None}
+
+
+def test_git_info_reads_git_output_as_utf8(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess as real_subprocess
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_run(argv: list[str], **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        output = {"HEAD": "a" * 40, "--abbrev-ref": "фича/И", "--porcelain": ""}
+        key = next(arg for arg in argv if arg in output)
+        return real_subprocess.CompletedProcess(argv, 0, stdout=output[key])
+
+    monkeypatch.setattr(run_batch_script.subprocess, "run", fake_run)
+
+    assert run_batch_script._git_info()["branch"] == "фича/И"
+    assert all(call.get("encoding") == "utf-8" for call in calls)
+
+
+def test_undecodable_git_output_does_not_stop_the_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    def undecodable(*args: Any, **kwargs: Any) -> Any:
+        raise UnicodeDecodeError("cp1251", b"\x98", 0, 1, "undefined")
+
+    monkeypatch.setattr(run_batch_script.subprocess, "run", undecodable)
+
+    assert run_batch_script._git_info() == {"commit": None, "branch": None, "dirty": None}

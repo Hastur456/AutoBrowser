@@ -95,3 +95,22 @@ def test_a_missing_history_loads_empty_and_blank_lines_are_skipped(tmp_path: Pat
     path.write_text(json.dumps({"n": 1}) + "\n\n", encoding="utf-8")
 
     assert load_history(path) == [{"n": 1}]
+
+
+def test_unicode_line_separators_inside_values_survive(tmp_path: Path) -> None:
+    path = tmp_path / "history.jsonl"
+    value = "shop\u2028cart\x85"
+
+    append_history(path, [{"scenario_id": value}, {"scenario_id": "next"}], max_rows=100)
+    append_history(path, [{"scenario_id": "third"}], max_rows=3)
+
+    assert load_history(path) == [{"scenario_id": value}, {"scenario_id": "next"}, {"scenario_id": "third"}]
+
+
+def test_an_append_after_a_torn_last_line_starts_a_new_line(tmp_path: Path) -> None:
+    path = tmp_path / "history.jsonl"
+    path.write_text('{"n": 1}\n{"n": 2', encoding="utf-8")
+
+    append_history(path, [{"n": 3}], max_rows=100)
+
+    assert path.read_text(encoding="utf-8").splitlines()[-1] == '{"n": 3}'

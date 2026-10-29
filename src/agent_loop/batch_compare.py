@@ -37,6 +37,9 @@ _METRIC_FINDINGS: dict[str, BatchFindingKind] = {
     "input_tokens": "costlier",
 }
 _PERF_KINDS = frozenset(_METRIC_FINDINGS.values())
+#: CLI options of ``batch.json["config"]`` that do not change a run's behavior (or that the
+#: provenance already compares), left out of the options warning.
+_UNCOMPARED_OPTIONS = frozenset({"model", "chrome_path", "cdp_port"})
 
 
 @dataclass(frozen=True)
@@ -150,6 +153,10 @@ def compare_batches(
         )
     if prov_a.get("model") != prov_b.get("model"):
         warnings.append(f"model differs ({prov_a.get('model')} -> {prov_b.get('model')})")
+    options = _option_changes(meta_a.get("config") or {}, meta_b.get("config") or {})
+    if options:
+        # CLI overrides such as --turn-cap are not part of the settings fingerprint.
+        warnings.append(f"options differ: {options}")
 
     before = _by_scenario(rows_a)
     after = _by_scenario(rows_b)
@@ -205,6 +212,15 @@ def _kind_change(kind_a: Any, kind_b: Any) -> BatchFindingKind:
     if agent_a and kind_b == "passed":
         return "fixed"
     return "changed"
+
+
+def _option_changes(config_a: Mapping[str, Any], config_b: Mapping[str, Any]) -> str:
+    keys = sorted((set(config_a) | set(config_b)) - _UNCOMPARED_OPTIONS)
+    return ", ".join(
+        f"{key} {config_a.get(key)} -> {config_b.get(key)}"
+        for key in keys
+        if config_a.get(key) != config_b.get(key)
+    )
 
 
 def _by_scenario(rows: Sequence[Mapping[str, Any]]) -> dict[str, Mapping[str, Any]]:

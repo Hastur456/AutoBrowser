@@ -243,7 +243,7 @@ the `stop_reason` they carry, permission denies and the grade, never from the si
 | Kind | When |
 |---|---|
 | `passed` | every task ended `done` and the grade passed |
-| `provider_error` | infra: the model provider failed (`ModelProviderError`) |
+| `provider_error` | infra: the model provider failed (`ModelProviderError`), including an approval classifier outage that alone denied a call |
 | `timeout` | infra: the task or the progress watchdog timed out |
 | `permission_denied` | an approval was refused, or a permission deny made an unfinished task fail |
 | `guard_limit` | a loop limit ended the task: turn cap, replans, consecutive failures, a stalled plan |
@@ -319,7 +319,9 @@ uv run scripts/compare_batches.py --perf-gate          # also fail on slower/cos
 ```
 
 Two runs are comparable when they ran the same Golden Set (`tasks_sha256`); a different settings
-fingerprint or model is printed as a warning. Per scenario present in both runs:
+fingerprint, model or CLI option (such as `--turn-cap`, which the fingerprint does not cover) is
+printed as a warning. Without arguments, a batch that is unreadable or has not finished (still
+running, or killed) is skipped with a warning. Per scenario present in both runs:
 
 | Before → after | Finding |
 |---|---|

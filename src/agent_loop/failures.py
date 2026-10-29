@@ -76,11 +76,7 @@ def classify_task(events: Sequence[EventRecord]) -> TaskOutcome:
 
     task_id = next((str(event.task_id) for event in events if event.task_id), "")
     terminal = next((event for event in events if event.type in _TERMINAL_EVENTS), None)
-    denies = sum(
-        1
-        for event in events
-        if event.type == "permission.decided" and event.payload.get("decision") == "deny"
-    )
+    denies, infra_denies = _count_denies(events)
     if terminal is None:
         return TaskOutcome(task_id, "missing", "", "", denies, "error")
 
@@ -91,9 +87,11 @@ def classify_task(events: Sequence[EventRecord]) -> TaskOutcome:
         return TaskOutcome(task_id, "failed", stop_reason, error_type, denies, error_kind(error_type))
 
     status = str(payload.get("status") or terminal.type.removeprefix("goal."))
-    return TaskOutcome(
-        task_id, status, stop_reason, "", denies, _ended_kind(status, stop_reason, denies)
-    )
+    kind = _ended_kind(status, stop_reason, denies - len(infra_denies))
+    if infra_denies and kind not in {"passed", "permission_denied"}:
+        # Only the approval classifier's outage denied a call: not the agent's fault.
+        kind = infra_denies[-1]
+    return TaskOutcome(task_id, status, stop_reason, "", denies, kind)
 
 
 def outcome_from_result(task_id: str, completion_status: str, stop_reason: str) -> TaskOutcome:
@@ -134,6 +132,30 @@ def classify_scenario(
     if grade_status == "passed":
         return "passed"
     return "ungraded"
+
+
+def _count_denies(events: Sequence[EventRecord]) -> tuple[int, list[FailureKind]]:
+    """Permission denies of a task, and the infra kinds of those caused by a judge outage.
+
+    The approval classifier fails closed: its provider error or timeout becomes an ask, which
+    a batch (``dont_ask``) turns into a deny. Such a deny follows a ``model.responded`` of the
+    ``approval`` phase whose ``error`` names the exception type.
+    """
+
+    denies = 0
+    infra: list[FailureKind] = []
+    judge_error = ""
+    for event in events:
+        if event.type == "model.responded" and event.payload.get("phase") == "approval":
+            judge_error = str(event.payload.get("error") or "")
+        elif event.type == "permission.decided":
+            if event.payload.get("decision") == "deny":
+                denies += 1
+                kind = error_kind(judge_error) if judge_error else None
+                if kind in INFRA_KINDS:
+                    infra.append(kind)  # type: ignore[arg-type]
+            judge_error = ""
+    return denies, infra
 
 
 def _ended_kind(status: str, stop_reason: str, denies: int) -> FailureKind:

@@ -24,6 +24,7 @@ if str(ROOT) not in sys.path:
 
 from src.agent_loop.batch import tasks_sha256
 from src.agent_loop.batch_compare import compare_batches
+from src.agent_loop.events import read_jsonl_lines
 from src.config import get_settings
 
 COMPARE_FILE_NAME = "compare.md"
@@ -65,7 +66,9 @@ def main(argv: list[str] | None = None) -> int:
             older = load_batch(_resolve(batches_dir, args.batch_a))
             newer = load_batch(_resolve(batches_dir, args.batch_b))
         else:
-            pair = _latest_pair(Path(batches_dir))
+            pair, skipped = _latest_pair(Path(batches_dir))
+            for reason in skipped:
+                print(f"warning: skipping {reason}", file=sys.stderr)
             if pair is None:
                 print(f"error: no previous comparable run in {batches_dir}", file=sys.stderr)
                 return 2
@@ -110,11 +113,7 @@ def load_batch(batch_dir: Path) -> Batch:
     if not provenance.get("tasks_sha256") and tasks_copy.is_file():
         provenance["tasks_sha256"] = tasks_sha256(tasks_copy)
     meta["provenance"] = provenance
-    rows = [
-        json.loads(line)
-        for line in (batch_dir / RUN_INDEX_FILE_NAME).read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    rows = [json.loads(line) for line in read_jsonl_lines(batch_dir / RUN_INDEX_FILE_NAME)]
     return batch_dir, meta, rows
 
 
@@ -123,24 +122,34 @@ def _resolve(batches_dir: Path, name: str) -> Path:
     return path if path.is_dir() else Path(batches_dir) / name
 
 
-def _latest_pair(batches_dir: Path) -> tuple[Batch, Batch] | None:
-    """The latest run and the newest earlier run of the same Golden Set."""
+def _latest_pair(batches_dir: Path) -> tuple[tuple[Batch, Batch] | None, list[str]]:
+    """The latest finished run and the newest earlier finished run of the same Golden Set.
+
+    A batch that cannot be read, or that has not finished (still running, or killed), is
+    skipped; the second value says which and why.
+    """
 
     batches: list[Batch] = []
+    skipped: list[str] = []
     for batch_file in sorted(batches_dir.glob(f"*/{BATCH_FILE_NAME}")):
         try:
-            batches.append(load_batch(batch_file.parent))
-        except (OSError, ValueError):
+            batch = load_batch(batch_file.parent)
+        except (OSError, ValueError) as exc:
+            skipped.append(f"{batch_file.parent.name}: {exc}")
             continue
+        if not batch[1].get("finished_at"):
+            skipped.append(f"{batch_file.parent.name}: not finished")
+            continue
+        batches.append(batch)
     batches.sort(key=lambda batch: str(batch[1].get("started_at") or ""))
     if not batches:
-        return None
+        return None, skipped
     latest = batches[-1]
     tasks = latest[1]["provenance"].get("tasks_sha256")
     for candidate in reversed(batches[:-1]):
         if tasks and candidate[1]["provenance"].get("tasks_sha256") == tasks:
-            return candidate, latest
-    return None
+            return (candidate, latest), skipped
+    return None, skipped
 
 
 if __name__ == "__main__":

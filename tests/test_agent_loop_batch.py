@@ -780,3 +780,25 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_history_write_error_does_not_fail_a_finished_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import src.agent_loop.batch as batch_module
+
+    def locked(*args: Any, **kwargs: Any) -> None:
+        raise PermissionError("history.jsonl is locked")
+
+    monkeypatch.setattr(batch_module, "append_history", locked)
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["a"]}])
+
+    with caplog.at_level("WARNING"):
+        result = await run_batch(
+            tasks_path=tasks_path, session_factory=FakeSessionFactory(), batches_dir=tmp_path / "b"
+        )
+
+    assert result["status"] == "completed"
+    assert "history.jsonl is locked" in caplog.text

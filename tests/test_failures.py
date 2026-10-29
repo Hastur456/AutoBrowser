@@ -222,3 +222,47 @@ def test_a_task_result_without_a_trace_still_gets_a_kind(
     outcome = outcome_from_result("t1", status, reason)
 
     assert (outcome.status, outcome.stop_reason, outcome.failure_kind) == (goal_status, reason, kind)
+
+
+def _judged_deny(task_id: str, error: str) -> list[EventRecord]:
+    return [
+        _event(2.0, "model.requested", task_id, phase="approval", tool="t"),
+        _event(3.0, "model.responded", task_id, phase="approval", tool="t", needs_approval=True, error=error),
+        _event(3.1, "permission.decided", task_id, decision="deny", tool="t", source="mode"),
+    ]
+
+
+@pytest.mark.parametrize(("error", "kind"), [("ModelProviderError", "provider_error"), ("TimeoutError", "timeout")])
+def test_a_deny_caused_by_a_classifier_outage_is_an_infra_failure(error: str, kind: str) -> None:
+    events = [
+        _event(0.0, "goal.started", "t1", task="Do it."),
+        *_judged_deny("t1", error),
+        _event(9.0, "goal.blocked", "t1", status="blocked", stop_reason="model_stop"),
+    ]
+
+    outcome = classify_task(events)
+
+    assert outcome.failure_kind == kind
+    assert outcome.permission_denies == 1
+
+
+def test_a_deny_after_an_unreadable_classifier_answer_stays_a_permission_failure() -> None:
+    events = [
+        _event(0.0, "goal.started", "t1", task="Do it."),
+        *_judged_deny("t1", "no JSON answer"),
+        _event(9.0, "goal.blocked", "t1", status="blocked", stop_reason="model_stop"),
+    ]
+
+    assert classify_task(events).failure_kind == "permission_denied"
+
+
+def test_a_rule_deny_beside_a_classifier_outage_is_a_permission_failure() -> None:
+    events = [
+        _event(0.0, "goal.started", "t1", task="Do it."),
+        *_judged_deny("t1", "ModelProviderError"),
+        _event(4.0, "model.responded", "t1", phase="approval", tool="t", needs_approval=False, error=""),
+        _event(4.1, "permission.decided", "t1", decision="deny", tool="t", source="rule"),
+        _event(9.0, "goal.blocked", "t1", status="blocked", stop_reason="turn_cap"),
+    ]
+
+    assert classify_task(events).failure_kind == "permission_denied"

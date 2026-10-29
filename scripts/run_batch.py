@@ -187,8 +187,14 @@ def _git_info() -> dict[str, Any]:
     """Commit, branch and dirty flag of the checkout; all ``None`` without git."""
 
     def git(*argv: str) -> str:
+        # Git prints UTF-8 whatever the locale is (cp1251 on a Russian Windows).
         completed = subprocess.run(
-            ["git", *argv], cwd=ROOT, capture_output=True, text=True, check=True
+            ["git", *argv],
+            cwd=ROOT,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
         )
         return completed.stdout.strip()
 
@@ -198,7 +204,8 @@ def _git_info() -> dict[str, Any]:
             "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
             "dirty": bool(git("status", "--porcelain")),
         }
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, ValueError):
+        # Provenance must never stop a batch.
         return {"commit": None, "branch": None, "dirty": None}
 
 

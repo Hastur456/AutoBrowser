@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from src.agent_loop.batch_report import SUMMED_METRICS
+from src.agent_loop.events import read_jsonl_lines
 
 HISTORY_FILE_NAME = "history.jsonl"
 #: Version of the history row format.
@@ -59,13 +60,20 @@ def append_history(path: Path, rows: Iterable[Mapping[str, Any]], max_rows: int)
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    torn = path.is_file() and path.stat().st_size > 0 and not _ends_with_newline(path)
     with path.open("a", encoding="utf-8") as handle:
+        if torn:
+            # A run killed mid-write left a line without its newline; never glue onto it.
+            handle.write("\n")
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True))
             handle.write("\n")
-    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    if len(lines) <= max_rows:
+    with path.open("rb") as handle:
+        # Binary lines end only at b"\n"; counting them does not load the file.
+        line_count = sum(1 for _ in handle)
+    if line_count <= max_rows:
         return
+    lines = read_jsonl_lines(path)
     temporary = path.with_name(f"{path.name}.tmp")
     temporary.write_text("\n".join(lines[-max_rows:]) + "\n", encoding="utf-8")
     os.replace(temporary, path)
@@ -77,11 +85,13 @@ def load_history(path: Path) -> list[dict[str, Any]]:
     path = Path(path)
     if not path.is_file():
         return []
-    return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    return [json.loads(line) for line in read_jsonl_lines(path)]
+
+
+def _ends_with_newline(path: Path) -> bool:
+    with path.open("rb") as handle:
+        handle.seek(-1, os.SEEK_END)
+        return handle.read(1) == b"\n"
 
 
 __all__ = [
