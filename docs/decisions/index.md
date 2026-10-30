@@ -4,6 +4,17 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-10-31 Langfuse as the Dataset, Experiment and Score Platform](2026-10-31-langfuse-platform-integration.md)
+  (Proposed, Russian): a hybrid — the regression verdict and CI exit codes stay local and
+  hermetic, Langfuse is a second interface. No Langfuse SDK: a narrow `httpx` REST client plus
+  OTLP/JSON with `langfuse.experiment.*` attributes. Each batch becomes one experiment built
+  after the run from the batch folder (one item trace per scenario), idempotent through
+  deterministic ids and a per-batch sync ledger. Dataset version = `tasks_sha256` + git commit,
+  with Langfuse item versions as a projection. Grades, checks, `failure_kind`, `stop_reason` and
+  the local verdict become scores; a managed LLM judge and an annotation queue are
+  informational only. Vendor code lives in `scripts/langfuse_bridge/`, the settings section is
+  the neutral `eval_platform`, content capture is `none` by default. Supersedes in part the
+  2026-10-19 No-Langfuse ADR (decision 1, datasets/scores API); amends the Part B OTLP plan.
 - [2026-10-26 Agent Skills](2026-10-26-agent-skills.md) (Accepted, Russian): skills in the
   Agent Skills `SKILL.md` format (folder, `name`/`description` frontmatter, body, reference
   files; AutoBrowser extensions only as string `metadata` keys `always`/`requires`/`title`);
