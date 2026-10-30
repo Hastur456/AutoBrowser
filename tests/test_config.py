@@ -1350,6 +1350,38 @@ def test_pipeline_bounds_are_enforced(settings: Any, value: float) -> None:
         settings(pipeline={"request_chars_tolerance": value})
 
 
+def test_the_batch_history_limit_defaults_and_reads_the_env(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert settings().pipeline.history_max_rows == 50_000
+
+    monkeypatch.setenv("AUTOBROWSER_PIPELINE__HISTORY_MAX_ROWS", "1000")
+
+    assert settings().pipeline.history_max_rows == 1000
+
+
+@pytest.mark.parametrize("value", [99, 10_000_001])
+def test_the_batch_history_limit_is_bounded(settings: Any, value: int) -> None:
+    with pytest.raises(ValueError):
+        settings(pipeline={"history_max_rows": value})
+
+
+def test_the_batch_metric_tolerance_defaults_and_reads_the_env(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert settings().pipeline.batch_metric_tolerance == 0.25
+
+    monkeypatch.setenv("AUTOBROWSER_PIPELINE__BATCH_METRIC_TOLERANCE", "0.5")
+
+    assert settings().pipeline.batch_metric_tolerance == 0.5
+
+
+@pytest.mark.parametrize("value", [-0.01, 10.5])
+def test_the_batch_metric_tolerance_is_bounded(settings: Any, value: float) -> None:
+    with pytest.raises(ValueError):
+        settings(pipeline={"batch_metric_tolerance": value})
+
+
 def test_the_config_file_is_read_as_utf8(
     settings: Any,
     monkeypatch: pytest.MonkeyPatch,

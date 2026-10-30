@@ -9,6 +9,9 @@ from typing import Any
 import pytest
 
 from scripts import run_batch as run_batch_script
+from src.agent_loop.batch import BatchScenario, tasks_sha256
+
+GIT = {"commit": "a" * 40, "branch": "main", "dirty": False}
 
 
 @dataclass(frozen=True)
@@ -29,7 +32,9 @@ class FakeSession:
 @pytest.mark.asyncio
 async def test_run_batch_from_args_passes_session_factory_and_batch_options(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(run_batch_script, "_git_info", lambda: dict(GIT))
     tasks_path = tmp_path / "tasks.jsonl"
     tasks_path.write_text('{"scenario_id":"s1","tasks":["inspect"]}\n', encoding="utf-8")
     parser = run_batch_script.build_parser()
@@ -57,7 +62,7 @@ async def test_run_batch_from_args_passes_session_factory_and_batch_options(
 
     async def batch_runner(**kwargs: Any) -> dict[str, Any]:
         calls["batch_kwargs"] = kwargs
-        session = kwargs["session_factory"]()
+        session = kwargs["session_factory"](BatchScenario("s1", ["inspect"]))
         return {
             "batch_id": "batch-1",
             "status": "completed",
@@ -79,6 +84,7 @@ async def test_run_batch_from_args_passes_session_factory_and_batch_options(
     assert "session" not in calls["batch_kwargs"]
     assert callable(calls["batch_kwargs"]["session_factory"])
     assert calls["batch_kwargs"]["continue_on_error"] is True
+    assert calls["batch_kwargs"]["history"] is True
     assert calls["batch_kwargs"]["config"] == {
         "model": "test-model",
         "no_mcp": True,
@@ -93,6 +99,16 @@ async def test_run_batch_from_args_passes_session_factory_and_batch_options(
     assert profile.parts[-3:] == (batch_id, "profiles", "scenario-1")
     assert not profile.parent.exists()  # deleted when the batch ends
     assert calls["session_args"][0].cdp_port == 9555
+    assert calls["session_args"][0].labels == {
+        "autobrowser.batch.id": batch_id,
+        "autobrowser.scenario.id": "s1",
+        "vcs.ref.head.revision": GIT["commit"],
+    }
+    provenance = calls["batch_kwargs"]["provenance"]
+    assert provenance["git"] == GIT
+    assert provenance["model"] == "test-model"
+    assert provenance["tasks_sha256"] == tasks_sha256(tasks_path)
+    assert {"provider", "settings_sha256", "non_default_sections", "python", "platform"} <= set(provenance)
     assert args.temperature == 0.0
     assert args.show_state is False
     assert args.show_tools is False
@@ -128,16 +144,21 @@ def test_session_factory_uses_distinct_profile_dirs_and_ports(
         args,
         session_builder,  # type: ignore[arg-type]
         Path("batches") / "batch-1" / "profiles",
+        {"autobrowser.batch.id": "batch-1"},
     )
 
-    first = factory()
-    second = factory()
+    first = factory(BatchScenario("s1", ["a"]))
+    second = factory(BatchScenario("s2", ["b"]))
 
     assert Path(first.config.user_data_dir) == Path("batches/batch-1/profiles/scenario-1")
     assert Path(second.config.user_data_dir) == Path("batches/batch-1/profiles/scenario-2")
     assert first.config.cdp_port == 9556
     assert second.config.cdp_port == 9557
     assert [item.cdp_port for item in received_args] == [9556, 9557]
+    assert [item.labels for item in received_args] == [
+        {"autobrowser.batch.id": "batch-1", "autobrowser.scenario.id": "s1"},
+        {"autobrowser.batch.id": "batch-1", "autobrowser.scenario.id": "s2"},
+    ]
 
 
 def test_main_prints_batch_result_without_real_runtime(
@@ -226,10 +247,82 @@ def test_the_parsed_args_build_a_real_session(tmp_path: Path) -> None:
         ["--tasks", str(tmp_path / "tasks.jsonl"), "--no-mcp"]
     )
 
-    factory = run_batch_script._session_factory(args, build_session, tmp_path / "profiles")
-    session = factory()
+    factory = run_batch_script._session_factory(args, build_session, tmp_path / "profiles", {})
+    session = factory(BatchScenario("s1", ["a"]))
 
     assert session.config.no_mcp is True
     assert Path(session.config.user_data_dir) == tmp_path / "profiles" / "scenario-1"
     # Nobody answers approvals in a batch: the default mode runs as dont_ask.
     assert session.config.permission_mode == "dont_ask"
+    assert session.config.labels == {"autobrowser.scenario.id": "s1"}
+
+
+def test_the_tasks_hash_ignores_line_endings(tmp_path: Path) -> None:
+    lf = tmp_path / "lf.jsonl"
+    crlf = tmp_path / "crlf.jsonl"
+    lf.write_bytes(b'{"a": 1}\n{"b": 2}\n')
+    crlf.write_bytes(b'{"a": 1}\r\n{"b": 2}\r\n')
+
+    assert tasks_sha256(lf) == tasks_sha256(crlf)
+    assert len(tasks_sha256(lf)) == 64
+
+
+def test_no_history_skips_the_history(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(run_batch_script, "_git_info", lambda: dict(GIT))
+    args = run_batch_script.build_parser().parse_args(
+        ["--tasks", str(tmp_path / "tasks.jsonl"), "--no-mcp", "--no-history"]
+    )
+    (tmp_path / "tasks.jsonl").write_text('{"scenario_id":"s1","tasks":["a"]}\n', encoding="utf-8")
+    received: dict[str, Any] = {}
+
+    async def batch_runner(**kwargs: Any) -> dict[str, Any]:
+        received.update(kwargs)
+        return {}
+
+    import asyncio
+
+    asyncio.run(run_batch_script.run_batch_from_args(args, batch_runner=batch_runner))
+
+    assert received["history"] is False
+
+
+def test_git_info_reads_the_checkout() -> None:
+    info = run_batch_script._git_info()
+
+    assert set(info) == {"commit", "branch", "dirty"}
+    assert info["commit"] is None or len(info["commit"]) == 40
+
+
+def test_git_info_is_null_without_git(monkeypatch: pytest.MonkeyPatch) -> None:
+    def missing(*args: Any, **kwargs: Any) -> Any:
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(run_batch_script.subprocess, "run", missing)
+
+    assert run_batch_script._git_info() == {"commit": None, "branch": None, "dirty": None}
+
+
+def test_git_info_reads_git_output_as_utf8(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess as real_subprocess
+
+    calls: list[dict[str, Any]] = []
+
+    def fake_run(argv: list[str], **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        output = {"HEAD": "a" * 40, "--abbrev-ref": "фича/И", "--porcelain": ""}
+        key = next(arg for arg in argv if arg in output)
+        return real_subprocess.CompletedProcess(argv, 0, stdout=output[key])
+
+    monkeypatch.setattr(run_batch_script.subprocess, "run", fake_run)
+
+    assert run_batch_script._git_info()["branch"] == "фича/И"
+    assert all(call.get("encoding") == "utf-8" for call in calls)
+
+
+def test_undecodable_git_output_does_not_stop_the_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    def undecodable(*args: Any, **kwargs: Any) -> Any:
+        raise UnicodeDecodeError("cp1251", b"\x98", 0, 1, "undefined")
+
+    monkeypatch.setattr(run_batch_script.subprocess, "run", undecodable)
+
+    assert run_batch_script._git_info() == {"commit": None, "branch": None, "dirty": None}

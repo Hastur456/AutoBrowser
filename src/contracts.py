@@ -23,6 +23,21 @@ PolicyDecision = Literal["approved", "needs_human", "blocked"]
 ToolStatus = Literal["success", "error"]
 GoalStatus = Literal["completed", "failed", "cancelled", "blocked"]
 CompletionStatus = Literal["continue", "done", "blocked", "cancelled"]
+#: Machine-readable reason a task ended, beside the prose of its final answer.
+StopReason = Literal[
+    "answered",
+    "model_stop",
+    "turn_cap",
+    "max_replans",
+    "consecutive_failures",
+    "no_plan_advance",
+    "approval_denied",
+    "approval_hook_denied",
+    "goal_hook_denied",
+    "no_action",
+    "invalid_decision",
+    "cancelled",
+]
 HookEventName = Literal[
     "goal_start",
     "pre_tool_use",
@@ -430,6 +445,7 @@ __all__ = [
     "PolicyDecision",
     "PolicyEvent",
     "RecoveryCounters",
+    "StopReason",
     "TaskRequest",
     "Tool",
     "ToolDef",

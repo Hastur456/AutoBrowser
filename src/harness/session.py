@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import Awaitable, Callable, Iterator, MutableMapping, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -143,6 +143,9 @@ class SessionConfig:
     permission_mode: PermissionMode | None = None
     #: Wire protocol of the chat model (``llm.provider`` or ``--provider``), for display.
     provider: str = ""
+    #: Free-form labels of the session (a batch puts its batch and scenario ids here), carried
+    #: by the ``session.started`` event so trace consumers can find the session by them.
+    labels: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_args(cls, args: Any) -> "SessionConfig":
@@ -164,6 +167,7 @@ class SessionConfig:
             turn_cap=args.turn_cap,
             permission_mode=getattr(args, "permission_mode", None),
             provider=getattr(args, "provider", None) or get_settings().llm.provider,
+            labels=dict(getattr(args, "labels", None) or {}),
         )
 
 
@@ -660,6 +664,7 @@ class SessionContext:
                 "session_id": self.session_id,
                 "resumed": self.resumed_from_sequence is not None,
                 "skills": self._skills_snapshot(),
+                "labels": dict(self.config.labels),
             },
         )
         self.events.emit("session.started", self)

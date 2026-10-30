@@ -7,7 +7,13 @@ from typing import Any
 
 import pytest
 
-from src.agent_loop.batch import BatchScenario, load_batch_scenarios, run_batch
+from src.agent_loop.batch import (
+    BatchScenario,
+    load_batch_scenarios,
+    run_batch,
+    settings_provenance,
+)
+from src.config import LLMSettings, Settings
 
 
 class FakeBatchSession:
@@ -58,8 +64,10 @@ class FakeSessionFactory:
         self.fail_on = fail_on or set()
         self.blocked_on = blocked_on or set()
         self.sessions: list[FakeBatchSession] = []
+        self.scenarios: list[str] = []
 
-    def __call__(self) -> FakeBatchSession:
+    def __call__(self, scenario: BatchScenario) -> FakeBatchSession:
+        self.scenarios.append(scenario.scenario_id)
         session = FakeBatchSession(
             f"session-{len(self.sessions) + 1}",
             fail_on=self.fail_on,
@@ -422,12 +430,12 @@ def _write_trace(session_dir: Path) -> None:
 
     t0 = datetime(2026, 10, 28, tzinfo=UTC)
     events = [
-        ("goal.started", 0.0, {}),
+        ("goal.started", 0.0, {"task": "Report the price."}),
         ("model.requested", 0.1, {"phase": "plan"}),
         ("model.responded", 1.1, {"phase": "plan", "usage": {"input_tokens": 100, "output_tokens": 7}}),
         ("tool.started", 1.2, {}),
         ("tool.finished", 1.7, {"tool_result": {"status": "success"}}),
-        ("goal.completed", 2.0, {"status": "completed"}),
+        ("goal.completed", 2.0, {"status": "completed", "stop_reason": "answered"}),
     ]
     session_dir.mkdir(parents=True)
     _write_jsonl(
@@ -451,8 +459,8 @@ async def test_run_batch_records_metrics_from_the_session_trace(tmp_path: Path) 
     _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["report"], "expected": {"contains": "report"}}])
     factory = FakeSessionFactory()
 
-    def build() -> FakeBatchSession:
-        session = factory()
+    def build(scenario: BatchScenario) -> FakeBatchSession:
+        session = factory(scenario)
         session.context.session_dir = tmp_path / "sessions" / session.context.session_id
         _write_trace(session.context.session_dir)
         return session
@@ -476,7 +484,7 @@ async def test_run_batch_records_metrics_from_the_session_trace(tmp_path: Path) 
     assert result["metrics"]["input_tokens"] == 100
     report = Path(result["report_path"]).read_text(encoding="utf-8")
     assert Path(result["report_path"]).parent == Path(result["batch_dir"])
-    assert "| s1 | passed | 1/1 |" in report
+    assert "| s1 | passed | passed | 1/1 |" in report
 
 
 @pytest.mark.asyncio
@@ -497,6 +505,269 @@ async def test_a_scenario_without_a_trace_still_gets_its_wall_time(tmp_path: Pat
     assert Path(result["report_path"]).is_file()
 
 
+@pytest.mark.asyncio
+async def test_the_session_factory_gets_each_scenario(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(
+        tasks_path,
+        [{"scenario_id": "s1", "tasks": ["a"]}, {"scenario_id": "s2", "tasks": ["b"]}],
+    )
+    factory = FakeSessionFactory()
+
+    await run_batch(tasks_path=tasks_path, session_factory=factory, batches_dir=tmp_path / "b")
+
+    assert factory.scenarios == ["s1", "s2"]
+
+
+@pytest.mark.asyncio
+async def test_rows_carry_the_v1_contract_from_the_session_trace(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["report"], "expected": {"contains": "report"}}])
+    factory = FakeSessionFactory()
+
+    def build(scenario: BatchScenario) -> FakeBatchSession:
+        session = factory(scenario)
+        session.context.session_dir = tmp_path / "sessions" / session.context.session_id
+        _write_trace(session.context.session_dir)
+        return session
+
+    result = await run_batch(
+        tasks_path=tasks_path, session_factory=build, batches_dir=tmp_path / "b", grade=True
+    )
+
+    (row,) = _read_jsonl(Path(result["run_index_path"]))
+    assert row["schema_version"] == 1
+    assert row["failure_kind"] == "passed"
+    assert row["task_outcomes"] == [
+        {
+            "task_id": "task-1",
+            "status": "completed",
+            "stop_reason": "answered",
+            "error_type": "",
+            "permission_denies": 0,
+            "failure_kind": "passed",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_without_a_trace_the_kinds_come_from_the_task_results(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(
+        tasks_path,
+        [
+            {"scenario_id": "pass", "tasks": ["report"], "expected": {"contains": "report"}},
+            {"scenario_id": "wrong", "tasks": ["report"], "expected": {"contains": "absent"}},
+            {"scenario_id": "stopped", "tasks": ["stop", "report"]},
+            {"scenario_id": "crash", "tasks": ["report", "boom"]},
+        ],
+    )
+
+    result = await run_batch(
+        tasks_path=tasks_path,
+        session_factory=FakeSessionFactory(fail_on={"boom"}, blocked_on={"stop"}),
+        batches_dir=tmp_path / "b",
+        continue_on_error=True,
+        grade=True,
+    )
+
+    rows = {row["scenario_id"]: row for row in _read_jsonl(Path(result["run_index_path"]))}
+    assert {name: row["failure_kind"] for name, row in rows.items()} == {
+        "pass": "passed",
+        "wrong": "grade_failed",
+        "stopped": "agent_stopped",
+        "crash": "error",
+    }
+    assert [o["status"] for o in rows["stopped"]["task_outcomes"]] == ["blocked", "completed"]
+    assert [o["task_id"] for o in rows["crash"]["task_outcomes"]] == ["task-1"]
+
+
+@pytest.mark.asyncio
+async def test_batch_json_records_the_schema_version_and_provenance(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["a"]}])
+    provenance = {"git": {"commit": "abc", "branch": "main", "dirty": False}, "model": "m"}
+
+    result = await run_batch(
+        tasks_path=tasks_path,
+        session_factory=FakeSessionFactory(),
+        batches_dir=tmp_path / "b",
+        provenance=provenance,
+    )
+
+    batch = json.loads(Path(result["batch_path"]).read_text(encoding="utf-8"))
+    assert batch["schema_version"] == 1
+    assert batch["provenance"] == provenance
+
+
+def test_settings_provenance_fingerprints_the_effective_settings() -> None:
+    defaults = Settings.model_construct()
+    changed = Settings.model_construct(llm=LLMSettings(model="another-model"))
+
+    base = settings_provenance(defaults)
+    other = settings_provenance(changed)
+
+    assert base["non_default_sections"] == []
+    assert other["non_default_sections"] == ["llm"]
+    assert len(base["settings_sha256"]) == 64
+    assert base["settings_sha256"] != other["settings_sha256"]
+    assert settings_provenance(Settings.model_construct()) == base
+
+
+def test_the_settings_fingerprint_never_holds_a_secret() -> None:
+    first = Settings.model_construct(llm=LLMSettings(api_key="secret-one"))
+    second = Settings.model_construct(llm=LLMSettings(api_key="secret-two"))
+
+    assert settings_provenance(first)["settings_sha256"] == settings_provenance(second)["settings_sha256"]
+
+
+def _traced_factory(tmp_path: Path) -> Any:
+    factory = FakeSessionFactory()
+
+    def build(scenario: BatchScenario) -> FakeBatchSession:
+        session = factory(scenario)
+        session.context.session_dir = tmp_path / "sessions" / session.context.session_id
+        _write_trace(session.context.session_dir)
+        return session
+
+    return build
+
+
+@pytest.mark.asyncio
+async def test_the_batch_folder_holds_each_scenario_trace(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["report"]}])
+
+    result = await run_batch(
+        tasks_path=tasks_path, session_factory=_traced_factory(tmp_path), batches_dir=tmp_path / "b"
+    )
+
+    batch_dir = Path(result["batch_dir"])
+    (row,) = _read_jsonl(Path(result["run_index_path"]))
+    assert row["trace_path"] == "traces/s1.events.jsonl"
+    assert row["trace_text_path"] == "traces/s1.txt"
+    copied = (batch_dir / row["trace_path"]).read_bytes()
+    assert copied == (tmp_path / "sessions" / "session-1" / "events.jsonl").read_bytes()
+    text = (batch_dir / row["trace_text_path"]).read_text(encoding="utf-8")
+    assert "## Task 1: Report the price." in text
+    assert "status: completed · stop_reason: answered · failure_kind: passed" in text
+    assert "goal.started: Report the price." in text
+    report = Path(result["report_path"]).read_text(encoding="utf-8")
+    assert "[traces/s1.txt](traces/s1.txt)" in report
+
+
+@pytest.mark.asyncio
+async def test_trace_names_are_sanitized_and_unique(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(
+        tasks_path,
+        [
+            {"scenario_id": "shop/cart: 1", "tasks": ["a"]},
+            {"scenario_id": "shop_cart__1", "tasks": ["b"]},
+            {"scenario_id": "Ok.name-1", "tasks": ["c"]},
+        ],
+    )
+
+    result = await run_batch(
+        tasks_path=tasks_path, session_factory=_traced_factory(tmp_path), batches_dir=tmp_path / "b"
+    )
+
+    rows = _read_jsonl(Path(result["run_index_path"]))
+    assert [row["trace_text_path"] for row in rows] == [
+        "traces/shop_cart__1.txt",
+        "traces/shop_cart__1-2.txt",
+        "traces/Ok.name-1.txt",
+    ]
+    assert all((Path(result["batch_dir"]) / row["trace_path"]).is_file() for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_a_scenario_without_a_trace_has_no_trace_files(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["boom"]}])
+
+    result = await run_batch(
+        tasks_path=tasks_path,
+        session_factory=FakeSessionFactory(fail_on={"boom"}),
+        batches_dir=tmp_path / "b",
+        continue_on_error=True,
+    )
+
+    (row,) = _read_jsonl(Path(result["run_index_path"]))
+    assert row["trace_path"] is None
+    assert row["trace_text_path"] is None
+    assert not (Path(result["batch_dir"]) / "traces").exists()
+
+
+@pytest.mark.asyncio
+async def test_every_run_appends_its_scenarios_to_the_history(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["a"]}, {"scenario_id": "s2", "tasks": ["b"]}])
+
+    for batch_id in ("batch-1", "batch-2"):
+        await run_batch(
+            tasks_path=tasks_path,
+            session_factory=FakeSessionFactory(),
+            batches_dir=tmp_path / "b",
+            batch_id=batch_id,
+        )
+
+    history = _read_jsonl(tmp_path / "b" / "history.jsonl")
+    assert [(row["batch_id"], row["scenario_id"]) for row in history] == [
+        ("batch-1", "s1"),
+        ("batch-1", "s2"),
+        ("batch-2", "s1"),
+        ("batch-2", "s2"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_batch_that_stopped_part_way_still_records_its_history(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["boom"]}, {"scenario_id": "s2", "tasks": ["b"]}])
+
+    with pytest.raises(RuntimeError):
+        await run_batch(
+            tasks_path=tasks_path,
+            session_factory=FakeSessionFactory(fail_on={"boom"}),
+            batches_dir=tmp_path / "b",
+        )
+
+    history = _read_jsonl(tmp_path / "b" / "history.jsonl")
+    assert [(row["scenario_id"], row["failure_kind"]) for row in history] == [("s1", "error")]
+
+
+@pytest.mark.asyncio
+async def test_history_can_be_skipped(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["a"]}])
+
+    await run_batch(
+        tasks_path=tasks_path,
+        session_factory=FakeSessionFactory(),
+        batches_dir=tmp_path / "b",
+        history=False,
+    )
+
+    assert not (tmp_path / "b" / "history.jsonl").exists()
+
+
+@pytest.mark.asyncio
+async def test_the_history_is_rotated_to_its_row_limit(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": f"s{n}", "tasks": ["a"]} for n in range(3)])
+
+    await run_batch(
+        tasks_path=tasks_path,
+        session_factory=FakeSessionFactory(),
+        batches_dir=tmp_path / "b",
+        history_max_rows=2,
+    )
+
+    history = _read_jsonl(tmp_path / "b" / "history.jsonl")
+    assert [row["scenario_id"] for row in history] == ["s1", "s2"]
+
+
 def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [json.dumps(record) for record in records]
@@ -509,3 +780,25 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_history_write_error_does_not_fail_a_finished_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import src.agent_loop.batch as batch_module
+
+    def locked(*args: Any, **kwargs: Any) -> None:
+        raise PermissionError("history.jsonl is locked")
+
+    monkeypatch.setattr(batch_module, "append_history", locked)
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["a"]}])
+
+    with caplog.at_level("WARNING"):
+        result = await run_batch(
+            tasks_path=tasks_path, session_factory=FakeSessionFactory(), batches_dir=tmp_path / "b"
+        )
+
+    assert result["status"] == "completed"
+    assert "history.jsonl is locked" in caplog.text

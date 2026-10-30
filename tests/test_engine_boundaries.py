@@ -70,9 +70,12 @@ def test_the_engine_imports_nothing_from_the_browser_layer(path: Path) -> None:
 
 #: Test-pipeline analytics: they read eval results and answers, the engine never needs them.
 PIPELINE_MODULES = {
+    "src.agent_loop.batch_compare",
+    "src.agent_loop.batch_history",
     "src.agent_loop.batch_report",
     "src.agent_loop.benchmarks",
     "src.agent_loop.comparison",
+    "src.agent_loop.failures",
     "src.agent_loop.graders",
 }
 

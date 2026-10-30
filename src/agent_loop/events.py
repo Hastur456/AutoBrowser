@@ -245,6 +245,17 @@ class EventEmitter:
         return record
 
 
+def read_jsonl_lines(path: Path) -> list[str]:
+    """The non-blank records of a JSONL file.
+
+    A record ends only at a newline: ``str.splitlines`` would also split on U+2028, U+2029
+    and U+0085, which page text holds and the writers keep raw (``ensure_ascii=False``).
+    """
+
+    text = Path(path).read_text(encoding="utf-8")
+    return [line.rstrip("\r") for line in text.split("\n") if line.strip()]
+
+
 def redact_json_safe(value: Any, *, key: str | None = None) -> Any:
     """Return a redacted JSON-compatible value."""
 
@@ -455,5 +466,6 @@ __all__ = [
     "JsonlEventSink",
     "NullEventSink",
     "REDACTED_VALUE",
+    "read_jsonl_lines",
     "redact_json_safe",
 ]

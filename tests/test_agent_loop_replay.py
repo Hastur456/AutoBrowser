@@ -302,3 +302,18 @@ def test_replay_shows_the_reason_of_a_cancelled_goal() -> None:
     assert summary.terminal_status == "cancelled"
     assert summary.final_answer == "Stopped."
     assert summary.trace_complete is True
+
+
+def test_load_events_keeps_unicode_line_separators_inside_values(tmp_path: Path) -> None:
+    """Page text can hold U+2028/U+2029/U+0085; a JSONL record ends only at a newline."""
+
+    path = tmp_path / "events.jsonl"
+    emitter = EventEmitter(JsonlEventSink(path), session_id="session-1")
+    text = "before\u2028middle\u2029after\x85end"
+    emitter.emit("goal.started", source="test", payload={"task": text}, task_id="t1")
+    emitter.emit("goal.completed", source="test", payload={"final_answer": text}, task_id="t1")
+
+    records = load_events(path)
+
+    assert [record.type for record in records] == ["goal.started", "goal.completed"]
+    assert records[0].payload["task"] == text

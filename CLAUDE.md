@@ -373,6 +373,7 @@ uv run main.py doctor --llm                   # + list the provider's models ove
 uv run main.py --show-state --task "..."      # debug state per step
 
 uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
+uv run scripts/compare_batches.py             # latest batch vs the previous one of the same set
 uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v2.json
 uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
 ```

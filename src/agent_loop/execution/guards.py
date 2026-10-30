@@ -28,7 +28,7 @@ from src.agent_loop.execution.progress import ineffective_repeat_reason
 from src.agent_loop.execution.state import LoopState
 
 if TYPE_CHECKING:
-    from src.contracts import CompletionStatus
+    from src.contracts import CompletionStatus, StopReason
 
 
 def _message_state(state: LoopState) -> dict[str, Any]:
@@ -41,12 +41,15 @@ def _message_state(state: LoopState) -> dict[str, Any]:
     }
 
 
-def _blocked_response(state: LoopState, reason: str) -> dict[str, Any]:
+def _blocked_response(
+    state: LoopState, reason: str, *, stop_reason: StopReason
+) -> dict[str, Any]:
     messages = ensure_message_history(_message_state(state))
     return {
         "decision": "done",
         "final_answer": reason,
         "completion_status": "blocked",
+        "stop_reason": stop_reason,
         "observation": reason,
         "error": reason,
         "messages": append_final_ai_response(messages, reason),
@@ -59,6 +62,7 @@ def _done_response(
     *,
     messages: list[Any] | None = None,
     status: str = "done",
+    stop_reason: StopReason,
     **updates: Any,
 ) -> dict[str, Any]:
     """Terminal update; ``status`` is the explicit completion status of the run."""
@@ -68,6 +72,7 @@ def _done_response(
         "decision": "done",
         "final_answer": final_answer,
         "completion_status": status,
+        "stop_reason": stop_reason,
         "messages": append_final_ai_response(history, final_answer),
         **_complete_plan_update(state),
     }
@@ -103,6 +108,7 @@ def _terminal_guard(state: LoopState) -> dict[str, Any] | None:
             state,
             str(state.final_answer or ""),
             status=str(state.completion_status or "done"),
+            stop_reason=state.stop_reason or "answered",  # type: ignore[arg-type]
         )
 
     replan_count = int(state.replan_count or 0)
@@ -114,6 +120,7 @@ def _terminal_guard(state: LoopState) -> dict[str, Any] | None:
                 f"Blocked: replanning reached the limit of {limits.max_replans}. "
                 f"Last observation: {observation}"
             ),
+            stop_reason="max_replans",
         )
 
     failures = int(state.consecutive_failures or 0)
@@ -126,6 +133,7 @@ def _terminal_guard(state: LoopState) -> dict[str, Any] | None:
                 f"{limits.max_consecutive_failures} consecutive times. "
                 f"Last error: {error}"
             ),
+            stop_reason="consecutive_failures",
         )
 
     steps_without_plan_advance = int(state.steps_without_plan_advance or 0)
@@ -138,6 +146,7 @@ def _terminal_guard(state: LoopState) -> dict[str, Any] | None:
                 f"{limits.max_steps_without_plan_advance} successful tool steps. "
                 f"Last observation: {observation}"
             ),
+            stop_reason="no_plan_advance",
         )
 
     return None

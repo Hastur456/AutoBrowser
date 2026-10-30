@@ -139,6 +139,25 @@ async def test_goal_runner_emits_the_terminal_event_of_the_status(
 
 
 @pytest.mark.asyncio
+async def test_goal_runner_terminal_payload_carries_the_stop_reason() -> None:
+    sink = InMemoryEventSink()
+    result = AgentLoopResult(
+        status="blocked",
+        final_answer="Blocked: limit.",
+        session_state={},
+        state=LoopState(),
+        stop_reason="turn_cap",
+    )
+
+    async def task_runner(_request: TaskRequest) -> AgentLoopResult:
+        return result
+
+    await make_runner(task_runner, sink).run(make_request())
+
+    assert sink.records[-1].payload["stop_reason"] == "turn_cap"
+
+
+@pytest.mark.asyncio
 async def test_goal_runner_emits_failure_event_and_reraises_original_exception() -> None:
     sink = InMemoryEventSink()
     error = RuntimeError("task failed")
@@ -180,6 +199,7 @@ async def test_goal_runner_emits_cancelled_event_and_reraises_cancellation(
         "task": "inspect page",
         "status": "cancelled",
         "reason": CANCELLED_REASON,
+        "stop_reason": "cancelled",
     }
 
 
