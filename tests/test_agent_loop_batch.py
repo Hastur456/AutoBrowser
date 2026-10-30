@@ -802,3 +802,12 @@ async def test_a_history_write_error_does_not_fail_a_finished_batch(
 
     assert result["status"] == "completed"
     assert "history.jsonl is locked" in caplog.text
+
+
+def test_the_settings_fingerprint_never_holds_an_export_header() -> None:
+    from src.config import TelemetrySettings
+
+    first = Settings.model_construct(telemetry=TelemetrySettings(otlp_headers={"Authorization": "Basic one"}))
+    second = Settings.model_construct(telemetry=TelemetrySettings(otlp_headers={"Authorization": "Basic two"}))
+
+    assert settings_provenance(first)["settings_sha256"] == settings_provenance(second)["settings_sha256"]

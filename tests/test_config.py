@@ -1382,6 +1382,55 @@ def test_the_batch_metric_tolerance_is_bounded(settings: Any, value: float) -> N
         settings(pipeline={"batch_metric_tolerance": value})
 
 
+# --------------------------------------------------------------------------
+# The telemetry section: OTLP trace export, off by default
+# --------------------------------------------------------------------------
+
+
+def test_telemetry_is_off_and_neutral_by_default(settings: Any) -> None:
+    telemetry = settings().telemetry
+
+    assert telemetry.otlp_enabled is False
+    assert telemetry.otlp_endpoint == "http://localhost:4318/v1/traces"
+    assert telemetry.otlp_headers == {}
+    assert telemetry.otlp_timeout_seconds == 10.0
+    assert telemetry.capture_content == "none"
+    assert telemetry.service_name == "autobrowser"
+
+
+def test_telemetry_reads_the_env_and_keeps_headers_secret(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_TELEMETRY__OTLP_ENABLED", "true")
+    monkeypatch.setenv("AUTOBROWSER_TELEMETRY__OTLP_ENDPOINT", "https://otel.example.test/v1/traces")
+    monkeypatch.setenv("AUTOBROWSER_TELEMETRY__OTLP_HEADERS", '{"Authorization": "Basic c2VjcmV0"}')
+    monkeypatch.setenv("AUTOBROWSER_TELEMETRY__CAPTURE_CONTENT", "redacted")
+
+    telemetry = settings().telemetry
+
+    assert telemetry.otlp_enabled is True
+    assert telemetry.otlp_endpoint == "https://otel.example.test/v1/traces"
+    assert telemetry.otlp_headers["Authorization"].get_secret_value() == "Basic c2VjcmV0"
+    assert "c2VjcmV0" not in repr(telemetry)
+    assert "c2VjcmV0" not in str(telemetry.model_dump(mode="json"))
+    assert telemetry.capture_content == "redacted"
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("otlp_timeout_seconds", 0.5),
+        ("otlp_timeout_seconds", 121.0),
+        ("otlp_endpoint", ""),
+        ("service_name", ""),
+        ("capture_content", "all"),
+    ],
+)
+def test_telemetry_values_are_validated(settings: Any, field: str, value: Any) -> None:
+    with pytest.raises(ValueError):
+        settings(telemetry={field: value})
+
+
 def test_the_config_file_is_read_as_utf8(
     settings: Any,
     monkeypatch: pytest.MonkeyPatch,

@@ -411,6 +411,18 @@ pipeline:
   batch_metric_tolerance: 0.25                  # (default) accepted metric growth between batch runs
 
 # ---------------------------------------------------------------------------
+# OpenTelemetry trace export over OTLP/HTTP (needs `uv sync --group otel`).
+# Off by default; see docs/development/telemetry.md. Keep the headers (keys)
+# in <home>/.env as AUTOBROWSER_TELEMETRY__OTLP_HEADERS, not in this file.
+telemetry:
+  otlp_enabled: false                           # (default) export every session as spans
+  otlp_endpoint: http://localhost:4318/v1/traces  # (default) standard local OTLP port
+  # otlp_endpoint: https://cloud.langfuse.com/api/public/otel/v1/traces  # Langfuse Cloud (EU)
+  otlp_timeout_seconds: 10.0                    # (default) export request and final flush
+  capture_content: none                         # (default) none | redacted (text leaves the machine)
+  service_name: autobrowser                     # (default) service.name of the spans
+
+# ---------------------------------------------------------------------------
 # Deterministic lifecycle hooks around the agent loop (src/harness/hooks.py).
 # Handlers are "package.module:attr" import paths of async callables, resolved
 # at session start -- an import error, a duplicate id or a sync handler fails

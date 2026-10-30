@@ -1732,6 +1732,67 @@ class PipelineSettings(_Section):
     ] = 0.25
 
 
+class TelemetrySettings(_Section):
+    """OpenTelemetry trace export of every session over OTLP/HTTP (off by default).
+
+    Any OTLP backend can receive the spans; the backend is chosen only by the endpoint and
+    headers configured here. Read by ``src/harness/otel_sink.py`` through the session's
+    event sinks; the engine never reads this section. See
+    docs/decisions/2026-10-29-otlp-trace-export.md.
+    """
+
+    otlp_enabled: Annotated[
+        bool,
+        Field(description="Export every session's tasks as OpenTelemetry spans."),
+    ] = False
+
+    otlp_endpoint: Annotated[
+        str,
+        Field(
+            min_length=1,
+            description=(
+                "OTLP/HTTP traces URL of the backend. The default is the standard local "
+                "OTLP port; a hosted backend names its own URL."
+            ),
+        ),
+    ] = "http://localhost:4318/v1/traces"
+
+    otlp_headers: Annotated[
+        dict[str, SecretStr],
+        Field(
+            description=(
+                "Headers of every export request, e.g. Authorization for a hosted "
+                "backend; a JSON object in the environment. Never logged."
+            ),
+        ),
+    ] = {}
+
+    otlp_timeout_seconds: Annotated[
+        float,
+        Field(
+            ge=1.0,
+            le=120.0,
+            description="Timeout of one export request and of the flush at session end.",
+        ),
+    ] = 10.0
+
+    capture_content: Annotated[
+        Literal["none", "redacted"],
+        Field(
+            description=(
+                "none: only ids, names, counts, statuses and durations leave the machine. "
+                "redacted: task text, answers and tool arguments/results too, after the "
+                "event redaction and truncation."
+            ),
+        ),
+    ] = "none"
+
+    service_name: Annotated[
+        str,
+        Field(min_length=1, description="service.name resource attribute of the spans."),
+    ] = "autobrowser"
+
+
 def _resolve_config_path() -> Path | None:
     """Return the YAML file to load, if any.
 
@@ -1834,6 +1895,7 @@ class Settings(BaseSettings):
     permissions: PermissionsSettings = Field(default_factory=PermissionsSettings)
     ui: UiSettings = Field(default_factory=UiSettings)
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
+    telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
     #: Name of the ``mcp_servers`` entry that provides browser tools (exposed unprefixed).
     #: ``None`` falls back to ``"playwright"`` when such an entry exists.
