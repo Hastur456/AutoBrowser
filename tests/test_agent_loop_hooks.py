@@ -417,6 +417,7 @@ async def test_a_deny_on_every_turn_ends_the_run_through_the_failure_guard() -> 
     assert echo.calls == []
     assert result.status == "blocked"
     assert "failed 3 consecutive times" in result.final_answer
+    assert result.stop_reason == "consecutive_failures"
     assert llm.calls == 4  # plan + three denied turns; the guard ends the fourth turn
 
 
@@ -445,6 +446,7 @@ async def test_ask_routes_an_approved_tool_to_human_input() -> None:
     assert echo.calls == []
     assert result.status == "blocked"
     assert "human approval was denied for echo" in result.final_answer
+    assert result.stop_reason == "approval_denied"
     assert "approval.requested" in types_of(records)
 
 
@@ -931,6 +933,7 @@ async def test_permission_request_deny_is_terminal_like_a_human_refusal() -> Non
     assert shop.asked == [] and shop.calls == []
     assert result.status == "blocked"
     assert result.final_answer == "Blocked: approval hook denied purchase_item: Budget."
+    assert result.stop_reason == "approval_hook_denied"
     assert llm.calls == 2  # plan + the purchase turn; nothing after the terminal
 
 
@@ -1150,6 +1153,7 @@ async def test_the_stop_budget_ends_the_rejections() -> None:
 
     assert result.status == "done"
     assert result.final_answer == "Same answer."
+    assert result.stop_reason == "answered"
     assert len(seen) == 2
     assert result.state.stop_blocks == 2
     payloads = hook_payloads(records)
@@ -1166,6 +1170,7 @@ async def test_turn_cap_bounds_a_stop_hook_that_always_denies() -> None:
 
     assert result.status == "blocked"
     assert "maximum of 4 agent turns" in result.final_answer
+    assert result.stop_reason == "turn_cap"
     assert result.state.stop_blocks == 4
 
 
@@ -1206,6 +1211,7 @@ async def test_a_non_done_stop_from_the_model_skips_stop_hooks(
 
     assert seen == []
     assert result.status == status
+    assert result.stop_reason == "model_stop"
 
 
 @pytest.mark.asyncio
@@ -1221,6 +1227,7 @@ async def test_a_done_stop_from_the_model_runs_stop_hooks() -> None:
 
     assert [event.final_answer for event in seen] == ["Finished."]
     assert result.status == "done"
+    assert result.stop_reason == "model_stop"
 
 
 @pytest.mark.asyncio
@@ -1246,6 +1253,8 @@ async def test_guard_terminals_skip_stop_hooks() -> None:
     assert seen == []
     assert failures.status == "blocked" and "consecutive times" in failures.final_answer
     assert replans.status == "blocked" and "replanning reached the limit" in replans.final_answer
+    assert failures.stop_reason == "consecutive_failures"
+    assert replans.stop_reason == "max_replans"
 
 
 
@@ -1293,6 +1302,7 @@ async def test_a_goal_start_deny_blocks_the_task_without_any_model_call() -> Non
     assert llm.calls == 0
     assert result.status == "blocked"
     assert result.final_answer == "Blocked: Out of scope."
+    assert result.stop_reason == "goal_hook_denied"
     assert result.turns == 0
     assert [(e.task, e.task_id, e.session_id, e.goal_id) for e in seen] == [
         ("Buy milk.", "task-1", "session-1", "task-1")
@@ -1381,3 +1391,71 @@ async def test_a_failing_goal_end_hook_does_not_change_the_result() -> None:
     payloads = hook_payloads(records)
     assert payloads[0]["error"] == "RuntimeError: audit sink down"
     assert [p["hook_id"] for p in payloads] == ["broken", "denies"]
+
+
+
+# --------------------------------------------------------------------------
+# stop_reason: the machine-readable terminal reason
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_model_answer_stops_with_answered() -> None:
+    result, _, _ = await run_engine([PLAN, DONE], tools=[])
+
+    assert result.status == "done"
+    assert result.stop_reason == "answered"
+    assert result.state.stop_reason == "answered"
+
+
+def test_a_stalled_plan_stops_with_no_plan_advance() -> None:
+    # The native loop never advances this counter itself; the guard still owns the terminal.
+    state = LoopState(task="Do the task.", steps_without_plan_advance=100)
+
+    update = CompletionController().pre_turn_terminal(state)
+
+    assert update is not None
+    assert "did not advance" in update["final_answer"]
+    assert update["stop_reason"] == "no_plan_advance"
+
+
+@pytest.mark.asyncio
+async def test_a_model_turn_without_actions_stops_with_no_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.agent_loop.model import ModelDriver, ModelTurn
+
+    async def no_actions(self: Any, messages: Any, **kwargs: Any) -> ModelTurn:
+        return ModelTurn(response=ModelResponse(content="", finish_reason="stop"), actions=[])
+
+    monkeypatch.setattr(ModelDriver, "invoke", no_actions)
+
+    result, _, _ = await run_engine([PLAN], tools=[])
+
+    assert result.status == "blocked"
+    assert result.stop_reason == "no_action"
+
+
+@pytest.mark.asyncio
+async def test_an_unexpected_decision_stops_with_invalid_decision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def bogus(self: Any, state: Any, action: Any, messages: Any) -> dict[str, Any]:
+        return {"decision": "bogus"}
+
+    monkeypatch.setattr(TurnController, "_classify_action", bogus)
+
+    result, _, _ = await run_engine([PLAN, DONE], tools=[])
+
+    assert result.status == "blocked"
+    assert result.stop_reason == "invalid_decision"
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_completion_stops_with_answered_on_the_final_answer() -> None:
+    engine = HookEngine([hook("grounded", "stop", scripted_stop("deny"))], max_stop_blocks=1)
+
+    result, _, _ = await run_engine([PLAN, answer("First."), answer("Second.")], hooks=engine, tools=[])
+
+    assert result.final_answer == "Second."
+    assert result.stop_reason == "answered"

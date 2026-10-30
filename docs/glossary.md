@@ -8,12 +8,13 @@
 | Agent Loop contracts | Runtime-facing contracts under `src/agent_loop/` for proposed actions, model turns, events, traces, metrics, context assembly, batch/export, evals, and goal lifecycle boundaries around the engine-native loop. |
 | Agent step | The reasoning phase of a `TurnController` turn that chooses a tool call, a replan, or a done decision. |
 | AgentLoopEngine | The explicit control-flow owner in `src/agent_loop/execution/loop.py`: builds the initial plan, then drives a bounded `while` loop of `TurnController` turns and returns a terminal `AgentLoopResult`. |
-| AgentLoopResult | Frozen terminal result of one engine run: `status` (`done`/`blocked`/`cancelled`), `final_answer`, `session_state`, `state`, and `turns`. |
+| AgentLoopResult | Frozen terminal result of one engine run: `status` (`done`/`blocked`/`cancelled`), `final_answer`, `session_state`, `state`, `turns`, and `stop_reason`. |
 | AgentTraceSink | Event sink that writes compact human-readable trace projections beside durable event records. |
 | ArtifactRegistry | Session-owned registry for durable outputs such as screenshots, downloads, reports, or extracted files. |
 | Assembled context | Deterministic, ordered prompt blocks produced by `ContextAssembler` (`src/agent_loop/context.py`), the canonical prompt-construction path. |
 | AutoBrowser | The browser automation agent implemented in this repository. |
 | Batch run | Execution of JSONL Golden Set scenarios through fresh `SessionRuntime` instances, with metadata written under `.autobrowser/batches/<batch_id>/`. |
+| Batch history | `<storage.batches_dir>/history.jsonl` (`src/agent_loop/batch_history.py`): one small row per scenario per batch run (commit, model, Golden Set and settings fingerprints, grade, failure kind, metrics), rotated to `pipeline.history_max_rows`; read by `scripts/compare_batches.py` and DuckDB. |
 | Browser error code | Shared browser-layer error vocabulary such as `invalid_ref` and `action_failed`. |
 | `browser_evaluate` | Playwright MCP page-JavaScript tool; it asks only if a configured rule says so (see the opt-in `page-js` example in `config.example.yaml`). |
 | `browser_find` | Browser tool for plain-text search; not reliable for structured link or attribute extraction. |
@@ -35,6 +36,7 @@
 | Executor | Engine phase that resolves and invokes approved tool requests through `ToolBroker`/`ToolRegistry`. |
 | Export row | JSONL task-level analytics row produced by `scripts/export_sessions.py` from persisted session, task, event, feedback, and batch metadata. |
 | Fail-closed | Hook failure mode where a timeout or exception counts as `deny`. The default for `goal_start` and `pre_tool_use`; other events fail open (no decision). `HookSpec.fail_closed` overrides it. |
+| Failure kind | One word per batch task and scenario (`src/agent_loop/failures.py`): `passed`, `provider_error`, `timeout` (the infra kinds, not the agent's fault), `permission_denied`, `guard_limit`, `agent_stopped`, `grade_failed`, `error`, `ungraded`. Derived from goal events, their stop reason, permission denies and the grade, never from site knowledge. |
 | FakeBrowserProvider | Legacy deterministic browser provider used by tests to replay browser responses without Chrome, CDP, or MCP. |
 | GoalRunner | One-task lifecycle boundary between `SessionRuntime` and the engine: `GoalRunner(task_runner, events, limits)` emits goal lifecycle events, runs the task runner (`Agent.run`) under the `GoalLimits` timeout and progress watchdog, and does not own the model/action loop. |
 | GoalLimits | Frozen time budgets of one goal run (`timeout_seconds`, `progress_timeout_seconds`), built from `LoopSettings` by `GoalLimits.from_settings()`. |
@@ -103,6 +105,7 @@
 | Session capability | a fixed word a session declares (`browser` iff a browser MCP server is configured) and a skill may require via `metadata.requires`; the only filter on which skills a session sees. |
 | State override channel | `TaskRequest.state_overrides`: the carried session state plus task-local resets handed to the next engine run. |
 | Stateful server | MCP server declared `stateful: true`; its reconnect is surfaced as `ServerConnectionLostError(stateful=True)` rather than hidden. |
+| Stop reason | Machine-readable reason a task ended (`StopReason` in `src/contracts.py`): `answered`, `model_stop`, `turn_cap`, `max_replans`, `consecutive_failures`, `no_plan_advance`, `approval_denied`, `approval_hook_denied`, `goal_hook_denied`, `no_action`, `invalid_decision`, `cancelled`. Set by the engine beside the completion status, carried on `AgentLoopResult.stop_reason` and in terminal goal events. |
 | Task boundary reset | Clearing task-local loop fields such as plan, final answer, errors, policy state, tool request/result, and retry counters before a new task starts. |
 | Task ID | Generated identifier stored on `TaskRecord` and loop state to attribute one user request inside a session (`goal_id == task_id`). |
 | Task lifecycle | One user request delegated to the engine, ending when `AgentLoopEngine` reaches a terminal `AgentLoopResult`. |

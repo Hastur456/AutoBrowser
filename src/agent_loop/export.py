@@ -8,7 +8,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from src.agent_loop.events import EventRecord
+from src.agent_loop.events import EventRecord, read_jsonl_lines
 from src.agent_loop.metrics import extract_event_metrics
 from src.config import get_settings
 
@@ -122,9 +122,7 @@ def _load_event_records(path: Path) -> list[EventRecord]:
     if not path.exists():
         return []
     records: list[EventRecord] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
+    for line in read_jsonl_lines(path):
         data = json.loads(line)
         if isinstance(data, dict):
             records.append(EventRecord.from_json_dict(data))
@@ -135,9 +133,7 @@ def _load_feedback_index(path: Path) -> dict[tuple[str, str], dict[str, Any]]:
     if not path.exists():
         return {}
     feedback: dict[tuple[str, str], dict[str, Any]] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
+    for line in read_jsonl_lines(path):
         data = json.loads(line)
         if not isinstance(data, dict):
             continue
@@ -165,9 +161,7 @@ def _load_batch_index(path: Path) -> dict[str, dict[str, Any]]:
 
 def _load_jsonl_objects(path: Path) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
+    for line in read_jsonl_lines(path):
         data = json.loads(line)
         if isinstance(data, dict):
             records.append(data)

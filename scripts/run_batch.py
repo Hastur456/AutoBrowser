@@ -18,10 +18,12 @@ import argparse
 import asyncio
 import copy
 import json
+import platform
 import shutil
 import socket
+import subprocess
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -30,7 +32,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.agent_loop.batch import run_batch
+from src.agent_loop.batch import BatchScenario, run_batch, settings_provenance, tasks_sha256
 from src.cli.bootstrap import build_session
 from src.config import get_settings
 from src.harness.session import SessionRuntime
@@ -52,7 +54,13 @@ async def run_batch_from_args(
 
     batch_id = f"batch-{uuid4().hex}"
     profiles_dir = get_settings().storage.batches_dir / batch_id / PROFILES_DIR_NAME
-    session_factory = _session_factory(args, session_builder, profiles_dir)
+    provenance = _provenance(args)
+    commit = provenance["git"]["commit"]
+    labels = {
+        "autobrowser.batch.id": batch_id,
+        **({"vcs.ref.head.revision": commit} if commit else {}),
+    }
+    session_factory = _session_factory(args, session_builder, profiles_dir, labels)
     try:
         return await batch_runner(
             tasks_path=args.tasks,
@@ -61,6 +69,8 @@ async def run_batch_from_args(
             continue_on_error=args.continue_on_error,
             config=_batch_config(args),
             grade=args.grade,
+            provenance=provenance,
+            history=not args.no_history,
         )
     finally:
         # The profiles are scratch state; a file Chrome still holds stays in the batch dir.
@@ -86,6 +96,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--grade",
         action="store_true",
         help="Grade each scenario's final answer against its expected mapping; exit 1 on a failure.",
+    )
+    parser.add_argument(
+        "--no-history",
+        action="store_true",
+        help="Do not append this run to the batch history (for experiments).",
     )
     parser.add_argument(
         "--model",
@@ -134,21 +149,64 @@ def _session_factory(
     args: argparse.Namespace,
     session_builder: SessionBuilder,
     profiles_dir: Path,
-) -> Callable[[], SessionRuntime]:
+    labels: Mapping[str, str],
+) -> Callable[[BatchScenario], SessionRuntime]:
     scenario_index = 0
     next_port = int(args.cdp_port)
 
-    def build() -> SessionRuntime:
+    def build(scenario: BatchScenario) -> SessionRuntime:
         nonlocal scenario_index, next_port
         scenario_index += 1
         session_args = copy.copy(args)
         session_args.user_data_dir = str(profiles_dir / f"scenario-{scenario_index}")
+        session_args.labels = {**labels, "autobrowser.scenario.id": scenario.scenario_id}
         if not args.no_mcp:
             session_args.cdp_port = _next_available_port(next_port)
             next_port = int(session_args.cdp_port) + 1
         return session_builder(session_args)
 
     return build
+
+
+def _provenance(args: argparse.Namespace) -> dict[str, Any]:
+    """What makes two runs comparable: commit, model, Golden Set and settings fingerprints."""
+
+    settings = get_settings()
+    return {
+        "git": _git_info(),
+        "model": args.model,
+        "provider": getattr(args, "provider", None) or settings.llm.provider,
+        "tasks_sha256": tasks_sha256(Path(args.tasks)),
+        **settings_provenance(settings),
+        "python": platform.python_version(),
+        "platform": sys.platform,
+    }
+
+
+def _git_info() -> dict[str, Any]:
+    """Commit, branch and dirty flag of the checkout; all ``None`` without git."""
+
+    def git(*argv: str) -> str:
+        # Git prints UTF-8 whatever the locale is (cp1251 on a Russian Windows).
+        completed = subprocess.run(
+            ["git", *argv],
+            cwd=ROOT,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+        )
+        return completed.stdout.strip()
+
+    try:
+        return {
+            "commit": git("rev-parse", "HEAD"),
+            "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
+            "dirty": bool(git("status", "--porcelain")),
+        }
+    except (OSError, subprocess.SubprocessError, ValueError):
+        # Provenance must never stop a batch.
+        return {"commit": None, "branch": None, "dirty": None}
 
 
 def _next_available_port(start: int) -> int:
