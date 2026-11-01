@@ -36,9 +36,13 @@ from scripts.langfuse_bridge.ledger import (
     LedgerLocked,
     SyncLedger,
 )
-from scripts.langfuse_bridge.scores import ensure_score_configs
+from scripts.langfuse_bridge.scores import (
+    PLATFORM_SCORES_FILE_NAME,
+    ensure_score_configs,
+    pull_scores,
+)
 from scripts.langfuse_bridge.sync import SyncReport, SyncUsageError, push_batch
-from src.agent_loop.platform_records import score_definitions
+from src.agent_loop.platform_records import review_definitions, score_definitions
 from src.config import EvalPlatformSettings, Settings, get_settings
 
 #: Scenario sets that can be pushed as datasets, and their files in the repository.
@@ -78,6 +82,11 @@ def build_parser() -> argparse.ArgumentParser:
     push.add_argument("--retry-rejected", action="store_true", help="Send the scores the platform rejected again.")
     push.add_argument("--dry-run", action="store_true", help="Print the plan; read only the files.")
 
+    scores = commands.add_parser("scores", help="Pull the judge's and reviewers' scores of a synced batch.")
+    scores_commands = scores.add_subparsers(dest="action", required=True)
+    pull = scores_commands.add_parser("pull", help="Write them to <batch>/platform_scores.jsonl.")
+    pull.add_argument("--batch", required=True, help="A batch id or directory.")
+
     commands.add_parser("doctor", help="Check the server version, keys, project and score configs (network).")
     commands.add_parser("setup", help="Create the score configs (archiving outdated ones) and the triage queue.")
 
@@ -104,6 +113,8 @@ def main(
             return _experiment(args, settings, factory, git or run_git(ROOT))
         if args.command == "status":
             return _status(args, settings, factory)
+        if args.command == "scores":
+            return _pull(args, settings, factory)
         if args.command == "setup":
             return _setup(settings, factory)
         if args.command == "doctor":
@@ -239,9 +250,24 @@ def _status(args: argparse.Namespace, settings: Settings, factory: ClientFactory
 
 
 def _setup(settings: Settings, factory: ClientFactory) -> int:
+    queue = settings.eval_platform.triage_queue
     with connect(settings, factory) as client:
         ids = ensure_score_configs(client, score_definitions())
         print(f"score configs: {len(ids)}")
+        if queue:
+            review = ensure_score_configs(client, review_definitions())
+            client.ensure_queue(queue, list(review.values()))
+            print(f"annotation queue: {queue}")
+    return 0
+
+
+def _pull(args: argparse.Namespace, settings: Settings, factory: ClientFactory) -> int:
+    batch_dir = _batch_dir(settings.storage.batches_dir, args.batch)
+    if not (batch_dir / LEDGER_FILE_NAME).is_file():
+        raise UsageError(f"{batch_dir.name} was never synced (no {LEDGER_FILE_NAME})")
+    with connect(settings, factory) as client:
+        rows = pull_scores(client, batch_dir)
+    print(f"{len(rows)} scores -> {batch_dir / PLATFORM_SCORES_FILE_NAME}")
     return 0
 
 

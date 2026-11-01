@@ -219,3 +219,26 @@ def test_doctor_checks_the_server_keys_and_project(tmp_path: Path, capsys: pytes
     unauthorized.fail("GET", "/projects", status=401)
     assert run(["doctor"], tmp_path, unauthorized) == 2
     assert SECRET_KEY not in capsys.readouterr().err
+
+
+def test_scores_pull_writes_the_batch_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    fake = FakeLangfuse()
+    batch = make_batch(batches(tmp_path), [Scenario("a")])
+    run(["experiment", "push", "--batch", str(batch)], tmp_path, fake)
+    ledger = json.loads((batch / "platform_sync.json").read_text(encoding="utf-8"))
+    fake.add_score(name="judge.fields", value=1, source="EVAL", experimentId="batch-1a2b3c4d5e6f",
+                   subject={"kind": "trace", "id": ledger["items"]["a"]["trace_id"]})
+
+    assert run(["scores", "pull", "--batch", "batch-1a2b3c4d5e6f"], tmp_path, fake) == 0
+
+    assert "1 scores -> " in capsys.readouterr().out
+    assert (batch / "platform_scores.jsonl").is_file()
+    assert run(["scores", "pull", "--batch", str(make_batch(batches(tmp_path), [Scenario("b")], batch_id="batch-never"))], tmp_path, fake) == 2
+
+
+def test_setup_creates_the_triage_queue_when_named(tmp_path: Path) -> None:
+    fake = FakeLangfuse()
+
+    assert run(["setup"], tmp_path, fake, triage_queue="autobrowser-triage") == 0
+
+    assert [queue["name"] for queue in fake.queues.values()] == ["autobrowser-triage"]

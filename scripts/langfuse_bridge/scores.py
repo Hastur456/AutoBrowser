@@ -13,6 +13,7 @@ again, typically after ``setup`` fixed a config.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -22,8 +23,10 @@ from scripts.langfuse_bridge.experiments import (
     BATCH_FILE_NAME,
     RUN_INDEX_FILE_NAME,
     BatchFolder,
+    load_batch_folder,
     span_id,
 )
+from scripts.langfuse_bridge.ledger import LEDGER_FILE_NAME
 from src.agent_loop.batch_compare import BatchComparison, compare_batches
 from src.agent_loop.benchmarks import split_by_task
 from src.agent_loop.events import read_jsonl_lines
@@ -36,6 +39,10 @@ from src.agent_loop.platform_records import (
 from src.agent_loop.replay import load_events
 from src.config import PipelineSettings
 
+PLATFORM_SCORES_FILE_NAME = "platform_scores.jsonl"
+#: Who wrote a score that is pulled back: the managed judge and the human reviewers.
+PULLED_SOURCES = "EVAL,ANNOTATION"
+_PULLED_FIELDS = "details,subject,annotation"
 _DATA_TYPES = {"numeric": "NUMERIC", "categorical": "CATEGORICAL", "boolean": "BOOLEAN", "text": "TEXT"}
 
 
@@ -165,3 +172,43 @@ def _same(current: Mapping[str, Any], wanted: Mapping[str, Any]) -> bool:
     if labels != [category["label"] for category in wanted.get("categories") or []]:
         return False
     return current.get("minValue") == wanted.get("minValue") and current.get("maxValue") == wanted.get("maxValue")
+
+
+def pull_scores(client: LangfuseClient, batch_dir: Path) -> list[dict[str, Any]]:
+    """The judge's and the reviewers' scores of a synced batch, written (whole) to
+    ``<batch_dir>/platform_scores.jsonl``: an informational layer the verdict never reads."""
+
+    ledger = json.loads((Path(batch_dir) / LEDGER_FILE_NAME).read_text(encoding="utf-8"))
+    experiment = str((ledger.get("experiment") or {}).get("id") or "")
+    items = ledger.get("items") or {}
+    scenario_of = {str(item.get("trace_id")): name for name, item in items.items()}
+    folder = load_batch_folder(Path(batch_dir), dataset="", suite="")
+    task_of = {span: task for task, (_trace, span) in _task_spans(folder, items).items()}
+    rows: list[dict[str, Any]] = []
+    for score in client.scores(experimentId=experiment, source=PULLED_SOURCES, fields=_PULLED_FIELDS):
+        subject = score.get("subject") or {}
+        trace = str(subject.get("traceId") or (subject.get("id") if subject.get("kind") == "trace" else "") or "")
+        scenario = scenario_of.get(trace)
+        if scenario is None:
+            continue
+        observation = str(subject.get("id") or "") if subject.get("kind") == "observation" else ""
+        rows.append(
+            {
+                "scenario_id": scenario,
+                "task_id": task_of.get(observation),
+                "name": score.get("name"),
+                "data_type": score.get("dataType"),
+                "value": score.get("value"),
+                "source": score.get("source"),
+                "comment": score.get("comment"),
+                "author_user_id": score.get("authorUserId"),
+                "timestamp": score.get("timestamp"),
+            }
+        )
+    path = Path(batch_dir) / PLATFORM_SCORES_FILE_NAME
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8"
+    )
+    os.replace(temporary, path)
+    return rows

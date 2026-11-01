@@ -28,6 +28,8 @@ from src.contracts import StopReason
 ScoreDataType = Literal["numeric", "categorical", "boolean", "text"]
 ScoreTarget = Literal["item", "task", "run"]
 Verdict = Literal["no_regression", "regression", "incomparable", "no_baseline"]
+#: What a reviewer says about a failed scenario in the annotation queue.
+HumanVerdict = Literal["agent_error", "site_changed", "anti_bot", "grader_wrong", "expected_outdated", "ok"]
 
 #: ``row["metrics"]`` figures sent as item scores (duration, tokens and cost the platform
 #: derives from the spans itself).
@@ -177,6 +179,15 @@ def score_definitions() -> list[ScoreDefinition]:
         ScoreDefinition("regressions", "numeric", min_value=0.0, description="Regression findings of the run."),
     ]
     return definitions
+
+
+def review_definitions() -> list[ScoreDefinition]:
+    """The scores a human gives in the annotation queue."""
+
+    return [
+        ScoreDefinition("human.verdict", "categorical", get_args(HumanVerdict), description="Why the scenario failed, by a reviewer."),
+        ScoreDefinition("human.comment", "text", description="A reviewer's note."),
+    ]
 
 
 def batch_score_records(

@@ -163,3 +163,94 @@ def test_scores_wait_until_every_trace_is_exported(tmp_path: Path) -> None:
     env.push(batch)
 
     assert env.fake.scores == {} and env.ledger(batch)["scores"] is None
+
+
+# -- annotation queue ------------------------------------------------------------------------------
+
+
+TRIAGE = [
+    Scenario("ok-1"),
+    Scenario("fail-1", failure_kind="grade_failed", grade="failed"),
+    Scenario("infra-1", failure_kind="timeout", grade="failed"),
+    Scenario("stop-1", failure_kind="agent_stopped", grade="failed"),
+    Scenario("ungraded-1", failure_kind="ungraded", grade="ungraded"),
+]
+
+
+def test_no_queue_without_a_queue_name(tmp_path: Path) -> None:
+    env = Env(tmp_path)
+    report = env.push(env.batch(TRIAGE))
+
+    assert report.enqueued == 0 and env.fake.queues == {}
+
+
+def test_failed_scenarios_go_to_the_queue_once(tmp_path: Path) -> None:
+    env = Env(tmp_path)
+    batch = env.batch(TRIAGE)
+
+    report = env.push(batch, platform={"triage_queue": "autobrowser-triage"})
+
+    queue = next(iter(env.fake.queues.values()))
+    assert queue["name"] == "autobrowser-triage"
+    config_names = {env.fake.configs[config_id]["name"] for config_id in queue["scoreConfigIds"]}
+    assert config_names == {"human.verdict", "human.comment"}
+    verdict = next(config for config in env.fake.configs.values() if config["name"] == "human.verdict")
+    assert [c["label"] for c in verdict["categories"]] == ["agent_error", "site_changed", "anti_bot", "grader_wrong", "expected_outdated", "ok"]
+    items = env.ledger(batch)["items"]
+    queued = {entry["objectId"] for entry in env.fake.queue_items[queue["id"]]}
+    assert queued == {items[name]["trace_id"] for name in ("fail-1", "stop-1", "ungraded-1")}
+    assert report.enqueued == 3
+    assert env.ledger(batch)["triage"]["enqueued"] == ["fail-1", "stop-1", "ungraded-1"]
+
+    env.push(batch, platform={"triage_queue": "autobrowser-triage"}, retry_rejected=True)
+    assert len(env.fake.queue_items[queue["id"]]) == 3
+
+
+def test_the_queue_takes_at_most_the_configured_number(tmp_path: Path) -> None:
+    env = Env(tmp_path)
+    batch = env.batch(TRIAGE)
+
+    env.push(batch, platform={"triage_queue": "q", "triage_max_items": 1})
+
+    assert env.ledger(batch)["triage"]["enqueued"] == ["fail-1"]
+
+
+# -- scores pull ---------------------------------------------------------------------------------
+
+
+def test_judge_and_human_scores_are_pulled_into_the_batch(tmp_path: Path) -> None:
+    from scripts.langfuse_bridge.scores import PLATFORM_SCORES_FILE_NAME, pull_scores
+
+    env = Env(tmp_path)
+    batch = env.batch(SCENARIOS)
+    env.push(batch)
+    items = env.ledger(batch)["items"]
+    trace = items["quotes-1"]["trace_id"]
+    task_span = span_id(trace, "quotes-1-task-1-goal.started-0")
+    env.fake.add_score(name="judge.fields", value=False, dataType="BOOLEAN", source="EVAL", experimentId="batch-1a2b3c4d5e6f",
+                       subject={"kind": "observation", "id": items["quotes-1"]["root_span_id"], "traceId": trace}, comment="no price")
+    env.fake.add_score(name="human.verdict", value="grader_wrong", dataType="CATEGORICAL", source="ANNOTATION", experimentId="batch-1a2b3c4d5e6f",
+                       subject={"kind": "observation", "id": task_span, "traceId": trace}, authorUserId="u1")
+    env.fake.add_score(name="foreign", value=1, dataType="NUMERIC", source="EVAL", experimentId="batch-1a2b3c4d5e6f",
+                       subject={"kind": "trace", "id": "ff" * 16})
+
+    with env_client(env) as api:
+        rows = pull_scores(api, batch)
+
+    lines = [json.loads(line) for line in (batch / PLATFORM_SCORES_FILE_NAME).read_text(encoding="utf-8").splitlines()]
+    assert lines == rows
+    assert [(row["scenario_id"], row["name"], row["value"], row["source"]) for row in rows] == [
+        ("quotes-1", "judge.fields", False, "EVAL"),
+        ("quotes-1", "human.verdict", "grader_wrong", "ANNOTATION"),
+    ]
+    assert rows[0]["task_id"] is None and rows[0]["comment"] == "no price"
+    assert rows[1]["task_id"] == "quotes-1-task-1" and rows[1]["author_user_id"] == "u1"
+    request = [r for r in env.fake.requests if r.path.endswith("/v3/scores")][-1]
+    assert request.params["experimentId"] == "batch-1a2b3c4d5e6f" and request.params["source"] == "EVAL,ANNOTATION"
+
+
+def env_client(env: Env) -> Any:
+    from scripts.langfuse_bridge.client import LangfuseClient
+    from tests.test_langfuse_sync import make_settings
+
+    return LangfuseClient(make_settings(env.tmp_path).eval_platform, transport=env.fake.transport(), sleep=lambda _s: None)

@@ -20,7 +20,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from scripts.langfuse_bridge.client import LangfuseClient, LangfuseError
 from scripts.langfuse_bridge.datasets import (
@@ -62,7 +62,8 @@ from scripts.langfuse_bridge.scores import (
 from src.agent_loop.batch import tasks_sha256
 from src.agent_loop.batch_compare import previous_comparable
 from src.agent_loop.events import redact_json_safe
-from src.agent_loop.platform_records import score_definitions
+from src.agent_loop.failures import FailureKind
+from src.agent_loop.platform_records import review_definitions, score_definitions
 from src.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -248,6 +249,8 @@ class _Run:
         self._export_items(client, ref)
         if self._all_exported():
             self._scores(client, ref, retry_rejected=retry_rejected)
+            if self.platform.triage_queue:
+                self._triage(client)
         return self.finish()
 
     def _export_items(self, client: LangfuseClient, ref: ExperimentRef) -> None:
@@ -360,6 +363,33 @@ class _Run:
         }
         self._save()
 
+    def _triage(self, client: LangfuseClient) -> None:
+        """Queue the item traces of failed scenarios for review, each once per experiment."""
+
+        known = set(get_args(FailureKind))
+        kinds = {kind for kind in self.platform.triage_kinds if kind in known}
+        for unknown in sorted(set(self.platform.triage_kinds) - known):
+            logger.warning("eval_platform.triage_kinds: %r is not a failure kind; ignored", unknown)
+        triage = self.ledger.data.get("triage") or {}
+        enqueued = list(triage.get("enqueued") or [])
+        candidates = [
+            str(row.get("scenario_id"))
+            for row in self.folder.rows
+            if row.get("failure_kind") in kinds and str(row.get("scenario_id")) not in enqueued
+        ]
+        room = max(self.platform.triage_max_items - len(enqueued), 0)
+        if not candidates[:room]:
+            return
+        queue_id = triage.get("queue_id")
+        if not queue_id:
+            config_ids = ensure_score_configs(client, review_definitions())
+            queue_id = client.ensure_queue(str(self.platform.triage_queue), list(config_ids.values()))
+        for scenario in candidates[:room]:
+            client.enqueue(queue_id, self.ledger.items[scenario]["trace_id"])
+            enqueued.append(scenario)
+            self.ledger.data["triage"] = {"queue_id": queue_id, "enqueued": enqueued}
+            self._save()
+
     def _all_exported(self) -> bool:
         items = self.ledger.items
         return len(self.folder.rows) > 0 and all(
@@ -469,6 +499,7 @@ class _Run:
             pending=pending,
             scores_accepted=int(scores.get("accepted") or 0),
             scores_rejected=len(scores.get("rejected") or []),
+            enqueued=len((data.get("triage") or {}).get("enqueued") or []),
             error=data.get("last_error"),
         )
 
