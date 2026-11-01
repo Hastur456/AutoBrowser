@@ -121,3 +121,72 @@ def test_bad_keys_exit_2_and_an_outage_exits_1(tmp_path: Path, capsys: pytest.Ca
     assert run(["dataset", "push", "--tasks", str(tasks)], tmp_path, unauthorized) == 2
     assert run(["dataset", "push", "--tasks", str(tasks)], tmp_path, down, max_retries=0) == 1
     assert SECRET_KEY not in capsys.readouterr().err
+
+
+# -- experiment push and status ---------------------------------------------------------------
+
+
+from tests.platform_fixtures.batch_folder import Scenario, make_batch  # noqa: E402
+
+
+def batches(tmp_path: Path) -> Path:
+    return tmp_path / "home" / "batches"
+
+
+def test_experiment_push_syncs_one_batch_by_id(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    fake = FakeLangfuse()
+    make_batch(batches(tmp_path), [Scenario("books-1"), Scenario("quotes-1")])
+
+    code = run(["experiment", "push", "--batch", "batch-1a2b3c4d5e6f"], tmp_path, fake)
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "langfuse: batch-1a2b3c4d5e6f complete · 2 exported" in out
+    assert len({span["traceId"] for span in fake.spans()}) == 2
+
+
+def test_experiment_push_dry_run_needs_no_network(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    batch = make_batch(batches(tmp_path), [Scenario("books-1")])
+
+    code = run(["experiment", "push", "--batch", str(batch), "--dry-run"], tmp_path, None)
+
+    assert code == 0 and "skipped" in capsys.readouterr().out
+
+
+def test_experiment_push_pending_catches_up_every_unfinished_ledger(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    fake = FakeLangfuse()
+    first = make_batch(batches(tmp_path), [Scenario("a")], batch_id="batch-aaaaaaaaaaaa")
+    make_batch(batches(tmp_path), [Scenario("b")], batch_id="batch-bbbbbbbbbbbb")
+    fake.fail("GET", "/health", status=503, times=10)
+    assert run(["experiment", "push", "--batch", str(first)], tmp_path, fake, max_retries=0) == 1
+    fake.faults.clear()
+
+    code = run(["experiment", "push", "--pending"], tmp_path, fake)
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "batch-aaaaaaaaaaaa complete" in out and "batch-bbbbbbbbbbbb" not in out
+
+
+def test_experiment_push_exit_codes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    fake = FakeLangfuse()
+    make_batch(batches(tmp_path), [Scenario("a")], batch_id="batch-running", finished=False)
+
+    assert run(["experiment", "push", "--batch", "batch-running"], tmp_path, fake) == 2
+    assert run(["experiment", "push", "--batch", "missing"], tmp_path, fake) == 2
+    assert run(["experiment", "push"], tmp_path, fake) == 2
+    assert "not finished" in capsys.readouterr().err
+
+
+def test_status_lists_ledgers_and_verify_finds_duplicated_observations(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    fake = FakeLangfuse()
+    make_batch(batches(tmp_path), [Scenario("a"), Scenario("b")])
+    run(["experiment", "push", "--batch", "batch-1a2b3c4d5e6f"], tmp_path, fake)
+    capsys.readouterr()
+
+    assert run(["status"], tmp_path, fake) == 0
+    assert "batch-1a2b3c4d5e6f complete · 2/2 exported" in capsys.readouterr().out
+
+    fake.traces.append(fake.traces[0])  # a re-sent trace: every observation twice
+    assert run(["status", "--batch", "batch-1a2b3c4d5e6f", "--verify"], tmp_path, fake) == 1
+    assert "duplicated: a" in capsys.readouterr().out

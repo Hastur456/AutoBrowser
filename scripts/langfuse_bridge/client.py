@@ -144,16 +144,20 @@ class LangfuseClient:
 
     # -- datasets -------------------------------------------------------------------------------
 
+    def dataset(self, name: str) -> dict[str, Any] | None:
+        """The dataset named ``name``, ``None`` when it does not exist."""
+
+        try:
+            return self._json("GET", f"/v2/datasets/{quote(name, safe='')}")
+        except LangfuseError as exc:
+            if exc.status == 404:
+                return None
+            raise
+
     def ensure_dataset(self, name: str, metadata: Mapping[str, Any]) -> str:
         """The dataset's id; created, or its metadata updated, only when needed."""
 
-        path = f"/v2/datasets/{quote(name, safe='')}"
-        try:
-            dataset = self._json("GET", path)
-        except LangfuseError as exc:
-            if exc.status != 404:
-                raise
-            dataset = None
+        dataset = self.dataset(name)
         if dataset is not None and (dataset.get("metadata") or {}) == dict(metadata):
             return str(dataset["id"])
         created = self._json("POST", "/v2/datasets", json={"name": name, "metadata": dict(metadata)})
@@ -183,6 +187,19 @@ class LangfuseClient:
     def trace_exists(self, trace_id: str) -> bool:
         body = self._json("GET", "/v2/observations", params={"traceId": trace_id, "limit": "1"})
         return bool(body.get("data"))
+
+    def observation_ids(self, trace_id: str) -> list[str]:
+        """The ids of every observation of a trace (every cursor page)."""
+
+        params = {"traceId": trace_id}
+        ids: list[str] = []
+        while True:
+            body = self._json("GET", "/v2/observations", params=params)
+            ids += [str(item.get("id")) for item in body.get("data") or []]
+            cursor = (body.get("meta") or {}).get("cursor")
+            if not cursor:
+                return ids
+            params["cursor"] = str(cursor)
 
     # -- scores ---------------------------------------------------------------------------------
 

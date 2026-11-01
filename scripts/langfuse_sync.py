@@ -30,6 +30,8 @@ from scripts.langfuse_bridge.datasets import (
     push_dataset,
     run_git,
 )
+from scripts.langfuse_bridge.ledger import EXPORTED, LEDGER_FILE_NAME, LedgerLocked, SyncLedger
+from scripts.langfuse_bridge.sync import SyncReport, SyncUsageError, push_batch
 from src.config import EvalPlatformSettings, Settings, get_settings
 
 #: Scenario sets that can be pushed as datasets, and their files in the repository.
@@ -58,6 +60,20 @@ def build_parser() -> argparse.ArgumentParser:
         if action == "push":
             sub.add_argument("--allow-dirty", action="store_true", help="Push a tasks file that differs from HEAD.")
             sub.add_argument("--dry-run", action="store_true", help="Print the plan; read only the file.")
+
+    experiment = commands.add_parser("experiment", help="Sync batches as experiments.")
+    experiment_commands = experiment.add_subparsers(dest="action", required=True)
+    push = experiment_commands.add_parser("push", help="Sync one batch (--batch) or every unfinished one (--pending).")
+    push.add_argument("--batch", default=None, help="A batch id or directory.")
+    push.add_argument("--pending", action="store_true", help="Every batch whose ledger is not complete.")
+    push.add_argument("--suite", choices=sorted(SUITES), default="golden")
+    push.add_argument("--new-attempt", action="store_true", help="Sync again as a new experiment (new project, reset).")
+    push.add_argument("--retry-rejected", action="store_true", help="Send the scores the platform rejected again.")
+    push.add_argument("--dry-run", action="store_true", help="Print the plan; read only the files.")
+
+    status = commands.add_parser("status", help="Show the sync state of the batches.")
+    status.add_argument("--batch", default=None, help="Only this batch (id or directory).")
+    status.add_argument("--verify", action="store_true", help="Check exported traces for duplicated observations.")
     return parser
 
 
@@ -74,9 +90,16 @@ def main(
     try:
         if args.command == "dataset":
             return _dataset(args, settings, factory, git or run_git(ROOT))
-    except (UsageError, DatasetError) as exc:
+        if args.command == "experiment":
+            return _experiment(args, settings, factory, git or run_git(ROOT))
+        if args.command == "status":
+            return _status(args, settings, factory)
+    except (UsageError, DatasetError, SyncUsageError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    except LedgerLocked as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     except LangfuseError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2 if exc.status in {401, 403} else 1
@@ -141,6 +164,69 @@ def _dataset(args: argparse.Namespace, settings: Settings, factory: ClientFactor
                 print(f"{label}: {', '.join(names)}")
         _print_edited(status)
         return 0
+
+
+def _experiment(args: argparse.Namespace, settings: Settings, factory: ClientFactory, git: Git) -> int:
+    if bool(args.batch) == bool(args.pending):
+        raise UsageError("name one batch (--batch) or pass --pending")
+    batches_dir = settings.storage.batches_dir
+    if args.pending:
+        targets = [ledger.parent for ledger in sorted(batches_dir.glob(f"*/{LEDGER_FILE_NAME}"))]
+        targets = [path for path in targets if SyncLedger.load(path).data.get("state") != "complete"]
+    else:
+        targets = [_batch_dir(batches_dir, args.batch)]
+    code = 0
+    for batch_dir in targets:
+        report: SyncReport = push_batch(
+            batch_dir,
+            settings,
+            client_factory=factory,
+            repo_tasks=ROOT / SUITES[args.suite],
+            git=git,
+            suite=args.suite,
+            new_attempt=args.new_attempt,
+            retry_rejected=args.retry_rejected,
+            dry_run=args.dry_run,
+        )
+        print(report.summary(batch_dir.name))
+        code = max(code, report.exit_code())
+    return code
+
+
+def _status(args: argparse.Namespace, settings: Settings, factory: ClientFactory) -> int:
+    batches_dir = settings.storage.batches_dir
+    if args.batch:
+        targets = [_batch_dir(batches_dir, args.batch)]
+    else:
+        targets = [ledger.parent for ledger in sorted(batches_dir.glob(f"*/{LEDGER_FILE_NAME}"))]
+    client = connect(settings, factory) if args.verify else None
+    code = 0
+    try:
+        for batch_dir in targets:
+            ledger = SyncLedger.load(batch_dir)
+            items = ledger.items
+            exported = [name for name, item in items.items() if item.get("state") == EXPORTED]
+            line = f"{batch_dir.name} {ledger.data.get('state')} · {len(exported)}/{len(items)} exported"
+            url = (ledger.data.get("experiment") or {}).get("url")
+            print(line + (f" · {url}" if url else ""))
+            if client is not None:
+                duplicated = [
+                    name
+                    for name in exported
+                    if len(client.observation_ids(items[name]["trace_id"])) > int(items[name].get("spans") or 0)
+                ]
+                if duplicated:
+                    print(f"  duplicated: {', '.join(duplicated)}")
+                    code = 1
+    finally:
+        if client is not None:
+            client.close()
+    return code
+
+
+def _batch_dir(batches_dir: Path, name: str) -> Path:
+    path = Path(name)
+    return path if path.is_dir() else batches_dir / name
 
 
 def _counts(plan: DatasetPlan) -> str:

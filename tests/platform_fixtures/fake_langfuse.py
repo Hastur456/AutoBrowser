@@ -41,6 +41,8 @@ class Fault:
     times: int = 1
     #: For an exception: let the request take effect first (a timeout after the server got it).
     after_effect: bool = False
+    #: Matching requests to let through untouched before the fault starts.
+    skip: int = 0
 
 
 @dataclass
@@ -83,8 +85,9 @@ class FakeLangfuse:
         body: Any = None,
         times: int = 1,
         after_effect: bool = False,
+        skip: int = 0,
     ) -> None:
-        self.faults.append(Fault(method, path, status, exception, headers or {}, body, times, after_effect))
+        self.faults.append(Fault(method, path, status, exception, headers or {}, body, times, after_effect, skip))
 
     def writes(self) -> list[RecordedRequest]:
         return [request for request in self.requests if request.method in {"POST", "PATCH", "PUT", "DELETE"}]
@@ -169,6 +172,9 @@ class FakeLangfuse:
     def _fault(self, method: str, path: str) -> Fault | None:
         for fault in self.faults:
             if fault.method == method and path.removeprefix(API).startswith(fault.path) and fault.times > 0:
+                if fault.skip > 0:
+                    fault.skip -= 1
+                    return None
                 fault.times -= 1
                 return fault
         return None
