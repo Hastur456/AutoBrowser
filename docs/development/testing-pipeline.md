@@ -360,6 +360,11 @@ environment `batch` and the labels `autobrowser.batch.id`, `autobrowser.scenario
 here, in the batch folder. Setup, content capture and privacy: the
 [Trace Export Guide](telemetry.md).
 
+With `eval_platform` enabled, `run_batch.py` also syncs each batch to Langfuse as an experiment
+on the dataset `autobrowser/golden`, with the grades, failure kinds and this verdict as scores
+(the verdict and exit codes stay local). `--no-platform-sync` skips it for one run; see the
+[Eval Platform Guide](eval-platform.md).
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
