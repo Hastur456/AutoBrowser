@@ -26,6 +26,7 @@ from src.config import (
     ROOT_PATH,
     LLMSettings,
     Settings,
+    TelemetrySettings,
     env_files,
     get_settings,
     home_dir,
@@ -36,6 +37,7 @@ from src.harness.session_store import (
     find_session,
     list_sessions,
 )
+from src.harness.otel_sink import otlp_exporter_installed
 from src.harness.skills import SESSION_CAPABILITIES, SkillStore, skill_roots, user_skills_root
 from src.version import PACKAGE_NAME, package_version
 
@@ -162,6 +164,7 @@ def _doctor(args: argparse.Namespace, write: Callable[[str], None]) -> int:
     servers = ", ".join(f"{name} ({config.transport})" for name, config in settings.mcp_servers.items())
     check(_OK if servers else _WARN, "mcp servers", servers or "none configured")
     _doctor_skills(settings, check)
+    check(*_telemetry_summary(settings.telemetry))
 
     caps = detect(settings.ui)
     check(
@@ -196,6 +199,23 @@ def _doctor_skills(settings: Settings, check: Callable[[str, str, object], None]
     for skill in store.skills():
         if skill.unknown_fields:
             check(_WARN, "skill", f"{skill.name}: unknown frontmatter keys {', '.join(skill.unknown_fields)}")
+
+
+def _telemetry_summary(telemetry: TelemetrySettings) -> tuple[str, str, str]:
+    """The OTLP export line, offline: endpoint without credentials, content mode, the number
+    of headers (never their names or values) and whether the exporter package is installed."""
+
+    if not telemetry.otlp_enabled:
+        return _OK, "telemetry", "off"
+    headers = len(telemetry.otlp_headers)
+    parts = [
+        _public_url(telemetry.otlp_endpoint) or "",
+        f"content {telemetry.capture_content}",
+        f"{headers} header{'' if headers == 1 else 's'}",
+    ]
+    if otlp_exporter_installed():
+        return _OK, "telemetry", " · ".join([*parts, "exporter installed"])
+    return _FAIL, "telemetry", " · ".join([*parts, "exporter missing: uv sync --group otel"])
 
 
 def _llm_summary(llm: LLMSettings, stall_budget: float) -> tuple[str, str]:

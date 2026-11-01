@@ -207,6 +207,52 @@ def test_doctor_prints_the_provider_without_secrets_or_network(
     assert "llm probe" not in out
 
 
+def test_doctor_reports_telemetry_off_by_default(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(subcommands.shutil, "which", lambda name: None)
+
+    entry.main(["doctor"])
+
+    assert doctor_line(capsys.readouterr().out, "telemetry") == "ok  telemetry      off"
+
+
+TELEMETRY_PROFILE = (
+    "telemetry:\n"
+    "  otlp_enabled: true\n"
+    "  otlp_endpoint: https://user:pw@otel.test/v1/traces?token=q-secret\n"
+    "  capture_content: redacted\n"
+    "  otlp_headers: {Authorization: Basic hdr-secret, X-Ingest: v-secret}\n"
+)
+
+
+@pytest.mark.parametrize("installed, mark, state", [(True, "ok", "exporter installed"), (False, "xx", "uv sync --group otel")])
+def test_doctor_reports_telemetry_without_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    installed: bool,
+    mark: str,
+    state: str,
+) -> None:
+    use_profile(monkeypatch, tmp_path, TELEMETRY_PROFILE)
+    monkeypatch.setattr(subcommands.shutil, "which", lambda name: None)
+    monkeypatch.setattr(subcommands, "otlp_exporter_installed", lambda: installed)
+
+    code = entry.main(["doctor"])
+
+    out = capsys.readouterr().out
+    line = doctor_line(out, "telemetry")
+    assert line.startswith(f"{mark}  ")
+    for part in ("https://otel.test/v1/traces", "content redacted", "2 headers", state):
+        assert part in line
+    for secret in ("user:pw", "q-secret", "hdr-secret", "v-secret", "Authorization"):
+        assert secret not in line
+    assert "hdr-secret" not in out and "v-secret" not in out
+    if not installed:
+        assert code == 1
+
+
 def test_doctor_warns_when_a_model_call_can_outlast_the_stall_budget(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
