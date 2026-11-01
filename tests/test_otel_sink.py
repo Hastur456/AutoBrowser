@@ -76,6 +76,35 @@ def test_the_exporter_gets_the_endpoint_headers_and_timeout(monkeypatch: pytest.
     assert otel_sink.otlp_exporter_installed() is True
 
 
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Authorization": " Basic c2VjcmV0LWtleQ=="},
+        {"Authorization": "Basic c2VjcmV0LWtleQ==\n"},
+        {"Authorization": "Basic c2VjcmV0\r\nX-Evil: c2VjcmV0LWtleQ=="},
+        {"Bad Name": "c2VjcmV0LWtleQ=="},
+        {"Bad:Name": "c2VjcmV0LWtleQ=="},
+    ],
+)
+def test_a_malformed_header_fails_without_echoing_its_value(
+    monkeypatch: pytest.MonkeyPatch, headers: dict[str, str]
+) -> None:
+    monkeypatch.setitem(sys.modules, EXPORTER_MODULE, types.SimpleNamespace(OTLPSpanExporter=lambda **_: None))
+    settings = TelemetrySettings(otlp_enabled=True, otlp_headers={k: SecretStr(v) for k, v in headers.items()})
+
+    with pytest.raises(RuntimeError) as raised:
+        otel_sink.load_otlp_exporter(settings)
+
+    assert "c2VjcmV0" not in str(raised.value) and "otlp_headers" in str(raised.value)
+    assert otel_sink.invalid_otlp_headers(settings) == sorted(headers)
+
+
+def test_well_formed_headers_are_valid() -> None:
+    settings = TelemetrySettings(otlp_headers={"Authorization": SecretStr("Basic abc=="), "x-ingestion-version": SecretStr("4")})
+
+    assert otel_sink.invalid_otlp_headers(settings) == []
+
+
 # -- the sink -------------------------------------------------------------------------------------
 
 
@@ -208,6 +237,28 @@ def test_session_closed_flushes_then_shuts_the_exporter_down() -> None:
     assert exporter.shut_down
     run(sink, trace())  # after close: ignored, no error
     assert len(exporter.get_finished_spans()) == 5
+
+
+class StuckProcessor(SimpleSpanProcessor):
+    """A collector that never answers: the flush hangs far past the export timeout."""
+
+    def force_flush(self, timeout_millis: int = 30_000) -> bool:
+        import time
+
+        time.sleep(5)
+        return False
+
+
+def test_session_closed_waits_no_longer_than_the_export_timeout() -> None:
+    import time
+
+    sink = sink_with(StuckProcessor(InMemorySpanExporter()), TELEMETRY.model_copy(update={"otlp_timeout_seconds": 1.0}))
+    run(sink, [session_started(), *trace()])
+
+    started = time.monotonic()
+    sink.emit(session_closed())
+
+    assert time.monotonic() - started < 3.0
 
 
 def test_no_span_is_exported_twice() -> None:

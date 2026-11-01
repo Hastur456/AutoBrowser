@@ -163,6 +163,8 @@ experiment traces instead (Proposed
 |---|---|
 | session start fails with `uv sync --group otel` | export enabled, exporter group not installed |
 | `doctor` shows `telemetry … exporter missing` | same; run `uv sync --group otel` |
+| `malformed header <name>` (doctor or session start) | a header name or value with surrounding spaces, a line break or a control character, often a copy-paste slip; the value is never printed |
+| session close waits up to `otlp_timeout_seconds` | the collector is slow or unreachable; a late flush finishes in the background |
 | nothing in Langfuse for minutes, then everything | the `x-langfuse-ingestion-version: 4` header is missing |
 | `OTLP trace export failed (…)` once in the log | the sink hit an error; later errors are dropped, the session runs on |
 | exporter warnings about 401/403 | wrong keys or region (EU vs US host) in the endpoint |

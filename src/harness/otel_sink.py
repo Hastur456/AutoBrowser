@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -60,9 +61,33 @@ def otlp_exporter_installed() -> bool:
     return True
 
 
-def load_otlp_exporter(settings: TelemetrySettings) -> Any:
-    """The OTLP/HTTP span exporter for ``settings``; a clear error without the package."""
+def invalid_otlp_headers(settings: TelemetrySettings) -> list[str]:
+    """Names of the headers an HTTP client would reject (a bad name, or a value with
+    surrounding whitespace or control characters). The HTTP stack logs such a value in its
+    error on every export, so it must never reach the exporter; only names are returned."""
 
+    def bad(text: str, *, name: bool) -> bool:
+        if not text or text != text.strip() or any(ord(char) < 32 or ord(char) == 127 for char in text):
+            return True
+        return name and (":" in text or any(char.isspace() for char in text))
+
+    return sorted(
+        header
+        for header, value in settings.otlp_headers.items()
+        if bad(header, name=True) or bad(value.get_secret_value(), name=False)
+    )
+
+
+def load_otlp_exporter(settings: TelemetrySettings) -> Any:
+    """The OTLP/HTTP span exporter for ``settings``; a clear error without the package or
+    with a malformed header (naming the header, never its value)."""
+
+    invalid = invalid_otlp_headers(settings)
+    if invalid:
+        raise RuntimeError(
+            f"telemetry.otlp_headers: malformed header {', '.join(invalid)} "
+            "(surrounding whitespace, a line break or a control character)."
+        )
     try:
         module = importlib.import_module(OTLP_EXPORTER_MODULE)
     except ImportError as exc:
@@ -159,8 +184,25 @@ class OtlpEventSink:
             if self._task is not None:
                 self._export_task()
         finally:
-            self._provider.force_flush(int(self._settings.otlp_timeout_seconds * 1000))
-            self._provider.shutdown()
+            self._flush_and_shutdown()
+
+    def _flush_and_shutdown(self) -> None:
+        """Flush and shut down off the caller's thread, waiting at most
+        ``otlp_timeout_seconds``: the SDK's flush ignores its own timeout, and a collector
+        that never answers must not stall the session's event loop. A late flush finishes in
+        the background (daemon thread) and never blocks the process exit."""
+
+        timeout = self._settings.otlp_timeout_seconds
+
+        def finish() -> None:
+            try:
+                self._provider.force_flush(int(timeout * 1000))
+            finally:
+                self._provider.shutdown()
+
+        worker = threading.Thread(target=finish, name="otlp-flush", daemon=True)
+        worker.start()
+        worker.join(timeout)
 
     def _export_task(self) -> None:
         events, self._task = self._task or [], None

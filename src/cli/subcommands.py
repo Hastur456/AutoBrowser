@@ -37,7 +37,7 @@ from src.harness.session_store import (
     find_session,
     list_sessions,
 )
-from src.harness.otel_sink import otlp_exporter_installed
+from src.harness.otel_sink import invalid_otlp_headers, otlp_exporter_installed
 from src.harness.skills import SESSION_CAPABILITIES, SkillStore, skill_roots, user_skills_root
 from src.version import PACKAGE_NAME, package_version
 
@@ -213,6 +213,9 @@ def _telemetry_summary(telemetry: TelemetrySettings) -> tuple[str, str, str]:
         f"content {telemetry.capture_content}",
         f"{headers} header{'' if headers == 1 else 's'}",
     ]
+    invalid = invalid_otlp_headers(telemetry)
+    if invalid:
+        return _FAIL, "telemetry", " · ".join([*parts, f"malformed header {', '.join(invalid)}"])
     if otlp_exporter_installed():
         return _OK, "telemetry", " · ".join([*parts, "exporter installed"])
     return _FAIL, "telemetry", " · ".join([*parts, "exporter missing: uv sync --group otel"])
