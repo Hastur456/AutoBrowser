@@ -21,10 +21,20 @@ from scripts.langfuse_bridge.datasets import item_id
 from src.agent_loop.benchmarks import split_by_task
 from src.agent_loop.events import EventRecord, read_jsonl_lines, redact_json_safe
 from src.agent_loop.failures import INFRA_KINDS
-from src.agent_loop.platform_records import DatasetItemRecord, golden_items, platform_key
+from src.agent_loop.platform_records import (
+    DatasetItemRecord,
+    golden_items,
+    platform_key,
+)
 from src.agent_loop.replay import load_events
 from src.config import EvalPlatformSettings
-from src.harness.otel_spans import AttributeValue, SpanContext, SpanSpec, encode_otlp_json, task_span_specs
+from src.harness.otel_spans import (
+    AttributeValue,
+    SpanContext,
+    SpanSpec,
+    encode_otlp_json,
+    task_span_specs,
+)
 
 BATCH_FILE_NAME = "batch.json"
 RUN_INDEX_FILE_NAME = "run_index.jsonl"

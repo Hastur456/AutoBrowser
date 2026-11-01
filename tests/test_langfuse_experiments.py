@@ -20,7 +20,12 @@ from scripts.langfuse_bridge.experiments import (
     item_trace_id,
     load_batch_folder,
 )
-from tests.platform_fixtures.batch_folder import ANSWER_TEXT, TOOL_RESULT_TEXT, Scenario, make_batch
+from tests.platform_fixtures.batch_folder import (
+    ANSWER_TEXT,
+    TOOL_RESULT_TEXT,
+    Scenario,
+    make_batch,
+)
 from tests.platform_fixtures.fake_langfuse import FakeLangfuse
 from tests.test_langfuse_client import settings
 

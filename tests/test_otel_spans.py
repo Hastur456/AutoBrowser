@@ -11,7 +11,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from src.agent_loop.events import EventRecord
-from src.harness.otel_spans import SpanContext, SpanSpec, encode_otlp_json, task_span_specs
+from src.harness.otel_spans import (
+    SpanContext,
+    SpanSpec,
+    encode_otlp_json,
+    task_span_specs,
+)
 
 T0 = datetime(2026, 11, 1, 12, 0, 0, tzinfo=UTC)
 T0_NS = int(T0.timestamp()) * 1_000_000_000

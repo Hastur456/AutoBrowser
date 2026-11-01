@@ -30,8 +30,15 @@ from scripts.langfuse_bridge.datasets import (
     push_dataset,
     run_git,
 )
-from scripts.langfuse_bridge.ledger import EXPORTED, LEDGER_FILE_NAME, LedgerLocked, SyncLedger
+from scripts.langfuse_bridge.ledger import (
+    EXPORTED,
+    LEDGER_FILE_NAME,
+    LedgerLocked,
+    SyncLedger,
+)
+from scripts.langfuse_bridge.scores import ensure_score_configs
 from scripts.langfuse_bridge.sync import SyncReport, SyncUsageError, push_batch
+from src.agent_loop.platform_records import score_definitions
 from src.config import EvalPlatformSettings, Settings, get_settings
 
 #: Scenario sets that can be pushed as datasets, and their files in the repository.
@@ -71,6 +78,9 @@ def build_parser() -> argparse.ArgumentParser:
     push.add_argument("--retry-rejected", action="store_true", help="Send the scores the platform rejected again.")
     push.add_argument("--dry-run", action="store_true", help="Print the plan; read only the files.")
 
+    commands.add_parser("doctor", help="Check the server version, keys, project and score configs (network).")
+    commands.add_parser("setup", help="Create the score configs (archiving outdated ones) and the triage queue.")
+
     status = commands.add_parser("status", help="Show the sync state of the batches.")
     status.add_argument("--batch", default=None, help="Only this batch (id or directory).")
     status.add_argument("--verify", action="store_true", help="Check exported traces for duplicated observations.")
@@ -94,6 +104,10 @@ def main(
             return _experiment(args, settings, factory, git or run_git(ROOT))
         if args.command == "status":
             return _status(args, settings, factory)
+        if args.command == "setup":
+            return _setup(settings, factory)
+        if args.command == "doctor":
+            return _doctor(settings, factory)
     except (UsageError, DatasetError, SyncUsageError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -222,6 +236,27 @@ def _status(args: argparse.Namespace, settings: Settings, factory: ClientFactory
         if client is not None:
             client.close()
     return code
+
+
+def _setup(settings: Settings, factory: ClientFactory) -> int:
+    with connect(settings, factory) as client:
+        ids = ensure_score_configs(client, score_definitions())
+        print(f"score configs: {len(ids)}")
+    return 0
+
+
+def _doctor(settings: Settings, factory: ClientFactory) -> int:
+    with connect(settings, factory) as client:
+        health = client.health()
+        project = client.project()
+        wanted = {definition.name for definition in score_definitions()}
+        present = {config["name"] for config in client.score_configs() if not config.get("isArchived")}
+        print(f"ok  server   {client.host} · version {health.version}")
+        print(f"ok  keys     project {project.id} ({project.name})")
+        mark = "ok" if wanted <= present else "!!"
+        hint = "" if wanted <= present else " · run setup"
+        print(f"{mark}  configs  score configs {len(wanted & present)} of {len(wanted)}{hint}")
+    return 0
 
 
 def _batch_dir(batches_dir: Path, name: str) -> Path:

@@ -42,7 +42,6 @@ from scripts.langfuse_bridge.experiments import (
     experiment_name,
     item_trace,
     load_batch_folder,
-    span_id,
 )
 from scripts.langfuse_bridge.ledger import (
     COMPLETE,
@@ -54,9 +53,16 @@ from scripts.langfuse_bridge.ledger import (
     SyncLedger,
     ledger_lock,
 )
+from scripts.langfuse_bridge.scores import (
+    batch_records,
+    ensure_score_configs,
+    local_comparison,
+    score_bodies,
+)
 from src.agent_loop.batch import tasks_sha256
 from src.agent_loop.batch_compare import previous_comparable
 from src.agent_loop.events import redact_json_safe
+from src.agent_loop.platform_records import score_definitions
 from src.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -136,7 +142,9 @@ def push_batch(
             raise SyncUsageError(str(exc)) from None
         with client:
             try:
-                return run.sync(client, repo_tasks=repo_tasks, git=git, new_attempt=new_attempt)
+                return run.sync(
+                    client, repo_tasks=repo_tasks, git=git, new_attempt=new_attempt, retry_rejected=retry_rejected
+                )
             except LangfuseError as exc:
                 run.fail(exc)
                 if exc.status in {401, 403}:
@@ -182,7 +190,15 @@ class _Run:
 
     # -- the pass ---------------------------------------------------------------------------
 
-    def sync(self, client: LangfuseClient, *, repo_tasks: Path | None, git: Git, new_attempt: bool) -> SyncReport:
+    def sync(
+        self,
+        client: LangfuseClient,
+        *,
+        repo_tasks: Path | None,
+        git: Git,
+        new_attempt: bool,
+        retry_rejected: bool,
+    ) -> SyncReport:
         health = client.health()
         if not health.compatible:
             raise SyncUsageError(f"the server reports version {health.version!r}; this bridge needs Langfuse >= 4.59.0")
@@ -230,6 +246,8 @@ class _Run:
         self._save()
 
         self._export_items(client, ref)
+        if self._all_exported():
+            self._scores(client, ref, retry_rejected=retry_rejected)
         return self.finish()
 
     def _export_items(self, client: LangfuseClient, ref: ExperimentRef) -> None:
@@ -296,6 +314,57 @@ class _Run:
         item.update(state=EXPORTED, exported_at=self.now().isoformat())
         self._save()
         return True
+
+    def _scores(self, client: LangfuseClient, ref: ExperimentRef, *, retry_rejected: bool) -> None:
+        """Send the batch's scores once; later only the rejected ones, and only when asked."""
+
+        previous = self.ledger.data.get("scores") or {}
+        rejected_before = list(previous.get("rejected") or [])
+        if previous.get("state") == "posted" and not (retry_rejected and rejected_before):
+            return
+        comparison = local_comparison(self.folder, self.ledger.data.get("baseline_batch_id"), self.settings.pipeline)
+        bodies = score_bodies(
+            self.folder,
+            batch_records(self.folder, comparison),
+            experiment=ref.id,
+            items=self.ledger.items,
+            config_ids=ensure_score_configs(client, score_definitions()),
+            environment=self.platform.environment,
+        )
+        accepted = 0
+        if previous.get("state") == "posted":
+            wanted = {str(entry.get("id")) for entry in rejected_before}
+            bodies = [body for body in bodies if body["id"] in wanted]
+            accepted = int(previous.get("accepted") or 0)
+        rejected: list[dict[str, Any]] = []
+        size = self.platform.score_batch_size
+        for start in range(0, len(bodies), size):
+            chunk = bodies[start : start + size]
+            result = client.post_scores(chunk)
+            accepted += result.accepted
+            for error in result.errors:
+                index = error.get("index")
+                body = chunk[index] if isinstance(index, int) and 0 <= index < len(chunk) else {}
+                rejected.append(
+                    {
+                        "id": body.get("id") or error.get("id"),
+                        "name": body.get("name"),
+                        "message": redact_json_safe(str(error.get("message") or "")),
+                    }
+                )
+        self.ledger.data["scores"] = {
+            "state": "posted",
+            "timestamp": str(self.folder.metadata.get("finished_at")),
+            "accepted": accepted,
+            "rejected": rejected,
+        }
+        self._save()
+
+    def _all_exported(self) -> bool:
+        items = self.ledger.items
+        return len(self.folder.rows) > 0 and all(
+            items.get(str(row.get("scenario_id")), {}).get("state") == EXPORTED for row in self.folder.rows
+        )
 
     # -- dataset and baseline ---------------------------------------------------------------
 
@@ -367,10 +436,8 @@ class _Run:
         self._save()
 
     def finish(self) -> SyncReport:
-        items = self.ledger.items
-        done = len(self.folder.rows) > 0 and all(
-            items.get(str(row.get("scenario_id")), {}).get("state") == EXPORTED for row in self.folder.rows
-        )
+        scores = self.ledger.data.get("scores") or {}
+        done = self._all_exported() and scores.get("state") == "posted" and not scores.get("rejected")
         if done:
             self.ledger.data.update(state=COMPLETE, last_error=None)
         else:
@@ -385,6 +452,7 @@ class _Run:
         unknown = states.count(UNKNOWN) + states.count(SENDING)
         pending = len(states) - exported - unknown
         data = self.ledger.data
+        scores = data.get("scores") or {}
         if data.get("state") == COMPLETE:
             state: SyncState = "complete"
         elif exported or unknown:
@@ -399,6 +467,8 @@ class _Run:
             exported=exported,
             unknown=unknown,
             pending=pending,
+            scores_accepted=int(scores.get("accepted") or 0),
+            scores_rejected=len(scores.get("rejected") or []),
             error=data.get("last_error"),
         )
 
@@ -408,10 +478,13 @@ class _Run:
 
 def _report_from(ledger: SyncLedger, state: SyncState) -> SyncReport:
     items = ledger.items
+    scores = ledger.data.get("scores") or {}
     return SyncReport(
         state=state,
         experiment_url=(ledger.data.get("experiment") or {}).get("url"),
         exported=sum(1 for item in items.values() if item.get("state") == EXPORTED),
+        scores_accepted=int(scores.get("accepted") or 0),
+        scores_rejected=len(scores.get("rejected") or []),
     )
 
 

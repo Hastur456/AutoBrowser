@@ -25,7 +25,13 @@ from typing import TYPE_CHECKING, Any
 
 from src.agent_loop.events import EventRecord
 from src.config import TelemetrySettings
-from src.harness.otel_spans import AGENT_NAME, TERMINAL_EVENTS, SpanContext, SpanSpec, task_span_specs
+from src.harness.otel_spans import (
+    AGENT_NAME,
+    TERMINAL_EVENTS,
+    SpanContext,
+    SpanSpec,
+    task_span_specs,
+)
 from src.version import package_version
 
 if TYPE_CHECKING:

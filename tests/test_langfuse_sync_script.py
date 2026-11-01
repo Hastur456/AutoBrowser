@@ -126,7 +126,7 @@ def test_bad_keys_exit_2_and_an_outage_exits_1(tmp_path: Path, capsys: pytest.Ca
 # -- experiment push and status ---------------------------------------------------------------
 
 
-from tests.platform_fixtures.batch_folder import Scenario, make_batch  # noqa: E402
+from tests.platform_fixtures.batch_folder import Scenario, make_batch
 
 
 def batches(tmp_path: Path) -> Path:
@@ -190,3 +190,32 @@ def test_status_lists_ledgers_and_verify_finds_duplicated_observations(tmp_path:
     fake.traces.append(fake.traces[0])  # a re-sent trace: every observation twice
     assert run(["status", "--batch", "batch-1a2b3c4d5e6f", "--verify"], tmp_path, fake) == 1
     assert "duplicated: a" in capsys.readouterr().out
+
+
+# -- setup and doctor -----------------------------------------------------------------------------
+
+
+def test_setup_creates_the_score_configs_once(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    fake = FakeLangfuse()
+
+    assert run(["setup"], tmp_path, fake) == 0
+    created = len(fake.configs)
+    assert run(["setup"], tmp_path, fake) == 0
+
+    assert created > 20 and len(fake.configs) == created
+    assert f"score configs: {created}" in capsys.readouterr().out
+
+
+def test_doctor_checks_the_server_keys_and_project(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    fake = FakeLangfuse()
+
+    assert run(["doctor"], tmp_path, fake) == 0
+    out = capsys.readouterr().out
+    for part in ("version 4.60.1", "project project-test", "score configs 0 of"):
+        assert part in out
+
+    assert run(["doctor"], tmp_path, FakeLangfuse(version="4.10.0")) == 2
+    unauthorized = FakeLangfuse()
+    unauthorized.fail("GET", "/projects", status=401)
+    assert run(["doctor"], tmp_path, unauthorized) == 2
+    assert SECRET_KEY not in capsys.readouterr().err

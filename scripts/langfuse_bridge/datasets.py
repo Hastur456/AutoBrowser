@@ -21,7 +21,11 @@ from typing import Any
 from scripts.langfuse_bridge.client import LangfuseClient
 from src.agent_loop.batch import tasks_sha256
 from src.agent_loop.events import read_jsonl_lines
-from src.agent_loop.platform_records import DatasetItemRecord, golden_items, platform_key
+from src.agent_loop.platform_records import (
+    DatasetItemRecord,
+    golden_items,
+    platform_key,
+)
 from src.config import EvalPlatformSettings
 
 ITEM_ID_PREFIX = "ab-"
