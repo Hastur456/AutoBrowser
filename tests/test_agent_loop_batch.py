@@ -614,6 +614,21 @@ def test_settings_provenance_fingerprints_the_effective_settings() -> None:
     assert settings_provenance(Settings.model_construct()) == base
 
 
+def test_observer_sections_do_not_change_the_settings_fingerprint() -> None:
+    from src.config import EvalPlatformSettings, PipelineSettings, TelemetrySettings
+
+    base = settings_provenance(Settings.model_construct())
+    observed = settings_provenance(
+        Settings.model_construct(
+            pipeline=PipelineSettings(history_max_rows=100),
+            telemetry=TelemetrySettings(otlp_enabled=True),
+            eval_platform=EvalPlatformSettings(enabled=True, host="https://platform.example.test"),
+        )
+    )
+
+    assert observed == base
+
+
 def test_the_settings_fingerprint_never_holds_a_secret() -> None:
     first = Settings.model_construct(llm=LLMSettings(api_key="secret-one"))
     second = Settings.model_construct(llm=LLMSettings(api_key="secret-two"))

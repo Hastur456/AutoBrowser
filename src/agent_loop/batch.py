@@ -42,6 +42,8 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 1
 #: Subdirectory of a batch directory holding a copy and a readable version of every trace.
 TRACES_DIR_NAME = "traces"
+#: Settings sections that observe or publish a run without changing the agent's behavior.
+OBSERVER_SECTIONS = ("pipeline", "telemetry", "eval_platform")
 _UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9._-]")
 
 
@@ -273,15 +275,20 @@ def settings_provenance(settings: Settings) -> dict[str, Any]:
     """Fingerprint of the effective settings and the sections that differ from the code.
 
     ``settings_sha256`` hashes the redacted settings, so no secret reaches it;
-    ``non_default_sections`` names the sections a profile or the environment changed.
+    ``non_default_sections`` names the sections a profile or the environment changed. The
+    observer sections (:data:`OBSERVER_SECTIONS`) are left out of both: they record or
+    publish a run without changing what the agent does, so switching them on must not make
+    two runs incomparable.
     """
 
-    dumped = redact_json_safe(settings.model_dump(mode="json"))
+    dumped = redact_json_safe(settings.model_dump(mode="json", exclude=set(OBSERVER_SECTIONS)))
     canonical = json.dumps(dumped, sort_keys=True, ensure_ascii=False)
     sections = sorted(
         name
         for name in type(settings).model_fields
-        if isinstance(value := getattr(settings, name), BaseModel) and value != type(value)()
+        if name not in OBSERVER_SECTIONS
+        and isinstance(value := getattr(settings, name), BaseModel)
+        and value != type(value)()
     )
     return {
         "settings_sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),

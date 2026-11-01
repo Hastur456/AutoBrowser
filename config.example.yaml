@@ -430,6 +430,30 @@ telemetry:
   #   vcs.ref.head.revision: langfuse.release
 
 # ---------------------------------------------------------------------------
+# Evaluation platform: batch results as datasets, experiments and scores
+# (scripts/langfuse_sync.py, run_batch.py). Off by default; read only by the
+# developer scripts and `doctor`. See docs/development/eval-platform.md. Keep
+# the keys in <home>/.env (AUTOBROWSER_EVAL_PLATFORM__PUBLIC_KEY/SECRET_KEY).
+eval_platform:
+  enabled: false                                # (default) sync batch results
+  # host: https://cloud.langfuse.com            # Langfuse Cloud EU (US: https://us.cloud.langfuse.com); default unset
+  capture_content: none                         # (default) none | answers | redacted (answers leave the machine)
+  dataset_prefix: autobrowser/                  # (default) dataset folder: autobrowser/golden
+  environment: batch                            # (default) environment of experiment traces and scores
+  auto_sync: true                               # (default) run_batch.py syncs right after the batch
+  sync_timeout_seconds: 300.0                   # (default) budget of that sync
+  timeout_seconds: 30.0                         # (default) one HTTP request
+  max_retries: 3                                # (default) retries on 429/5xx/network
+  retry_backoff_seconds: 2.0                    # (default) backoff base without Retry-After
+  requests_per_minute: 25                       # (default) client rate limit (Cloud Hobby: 30/min)
+  score_batch_size: 100                         # (default) scores per request
+  max_request_bytes: 4000000                    # (default) larger experiment traces are split
+  verify_grace_seconds: 60.0                    # (default) wait before re-sending a trace of unknown fate
+  # triage_queue: autobrowser-triage            # annotation queue for failed scenarios (default unset: off)
+  triage_kinds: [permission_denied, guard_limit, agent_stopped, grade_failed, error, ungraded]  # (default)
+  triage_max_items: 50                          # (default) most queued scenarios per batch
+
+# ---------------------------------------------------------------------------
 # Deterministic lifecycle hooks around the agent loop (src/harness/hooks.py).
 # Handlers are "package.module:attr" import paths of async callables, resolved
 # at session start -- an import error, a duplicate id or a sync handler fails

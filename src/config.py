@@ -1884,6 +1884,148 @@ class _YamlFileSettingsSource(YamlConfigSettingsSource):
         return data
 
 
+class EvalPlatformSettings(_Section):
+    """Sync of batch results to an evaluation platform: datasets, experiments, scores (off).
+
+    Read only by the developer tools in ``scripts/`` (the platform bridge, ``run_batch.py``)
+    and the offline ``doctor`` line; the agent runtime never reads this section. The
+    platform is chosen by ``host`` alone: no URL default lives in the code. See
+    ADR-2026-10-31 in docs/decisions/.
+    """
+
+    enabled: Annotated[
+        bool,
+        Field(description="Sync batch results (datasets, experiments, scores) to the platform."),
+    ] = False
+
+    host: Annotated[
+        str | None,
+        Field(
+            pattern=r"^https?://\S+[^/\s]$",
+            description="Base URL of the platform (http or https, no trailing slash).",
+        ),
+    ] = None
+
+    public_key: Annotated[
+        SecretStr | None,
+        Field(description="Project public key (the Basic-auth user name). Never logged."),
+    ] = None
+
+    secret_key: Annotated[
+        SecretStr | None,
+        Field(description="Project secret key (the Basic-auth password). Never logged."),
+    ] = None
+
+    capture_content: Annotated[
+        Literal["none", "answers", "redacted"],
+        Field(
+            description=(
+                "What of a run leaves the machine besides repository data (task texts, "
+                "expectations): none; answers (final answers, task text on task spans); "
+                "redacted (also tool arguments/results after event redaction)."
+            ),
+        ),
+    ] = "none"
+
+    dataset_prefix: Annotated[
+        str,
+        Field(
+            pattern=r"^[a-z0-9/_.-]{1,100}$",
+            description="Prefix (folder) of the dataset names, e.g. autobrowser/ -> autobrowser/golden.",
+        ),
+    ] = "autobrowser/"
+
+    environment: Annotated[
+        str,
+        Field(
+            pattern=r"^[a-z0-9_-]{1,40}$",
+            description="Environment of the experiment traces and scores on the platform.",
+        ),
+    ] = "batch"
+
+    auto_sync: Annotated[
+        bool,
+        Field(description="run_batch.py syncs the batch right after it ends (when enabled)."),
+    ] = True
+
+    sync_timeout_seconds: Annotated[
+        float,
+        Field(ge=10.0, le=3600.0, description="Budget of the sync after a batch."),
+    ] = 300.0
+
+    timeout_seconds: Annotated[
+        float,
+        Field(ge=1.0, le=300.0, description="Timeout of one HTTP request to the platform."),
+    ] = 30.0
+
+    max_retries: Annotated[
+        int,
+        Field(ge=0, le=10, description="Retries of one request on 429, 5xx and network errors."),
+    ] = 3
+
+    retry_backoff_seconds: Annotated[
+        float,
+        Field(
+            ge=0.1,
+            le=60.0,
+            description="Base of the exponential backoff when the server sends no Retry-After.",
+        ),
+    ] = 2.0
+
+    requests_per_minute: Annotated[
+        int,
+        Field(ge=1, le=10_000, description="Client-side rate limit of the REST requests."),
+    ] = 25
+
+    score_batch_size: Annotated[
+        int,
+        Field(ge=1, le=1000, description="Scores per scores request."),
+    ] = 100
+
+    max_request_bytes: Annotated[
+        int,
+        Field(
+            ge=10_000,
+            le=50_000_000,
+            description="Size limit of one trace-export request; a larger trace is split.",
+        ),
+    ] = 4_000_000
+
+    verify_grace_seconds: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=3600.0,
+            description="Wait before an experiment trace of unknown fate may be sent again.",
+        ),
+    ] = 60.0
+
+    triage_queue: Annotated[
+        str | None,
+        Field(
+            min_length=1,
+            max_length=80,
+            description="Annotation queue for failed scenarios; unset: no queueing.",
+        ),
+    ] = None
+
+    triage_kinds: Annotated[
+        tuple[Annotated[str, Field(min_length=1)], ...],
+        Field(
+            min_length=1,
+            description=(
+                "Failure kinds whose scenarios go to the annotation queue; a JSON list in "
+                "the environment."
+            ),
+        ),
+    ] = ("permission_denied", "guard_limit", "agent_stopped", "grade_failed", "error", "ungraded")
+
+    triage_max_items: Annotated[
+        int,
+        Field(ge=0, le=1000, description="Most scenarios queued for annotation per batch."),
+    ] = 50
+
+
 class Settings(BaseSettings):
     """Root settings object; build once per process via :func:`get_settings`.
 
@@ -1917,6 +2059,7 @@ class Settings(BaseSettings):
     ui: UiSettings = Field(default_factory=UiSettings)
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
+    eval_platform: EvalPlatformSettings = Field(default_factory=EvalPlatformSettings)
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
     #: Name of the ``mcp_servers`` entry that provides browser tools (exposed unprefixed).
     #: ``None`` falls back to ``"playwright"`` when such an entry exists.
