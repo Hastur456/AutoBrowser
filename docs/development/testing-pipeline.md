@@ -351,6 +351,15 @@ FROM read_json_auto('~/.autobrowser/batches/history.jsonl')
 GROUP BY scenario_id ORDER BY passed;
 ```
 
+### 7. Viewing runs in a trace UI
+
+With the OTLP export on (`telemetry.otlp_enabled`, `uv sync --group otel`), every scenario
+session is also sent as traces — to Langfuse or a local Phoenix/Jaeger. Batch sessions carry the
+environment `batch` and the labels `autobrowser.batch.id`, `autobrowser.scenario.id` and
+`vcs.ref.head.revision`, so a scenario of this batch is found by its ids. The verdict stays
+here, in the batch folder. Setup, content capture and privacy: the
+[Trace Export Guide](telemetry.md).
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
