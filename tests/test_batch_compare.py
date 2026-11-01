@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from src.agent_loop.batch_compare import BatchComparison, compare_batches
+from src.agent_loop.batch_compare import BatchComparison, compare_batches, latest_finished, previous_comparable
 from src.config import PipelineSettings
 
 SETTINGS = PipelineSettings(batch_metric_tolerance=0.25)
@@ -172,3 +172,42 @@ def test_different_cli_options_are_a_warning() -> None:
     comparison = compare_batches(meta_a, [_row("s1", "passed")], meta_b, [_row("s1", "passed")], SETTINGS)
 
     assert comparison.warnings == ["options differ: turn_cap 50 -> 10"]
+
+
+# -- the previous comparable run ----------------------------------------------------------------
+
+
+def _run(batch_id: str, started: str, *, tasks: str = "t", finished: bool = True) -> dict[str, Any]:
+    return {
+        **_meta(batch_id, tasks=tasks),
+        "started_at": f"2026-11-01T{started}:00+00:00",
+        "finished_at": f"2026-11-01T{started}:30+00:00" if finished else None,
+    }
+
+
+def test_the_latest_finished_run_is_the_newest_by_start() -> None:
+    runs = [_run("b1", "10:00"), _run("b3", "12:00", finished=False), _run("b2", "11:00")]
+
+    assert latest_finished(runs, meta_of=lambda run: run) == runs[2]
+    assert latest_finished([], meta_of=lambda run: run) is None
+
+
+def test_the_previous_comparable_run_is_the_newest_earlier_finished_one_of_the_same_set() -> None:
+    target = _run("b4", "13:00")
+    runs = [
+        _run("b1", "10:00"),
+        _run("b2", "11:00"),
+        _run("b3", "12:00", tasks="other"),
+        _run("b5", "12:30", finished=False),
+        _run("b6", "14:00"),
+        target,
+    ]
+
+    assert previous_comparable(target, runs, meta_of=lambda run: run) == runs[1]
+
+
+def test_no_previous_comparable_run_without_a_golden_set_hash_or_a_match() -> None:
+    target = {**_run("b2", "11:00"), "provenance": {}}
+
+    assert previous_comparable(target, [_run("b1", "10:00")], meta_of=lambda run: run) is None
+    assert previous_comparable(_run("b2", "11:00", tasks="x"), [_run("b1", "10:00")], meta_of=lambda run: run) is None

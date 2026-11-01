@@ -23,7 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.agent_loop.batch import tasks_sha256
-from src.agent_loop.batch_compare import compare_batches
+from src.agent_loop.batch_compare import compare_batches, latest_finished, previous_comparable
 from src.agent_loop.events import read_jsonl_lines
 from src.config import get_settings
 
@@ -141,15 +141,15 @@ def _latest_pair(batches_dir: Path) -> tuple[tuple[Batch, Batch] | None, list[st
             skipped.append(f"{batch_file.parent.name}: not finished")
             continue
         batches.append(batch)
-    batches.sort(key=lambda batch: str(batch[1].get("started_at") or ""))
-    if not batches:
+    latest = latest_finished(batches, meta_of=_meta)
+    if latest is None:
         return None, skipped
-    latest = batches[-1]
-    tasks = latest[1]["provenance"].get("tasks_sha256")
-    for candidate in reversed(batches[:-1]):
-        if tasks and candidate[1]["provenance"].get("tasks_sha256") == tasks:
-            return (candidate, latest), skipped
-    return None, skipped
+    previous = previous_comparable(latest[1], batches, meta_of=_meta)
+    return ((previous, latest) if previous is not None else None), skipped
+
+
+def _meta(batch: Batch) -> dict[str, Any]:
+    return batch[1]
 
 
 if __name__ == "__main__":

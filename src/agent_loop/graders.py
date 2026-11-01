@@ -336,8 +336,13 @@ _GRADERS: dict[str, Callable[[str, Any], str]] = {
 }
 
 
+#: The ``expected`` keys a deterministic grader checks (any other key grades ``ungraded``).
+GRADED_KEYS: tuple[str, ...] = tuple(_GRADERS)
+
+
 __all__ = [
     "CheckStatus",
+    "GRADED_KEYS",
     "Grade",
     "GradeCheck",
     "answer_numbers",

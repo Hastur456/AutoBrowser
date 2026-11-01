@@ -113,6 +113,32 @@ def test_load_batch_scenarios_reads_jsonl(tmp_path: Path) -> None:
     ]
 
 
+def test_a_scenario_may_carry_a_reference_for_the_judge(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(
+        tasks_path,
+        [
+            {"scenario_id": "s1", "tasks": ["a"], "reference": "  Every item has a name and a price. "},
+            {"scenario_id": "s2", "tasks": ["b"]},
+        ],
+    )
+
+    first, second = load_batch_scenarios(tasks_path)
+
+    assert first.reference == "Every item has a name and a price."
+    assert second.reference is None
+    assert first.to_json_dict()["reference"] == "Every item has a name and a price."
+
+
+@pytest.mark.parametrize("reference", [123, ["a"], "   "])
+def test_a_reference_must_be_a_non_empty_string(tmp_path: Path, reference: Any) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["a"], "reference": reference}])
+
+    with pytest.raises(ValueError, match="reference"):
+        load_batch_scenarios(tasks_path)
+
+
 def test_load_batch_scenarios_rejects_missing_required_fields(tmp_path: Path) -> None:
     tasks_path = tmp_path / "tasks.jsonl"
     _write_jsonl(tasks_path, [{"scenario_id": "scenario-1", "task": "old format"}])

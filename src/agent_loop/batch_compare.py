@@ -11,9 +11,9 @@ these fail only under the perf gate. ``scripts/compare_batches.py`` loads the fi
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 from src.agent_loop.failures import INFRA_KINDS
 from src.config import PipelineSettings
@@ -126,6 +126,40 @@ class BatchComparison:
                     f" | {_cell(finding.after)} | {finding.metric} | {change} |"
                 )
         return "\n".join(lines) + "\n"
+
+
+_Run = TypeVar("_Run")
+
+
+def latest_finished(runs: Sequence[_Run], *, meta_of: Callable[[_Run], Mapping[str, Any]]) -> _Run | None:
+    """The finished run (``finished_at`` set) that started last, ``None`` without one."""
+
+    finished = [run for run in runs if meta_of(run).get("finished_at")]
+    return max(finished, key=lambda run: str(meta_of(run).get("started_at") or ""), default=None)
+
+
+def previous_comparable(
+    target: Mapping[str, Any],
+    runs: Sequence[_Run],
+    *,
+    meta_of: Callable[[_Run], Mapping[str, Any]],
+) -> _Run | None:
+    """The newest finished run that started before ``target`` on the same Golden Set
+    (``provenance.tasks_sha256``); ``None`` when ``target`` has no hash or no run matches."""
+
+    tasks = (target.get("provenance") or {}).get("tasks_sha256")
+    if not tasks:
+        return None
+    started = str(target.get("started_at") or "")
+    candidates = [
+        run
+        for run in runs
+        if (meta := meta_of(run)).get("finished_at")
+        and meta.get("batch_id") != target.get("batch_id")
+        and str(meta.get("started_at") or "") < started
+        and (meta.get("provenance") or {}).get("tasks_sha256") == tasks
+    ]
+    return max(candidates, key=lambda run: str(meta_of(run).get("started_at") or ""), default=None)
 
 
 def compare_batches(

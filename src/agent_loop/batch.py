@@ -55,6 +55,9 @@ class BatchScenario:
     tasks: list[str]
     expected: Any | None = None
     tags: list[str] | None = None
+    #: A reference answer or rubric for a judge of the keys no grader checks; graders never
+    #: read it.
+    reference: str | None = None
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -62,6 +65,7 @@ class BatchScenario:
             "tasks": list(self.tasks),
             "expected": self.expected,
             "tags": list(self.tags or []),
+            "reference": self.reference,
         }
 
 
@@ -443,11 +447,15 @@ def _batch_scenario_from_payload(
         parsed_tags = [str(item) for item in tags]
     else:
         raise ValueError(f"Line {line_number} tags must be a list.")
+    reference = payload.get("reference")
+    if reference is not None and (not isinstance(reference, str) or not reference.strip()):
+        raise ValueError(f"Line {line_number} reference must be a non-empty string.")
     return BatchScenario(
         scenario_id=str(scenario_id),
         tasks=parsed_tasks,
         expected=payload.get("expected"),
         tags=parsed_tags,
+        reference=reference.strip() if reference is not None else None,
     )
 
 
