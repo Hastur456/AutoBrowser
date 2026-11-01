@@ -1184,3 +1184,16 @@ def test_session_config_reads_labels_from_the_args() -> None:
 
     assert SessionConfig.from_args(SimpleNamespace(**fields, labels={"k": "v"})).labels == {"k": "v"}
     assert SessionConfig.from_args(SimpleNamespace(**fields)).labels == {}
+
+
+def test_session_config_reads_otlp_export_from_the_args() -> None:
+    from types import SimpleNamespace
+
+    fields = dict(
+        model="m", temperature=None, no_mcp=True, show_state=False, show_tools=False, json=False,
+        compress_tools=False, agent_loop=False, chrome_path="chrome.exe", user_data_dir="profile",
+        cdp_port=9555, cdp_timeout=1.0, turn_cap=10,
+    )
+
+    assert SessionConfig.from_args(SimpleNamespace(**fields)).otlp_export is True
+    assert SessionConfig.from_args(SimpleNamespace(**fields, otlp_export=False)).otlp_export is False

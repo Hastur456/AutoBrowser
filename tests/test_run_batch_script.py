@@ -101,6 +101,7 @@ async def test_run_batch_from_args_passes_session_factory_and_batch_options(
     assert calls["session_args"][0].cdp_port == 9555
     assert calls["session_args"][0].labels == {
         "autobrowser.batch.id": batch_id,
+        "deployment.environment.name": "batch",
         "autobrowser.scenario.id": "s1",
         "vcs.ref.head.revision": GIT["commit"],
     }

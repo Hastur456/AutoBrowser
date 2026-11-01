@@ -26,11 +26,12 @@ from src.agent_loop.execution.loop import Agent, AgentLoopResult, HumanInputCall
 from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalLimits, GoalRunner
-from src.config import get_settings
+from src.config import TelemetrySettings, get_settings
 from src.contracts import PermissionMode, TaskRequest
 from src.harness.hooks import HookEngine, NullHookEngine, registry_digest
 from src.browser.memory import BrowserMemoryPolicy, BrowserMemoryScope
 from src.browser.permissions import BrowserResourceResolver
+from src.harness.otel_sink import ModelIdentity, build_otlp_sink
 from src.harness.permissions import PermissionEngine
 from src.harness.mcp_setup import MCPRuntime, build_mcp_runtime
 from src.harness.memory import MemoryManager, NullMemoryContext
@@ -146,6 +147,9 @@ class SessionConfig:
     #: Free-form labels of the session (a batch puts its batch and scenario ids here), carried
     #: by the ``session.started`` event so trace consumers can find the session by them.
     labels: Mapping[str, str] = field(default_factory=dict)
+    #: Export the session over OTLP when ``telemetry.otlp_enabled``; ``False`` keeps this
+    #: session out of the live export (a run that reaches the backend another way).
+    otlp_export: bool = True
 
     @classmethod
     def from_args(cls, args: Any) -> "SessionConfig":
@@ -168,6 +172,7 @@ class SessionConfig:
             permission_mode=getattr(args, "permission_mode", None),
             provider=getattr(args, "provider", None) or get_settings().llm.provider,
             labels=dict(getattr(args, "labels", None) or {}),
+            otlp_export=bool(getattr(args, "otlp_export", True)),
         )
 
 
@@ -408,6 +413,20 @@ def _build_session_event_sink(
     )
 
 
+def _telemetry_sinks(
+    config: SessionConfig,
+    telemetry: TelemetrySettings,
+    *,
+    models: Callable[[], ModelIdentity],
+) -> list[EventSink]:
+    """The OTLP sink when export is enabled and the session takes part in it; raises when
+    enabled without the exporter package."""
+
+    if not (telemetry.otlp_enabled and config.otlp_export):
+        return []
+    return [build_otlp_sink(telemetry, models=models)]
+
+
 def _valid_model_id(model: str) -> bool:
     """A non-empty id of printable characters (no ESC, bidi or other control codes)."""
 
@@ -597,8 +616,11 @@ class SessionContext:
         # A new session takes its lock here; a resumed one has held it since restore().
         if self.session_lock is None:
             self.session_lock = SessionLock.acquire(self.session_dir)
+        telemetry_sinks = _telemetry_sinks(
+            self.config, settings.telemetry, models=self._model_identity
+        )
         self.event_emitter = EventEmitter(
-            _build_session_event_sink(self.session_dir, self.event_sinks),
+            _build_session_event_sink(self.session_dir, [*self.event_sinks, *telemetry_sinks]),
             session_id=self.session_id,
             sequence=self.resumed_from_sequence or 0,
         )
@@ -684,6 +706,16 @@ class SessionContext:
             send_temperature=config.temperature is not None,
         )
         return llm, approval
+
+    def _model_identity(self) -> ModelIdentity:
+        """The current chat models for the trace export (``use_model`` may switch them)."""
+
+        classifier = get_settings().permissions.classifier_model
+        return ModelIdentity(
+            model=self.config.model,
+            provider=self.config.provider or None,
+            phase_models={"approval": classifier} if classifier else {},
+        )
 
     def use_model(self, config: SessionConfig, llm_factory: LLMFactory) -> None:
         """Switch a started session to ``config.model``: a new model, approval judge and
