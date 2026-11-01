@@ -268,6 +268,60 @@ def test_doctor_fails_on_a_malformed_telemetry_header_without_its_value(
     assert "hdr-secret" not in out
 
 
+def test_doctor_reports_the_eval_platform_disabled_by_default(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(subcommands.shutil, "which", lambda name: None)
+
+    entry.main(["doctor"])
+
+    assert doctor_line(capsys.readouterr().out, "eval platform") == "ok  eval platform  disabled"
+
+
+@pytest.mark.parametrize(
+    "keys, mark, state",
+    [
+        ("  public_key: pk-secret-1\n  secret_key: sk-secret-2\n", "ok", "keys set"),
+        ("  public_key: pk-secret-1\n", "!!", "keys missing"),
+    ],
+)
+def test_doctor_reports_the_eval_platform_offline_without_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    keys: str,
+    mark: str,
+    state: str,
+) -> None:
+    use_profile(
+        monkeypatch,
+        tmp_path,
+        "eval_platform:\n  enabled: true\n  host: https://platform.example.test\n  capture_content: answers\n" + keys,
+    )
+    monkeypatch.setattr(subcommands.shutil, "which", lambda name: None)
+
+    entry.main(["doctor"])
+
+    out = capsys.readouterr().out
+    line = doctor_line(out, "eval platform")
+    assert line.startswith(f"{mark}  ")
+    for part in ("enabled", "host https://platform.example.test", state, "content answers"):
+        assert part in line
+    assert "pk-secret-1" not in out and "sk-secret-2" not in out
+
+
+def test_doctor_warns_when_the_enabled_eval_platform_has_no_host(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_profile(monkeypatch, tmp_path, "eval_platform:\n  enabled: true\n")
+    monkeypatch.setattr(subcommands.shutil, "which", lambda name: None)
+
+    entry.main(["doctor"])
+
+    line = doctor_line(capsys.readouterr().out, "eval platform")
+    assert line.startswith("!!  ") and "no host" in line
+
+
 def test_doctor_warns_when_a_model_call_can_outlast_the_stall_budget(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

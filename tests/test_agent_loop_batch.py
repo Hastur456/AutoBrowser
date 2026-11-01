@@ -113,6 +113,32 @@ def test_load_batch_scenarios_reads_jsonl(tmp_path: Path) -> None:
     ]
 
 
+def test_a_scenario_may_carry_a_reference_for_the_judge(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(
+        tasks_path,
+        [
+            {"scenario_id": "s1", "tasks": ["a"], "reference": "  Every item has a name and a price. "},
+            {"scenario_id": "s2", "tasks": ["b"]},
+        ],
+    )
+
+    first, second = load_batch_scenarios(tasks_path)
+
+    assert first.reference == "Every item has a name and a price."
+    assert second.reference is None
+    assert first.to_json_dict()["reference"] == "Every item has a name and a price."
+
+
+@pytest.mark.parametrize("reference", [123, ["a"], "   "])
+def test_a_reference_must_be_a_non_empty_string(tmp_path: Path, reference: Any) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["a"], "reference": reference}])
+
+    with pytest.raises(ValueError, match="reference"):
+        load_batch_scenarios(tasks_path)
+
+
 def test_load_batch_scenarios_rejects_missing_required_fields(tmp_path: Path) -> None:
     tasks_path = tmp_path / "tasks.jsonl"
     _write_jsonl(tasks_path, [{"scenario_id": "scenario-1", "task": "old format"}])
@@ -612,6 +638,21 @@ def test_settings_provenance_fingerprints_the_effective_settings() -> None:
     assert len(base["settings_sha256"]) == 64
     assert base["settings_sha256"] != other["settings_sha256"]
     assert settings_provenance(Settings.model_construct()) == base
+
+
+def test_observer_sections_do_not_change_the_settings_fingerprint() -> None:
+    from src.config import EvalPlatformSettings, PipelineSettings, TelemetrySettings
+
+    base = settings_provenance(Settings.model_construct())
+    observed = settings_provenance(
+        Settings.model_construct(
+            pipeline=PipelineSettings(history_max_rows=100),
+            telemetry=TelemetrySettings(otlp_enabled=True),
+            eval_platform=EvalPlatformSettings(enabled=True, host="https://platform.example.test"),
+        )
+    )
+
+    assert observed == base
 
 
 def test_the_settings_fingerprint_never_holds_a_secret() -> None:

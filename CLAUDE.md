@@ -182,9 +182,9 @@ Every tunable lives in `src/config.py` — a pydantic-settings root read at call
 never imports it back). See
 `docs/decisions/2026-09-16-typed-settings-module.md` and the `.env.example` template.
 
-Names are `AUTOBROWSER_<SECTION>__<FIELD>` over fourteen sections (`llm`, `browser`, `loop`,
+Names are `AUTOBROWSER_<SECTION>__<FIELD>` over fifteen sections (`llm`, `browser`, `loop`,
 `observation`, `memory`, `skills`, `events`, `storage`, `flags`, `hooks`, `permissions`, `ui`, `pipeline`,
-`telemetry`). Env outranks `.env` outranks the code
+`telemetry`, `eval_platform`). Env outranks `.env` outranks the code
 defaults; an empty value means "not set"; sections are `frozen` with `extra="forbid"`.
 `AUTOBROWSER_LLM__API_KEY` is passed to the provider as an explicit `Authorization: Bearer`
 header — the vendor `OLLAMA_API_KEY` is no longer read. Adding a setting means updating
@@ -375,6 +375,7 @@ uv run main.py --show-state --task "..."      # debug state per step
 
 uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
 uv run scripts/compare_batches.py             # latest batch vs the previous one of the same set
+uv run scripts/langfuse_sync.py experiment push --pending  # Langfuse sync (eval_platform; docs/development/eval-platform.md)
 uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v2.json
 uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
 ```

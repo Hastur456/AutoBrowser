@@ -29,6 +29,8 @@ development workflows.
 
 - [UI Integration](ui-integration.md): the terminal UI thread model (UI loop vs.
   `RuntimeLoop`, the render pump as the only writer) and a task with an approval card.
+- [Eval Platform Sync](eval-platform-sync.md): batch folder to Langfuse dataset, experiment
+  and scores — components and boundaries, one sync, and the states of an experiment trace.
 - [Trace Export](trace-export.md): session events through the sinks (`events.jsonl`,
   `agent_trace.jsonl`, the OTLP sink) to Langfuse or another OTLP backend, and the span tree
   of one task.

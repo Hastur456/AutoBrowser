@@ -13,7 +13,7 @@ This directory contains Architecture Decision Records (ADRs).
   primary receiver; no Langfuse SDK. Implements the deferred option of the 2026-10-19
   No-Langfuse ADR.
 - [2026-10-31 Langfuse as the Dataset, Experiment and Score Platform](2026-10-31-langfuse-platform-integration.md)
-  (Proposed, Russian): a hybrid — the regression verdict and CI exit codes stay local and
+  (Accepted, Russian): a hybrid — the regression verdict and CI exit codes stay local and
   hermetic, Langfuse is a second interface. No Langfuse SDK: a narrow `httpx` REST client plus
   OTLP/JSON with `langfuse.experiment.*` attributes. Each batch becomes one experiment built
   after the run from the batch folder (one item trace per scenario), idempotent through

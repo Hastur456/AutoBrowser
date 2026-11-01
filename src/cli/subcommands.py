@@ -25,6 +25,7 @@ from src.config import (
     LEGACY_STORAGE_ROOT,
     ROOT_PATH,
     LLMSettings,
+    EvalPlatformSettings,
     Settings,
     TelemetrySettings,
     env_files,
@@ -165,6 +166,7 @@ def _doctor(args: argparse.Namespace, write: Callable[[str], None]) -> int:
     check(_OK if servers else _WARN, "mcp servers", servers or "none configured")
     _doctor_skills(settings, check)
     check(*_telemetry_summary(settings.telemetry))
+    check(*_eval_platform_summary(settings.eval_platform))
 
     caps = detect(settings.ui)
     check(
@@ -199,6 +201,29 @@ def _doctor_skills(settings: Settings, check: Callable[[str, str, object], None]
     for skill in store.skills():
         if skill.unknown_fields:
             check(_WARN, "skill", f"{skill.name}: unknown frontmatter keys {', '.join(skill.unknown_fields)}")
+
+
+def _eval_platform_summary(platform: EvalPlatformSettings) -> tuple[str, str, str]:
+    """The evaluation-platform line, offline: host without credentials, whether both keys are
+    set (never their values) and the content mode. The network check is the platform's own
+    sync tool."""
+
+    if not platform.enabled:
+        return _OK, "eval platform", "disabled"
+    keys = bool(
+        platform.public_key
+        and platform.public_key.get_secret_value().strip()
+        and platform.secret_key
+        and platform.secret_key.get_secret_value().strip()
+    )
+    host = _public_url(platform.host)
+    parts = [
+        "enabled",
+        f"host {host}" if host else "no host",
+        "keys set" if keys else "keys missing",
+        f"content {platform.capture_content}",
+    ]
+    return (_OK if keys and host else _WARN), "eval platform", " · ".join(parts)
 
 
 def _telemetry_summary(telemetry: TelemetrySettings) -> tuple[str, str, str]:

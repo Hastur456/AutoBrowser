@@ -194,6 +194,19 @@ Run Golden Set JSONL scenarios:
 
 ```powershell
 uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue-on-error
+uv run scripts/compare_batches.py              # latest batch vs the previous one of the same set
+```
+
+Sync batch results to Langfuse (datasets, experiments, scores; `eval_platform`, off by default;
+`docs/development/eval-platform.md`). Vendor code lives only in `scripts/langfuse_bridge/`;
+`src/` holds neutral records and never names the platform:
+
+```powershell
+uv run scripts/langfuse_sync.py doctor                    # server, keys, project, score configs
+uv run scripts/langfuse_sync.py setup                     # score configs (+ annotation queue)
+uv run scripts/langfuse_sync.py dataset push              # Golden Set -> autobrowser/golden
+uv run scripts/langfuse_sync.py experiment push --pending # catch up unfinished syncs
+uv run scripts/langfuse_sync.py scores pull --batch <id>  # judge and reviewer scores -> the batch
 ```
 
 Export session rows and inspect traces:

@@ -1451,6 +1451,93 @@ def test_telemetry_values_are_validated(settings: Any, field: str, value: Any) -
         settings(telemetry={field: value})
 
 
+# --------------------------------------------------------------------------
+# The eval_platform section: dataset/experiment/score sync, off by default
+# --------------------------------------------------------------------------
+
+
+def test_eval_platform_is_off_and_names_no_host_by_default(settings: Any) -> None:
+    platform = settings().eval_platform
+
+    assert platform.enabled is False
+    assert platform.host is None
+    assert platform.public_key is None and platform.secret_key is None
+    assert platform.capture_content == "none"
+    assert platform.dataset_prefix == "autobrowser/"
+    assert platform.environment == "batch"
+    assert platform.auto_sync is True
+    assert platform.sync_timeout_seconds == 300.0
+    assert platform.timeout_seconds == 30.0
+    assert platform.max_retries == 3
+    assert platform.retry_backoff_seconds == 2.0
+    assert platform.requests_per_minute == 25
+    assert platform.score_batch_size == 100
+    assert platform.max_request_bytes == 4_000_000
+    assert platform.verify_grace_seconds == 60.0
+    assert platform.triage_queue is None
+    assert platform.triage_kinds == (
+        "permission_denied",
+        "guard_limit",
+        "agent_stopped",
+        "grade_failed",
+        "error",
+        "ungraded",
+    )
+    assert platform.triage_max_items == 50
+
+
+def test_eval_platform_reads_the_env_and_keeps_keys_secret(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_EVAL_PLATFORM__ENABLED", "true")
+    monkeypatch.setenv("AUTOBROWSER_EVAL_PLATFORM__HOST", "https://platform.example.test")
+    monkeypatch.setenv("AUTOBROWSER_EVAL_PLATFORM__PUBLIC_KEY", "pk-test-public")
+    monkeypatch.setenv("AUTOBROWSER_EVAL_PLATFORM__SECRET_KEY", "sk-test-secret")
+    monkeypatch.setenv("AUTOBROWSER_EVAL_PLATFORM__TRIAGE_KINDS", '["grade_failed", "ungraded"]')
+    monkeypatch.setenv("AUTOBROWSER_EVAL_PLATFORM__CAPTURE_CONTENT", "answers")
+
+    platform = settings().eval_platform
+
+    assert platform.enabled is True
+    assert platform.host == "https://platform.example.test"
+    assert platform.public_key is not None and platform.public_key.get_secret_value() == "pk-test-public"
+    assert platform.secret_key is not None and platform.secret_key.get_secret_value() == "sk-test-secret"
+    assert platform.triage_kinds == ("grade_failed", "ungraded")
+    assert platform.capture_content == "answers"
+    for secret in ("pk-test-public", "sk-test-secret"):
+        assert secret not in repr(platform)
+        assert secret not in str(platform.model_dump(mode="json"))
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("host", "platform.example.test"),
+        ("host", "ftp://platform.example.test"),
+        ("host", "https://platform.example.test/"),
+        ("capture_content", "all"),
+        ("dataset_prefix", ""),
+        ("dataset_prefix", "Upper/"),
+        ("environment", "Batch Run"),
+        ("environment", "x" * 41),
+        ("sync_timeout_seconds", 5.0),
+        ("timeout_seconds", 301.0),
+        ("max_retries", 11),
+        ("retry_backoff_seconds", 0.05),
+        ("requests_per_minute", 0),
+        ("score_batch_size", 1001),
+        ("max_request_bytes", 9_999),
+        ("verify_grace_seconds", -1.0),
+        ("triage_queue", ""),
+        ("triage_kinds", ()),
+        ("triage_max_items", 1001),
+    ],
+)
+def test_eval_platform_values_are_validated(settings: Any, field: str, value: Any) -> None:
+    with pytest.raises(ValueError):
+        settings(eval_platform={field: value})
+
+
 def test_the_config_file_is_read_as_utf8(
     settings: Any,
     monkeypatch: pytest.MonkeyPatch,

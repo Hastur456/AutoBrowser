@@ -77,6 +77,7 @@ PIPELINE_MODULES = {
     "src.agent_loop.comparison",
     "src.agent_loop.failures",
     "src.agent_loop.graders",
+    "src.agent_loop.platform_records",
 }
 
 
@@ -115,6 +116,21 @@ def test_the_agent_loop_imports_no_trace_export(path: Path) -> None:
     )
 
     assert not export_imports, f"{path.relative_to(SRC)} imports {export_imports}"
+
+
+@pytest.mark.parametrize(
+    "path", sorted(SRC.rglob("*.py")), ids=lambda path: path.relative_to(SRC).as_posix()
+)
+def test_src_imports_nothing_from_scripts(path: Path) -> None:
+    """The developer tools (the platform bridge among them) sit on top of ``src/``."""
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+
+    script_imports = [
+        module for module in _imported_modules(tree) if module == "scripts" or module.startswith("scripts.")
+    ]
+
+    assert not script_imports, f"{path.relative_to(SRC)} imports {script_imports}"
 
 
 #: Trace backends are chosen by the endpoint and headers in the configuration; their names and

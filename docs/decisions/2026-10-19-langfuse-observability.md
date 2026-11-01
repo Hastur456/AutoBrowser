@@ -4,6 +4,7 @@ Status: Proposed
 Date: 2026-10-19
 
 Deferred option implemented by [ADR-2026-10-29](2026-10-29-otlp-trace-export.md).
+Superseded in part by [ADR-2026-10-31](2026-10-31-langfuse-platform-integration.md).
 
 ## Context
 
