@@ -362,6 +362,24 @@ def test_capture_redacted_exports_the_redacted_task_answer_and_tool_io() -> None
     assert "sk-live-1" not in " ".join(all_values(spans))
 
 
+def test_capture_answers_exports_the_task_and_answer_only() -> None:
+    events = trace()
+    events.insert(9, ev("permission.decided", 223, {"tool": "click", "server": "b", "decision": "deny", "source": "rule", "rule_id": "r", "reason": REASON}))
+    events[8] = ev("tool.finished", 222, {"tool_result": {"name": "click", "status": "error", "content": RESULT, "error": RESULT}})
+
+    spans = specs(events, capture="answers")
+
+    root = spans[0]
+    assert root.attributes["input.value"] == TASK and root.attributes["output.value"] == ANSWER
+    tool = next(span for span in spans if span.name.startswith("execute_tool"))
+    assert "gen_ai.tool.call.arguments" not in tool.attributes and "gen_ai.tool.call.result" not in tool.attributes
+    assert tool.error == "tool_error"
+    assert all("reason" not in event.attributes for event in root.events)
+    values = [value for value in all_values(spans) if value not in {TASK, ANSWER}]
+    for text in (RESULT, REASON, "Add to basket"):
+        assert not any(text in value for value in values), text
+
+
 # -- OTLP/JSON -------------------------------------------------------------------------------------
 
 

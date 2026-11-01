@@ -10,9 +10,9 @@ tree. The live sink (``src/harness/otel_sink.py``) materializes the specs throug
 Attribute names follow the OpenTelemetry GenAI conventions where one exists; everything else
 is ``autobrowser.*``. Tool and model names are data (span names and attributes), never
 branches. With ``capture_content="none"`` only ids, names, counts, statuses and durations are
-emitted; with ``"redacted"`` the task text, the final answer, tool arguments/results and
-decision reasons are added, read from ``EventRecord.to_json_dict()`` (redacted and truncated),
-never from the raw payload. See docs/decisions/2026-10-29-otlp-trace-export.md.
+emitted; ``"answers"`` adds the task text and the final answer on the task span; ``"redacted"``
+also tool arguments/results, decision reasons and error messages. Values are read from
+``EventRecord.to_json_dict()`` (redacted and truncated), never from the raw payload. See docs/decisions/2026-10-29-otlp-trace-export.md.
 """
 
 from __future__ import annotations
@@ -113,6 +113,7 @@ def task_span_specs(
 
     context = context or SpanContext()
     redacted = capture_content == "redacted"
+    answers = redacted or capture_content == "answers"
     start = next((event for event in events if event.type == "goal.started"), None)
     if start is None:
         return []
@@ -178,7 +179,7 @@ def task_span_specs(
         children.append(_closed(span, root_key, end_ns, None, incomplete=True))
     children.sort(key=lambda spec: (spec.start_ns, spec.key))
 
-    root = _root(start, terminal, root_key, end_ns, tuple(span_events), redacted)
+    root = _root(start, terminal, root_key, end_ns, tuple(span_events), answers=answers, redacted=redacted)
     return [_with_common(spec, context) for spec in [root, *children]]
 
 
@@ -234,6 +235,8 @@ def _root(
     key: str,
     end_ns: int,
     events: tuple[SpanEventSpec, ...],
+    *,
+    answers: bool,
     redacted: bool,
 ) -> SpanSpec:
     attributes: dict[str, AttributeValue] = {
@@ -244,7 +247,7 @@ def _root(
         attributes["gen_ai.conversation.id"] = start.session_id
     if start.task_id:
         attributes["autobrowser.task.id"] = start.task_id
-    if redacted:
+    if answers:
         attributes["input.value"] = _text(_payload(start).get("task") or "")
     if terminal is None:
         attributes[INCOMPLETE_KEY] = True
@@ -258,7 +261,7 @@ def _root(
         attributes["autobrowser.stop_reason"] = stop_reason
     if isinstance(payload.get("turns"), int):
         attributes["autobrowser.turns"] = payload["turns"]
-    if redacted and payload.get("final_answer"):
+    if answers and payload.get("final_answer"):
         attributes["output.value"] = _text(payload["final_answer"])
     error: str | None = None
     if status == "failed":
