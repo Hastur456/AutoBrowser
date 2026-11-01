@@ -4,6 +4,14 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-10-29 Neutral OTLP Trace Export, Langfuse as the Primary Receiver](2026-10-29-otlp-trace-export.md)
+  (Accepted): each task becomes one OpenTelemetry trace (`invoke_agent autobrowser` root,
+  `chat {model}` and `execute_tool {tool}` children, decisions as span events) exported over
+  OTLP/HTTP by a session event sink, each span exactly once. Off by default; content is opt-in
+  (`capture_content`). The backend is configuration: endpoint, secret headers and
+  `attribute_aliases` for backend keys, so `src/` names no vendor. Langfuse is the documented
+  primary receiver; no Langfuse SDK. Implements the deferred option of the 2026-10-19
+  No-Langfuse ADR.
 - [2026-10-31 Langfuse as the Dataset, Experiment and Score Platform](2026-10-31-langfuse-platform-integration.md)
   (Proposed, Russian): a hybrid — the regression verdict and CI exit codes stay local and
   hermetic, Langfuse is a second interface. No Langfuse SDK: a narrow `httpx` REST client plus
