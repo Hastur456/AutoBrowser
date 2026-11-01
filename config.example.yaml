@@ -421,6 +421,13 @@ telemetry:
   otlp_timeout_seconds: 10.0                    # (default) export request and final flush
   capture_content: none                         # (default) none | redacted (text leaves the machine)
   service_name: autobrowser                     # (default) service.name of the spans
+  # environment: interactive                   # deployment.environment.name (default unset; batch runs label "batch")
+  attribute_aliases: {}                         # (default) copy attribute A also under key B
+  # Langfuse reads trace filters and the release only under its own keys:
+  # attribute_aliases:
+  #   autobrowser.batch.id: langfuse.trace.metadata.batch_id
+  #   autobrowser.scenario.id: langfuse.trace.metadata.scenario_id
+  #   vcs.ref.head.revision: langfuse.release
 
 # ---------------------------------------------------------------------------
 # Deterministic lifecycle hooks around the agent loop (src/harness/hooks.py).

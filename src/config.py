@@ -1792,6 +1792,27 @@ class TelemetrySettings(_Section):
         Field(min_length=1, description="service.name resource attribute of the spans."),
     ] = "autobrowser"
 
+    environment: Annotated[
+        str | None,
+        Field(
+            min_length=1,
+            description=(
+                "deployment.environment.name on every span (e.g. interactive); unset: no "
+                "attribute. A session label of the same key (batch runs set 'batch') wins."
+            ),
+        ),
+    ] = None
+
+    attribute_aliases: Annotated[
+        dict[Annotated[str, Field(min_length=1)], Annotated[str, Field(min_length=1)]],
+        Field(
+            description=(
+                "Copy span attribute A also under key B on every span that has A, for a "
+                "backend that reads its own keys; a JSON object in the environment."
+            ),
+        ),
+    ] = {}
+
 
 def _resolve_config_path() -> Path | None:
     """Return the YAML file to load, if any.

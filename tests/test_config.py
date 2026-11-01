@@ -1396,6 +1396,23 @@ def test_telemetry_is_off_and_neutral_by_default(settings: Any) -> None:
     assert telemetry.otlp_timeout_seconds == 10.0
     assert telemetry.capture_content == "none"
     assert telemetry.service_name == "autobrowser"
+    assert telemetry.environment is None
+    assert telemetry.attribute_aliases == {}
+
+
+def test_telemetry_reads_the_environment_name_and_attribute_aliases(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_TELEMETRY__ENVIRONMENT", "staging")
+    monkeypatch.setenv(
+        "AUTOBROWSER_TELEMETRY__ATTRIBUTE_ALIASES",
+        '{"autobrowser.batch.id": "backend.metadata.batch_id"}',
+    )
+
+    telemetry = settings().telemetry
+
+    assert telemetry.environment == "staging"
+    assert telemetry.attribute_aliases == {"autobrowser.batch.id": "backend.metadata.batch_id"}
 
 
 def test_telemetry_reads_the_env_and_keeps_headers_secret(
@@ -1424,6 +1441,9 @@ def test_telemetry_reads_the_env_and_keeps_headers_secret(
         ("otlp_endpoint", ""),
         ("service_name", ""),
         ("capture_content", "all"),
+        ("environment", ""),
+        ("attribute_aliases", {"": "target"}),
+        ("attribute_aliases", {"source": ""}),
     ],
 )
 def test_telemetry_values_are_validated(settings: Any, field: str, value: Any) -> None:
