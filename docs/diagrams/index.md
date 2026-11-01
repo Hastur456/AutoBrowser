@@ -29,6 +29,9 @@ development workflows.
 
 - [UI Integration](ui-integration.md): the terminal UI thread model (UI loop vs.
   `RuntimeLoop`, the render pump as the only writer) and a task with an approval card.
+- [Trace Export](trace-export.md): session events through the sinks (`events.jsonl`,
+  `agent_trace.jsonl`, the OTLP sink) to Langfuse or another OTLP backend, and the span tree
+  of one task.
 
 ## Update Guidance
 

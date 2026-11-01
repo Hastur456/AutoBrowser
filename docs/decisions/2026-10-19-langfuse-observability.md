@@ -3,6 +3,8 @@
 Status: Proposed
 Date: 2026-10-19
 
+Deferred option implemented by [ADR-2026-10-29](2026-10-29-otlp-trace-export.md).
+
 ## Context
 
 Пользователь просит автономный пайплайн регрессий и бенчмарков и интеграцию с Langfuse,

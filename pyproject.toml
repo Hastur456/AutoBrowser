@@ -159,6 +159,11 @@ dev = [
     "pyte>=0.8.2",
     "pywinpty>=3.1.0 ; sys_platform == 'win32'",
 ]
+# OTLP/HTTP trace export (``telemetry.otlp_enabled``): ``uv sync --group otel``. Pinned to the
+# ``opentelemetry-sdk`` version of the main dependencies.
+otel = [
+    "opentelemetry-exporter-otlp-proto-http==1.39.1",
+]
 
 [tool.uv.build-backend]
 # The import package is the top-level ``src`` (no rename yet, see

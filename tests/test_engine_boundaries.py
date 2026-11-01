@@ -93,6 +93,46 @@ def test_the_engine_imports_no_pipeline_analytics(path: Path) -> None:
     assert not pipeline_imports, f"{path.name} imports {pipeline_imports}"
 
 
+#: The OTLP trace export is a session event sink: the agent loop only emits events.
+TRACE_EXPORT_MODULES = ("src.harness.otel_sink", "src.harness.otel_spans", "opentelemetry")
+AGENT_LOOP_MODULES = sorted((SRC / "agent_loop").rglob("*.py"))
+
+
+@pytest.mark.parametrize(
+    "path", AGENT_LOOP_MODULES, ids=lambda path: path.relative_to(SRC).as_posix()
+)
+def test_the_agent_loop_imports_no_trace_export(path: Path) -> None:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+
+    imported = set(_imported_modules(tree))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imported.update(f"{node.module}.{alias.name}" for alias in node.names)
+    export_imports = sorted(
+        module
+        for module in imported
+        if any(module == name or module.startswith(f"{name}.") for name in TRACE_EXPORT_MODULES)
+    )
+
+    assert not export_imports, f"{path.relative_to(SRC)} imports {export_imports}"
+
+
+#: Trace backends are chosen by the endpoint and headers in the configuration; their names and
+#: backend-specific attribute keys live in the templates and docs only.
+TRACE_BACKEND_MARKERS = re.compile(r"\b(?:langfuse|phoenix|arize|jaeger)\b", re.IGNORECASE)
+
+
+@pytest.mark.parametrize(
+    "path",
+    sorted(path for path in SRC.rglob("*") if path.is_file() and path.suffix in {".py", ".md", ".yaml", ".json"}),
+    ids=lambda path: path.relative_to(SRC).as_posix(),
+)
+def test_no_source_file_names_a_trace_backend(path: Path) -> None:
+    found = TRACE_BACKEND_MARKERS.findall(path.read_text(encoding="utf-8"))
+
+    assert not found, f"{path.relative_to(SRC)} mentions {sorted(set(found))}"
+
+
 @pytest.mark.parametrize("path", ENGINE_MODULES, ids=lambda path: path.name)
 def test_the_engine_names_no_browser_tools(path: Path) -> None:
     found = BROWSER_TOOL_NAME.findall(path.read_text(encoding="utf-8"))

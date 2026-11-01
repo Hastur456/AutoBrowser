@@ -39,6 +39,8 @@ from src.harness.session import SessionRuntime
 
 #: Subdirectory of a batch directory holding the scenarios' Chrome profiles.
 PROFILES_DIR_NAME = "profiles"
+#: ``deployment.environment.name`` of a batch session's spans (a session label).
+BATCH_ENVIRONMENT = "batch"
 
 SessionBuilder = Callable[[argparse.Namespace], SessionRuntime]
 BatchRunner = Callable[..., Awaitable[dict[str, Any]]]
@@ -58,6 +60,8 @@ async def run_batch_from_args(
     commit = provenance["git"]["commit"]
     labels = {
         "autobrowser.batch.id": batch_id,
+        # The trace export's environment: a batch run, apart from interactive sessions.
+        "deployment.environment.name": BATCH_ENVIRONMENT,
         **({"vcs.ref.head.revision": commit} if commit else {}),
     }
     session_factory = _session_factory(args, session_builder, profiles_dir, labels)

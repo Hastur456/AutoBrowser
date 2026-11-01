@@ -14,6 +14,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   answers and traces land, reading grades, writing `expected`.
 - [Browser Agent Rules](development/browser-agent-rules.md): Playwright MCP
   interaction rules and search-flow debugging guidance.
+- [Trace Export Guide](development/telemetry.md): OTLP trace export (off by default) —
+  the span tree, enabling, Langfuse first (keys, headers, aliases, finding a run, privacy),
+  Phoenix and Jaeger.
 - [Agent Skills Guide](development/skills.md): `SKILL.md` skills — format, built-in and
   your skills, the catalog and `skill_view`, enabling, debugging and tests.
 - [Lifecycle Hooks Guide](development/lifecycle-hooks.md): how hooks work, their
