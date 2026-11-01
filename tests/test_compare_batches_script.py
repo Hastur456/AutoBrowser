@@ -187,3 +187,16 @@ def test_different_cli_options_are_a_warning(tmp_path: Path, capsys: pytest.Capt
 
     assert _run(tmp_path, "batch-a", "batch-b") == 0
     assert "warning: options differ" in capsys.readouterr().out
+
+
+def test_synced_batches_print_their_experiment_links(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    older = _batch(tmp_path, "batch-a", "2026-10-29T10:00:00+00:00", [("s1", "passed")])
+    _batch(tmp_path, "batch-b", "2026-10-29T11:00:00+00:00", [("s1", "passed")])
+    ledger = {"experiment": {"id": "batch-a", "url": "https://platform.example.test/project/p/datasets/d"}}
+    (older / "platform_sync.json").write_text(json.dumps(ledger), encoding="utf-8")
+
+    assert _run(tmp_path, "batch-a", "batch-b") == 0
+
+    out = capsys.readouterr().out
+    assert "langfuse: batch-a https://platform.example.test/project/p/datasets/d" in out
+    assert "langfuse: batch-b" not in out

@@ -22,8 +22,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts.langfuse_bridge.ledger import LEDGER_FILE_NAME
 from src.agent_loop.batch import tasks_sha256
-from src.agent_loop.batch_compare import compare_batches, latest_finished, previous_comparable
+from src.agent_loop.batch_compare import (
+    compare_batches,
+    latest_finished,
+    previous_comparable,
+)
 from src.agent_loop.events import read_jsonl_lines
 from src.config import get_settings
 
@@ -95,6 +100,10 @@ def main(argv: list[str] | None = None) -> int:
         for finding in comparison.findings:
             print(finding.describe())
         print(f"{comparison.unchanged} scenarios unchanged")
+        for batch in (older, newer):
+            url = _experiment_url(batch[0])
+            if url:
+                print(f"langfuse: {batch[1].get('batch_id')} {url}")
     return comparison.exit_code(args.perf_gate)
 
 
@@ -115,6 +124,17 @@ def load_batch(batch_dir: Path) -> Batch:
     meta["provenance"] = provenance
     rows = [json.loads(line) for line in read_jsonl_lines(batch_dir / RUN_INDEX_FILE_NAME)]
     return batch_dir, meta, rows
+
+
+def _experiment_url(batch_dir: Path) -> str | None:
+    """The platform experiment of a synced batch (its sync ledger), ``None`` otherwise."""
+
+    try:
+        ledger = json.loads((batch_dir / LEDGER_FILE_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    experiment = ledger.get("experiment") if isinstance(ledger, dict) else None
+    return str(experiment.get("url") or "") or None if isinstance(experiment, dict) else None
 
 
 def _resolve(batches_dir: Path, name: str) -> Path:

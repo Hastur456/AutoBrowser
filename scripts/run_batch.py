@@ -23,6 +23,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -32,7 +33,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.agent_loop.batch import BatchScenario, run_batch, settings_provenance, tasks_sha256
+from scripts.langfuse_bridge.datasets import run_git
+from scripts.langfuse_bridge.sync import push_batch
+from src.agent_loop.batch import (
+    BatchScenario,
+    run_batch,
+    settings_provenance,
+    tasks_sha256,
+)
 from src.cli.bootstrap import build_session
 from src.config import get_settings
 from src.harness.session import SessionRuntime
@@ -136,6 +144,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=settings.browser.cdp_port,
         help=f"Chrome DevTools Protocol port. Default: {settings.browser.cdp_port}",
     )
+    parser.add_argument(
+        "--no-platform-sync",
+        action="store_true",
+        help="Do not sync this batch to the evaluation platform (eval_platform), even when enabled.",
+    )
     _add_session_defaults(parser)
     return parser
 
@@ -145,8 +158,45 @@ def main(argv: list[str] | None = None) -> int:
     result = asyncio.run(run_batch_from_args(args))
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     if args.grade and (result.get("status") == "failed" or result.get("grades", {}).get("failed")):
-        return 1
-    return 0
+        code = 1
+    else:
+        code = 0
+    if _platform_sync_enabled(args):
+        _sync_platform(args, result)
+    return code
+
+
+def _platform_sync_enabled(args: argparse.Namespace) -> bool:
+    """The batch is synced to the evaluation platform right after it ends."""
+
+    platform = get_settings().eval_platform
+    return platform.enabled and platform.auto_sync and not getattr(args, "no_platform_sync", False)
+
+
+def _sync_platform(args: argparse.Namespace, result: Mapping[str, Any]) -> None:
+    """Sync the finished batch within ``eval_platform.sync_timeout_seconds``; any failure is a
+    warning on stderr (stdout stays the JSON result) and never changes the exit code."""
+
+    batch_dir = result.get("batch_dir")
+    if not batch_dir:
+        return
+    batch_id = str(result.get("batch_id") or Path(str(batch_dir)).name)
+    settings = get_settings()
+    retry = "rerun: uv run scripts/langfuse_sync.py experiment push --pending"
+    try:
+        report = push_batch(
+            Path(str(batch_dir)),
+            settings,
+            repo_tasks=Path(args.tasks),
+            git=run_git(ROOT),
+            deadline=time.monotonic() + settings.eval_platform.sync_timeout_seconds,
+        )
+    except Exception as exc:  # noqa: BLE001 - the batch result stands whatever the sync does
+        print(f"warning: langfuse sync of {batch_id} failed ({type(exc).__name__}: {exc}); {retry}", file=sys.stderr)
+        return
+    print(report.summary(batch_id), file=sys.stderr)
+    if report.state != "complete":
+        print(f"warning: langfuse sync of {batch_id} is {report.state}; {retry}", file=sys.stderr)
 
 
 def _session_factory(
@@ -157,6 +207,8 @@ def _session_factory(
 ) -> Callable[[BatchScenario], SessionRuntime]:
     scenario_index = 0
     next_port = int(args.cdp_port)
+    # A synced batch reaches the platform as experiment traces: no second, live copy.
+    otlp_export = not _platform_sync_enabled(args)
 
     def build(scenario: BatchScenario) -> SessionRuntime:
         nonlocal scenario_index, next_port
@@ -164,6 +216,7 @@ def _session_factory(
         session_args = copy.copy(args)
         session_args.user_data_dir = str(profiles_dir / f"scenario-{scenario_index}")
         session_args.labels = {**labels, "autobrowser.scenario.id": scenario.scenario_id}
+        session_args.otlp_export = otlp_export
         if not args.no_mcp:
             session_args.cdp_port = _next_available_port(next_port)
             next_port = int(session_args.cdp_port) + 1

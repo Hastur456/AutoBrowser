@@ -327,3 +327,98 @@ def test_undecodable_git_output_does_not_stop_the_batch(monkeypatch: pytest.Monk
     monkeypatch.setattr(run_batch_script.subprocess, "run", undecodable)
 
     assert run_batch_script._git_info() == {"commit": None, "branch": None, "dirty": None}
+
+
+# -- the evaluation platform sync after a batch --------------------------------------------------
+
+
+from pydantic import SecretStr  # noqa: E402
+
+from scripts.langfuse_bridge.sync import SyncReport  # noqa: E402
+from src.config import EvalPlatformSettings, Settings  # noqa: E402
+
+
+def platform_settings(**platform: Any) -> Settings:
+    values: dict[str, Any] = {
+        "enabled": True,
+        "host": "https://platform.example.test",
+        "public_key": SecretStr("pk"),
+        "secret_key": SecretStr("sk"),
+    }
+    values.update(platform)
+    return Settings.model_construct(eval_platform=EvalPlatformSettings(**values))
+
+
+class FakeSync:
+    def __init__(self, report: SyncReport | Exception) -> None:
+        self.report = report
+        self.calls: list[dict[str, Any]] = []
+
+    def __call__(self, batch_dir: Path, settings: Settings, **kwargs: Any) -> SyncReport:
+        self.calls.append({"batch_dir": batch_dir, **kwargs})
+        if isinstance(self.report, Exception):
+            raise self.report
+        return self.report
+
+
+def run_main(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, settings: Settings, sync: FakeSync, *extra: str) -> int:
+    async def fake_run_batch_from_args(args: argparse.Namespace) -> dict[str, Any]:
+        return {"batch_id": "batch-1", "batch_dir": str(tmp_path / "batch-1"), "status": "completed", "grades": {"passed": 0, "failed": 1, "ungraded": 0}}
+
+    monkeypatch.setattr(run_batch_script, "run_batch_from_args", fake_run_batch_from_args)
+    monkeypatch.setattr(run_batch_script, "get_settings", lambda: settings)
+    monkeypatch.setattr(run_batch_script, "push_batch", sync)
+    return run_batch_script.main(["--tasks", str(tmp_path / "tasks.jsonl"), "--no-mcp", "--grade", *extra])
+
+
+def test_an_enabled_platform_syncs_the_batch_without_changing_the_exit_code(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sync = FakeSync(SyncReport(state="complete", exported=1, experiment_url="https://platform.example.test/x"))
+
+    code = run_main(monkeypatch, tmp_path, platform_settings(), sync)
+
+    assert code == 1  # the failed grade, as without the platform
+    assert sync.calls[0]["batch_dir"] == tmp_path / "batch-1"
+    assert sync.calls[0]["deadline"] is not None
+    captured = capsys.readouterr()
+    json.loads(captured.out)  # stdout stays pure JSON
+    assert "langfuse: batch-1 complete" in captured.err
+
+
+def test_a_failed_sync_is_a_warning(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    for failure in (RuntimeError("boom"), SyncReport(state="pending", error="ConnectError")):
+        sync = FakeSync(failure)
+
+        assert run_main(monkeypatch, tmp_path, platform_settings(), sync) == 1
+
+        err = capsys.readouterr().err
+        assert "langfuse_sync.py experiment push --pending" in err
+
+
+@pytest.mark.parametrize(
+    "platform, extra",
+    [({"enabled": False}, ()), ({"auto_sync": False}, ()), ({}, ("--no-platform-sync",))],
+)
+def test_no_sync_when_disabled_or_opted_out(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, platform: dict[str, Any], extra: tuple[str, ...]
+) -> None:
+    sync = FakeSync(SyncReport(state="complete"))
+
+    run_main(monkeypatch, tmp_path, platform_settings(**platform), sync, *extra)
+
+    assert sync.calls == []
+
+
+@pytest.mark.parametrize("platform, extra, exported", [({}, (), False), ({"enabled": False}, (), True), ({}, ("--no-platform-sync",), True)])
+def test_sessions_skip_the_live_export_when_the_batch_is_synced(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, platform: dict[str, Any], extra: tuple[str, ...], exported: bool
+) -> None:
+    monkeypatch.setattr(run_batch_script, "get_settings", lambda: platform_settings(**platform))
+    args = run_batch_script.build_parser().parse_args(["--tasks", "t.jsonl", "--no-mcp", *extra])
+    seen: list[argparse.Namespace] = []
+
+    factory = run_batch_script._session_factory(args, lambda session_args: seen.append(session_args) or session_args, tmp_path, {})
+    factory(BatchScenario("s1", ["a"]))
+
+    assert seen[0].otlp_export is exported
