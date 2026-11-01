@@ -132,12 +132,15 @@ def push_dataset(
     name = dataset_name(settings, suite)
     records = golden_items(tasks_path, dataset=name, suite=suite, source_path=source_path)
     content_hash = tasks_sha256(tasks_path)
-    dirty = bool(git(["status", "--porcelain", "--", source_path]).strip())
+    try:
+        dirty = bool(git(["status", "--porcelain", "--", source_path]).strip())
+        commit = git(["log", "-1", "--format=%H", "--", source_path]).strip() or None
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise DatasetError(f"git could not tell the state of {source_path} ({type(exc).__name__})") from None
     if dirty and not allow_dirty and not dry_run:
         raise DatasetError(
             f"{source_path} differs from the committed version; commit it or pass --allow-dirty"
         )
-    commit = git(["log", "-1", "--format=%H", "--", source_path]).strip() or None
     if dry_run or client is None:
         return DatasetPush(
             added=[record.scenario_id for record in records],

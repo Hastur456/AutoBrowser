@@ -168,6 +168,8 @@ def _value(record: ScoreRecord) -> float | str:
 def _same(current: Mapping[str, Any], wanted: Mapping[str, Any]) -> bool:
     if current.get("dataType") != wanted["dataType"]:
         return False
+    if wanted["dataType"] == "BOOLEAN":
+        return True  # the server generates the categories of a boolean config
     labels = [category.get("label") for category in current.get("categories") or []]
     if labels != [category["label"] for category in wanted.get("categories") or []]:
         return False

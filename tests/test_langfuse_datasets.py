@@ -140,6 +140,27 @@ def test_a_dirty_tasks_file_is_refused_unless_allowed(tmp_path: Path) -> None:
     assert row["git_dirty"] is True
 
 
+def test_a_git_failure_is_a_dataset_error(tmp_path: Path) -> None:
+    import subprocess
+
+    tasks = write(tmp_path / "tasks.jsonl", SCENARIOS)
+
+    for failure in (FileNotFoundError("git"), subprocess.CalledProcessError(128, ["git"])):
+        def broken(args: list[str], failure: Exception = failure) -> str:
+            raise failure
+
+        with pytest.raises(DatasetError, match="git"):
+            push_dataset(
+                client(FakeLangfuse()),
+                settings(),
+                suite="golden",
+                tasks_path=tasks,
+                source_path="tests/golden/tasks.jsonl",
+                journal_path=tmp_path / "j.jsonl",
+                git=broken,
+            )
+
+
 def test_every_push_with_new_content_is_journaled(tmp_path: Path) -> None:
     fake = FakeLangfuse()
     tasks = write(tmp_path / "tasks.jsonl", SCENARIOS)

@@ -219,6 +219,8 @@ class FakeLangfuse:
             return self._paged(list(self.configs.values()), params)
         if path == "/score-configs" and method == "POST":
             config = {**body, "id": f"config-{next(self._ids)}", "isArchived": False, "projectId": self.project_id}
+            if body.get("dataType") == "BOOLEAN":  # the server generates them (OpenAPI)
+                config["categories"] = [{"label": "True", "value": 1}, {"label": "False", "value": 0}]
             self.configs[config["id"]] = config
             return _json(200, config)
         if path.startswith("/score-configs/") and method == "PATCH":
@@ -285,7 +287,7 @@ class FakeLangfuse:
             if config is not None and config["dataType"] == "CATEGORICAL":
                 labels = {category["label"] for category in config.get("categories") or []}
                 if score["value"] not in labels:
-                    errors.append({"index": index, "id": score.get("id"), "message": f"value {score['value']!r} is not a category"})
+                    errors.append({"message": f"score {index}: value {score['value']!r} is not a category"})
                     continue
             self.scores[score.get("id") or f"score-{next(self._ids)}"] = score
             accepted += 1

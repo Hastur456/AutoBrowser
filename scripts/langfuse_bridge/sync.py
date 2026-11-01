@@ -319,7 +319,9 @@ class _Run:
         return True
 
     def _scores(self, client: LangfuseClient, ref: ExperimentRef, *, retry_rejected: bool) -> None:
-        """Send the batch's scores once; later only the rejected ones, and only when asked."""
+        """Send the batch's scores once. After a partial rejection, only ``retry_rejected``
+        sends again — the whole set, since Langfuse does not name the rejected scores and an
+        unchanged score is an upsert (same id and timestamp)."""
 
         previous = self.ledger.data.get("scores") or {}
         rejected_before = list(previous.get("rejected") or [])
@@ -335,26 +337,15 @@ class _Run:
             environment=self.platform.environment,
         )
         accepted = 0
-        if previous.get("state") == "posted":
-            wanted = {str(entry.get("id")) for entry in rejected_before}
-            bodies = [body for body in bodies if body["id"] in wanted]
-            accepted = int(previous.get("accepted") or 0)
         rejected: list[dict[str, Any]] = []
         size = self.platform.score_batch_size
         for start in range(0, len(bodies), size):
             chunk = bodies[start : start + size]
             result = client.post_scores(chunk)
             accepted += result.accepted
-            for error in result.errors:
-                index = error.get("index")
-                body = chunk[index] if isinstance(index, int) and 0 <= index < len(chunk) else {}
-                rejected.append(
-                    {
-                        "id": body.get("id") or error.get("id"),
-                        "name": body.get("name"),
-                        "message": redact_json_safe(str(error.get("message") or "")),
-                    }
-                )
+            messages = [str(error.get("message") or "") for error in result.errors]
+            messages += [""] * max(result.rejected - len(messages), 0)
+            rejected += [{"message": redact_json_safe(message)} for message in messages]
         self.ledger.data["scores"] = {
             "state": "posted",
             "timestamp": str(self.folder.metadata.get("finished_at")),

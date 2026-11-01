@@ -156,6 +156,28 @@ def test_the_otlp_export_is_not_retried_after_the_request_may_have_arrived() -> 
     assert len(fake.traces) == 1 and len(fake.requests) == 1
 
 
+@pytest.mark.parametrize("status", [500, 502, 504])
+def test_an_otlp_server_error_may_have_been_ingested_and_is_not_retried(status: int) -> None:
+    fake = FakeLangfuse()
+    fake.fail("POST", "/otel/v1/traces", status=status, times=5)
+
+    with pytest.raises(LangfuseError) as raised:
+        client(fake).export_otlp({"resourceSpans": []})
+
+    assert raised.value.delivery_unknown and raised.value.status == status
+    assert len(fake.requests) == 1
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_an_otlp_export_retries_a_request_the_server_did_not_take(status: int) -> None:
+    fake = FakeLangfuse()
+    fake.fail("POST", "/otel/v1/traces", status=status)
+
+    client(fake).export_otlp({"resourceSpans": []})
+
+    assert len(fake.traces) == 1
+
+
 def test_the_otlp_export_retries_a_refused_connection() -> None:
     fake = FakeLangfuse()
     fake.fail("POST", "/otel/v1/traces", exception=httpx.ConnectError)
@@ -176,7 +198,7 @@ def test_a_partial_score_batch_is_reported_and_not_retried() -> None:
     ])
 
     assert (result.accepted, result.rejected) == (1, 1)
-    assert result.errors[0]["id"] == "s2"
+    assert "zzz" in result.errors[0]["message"]
     assert len([request for request in fake.requests if request.path.endswith("/scores")]) == 1
     assert (api.post_scores([{"id": "s3", "name": "n", "value": 1, "dataType": "NUMERIC"}]).accepted, len(fake.scores)) == (1, 2)
 

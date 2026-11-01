@@ -43,6 +43,16 @@ def test_configs_are_created_once() -> None:
     assert len(fake.writes()) == writes
 
 
+def test_boolean_configs_with_server_categories_are_not_recreated() -> None:
+    fake = FakeLangfuse()
+    api = client(fake)
+    first = ensure_score_configs(api, [ScoreDefinition("passed", "boolean")])
+    writes = len(fake.writes())
+
+    assert ensure_score_configs(api, [ScoreDefinition("passed", "boolean")]) == first
+    assert len(fake.writes()) == writes
+
+
 def test_a_grown_vocabulary_archives_the_old_config_and_creates_a_new_one() -> None:
     fake = FakeLangfuse()
     api = client(fake)
@@ -133,7 +143,7 @@ def test_the_local_verdict_against_the_previous_batch_becomes_scores(tmp_path: P
 def test_rejected_scores_are_reported_not_retried_until_asked(tmp_path: Path) -> None:
     env = Env(tmp_path)
     batch = env.batch(SCENARIOS)
-    env.fake.fail("POST", "/scores", status=207, body={"accepted": 0, "rejected": 1, "errors": [{"index": 0, "id": "x", "message": "bad value"}]})
+    env.fake.fail("POST", "/scores", status=207, body={"accepted": 0, "rejected": 1, "errors": [{"message": "bad value"}]})
 
     report = env.push(batch)
 
@@ -150,8 +160,10 @@ def test_rejected_scores_are_reported_not_retried_until_asked(tmp_path: Path) ->
     assert again.scores_rejected == 1
 
     fixed = env.push(batch, retry_rejected=True)
-    resent = [request for request in env.fake.requests if request.path.endswith("/scores")][-1]
-    assert [score["id"] for score in resent.body] == [first_body["id"]]
+    resent = [request for request in env.fake.requests if request.path.endswith("/scores")][1:]
+    # Langfuse names no rejected score: the whole set goes again, as upserts by id
+    assert {score["id"] for request in resent for score in request.body} == {score["id"] for score in posts[0].body}
+    assert first_body["id"] in env.fake.scores
     assert fixed.state == "complete" and env.ledger(batch)["scores"]["rejected"] == []
 
 

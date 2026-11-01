@@ -298,6 +298,16 @@ class LangfuseClient:
             status = response.status_code
             if status < 400:
                 return response
+            if not idempotent and status >= 500 and status != 503:
+                # A gateway error may come after the request was forwarded and ingested; a
+                # re-send would duplicate spans, so the caller verifies first.
+                raise LangfuseError(
+                    f"HTTP {status}: the request may have arrived",
+                    method=method,
+                    path=full_path,
+                    status=status,
+                    delivery_unknown=True,
+                )
             retriable = status == 429 or status >= 500
             if not retriable or last:
                 reason = f"HTTP {status}" + (f" ({_AUTH_HINT})" if status in {401, 403} else "")
