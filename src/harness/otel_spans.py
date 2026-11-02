@@ -156,6 +156,7 @@ def task_span_specs(
             attributes = {"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": tool}
             if request.get("id"):
                 attributes["gen_ai.tool.call.id"] = str(request["id"])
+            server = str(payload.get("server") or "") or server
             if server:
                 attributes["autobrowser.tool.server"] = server
             if redacted:

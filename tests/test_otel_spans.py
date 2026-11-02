@@ -413,3 +413,15 @@ def test_encode_otlp_json_builds_resource_spans() -> None:
     assert encoded[0]["events"][0]["name"] == "plan.updated"
     assert encoded[0]["events"][0]["timeUnixNano"] == str(ns(61))
     json.dumps(body)
+
+
+def test_a_tool_span_takes_the_server_of_its_tool_started_event() -> None:
+    events = [
+        ev("goal.started", 0, {"task": TASK}),
+        ev("tool.started", 10, {"tool_request": {"name": "lookup"}, "server": "docs", "read_only": True}),
+        ev("tool.finished", 20, {"tool_result": {"name": "lookup", "status": "success", "content": "x"}}),
+        ev("goal.completed", 30, {"task": TASK, "status": "completed", "final_answer": ANSWER, "turns": 1}),
+    ]
+
+    (tool,) = [span for span in specs(events) if span.attributes.get("gen_ai.operation.name") == "execute_tool"]
+    assert tool.attributes["autobrowser.tool.server"] == "docs"

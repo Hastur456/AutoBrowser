@@ -591,7 +591,7 @@ class TurnController:
 
         request = dict(state.tool_request or {})
         model_ask_reason = state.approval_request
-        self._emit("action.proposed", {"tool_request": request})
+        self._emit("action.proposed", {"tool_request": request, "source": "model"})
 
         progress_reason = progress_block_reason(state, request)
         if progress_reason is not None:
@@ -632,7 +632,12 @@ class TurnController:
             if blocked:
                 return self._with_note(state, notes), None
 
-        self._emit("tool.started", {"tool_request": started_request})
+        read_only = prepared.tool is not None and tool_is_read_only(prepared.tool)
+        # ``server``/``read_only`` let a recorder mirror the kept snapshots without names.
+        self._emit(
+            "tool.started",
+            {"tool_request": started_request, "server": prepared.server, "read_only": read_only},
+        )
         result: ToolResult = await self._broker.invoke(prepared)
         self._emit("tool.finished", {"tool_result": dict(result)})
 
@@ -643,7 +648,7 @@ class TurnController:
         observation_update = self._observation.compile(
             state,
             server=prepared.server,
-            read_only=prepared.tool is not None and tool_is_read_only(prepared.tool),
+            read_only=read_only,
             compress_tool_output=self._compress_tools,
         )
         state = state.apply(observation_update)
