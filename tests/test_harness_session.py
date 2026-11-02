@@ -1388,7 +1388,7 @@ async def test_the_agent_gets_step_sources_only_with_replay_enabled(
 
     steps = built[0].resources.steps
     assert isinstance(steps, PlaybackFactory) is enabled
-    assert steps is None or not enabled
+    assert (steps is None) is (not enabled)
     # No browser server in a --no-mcp session: the plain-text adapter reads the outputs.
     assert isinstance(runtime.context.playback_adapter, TextPlaybackAdapter)
     await runtime.close()
