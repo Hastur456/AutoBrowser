@@ -10,6 +10,8 @@ from src.config import MemorySettings
 from src.harness.memory_store import MemoryContext, MemoryStore
 
 SCENARIO_DIR = Path(__file__).parent / "scenarios"
+#: Replay scenarios: a recording plus the page it is replayed on (baseline ``playback_v1``).
+PLAYBACK_SCENARIO_DIR = Path(__file__).parent / "playback_scenarios"
 MEMORY_SEED_DIR = Path(__file__).parent / "memory_seed"
 #: The committed, empty settings profile of hermetic runs: every setting is the code default.
 HERMETIC_PROFILE = Path(__file__).resolve().parents[1] / "pipeline" / "hermetic.yaml"
@@ -17,8 +19,8 @@ HERMETIC_PROFILE = Path(__file__).resolve().parents[1] / "pipeline" / "hermetic.
 KEPT_ENV_PREFIX = f"{config.ENV_PREFIX}PIPELINE{config.ENV_NESTED_DELIMITER}"
 
 
-def load_scenarios() -> list[EvalScenario]:
-    return [load_scenario(path) for path in sorted(SCENARIO_DIR.glob("*.yaml"))]
+def load_scenarios(directory: Path = SCENARIO_DIR) -> list[EvalScenario]:
+    return [load_scenario(path) for path in sorted(Path(directory).glob("*.yaml"))]
 
 
 def seed_memory(root: Path = MEMORY_SEED_DIR) -> MemoryContext:

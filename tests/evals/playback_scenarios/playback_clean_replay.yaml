@@ -1,0 +1,41 @@
+name: playback_clean_replay
+task: Buy one pack of AA batteries on https://shop.example/batteries.
+strict: true
+playback:
+  answer: summary
+  recording:
+    name: batteries
+    task: Buy one pack of AA batteries on https://shop.example/batteries.
+    plan:
+    - {id: 1, description: Open the page, status: pending}
+    - {id: 2, description: Buy the batteries, status: pending}
+    steps:
+    - {index: 1, tool: browser_navigate, plan_step: 0, args: {url: 'https://shop.example/batteries'}}
+    - {index: 2, tool: browser_snapshot, plan_step: 1, read_only: true, args: {}}
+    - index: 3
+      tool: browser_click
+      plan_step: 1
+      args: {element: Buy now, target: e4}
+      bindings:
+      - path: [target]
+        value: e4
+        descriptor: {role: button, name: Buy now, nth: 1, count: 1, context: [], frame: ''}
+model:
+  responses: []
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://shop.example/batteries
+    - listitem "AA batteries, 8 pack — $6.50" [ref=e30]
+    - button "Buy now" [ref=e31]
+  - |-
+    - Page URL: https://shop.example/orders/7781
+    - heading "Order #7781 confirmed" [ref=e36]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains: [Replayed 3 recorded steps]
+  expected_stage_reached: playback
+  max_model_turns: 0
+  max_tool_calls: 3
+  max_errors: 0

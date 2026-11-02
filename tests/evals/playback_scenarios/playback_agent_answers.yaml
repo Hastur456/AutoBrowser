@@ -1,0 +1,29 @@
+name: playback_agent_answers
+task: Read the price of AA batteries on https://shop.example/batteries.
+strict: true
+playback:
+  recording:
+    name: battery-price
+    task: Read the price of AA batteries on https://shop.example/batteries.
+    answer: agent
+    plan:
+    - {id: 1, description: Open the page and read the price, status: pending}
+    steps:
+    - {index: 1, tool: browser_navigate, plan_step: 0, args: {url: 'https://shop.example/batteries'}}
+    - {index: 2, tool: browser_snapshot, plan_step: 0, read_only: true, args: {}}
+model:
+  responses:
+  - decision: done
+    final_answer: AA batteries cost $5.90 for an 8 pack.
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://shop.example/batteries
+    - listitem "AA batteries, 8 pack — $5.90" [ref=e70]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains: ['$5.90']
+  expected_stage_reached: agent
+  max_model_turns: 1
+  max_tool_calls: 2

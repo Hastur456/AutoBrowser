@@ -34,6 +34,7 @@ from src.agent_loop.failures import (
 from src.agent_loop.graders import grade_answer
 from src.agent_loop.replay import load_events
 from src.config import Settings, get_settings
+from src.contracts import TaskUsage, ladder_rank
 from src.harness.session_store import EVENTS_FILE_NAME
 
 logger = logging.getLogger(__name__)
@@ -182,12 +183,14 @@ async def run_batch(
             final_answer: str | None = None
             task_statuses: list[str] = []
             stop_reasons: list[str] = []
+            task_usages: list[Any] = []
             row: dict[str, Any] | None = None
             try:
                 for task in scenario.tasks:
                     result = await session.run_task(task)
                     task_statuses.append(str(result.status))
                     stop_reasons.append(str(getattr(result, "stop_reason", "") or ""))
+                    task_usages.append(getattr(result, "usage", None))
                     final_answer = result.final_answer
             except Exception as exc:
                 status = "failed"
@@ -227,6 +230,7 @@ async def run_batch(
             finally:
                 await session.close()
                 if row is not None:
+                    row.update(_usage_fields(task_usages))
                     # After close: the session's trace is complete on disk.
                     trace = _session_trace(session)
                     events = load_events(trace) if trace is not None else None
@@ -485,6 +489,27 @@ def _run_index_row(
         "error": error,
         "task_statuses": list(task_statuses),
         "final_answer": final_answer,
+    }
+
+
+def _usage_fields(usages: Sequence[Any]) -> dict[str, Any]:
+    """``stage_reached`` and ``usage`` of a scenario (the sum of its tasks) plus each task's
+    own ``task_usage``; a task without accounting (a foreign result) is ``None``."""
+
+    known = [usage for usage in usages if isinstance(usage, TaskUsage)]
+    if not known:
+        return {"stage_reached": None, "usage": None, "task_usage": [None for _ in usages]}
+    costs = [usage.cost for usage in known]
+    total = {
+        "model_calls": sum(usage.model_calls for usage in known),
+        "input_tokens": sum(usage.input_tokens for usage in known),
+        "output_tokens": sum(usage.output_tokens for usage in known),
+        "cost": None if any(cost is None for cost in costs) else sum(costs),  # type: ignore[arg-type]
+    }
+    return {
+        "stage_reached": max((usage.stage_reached for usage in known), key=ladder_rank),
+        "usage": total,
+        "task_usage": [asdict(usage) if isinstance(usage, TaskUsage) else None for usage in usages],
     }
 
 

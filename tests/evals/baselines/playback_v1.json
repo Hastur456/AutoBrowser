@@ -1,0 +1,90 @@
+{
+  "schema_version": 2,
+  "suite": "playback",
+  "scenarios": {
+    "playback_agent_answers": {
+      "action_signature": "sha256:0a42eb5758858c977496b4704ca7766c4cf75791bf3633581a0c9c36f7a80161",
+      "approval_request_count": 0,
+      "error_count": 0,
+      "final_answer": "AA batteries cost $5.90 for an 8 pack.",
+      "model_turn_count": 1,
+      "observation_count": 2,
+      "policy_block_count": 0,
+      "repeated_action_count": 0,
+      "request_chars": 21805,
+      "terminal_status": "completed",
+      "tool_call_count": 2,
+      "trace_complete": true
+    },
+    "playback_binding_handoff": {
+      "action_signature": "sha256:eeec11f5d834bb494f5243693c51111b4ad6d262488becc3e846fda7bb7421ab",
+      "approval_request_count": 0,
+      "error_count": 0,
+      "final_answer": "Bought one pack of AA batteries; order #7790 confirmed.",
+      "model_turn_count": 2,
+      "observation_count": 3,
+      "policy_block_count": 0,
+      "repeated_action_count": 0,
+      "request_chars": 44042,
+      "terminal_status": "completed",
+      "tool_call_count": 3,
+      "trace_complete": true
+    },
+    "playback_budget_exhausted": {
+      "action_signature": "sha256:0a42eb5758858c977496b4704ca7766c4cf75791bf3633581a0c9c36f7a80161",
+      "approval_request_count": 0,
+      "error_count": 0,
+      "final_answer": "Blocked: the task used its 0 model calls.",
+      "model_turn_count": 0,
+      "observation_count": 2,
+      "policy_block_count": 0,
+      "repeated_action_count": 0,
+      "request_chars": 0,
+      "terminal_status": "blocked",
+      "tool_call_count": 2,
+      "trace_complete": true
+    },
+    "playback_clean_replay": {
+      "action_signature": "sha256:eeec11f5d834bb494f5243693c51111b4ad6d262488becc3e846fda7bb7421ab",
+      "approval_request_count": 0,
+      "error_count": 0,
+      "final_answer": "Replayed 3 recorded steps of batteries.",
+      "model_turn_count": 0,
+      "observation_count": 3,
+      "policy_block_count": 0,
+      "repeated_action_count": 0,
+      "request_chars": 0,
+      "terminal_status": "completed",
+      "tool_call_count": 3,
+      "trace_complete": true
+    },
+    "playback_ladder_cap": {
+      "action_signature": "sha256:0a42eb5758858c977496b4704ca7766c4cf75791bf3633581a0c9c36f7a80161",
+      "approval_request_count": 0,
+      "error_count": 0,
+      "final_answer": "Blocked: playback stopped (binding) and this run may not go above the playback stage.",
+      "model_turn_count": 0,
+      "observation_count": 2,
+      "policy_block_count": 0,
+      "repeated_action_count": 0,
+      "request_chars": 0,
+      "terminal_status": "blocked",
+      "tool_call_count": 2,
+      "trace_complete": true
+    },
+    "playback_output_answer": {
+      "action_signature": "sha256:0a42eb5758858c977496b4704ca7766c4cf75791bf3633581a0c9c36f7a80161",
+      "approval_request_count": 0,
+      "error_count": 0,
+      "final_answer": "listitem \"AA batteries, 8 pack — $5.90\"",
+      "model_turn_count": 0,
+      "observation_count": 2,
+      "policy_block_count": 0,
+      "repeated_action_count": 0,
+      "request_chars": 0,
+      "terminal_status": "completed",
+      "tool_call_count": 2,
+      "trace_complete": true
+    }
+  }
+}
