@@ -4,6 +4,22 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-11-02 Serve Mode, Cost Ladder and Replay](2026-11-02-serve-mode-and-cost-ladder.md)
+  (Accepted, Russian): `autobrowser serve`, a long-lived stand process in a new `src/serve/`
+  package, built as a `SessionController` client. It has triggers (interval, cron, webhook,
+  later Telegram), a queue with coalescing and cooldown, day budgets, a ledger of per-run cost
+  reports, a loopback-by-default token-protected HTTP API, a headless browser with its own
+  profile (`browser.launch: external`) and Docker. Runs climb a cost ladder (probe → playback →
+  retarget → agent → human) and never go above `RunProfile.max_stage`.
+  - **Replay** runs inside the engine through a neutral `StepSource`: a recorded plan skips
+    call #0, and every replayed step goes through the normal guard/hooks/permissions pipeline.
+  - **Stale refs** are rebound before the call from a name-free element descriptor (role, name,
+    nth, ancestors) found by the `[ref=…]` marker. A divergence goes to a cheap-model retarget of
+    that one step, then to the agent.
+  - **Budgets.** Task usage and price-based run budgets give `budget_exhausted`.
+  - **Phase 4** adds model tiers (cascade) and the Telegram channel.
+
+  Extends the SessionController, name-free tool handling and PermissionEngine ADRs.
 - [2026-10-29 Neutral OTLP Trace Export, Langfuse as the Primary Receiver](2026-10-29-otlp-trace-export.md)
   (Accepted): each task becomes one OpenTelemetry trace (`invoke_agent autobrowser` root,
   `chat {model}` and `execute_tool {tool}` children, decisions as span events) exported over
