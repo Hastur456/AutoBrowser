@@ -255,6 +255,25 @@ skills:
   always_max_chars: 12000                       # (default) an always-on body; longer is skipped
 
 # ---------------------------------------------------------------------------
+# Recordings of completed runs and their playback without the model
+# (docs/development/replay.md). Off by default.
+replay:
+  enabled: false                                # (default) --record, /record, -p --recording
+  dir: recordings                               # (default) relative to storage.root_dir
+  max_steps: 100                                # (default) a longer run is not recorded
+  checkpoint_min_similarity: 0.6                # (default) below it the agent takes over
+  checkpoint_url: path                          # (default) path | host | off
+  describe_context_lines: 2                     # (default) ancestor lines of an element
+  text_shingle_words: 3                         # (default) fingerprint of non-browser output
+  retarget_enabled: true                        # (default) one model call per diverged step
+  max_retargets_per_run: 3                      # (default)
+  retarget_context_chars: 12000                 # (default) page text sent with a retarget
+  retarget_timeout_seconds: 30.0                # (default)
+  default_answer: agent                         # (default) agent | output | summary
+  keep_previous: true                           # (default) previous.json on replace
+  detail_max_chars: 300                         # (default) divergence detail in events
+
+# ---------------------------------------------------------------------------
 # Persisted event/trace detail under .autobrowser/sessions/<session_id>/.
 events:
   # Longest string recorded in an event before it is truncated.

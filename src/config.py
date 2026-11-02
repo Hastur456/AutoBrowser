@@ -882,6 +882,131 @@ class SkillsSettings(_Section):
     ] = 12_000
 
 
+#: What of the page URL must match at a playback checkpoint.
+CheckpointUrlMode = Literal["path", "host", "off"]
+
+
+class ReplaySettings(_Section):
+    """Recordings of completed runs and their playback without the model
+    (``docs/development/2026-11-02-serve-mode-design.md`` §5, §9.1).
+
+    Off by default: nothing is recorded or replayed until ``enabled``.
+    """
+
+    enabled: Annotated[
+        bool,
+        Field(
+            description=(
+                "Record completed runs (--record, /record) and replay recordings "
+                "(-p --recording, autobrowser recordings)."
+            ),
+        ),
+    ] = False
+
+    dir: Annotated[
+        str,
+        Field(min_length=1, description="Folder of the recordings, relative to storage.root_dir."),
+    ] = "recordings"
+
+    max_steps: Annotated[
+        int,
+        Field(ge=1, description="Steps of one recording; a longer run is not recorded."),
+    ] = 100
+
+    checkpoint_min_similarity: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=1.0,
+            description=(
+                "Lowest similarity of a step's output to the recorded one before playback "
+                "hands the task to the agent."
+            ),
+        ),
+    ] = 0.6
+
+    checkpoint_url: Annotated[
+        CheckpointUrlMode,
+        Field(
+            description=(
+                "What of the page URL must match at a checkpoint: the path (with the host), "
+                "the host only, or nothing."
+            ),
+        ),
+    ] = "path"
+
+    describe_context_lines: Annotated[
+        int,
+        Field(
+            ge=0,
+            le=10,
+            description="Ancestor lines kept in a recorded element descriptor.",
+        ),
+    ] = 2
+
+    text_shingle_words: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=10,
+            description=(
+                "Words per shingle in the checkpoint fingerprint of a non-browser tool output."
+            ),
+        ),
+    ] = 3
+
+    retarget_enabled: Annotated[
+        bool,
+        Field(
+            description=(
+                "Let a model retarget one diverged step (ladder stage 2) before the agent "
+                "takes over."
+            ),
+        ),
+    ] = True
+
+    max_retargets_per_run: Annotated[
+        int,
+        Field(ge=0, description="Retargeted steps per task."),
+    ] = 3
+
+    retarget_context_chars: Annotated[
+        int,
+        Field(ge=1_000, description="Characters of page text sent with a retarget request."),
+    ] = 12_000
+
+    retarget_timeout_seconds: Annotated[
+        float,
+        Field(gt=0, description="Timeout of one retarget model call."),
+    ] = 30.0
+
+    default_answer: Annotated[
+        Literal["agent", "output", "summary"],
+        Field(
+            description=(
+                "How a new recording answers after its steps: one agent turn, the region of "
+                "the last output, or a fixed summary."
+            ),
+        ),
+    ] = "agent"
+
+    keep_previous: Annotated[
+        bool,
+        Field(description="Keep the replaced recording as previous.json."),
+    ] = True
+
+    detail_max_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Characters of a divergence detail or a skip reason in recording and "
+                "playback events."
+            ),
+        ),
+    ] = 300
+
+
 class EventSettings(_Section):
     """Truncation limits for persisted events and the agent trace sidecar."""
 
@@ -2051,6 +2176,7 @@ class Settings(BaseSettings):
     observation: ObservationSettings = Field(default_factory=ObservationSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     skills: SkillsSettings = Field(default_factory=SkillsSettings)
+    replay: ReplaySettings = Field(default_factory=ReplaySettings)
     events: EventSettings = Field(default_factory=EventSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     flags: FlagsSettings = Field(default_factory=FlagsSettings)
@@ -2144,6 +2270,7 @@ __all__ = [
     "PermissionRule",
     "PermissionsSettings",
     "PipelineSettings",
+    "ReplaySettings",
     "Settings",
     "StorageSettings",
     "TOOL_HOOK_EVENTS",

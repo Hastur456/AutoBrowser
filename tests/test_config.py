@@ -1332,6 +1332,63 @@ def test_skills_bounds_are_enforced(settings: Any, field: str, value: Any) -> No
 
 
 # --------------------------------------------------------------------------
+# The replay section
+# --------------------------------------------------------------------------
+
+
+def test_replay_defaults_are_off_and_conservative(settings: Any) -> None:
+    replay = settings().replay
+
+    assert replay.enabled is False
+    assert replay.dir == "recordings"
+    assert replay.max_steps == 100
+    assert replay.checkpoint_min_similarity == 0.6
+    assert replay.checkpoint_url == "path"
+    assert replay.describe_context_lines == 2
+    assert replay.text_shingle_words == 3
+    assert replay.retarget_enabled is True
+    assert replay.max_retargets_per_run == 3
+    assert replay.retarget_context_chars == 12_000
+    assert replay.retarget_timeout_seconds == 30.0
+    assert replay.default_answer == "agent"
+    assert replay.keep_previous is True
+    assert replay.detail_max_chars == 300
+
+
+def test_replay_env_names_resolve(settings: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AUTOBROWSER_REPLAY__ENABLED", "true")
+    monkeypatch.setenv("AUTOBROWSER_REPLAY__CHECKPOINT_URL", "host")
+    monkeypatch.setenv("AUTOBROWSER_REPLAY__DEFAULT_ANSWER", "summary")
+
+    replay = settings().replay
+
+    assert (replay.enabled, replay.checkpoint_url, replay.default_answer) == (True, "host", "summary")
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("dir", ""),
+        ("max_steps", 0),
+        ("checkpoint_min_similarity", 1.5),
+        ("checkpoint_min_similarity", -0.1),
+        ("checkpoint_url", "query"),
+        ("describe_context_lines", 11),
+        ("text_shingle_words", 0),
+        ("max_retargets_per_run", -1),
+        ("retarget_context_chars", 999),
+        ("retarget_timeout_seconds", 0),
+        ("default_answer", "maybe"),
+        ("detail_max_chars", 0),
+        ("unknown", 1),
+    ],
+)
+def test_replay_bounds_are_enforced(settings: Any, field: str, value: Any) -> None:
+    with pytest.raises(ValueError):
+        settings(replay={field: value})
+
+
+# --------------------------------------------------------------------------
 # The pipeline section: tolerances of the regression tools
 # --------------------------------------------------------------------------
 
