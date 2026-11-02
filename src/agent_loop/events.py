@@ -43,6 +43,14 @@ EventType = Literal[
     # Agent skills (src/harness/skills.py).
     "skills.invalid",
     "skills.shadowed",
+    # Cost ladder and playback of recordings (src/agent_loop/execution/loop.py).
+    "ladder.escalated",
+    "playback.started",
+    "playback.step",
+    "playback.diverged",
+    # Recordings written after a task (src/harness/recorder.py).
+    "recording.saved",
+    "recording.skipped",
 ]
 
 SENSITIVE_KEY_MARKERS = (
@@ -67,6 +75,10 @@ AGENT_TRACE_EVENT_TYPES = {
     "tool.finished",
     "observation.compiled",
     "hook.decided",
+    "ladder.escalated",
+    "playback.started",
+    "playback.step",
+    "playback.diverged",
     "goal.completed",
     "goal.blocked",
     "goal.failed",

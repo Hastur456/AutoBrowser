@@ -21,6 +21,7 @@ from src.agent_loop.execution.progress import ActionRecord
 from src.contracts import (
     PlanStep,
     PolicyDecision,
+    TaskUsage,
     ToolRequest,
     ToolResult,
 )
@@ -100,6 +101,14 @@ class LoopState:
     # Task-local notes the model keeps through the optional ``notes`` tool argument
     # (``execution/notes.py``); rendered as the Working Notes block. Not carried across tasks.
     working_notes: str = ""
+
+    # Cost ladder (task-local): who proposes the next step (``playback``/``retarget`` while a
+    # step source drives, ``agent`` otherwise), the model tier the agent runs on, the task's
+    # model accounting and the number of retargeted steps. Not part of ``to_session_state``.
+    ladder_stage: str = "agent"
+    model_tier: int = 0
+    usage: TaskUsage = field(default_factory=TaskUsage)
+    retargets: int = 0
 
     final_answer: str = ""
     # Explicit terminal status ("done"/"blocked"/"cancelled") set by whoever ends the run;

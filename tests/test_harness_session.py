@@ -1197,3 +1197,22 @@ def test_session_config_reads_otlp_export_from_the_args() -> None:
 
     assert SessionConfig.from_args(SimpleNamespace(**fields)).otlp_export is True
     assert SessionConfig.from_args(SimpleNamespace(**fields, otlp_export=False)).otlp_export is False
+
+
+def test_the_cost_ladder_fields_are_reset_at_every_task_boundary() -> None:
+    from src.agent_loop.execution.state import LoopState
+    from src.contracts import TaskUsage
+    from src.harness.session import _task_state_overrides
+
+    carried = SessionState()
+    carried.replace({"messages": [], "observation": "page"})
+    overrides = _task_state_overrides(carried, task_id="task-2")
+    state = LoopState.from_state_overrides(overrides)
+
+    assert overrides["usage"] == TaskUsage()
+    assert (state.ladder_stage, state.model_tier, state.retargets) == ("agent", 0, 0)
+    assert state.usage == TaskUsage()
+    # Task-local: never carried to the next task.
+    assert not {"ladder_stage", "model_tier", "usage", "retargets"} & set(
+        state.to_session_state()
+    )

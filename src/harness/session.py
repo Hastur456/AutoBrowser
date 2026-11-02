@@ -27,7 +27,7 @@ from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.goals import GoalLimits, GoalRunner
 from src.config import TelemetrySettings, get_settings
-from src.contracts import PermissionMode, TaskRequest
+from src.contracts import PermissionMode, TaskRequest, TaskUsage
 from src.harness.hooks import HookEngine, NullHookEngine, registry_digest
 from src.browser.memory import BrowserMemoryPolicy, BrowserMemoryScope
 from src.browser.permissions import BrowserResourceResolver
@@ -120,6 +120,10 @@ TASK_BOUNDARY_RESETS: dict[str, Any] = {
     "counters": {},
     "policy_event": {},
     "working_notes": "",
+    "ladder_stage": "agent",
+    "model_tier": 0,
+    "usage": TaskUsage(),
+    "retargets": 0,
 }
 
 
