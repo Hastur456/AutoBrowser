@@ -1216,3 +1216,158 @@ def test_the_cost_ladder_fields_are_reset_at_every_task_boundary() -> None:
     assert not {"ladder_stage", "model_tier", "usage", "retargets"} & set(
         state.to_session_state()
     )
+
+
+# -- recordings (replay) ---------------------------------------------------------------------
+
+from src.config import ReplaySettings  # noqa: E402
+from src.contracts import RunProfile  # noqa: E402
+from src.harness.recording_store import RecordingStore  # noqa: E402
+
+
+def use_replay(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **fields: Any) -> RecordingStore:
+    root = tmp_path / ".autobrowser"
+    settings = Settings(replay=ReplaySettings(**fields), storage=StorageSettings(root_dir=root))
+    monkeypatch.setattr("src.harness.session.get_settings", lambda: settings)
+    return RecordingStore.from_settings(settings.replay, settings.storage)
+
+
+def tool_calling_runner(built: list[BuiltAgent]) -> Any:
+    """A scripted agent that emits one successful tool call through the session emitter."""
+
+    async def run(request: TaskRequest) -> AgentLoopResult:
+        events = built[-1].resources.events
+        ids = {"task_id": request.task_id, "goal_id": request.task_id}
+        events.emit("tool.started", source="test", payload={
+            "tool_request": {"name": "open", "args": {"url": "https://x.example"}},
+            "server": "", "read_only": False}, **ids)
+        events.emit("tool.finished", source="test", payload={
+            "tool_result": {"name": "open", "status": "success", "content": "opened"}}, **ids)
+        return native_result(final_answer="opened")
+
+    return run
+
+
+@pytest.mark.asyncio
+async def test_record_as_saves_a_recording_after_the_goal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = use_replay(monkeypatch, tmp_path, enabled=True)
+    built = install_runner(monkeypatch, lambda request: tool_calling_runner(built)(request))
+    runtime = make_runtime()
+
+    await runtime.run_task("open x", profile=RunProfile(record_as="open-x"))
+
+    (step,) = store.load("open-x").steps
+    assert step.args == {"url": "https://x.example"}
+    events = read_typed_events(runtime.context.session_dir)
+    (saved,) = [event for event in events if event["type"] == "recording.saved"]
+    assert saved["payload"] == {"name": "open-x", "steps": 1, "replaced": False}
+    types = [event["type"] for event in events]
+    assert types.index("goal.completed") < types.index("recording.saved")
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_without_record_as_nothing_is_recorded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = use_replay(monkeypatch, tmp_path, enabled=True)
+    built = install_runner(monkeypatch, lambda request: tool_calling_runner(built)(request))
+    runtime = make_runtime()
+
+    await runtime.run_task("open x")
+
+    assert store.entries() == []
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_record_as_with_replay_disabled_is_skipped_not_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_replay(monkeypatch, tmp_path, enabled=False)
+    install_runner(monkeypatch, lambda request: _answer(request))
+    runtime = make_runtime()
+
+    result = await runtime.run_task("open x", profile=RunProfile(record_as="open-x"))
+
+    assert result.final_answer == "ok"
+    events = read_typed_events(runtime.context.session_dir)
+    (skipped,) = [event for event in events if event["type"] == "recording.skipped"]
+    assert "replay.enabled" in skipped["payload"]["reason"]
+    await runtime.close()
+
+
+async def _answer(request: TaskRequest) -> AgentLoopResult:
+    return native_result(final_answer="ok")
+
+
+@pytest.mark.asyncio
+async def test_an_invalid_recording_name_fails_before_the_task(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_replay(monkeypatch, tmp_path, enabled=True)
+    calls: list[TaskRequest] = []
+
+    async def run(request: TaskRequest) -> AgentLoopResult:
+        calls.append(request)
+        return native_result(final_answer="ok")
+
+    install_runner(monkeypatch, run)
+    runtime = make_runtime()
+
+    with pytest.raises(ValueError, match="invalid recording name"):
+        await runtime.run_task("x", profile=RunProfile(record_as="../escape"))
+    assert calls == [] and runtime.context.tasks == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_recording_never_fails_the_task(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = use_replay(monkeypatch, tmp_path, enabled=True)
+    built = install_runner(monkeypatch, lambda request: tool_calling_runner(built)(request))
+    runtime = make_runtime()
+
+    def broken_save(recording: Any) -> bool:
+        raise OSError("disk full")
+
+    await runtime.start()
+    monkeypatch.setattr(runtime.context.recording_store, "save", broken_save)
+    result = await runtime.run_task("open x", profile=RunProfile(record_as="open-x"))
+
+    assert result.final_answer == "opened"
+    assert runtime.context.tasks[-1].status == "completed"
+    events = read_typed_events(runtime.context.session_dir)
+    (skipped,) = [event for event in events if event["type"] == "recording.skipped"]
+    assert skipped["payload"] == {"name": "open-x", "reason": "OSError: disk full"}
+    assert not store.exists("open-x")
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_the_profile_reaches_the_agent_and_carry_context_false_carries_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    requests: list[TaskRequest] = []
+
+    async def run(request: TaskRequest) -> AgentLoopResult:
+        requests.append(request)
+        return native_result(final_answer="ok", messages=[system_message("s"), user_message("u")],
+                             observation="page")
+
+    install_runner(monkeypatch, run)
+    runtime = make_runtime()
+    profile = RunProfile(carry_context=False, labels={"job": "j"})
+
+    await runtime.run_task("first")
+    await runtime.run_task("second", profile=profile)
+
+    assert requests[0].profile == RunProfile()
+    assert requests[1].profile is profile
+    assert "messages" not in requests[1].state_overrides
+    assert "observation" not in requests[1].state_overrides
+    assert requests[1].state_overrides["plan"] == []
+    await runtime.close()

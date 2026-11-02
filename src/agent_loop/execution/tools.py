@@ -32,9 +32,29 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from src.agent_loop.recordings import schema_digest
 from src.contracts import ToolRequest, ToolResult
 from src.harness.normalization import ToolCallNormalizer, as_normalizers
-from src.harness.tools import ToolRegistry
+from src.harness.tools import ToolRegistry, to_tool_def, tool_is_read_only, tool_name
+
+
+def tool_catalog(tools: Sequence[Any]) -> dict[str, dict[str, Any]]:
+    """Tool name -> ``{"server", "read_only", "schema_digest"}`` of the registered tools.
+
+    The same ``server`` (``MCPTool.server``) and ``readOnlyHint`` the broker and the
+    observation compiler use; recordings compare it to catch a changed tool before a replay.
+    """
+
+    catalog: dict[str, dict[str, Any]] = {}
+    for tool in tools:
+        name = tool_name(tool)
+        if name:
+            catalog[name] = {
+                "server": str(getattr(tool, "server", "") or ""),
+                "read_only": tool_is_read_only(tool),
+                "schema_digest": schema_digest(to_tool_def(tool).input_schema),
+            }
+    return catalog
 
 
 def _stringify_result(value: Any) -> str:
@@ -216,4 +236,5 @@ class ToolBroker:
 __all__ = [
     "PreparedToolCall",
     "ToolBroker",
+    "tool_catalog",
 ]

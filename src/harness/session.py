@@ -25,22 +25,29 @@ from src.agent_loop.execution.approval import ApprovalJudge
 from src.agent_loop.execution.loop import Agent, AgentLoopResult, HumanInputCallback
 from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
+from src.agent_loop.execution.tools import tool_catalog
 from src.agent_loop.goals import GoalLimits, GoalRunner
+from src.agent_loop.recordings import validate_recording_name
 from src.config import TelemetrySettings, get_settings
-from src.contracts import PermissionMode, TaskRequest, TaskUsage
+from src.contracts import PermissionMode, PlaybackAdapter, RunProfile, TaskRequest, TaskUsage
 from src.harness.hooks import HookEngine, NullHookEngine, registry_digest
 from src.browser.memory import BrowserMemoryPolicy, BrowserMemoryScope
 from src.browser.permissions import BrowserResourceResolver
+from src.browser.playback import BrowserPlaybackAdapter
 from src.harness.otel_sink import ModelIdentity, build_otlp_sink
 from src.harness.permissions import PermissionEngine
 from src.harness.mcp_setup import MCPRuntime, build_mcp_runtime
 from src.harness.memory import MemoryManager, NullMemoryContext
 from src.harness.memory_consolidation import MemoryConsolidator
 from src.harness.memory_store import MemoryContext, MemoryStore
-from src.harness.memory_tool import memory_tools
+from src.harness.memory_tool import MEMORY_SERVER, memory_tools
+from src.harness.playback import TextPlaybackAdapter
+from src.harness.recorder import Recorder
+from src.harness.recording_store import RecordingStore
 from src.harness.skill_tool import skill_tools
 from src.harness.skills import (
     BROWSER_CAPABILITY,
+    SKILLS_SERVER,
     SkillStore,
     always_sections,
     catalog_section,
@@ -441,11 +448,15 @@ def _task_state_overrides(
     session_state: MutableMapping[str, object],
     *,
     task_id: str,
+    carry: bool = True,
 ) -> dict[str, object]:
+    """The next task's ``state_overrides``: the carried durable context (none when ``carry``
+    is false, ``RunProfile.carry_context``) plus the task-boundary resets."""
+
     carried_state = {
         key: session_state[key]
         for key in SESSION_STATE_KEYS
-        if key in session_state
+        if carry and key in session_state
     }
     if carried_state.get("messages"):
         # The session owns the carry-forward, MemoryManager the shape of the history:
@@ -522,6 +533,13 @@ class SessionContext:
     #: The session's skills (``settings.skills``), read once in :meth:`initialize` after MCP
     #: starts (a skill may require the browser capability).
     skill_store: SkillStore | None = None
+    #: Recordings and the recorder (``settings.replay.enabled``), built in :meth:`initialize`;
+    #: ``None`` when replay is off.
+    recording_store: RecordingStore | None = None
+    recorder: Recorder | None = None
+    #: Reads the session's tool outputs for recording and playback: the browser snapshot
+    #: format when a browser server is configured, plain text otherwise.
+    playback_adapter: PlaybackAdapter | None = None
     chrome_process: Any | None = None
     #: Open while MCP runs: the stderr log of the stdio servers (:data:`CHILD_STDERR_LOG_NAME`).
     child_stderr: TextIO | None = None
@@ -623,8 +641,20 @@ class SessionContext:
         telemetry_sinks = _telemetry_sinks(
             self.config, settings.telemetry, models=self._model_identity
         )
+        replay_sinks: list[EventSink] = []
+        if settings.replay.enabled:
+            self.recording_store = RecordingStore.from_settings(settings.replay, settings.storage)
+            # The session's own tools are not part of a recorded run (by server, not name).
+            self.recorder = Recorder(
+                self.recording_store,
+                settings.replay,
+                service_servers=frozenset({MEMORY_SERVER, SKILLS_SERVER}),
+            )
+            replay_sinks.append(self.recorder)
         self.event_emitter = EventEmitter(
-            _build_session_event_sink(self.session_dir, [*self.event_sinks, *telemetry_sinks]),
+            _build_session_event_sink(
+                self.session_dir, [*self.event_sinks, *telemetry_sinks, *replay_sinks]
+            ),
             session_id=self.session_id,
             sequence=self.resumed_from_sequence or 0,
         )
@@ -672,6 +702,15 @@ class SessionContext:
             )
             if self.config.show_tools and print_tools is not None:
                 print_tools(list(await self.tool_registry.get_all()), output_fn)
+
+        # Same signal as the browser rules skill: a configured browser server.
+        self.playback_adapter = (
+            BrowserPlaybackAdapter(settings.replay)
+            if BROWSER_CAPABILITY in self._capabilities()
+            else TextPlaybackAdapter(settings.replay)
+        )
+        if self.recorder is not None:
+            self.recorder.adapter = self.playback_adapter
 
         self.harness = harness_factory(
             llm=self.llm,
@@ -791,6 +830,23 @@ class SessionContext:
             self.memory_store,
             BrowserMemoryScope(),
             tools_enabled=memory.tool_enabled,
+        )
+
+    def emit_recording_event(
+        self, event_type: str, payload: dict[str, Any], *, task_id: str
+    ) -> None:
+        """Emit ``recording.saved``/``recording.skipped`` for ``task_id`` (reasons truncated to
+        ``replay.detail_max_chars``)."""
+
+        if "reason" in payload:
+            limit = get_settings().replay.detail_max_chars
+            payload = {**payload, "reason": str(payload["reason"])[:limit]}
+        self.event_emitter.emit(
+            event_type,  # type: ignore[arg-type]
+            source="harness.recorder",
+            payload=payload,
+            task_id=task_id,
+            goal_id=task_id,
         )
 
     def emit_memory_event(self, event_type: str, payload: dict[str, Any]) -> None:
@@ -1196,9 +1252,17 @@ class SessionRuntime:
         self.context = restored
         return restored
 
-    async def run_task(self, task: str) -> AgentLoopResult:
-        """Run one user task through the session's agent."""
+    async def run_task(self, task: str, *, profile: RunProfile | None = None) -> AgentLoopResult:
+        """Run one user task through the session's agent.
 
+        ``profile`` (default: today's behaviour) carries playback, the ladder cap, the budget
+        and ``record_as``; ``carry_context=False`` starts the task without the session's
+        durable context. An invalid recording name fails before the task starts.
+        """
+
+        profile = profile or RunProfile()
+        if profile.record_as is not None:
+            validate_recording_name(profile.record_as)
         await self.start()
         if self.agent is None:
             raise RuntimeError("SessionRuntime.start() did not build the agent.")
@@ -1208,27 +1272,34 @@ class SessionRuntime:
             task=task,
             task_id=task_id,
             session_id=self.context.session_id,
-            state_overrides=_task_state_overrides(self.context.state, task_id=task_id),
+            state_overrides=_task_state_overrides(
+                self.context.state, task_id=task_id, carry=profile.carry_context
+            ),
             turn_cap=self.config.turn_cap,
             compress_tools=self.config.compress_tools,
+            profile=profile,
         )
         runner = GoalRunner(
             task_runner=self.agent.run,
             events=self.context.event_emitter,
             limits=GoalLimits.from_settings(get_settings().loop),
         )
+        self._arm_recording(task, task_id, profile)
         try:
             goal_result = await runner.run(request)
         except asyncio.CancelledError as exc:
+            self._disarm_recording(task_id)
             self._forget_memory(task_id)
             self.context.cancel_task(record, exc)
             raise
         except Exception as exc:
+            self._disarm_recording(task_id)
             self._forget_memory(task_id)
             self.context.fail_task(record, exc)
             raise
         result = goal_result.result
         self.context.state.replace(dict(result.session_state))
+        await self._save_recording(task_id, goal_result.status, result)
         try:
             await self._update_memory(task, task_id, goal_result.status, result)
         except BaseException:
@@ -1245,6 +1316,67 @@ class SessionRuntime:
                 final_answer=str(result.final_answer or ""),
             )
         return result
+
+    def _arm_recording(self, task: str, task_id: str, profile: RunProfile) -> None:
+        name = profile.record_as
+        if name is None:
+            return
+        recorder = self.context.recorder
+        if recorder is None:
+            self.context.emit_recording_event(
+                "recording.skipped",
+                {"name": name, "reason": "replay is disabled (replay.enabled)"},
+                task_id=task_id,
+            )
+            return
+        recorder.arm(task_id, name, task)
+
+    def _disarm_recording(self, task_id: str) -> None:
+        if self.context.recorder is not None:
+            self.context.recorder.disarm(task_id)
+
+    async def _save_recording(self, task_id: str, status: str, result: AgentLoopResult) -> None:
+        """After ``goal_end``: save the armed task's recording. A recording never fails a
+        task: any problem becomes ``recording.skipped``."""
+
+        recorder = self.context.recorder
+        name = recorder.armed(task_id) if recorder is not None else None
+        if recorder is None or name is None:
+            return
+        try:
+            tools = await self.context.tool_registry.get_all() if self.context.tool_registry else []
+            outcome = recorder.finish(
+                task_id,
+                status=status,
+                stage_reached=str(result.state.usage.stage_reached),
+                catalog=tool_catalog(list(tools)),
+                source={
+                    "session_id": self.context.session_id,
+                    "task_id": task_id,
+                    "model": self.context.config.model,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - reported, never raised
+            recorder.disarm(task_id)
+            _LOG.warning("the recording of %s was not saved", task_id, exc_info=True)
+            self.context.emit_recording_event(
+                "recording.skipped",
+                {"name": name, "reason": f"{type(exc).__name__}: {exc}"},
+                task_id=task_id,
+            )
+            return
+        if outcome is None:
+            return
+        if outcome.saved:
+            self.context.emit_recording_event(
+                "recording.saved",
+                {"name": outcome.name, "steps": outcome.steps, "replaced": outcome.replaced},
+                task_id=task_id,
+            )
+        else:
+            self.context.emit_recording_event(
+                "recording.skipped", {"name": outcome.name, "reason": outcome.reason}, task_id=task_id
+            )
 
     async def _update_memory(
         self, task: str, task_id: str, status: str, result: AgentLoopResult
