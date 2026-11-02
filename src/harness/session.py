@@ -29,7 +29,14 @@ from src.agent_loop.execution.tools import tool_catalog
 from src.agent_loop.goals import GoalLimits, GoalRunner
 from src.agent_loop.recordings import validate_recording_name
 from src.config import TelemetrySettings, get_settings
-from src.contracts import PermissionMode, PlaybackAdapter, RunProfile, TaskRequest, TaskUsage
+from src.contracts import (
+    PermissionMode,
+    PlaybackAdapter,
+    RunProfile,
+    TaskRequest,
+    TaskUsage,
+    ToolDef,
+)
 from src.harness.hooks import HookEngine, NullHookEngine, registry_digest
 from src.browser.memory import BrowserMemoryPolicy, BrowserMemoryScope
 from src.browser.permissions import BrowserResourceResolver
@@ -41,7 +48,7 @@ from src.harness.memory import MemoryManager, NullMemoryContext
 from src.harness.memory_consolidation import MemoryConsolidator
 from src.harness.memory_store import MemoryContext, MemoryStore
 from src.harness.memory_tool import MEMORY_SERVER, memory_tools
-from src.harness.playback import PlaybackFactory, TextPlaybackAdapter
+from src.harness.playback import PlaybackFactory, Retargeter, TextPlaybackAdapter
 from src.harness.recorder import Recorder
 from src.harness.recording_store import RecordingStore
 from src.harness.skill_tool import skill_tools
@@ -64,7 +71,7 @@ from src.harness.session_store import (
     save_state,
 )
 from src.harness.telemetry import TelemetryObserver
-from src.harness.tools import ToolRegistry
+from src.harness.tools import ToolRegistry, to_tool_def, tool_name
 from src.llm import ChatModel
 
 
@@ -999,9 +1006,29 @@ class SessionContext:
 
         if self.recording_store is None or self.playback_adapter is None:
             return None
+        settings = self.recording_store.settings
+        retargeter = None
+        if settings.retarget_enabled and self.llm is not None:
+            retargeter = Retargeter(
+                self.llm,
+                self.playback_adapter,
+                settings,
+                tool_def=self._tool_def,
+                model_label=self.config.model,
+            )
         return PlaybackFactory(
-            self.recording_store, self.playback_adapter, self.recording_store.settings
+            self.recording_store, self.playback_adapter, settings, retargeter=retargeter
         )
+
+    async def _tool_def(self, name: str) -> ToolDef | None:
+        """The current model-visible schema of the session tool ``name`` (``None``: gone)."""
+
+        if self.tool_registry is None:
+            return None
+        for tool in await self.tool_registry.get_all():
+            if tool_name(tool) == name:
+                return to_tool_def(tool)
+        return None
 
     def _memory_snapshot(self) -> dict[str, Any]:
         store = self.memory_store

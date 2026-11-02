@@ -20,12 +20,13 @@ from src.browser.playback import BrowserPlaybackAdapter
 from src.config import ReplaySettings
 from src.contracts import PlaybackRequest, RunProfile
 from src.harness.mcp_tools import MCPToolSource
-from src.harness.playback import PlaybackFactory
+from src.harness.playback import PlaybackFactory, Retargeter
 from src.harness.recorder import Recorder
 from src.harness.recording_store import RecordingStore
 from src.harness.runtime import BrowserHarness
-from src.harness.tools import ToolRegistry
-from src.llm import ModelResponse
+from src.harness.tools import ToolRegistry, to_tool_def
+from src.llm import ModelResponse, ModelUsage
+from src.messages import ToolCall
 from src.mcp import MCPManager
 
 PAGE_SERVER = str(Path(__file__).parent / "mcp_fixtures" / "fake_page_server.py")
@@ -63,6 +64,7 @@ async def run(
     store: RecordingStore,
     profile: RunProfile | None = None,
     record: bool = False,
+    retarget_model: Any = None,
 ) -> tuple[AgentLoopResult, list[EventRecord], CountingModel, list[str]]:
     settings = store.settings
     adapter = BrowserPlaybackAdapter(settings)
@@ -73,8 +75,18 @@ async def run(
         emitter = EventEmitter(CompositeEventSink([sink, recorder]), session_id="s")
         llm = CountingModel(responses)
         harness = BrowserHarness(llm=llm, tool_registry=registry, event_emitter=emitter)
+        retargeter = None
+        if retarget_model is not None:
+
+            async def tool_def(name: str) -> Any:
+                return next((to_tool_def(t) for t in await registry.get_all() if t.name == name), None)
+
+            retargeter = Retargeter(retarget_model, adapter, settings, tool_def=tool_def, model_label="cheap")
         resources = EngineResources.from_harness(
-            harness, llm=llm, events=emitter, steps=PlaybackFactory(store, adapter, settings)
+            harness,
+            llm=llm,
+            events=emitter,
+            steps=PlaybackFactory(store, adapter, settings, retargeter=retargeter),
         )
         if record:
             recorder.arm("task-1", "kettle-specs", TASK)
@@ -151,8 +163,32 @@ async def test_record_then_replay_where_refs_layout_and_path_change(tmp_path: Pa
         assert [record.payload["kind"] for record in records if record.type == "playback.diverged"] == ["checkpoint"]
         assert clicks(records) == []
 
+        # 5. The same renamed tab with a retargeter: one cheap call re-chooses the element,
+        #    the agent is never asked.
+        class CheapModel:
+            calls = 0
+
+            async def complete(self, messages: Any, **kwargs: Any) -> ModelResponse:
+                CheapModel.calls += 1
+                return ModelResponse(
+                    tool_calls=(ToolCall(id="r1", name="page__click",
+                                         arguments={"element": "Characteristics tab", "target": "e111"}),),
+                    usage=ModelUsage(input_tokens=300, output_tokens=12),
+                )
+
+        retargeted, records, llm, _ = await run(
+            server("--ref-base", "100", "--layout", "changed"), [DONE], store=store, profile=replay(),
+            retarget_model=CheapModel(),
+        )
+        assert llm.calls == 0 and CheapModel.calls == 1
+        assert retargeted.stop_reason == "playback_completed"
+        assert retargeted.state.usage.stage_reached == "retarget"
+        assert clicks(records) == ["e111"]
+        assert [r.payload["source"] for r in records if r.type == "action.proposed"][-1] == "retarget"
+
         stats = store.stats("kettle-specs")
-        assert stats["playbacks"] == 3
+        assert stats["playbacks"] == 4
+        assert stats["by_stage"] == {"playback": 1, "agent": 2, "retarget": 1}
         assert stats["diverged"] == {"binding": 1, "checkpoint": 1}
 
     await asyncio.wait_for(scenario(), timeout=120)

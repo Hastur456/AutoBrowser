@@ -16,12 +16,16 @@ word shingles. Browser snapshots are :mod:`src.browser.playback`'s business.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from src.agent_loop.model import response_usage
+from src.agent_loop.prompts import PLAYBACK_RETARGET_SYSTEM_PROMPT, PLAYBACK_RETARGET_USER_PROMPT
 from src.agent_loop.recordings import (
     RecordedStep,
     Recording,
@@ -47,9 +51,12 @@ from src.contracts import (
     StepOutcome,
     StepProposal,
     StepView,
+    ToolDef,
     ladder_rank,
 )
 from src.harness.recording_store import RecordingStore
+from src.llm import ChatModel, ModelPrice, ModelProviderError
+from src.messages import system_message, user_message
 
 _LOG = logging.getLogger(__name__)
 
@@ -317,6 +324,127 @@ def _budget_spent(budget: RunBudget, view: StepView) -> bool:
     return budget.max_cost is not None and usage.cost is not None and usage.cost >= budget.max_cost
 
 
+#: Resolves a recorded tool name to its current model-visible schema (``None``: gone).
+ToolDefResolver = Callable[[str], Awaitable[ToolDef | None]]
+
+
+class Retargeter:
+    """Stage 2: one model call re-chooses the arguments of one diverged recorded step.
+
+    The model sees the task, the recorded step (its element references replaced by their
+    recorded descriptions), why it diverged and the current page, and is offered only the
+    recorded tool. Its answer is accepted only as exactly one call of that tool whose
+    reference arguments are live references of the current page (``adapter.rebind`` in
+    verify mode); anything else — text, another tool, two calls, an invented reference,
+    a timeout or a provider error — means no retarget, and the agent takes over.
+    """
+
+    def __init__(
+        self,
+        llm: ChatModel,
+        adapter: PlaybackAdapter,
+        settings: ReplaySettings,
+        *,
+        tool_def: ToolDefResolver,
+        model_label: str = "",
+        price: ModelPrice | None = None,
+        tier: int = 0,
+    ) -> None:
+        self._llm = llm
+        self._adapter = adapter
+        self._settings = settings
+        self._tool_def = tool_def
+        self._label = model_label
+        self._price = price
+        self._tier = tier
+
+    async def retarget(
+        self,
+        *,
+        task: str,
+        step: RecordedStep,
+        reason: str,
+        view: StepView,
+        page_texts: Sequence[str],
+        emit: EventCallback,
+    ) -> tuple[dict[str, Any] | None, ModelCallRecord | None]:
+        tool = await self._tool_def(step.tool)
+        if tool is None:
+            return None, None
+        page = "\n\n".join(page_texts)[: self._settings.retarget_context_chars]
+        messages = [
+            system_message(PLAYBACK_RETARGET_SYSTEM_PROMPT),
+            user_message(
+                PLAYBACK_RETARGET_USER_PROMPT.format(
+                    task=task,
+                    tool=step.tool,
+                    args=_described_args(step),
+                    reason=reason,
+                    page=page,
+                )
+            ),
+        ]
+        emit("model.requested", {"phase": "retarget", "tier": self._tier, "tool_count": 1})
+        try:
+            response = await asyncio.wait_for(
+                self._llm.complete(messages, tools=[tool]),
+                timeout=self._settings.retarget_timeout_seconds,
+            )
+        except (TimeoutError, ModelProviderError) as exc:
+            error = "timeout" if isinstance(exc, TimeoutError) else str(exc)
+            emit("model.responded", {"phase": "retarget", "tier": self._tier, "error": error})
+            return None, ModelCallRecord(phase="retarget", model=self._label, tier=self._tier)
+        usage = response_usage(response) or {}
+        emit(
+            "model.responded",
+            {"phase": "retarget", "tier": self._tier, **({"usage": usage} if usage else {})},
+        )
+        record = ModelCallRecord(
+            phase="retarget",
+            model=self._label,
+            usage=usage,
+            cost=self._price.cost(response.usage) if self._price is not None else None,
+            tier=self._tier,
+        )
+        calls = list(response.tool_calls or ())
+        if len(calls) != 1 or calls[0].name != step.tool:
+            return None, record
+        args = dict(calls[0].arguments or {})
+        if step.bindings:
+            verified = self._adapter.rebind(args, step.bindings, page_texts, verify=True)
+            if verified.args is None:
+                return None, record
+        return args, record
+
+
+def _described_args(step: RecordedStep) -> str:
+    """The recorded arguments as JSON, each reference replaced by its recorded description:
+    ``<element role="tab" name="Specs" context=["tablist"], was e21>``."""
+
+    args: Any = json.loads(json.dumps(dict(step.args), default=str))
+    descriptions: dict[str, str] = {}
+    for index, binding in enumerate(step.bindings):
+        target: Any = args
+        for part in binding.path[:-1]:
+            target = target[part] if isinstance(target, (dict, list)) else None
+        last = binding.path[-1]
+        placeholder = f"__element_{index}__"
+        fields = " ".join(
+            f"{key}={json.dumps(value, ensure_ascii=False)}"
+            for key, value in binding.descriptor.items()
+            if value not in ("", [], None)
+        )
+        descriptions[json.dumps(placeholder)] = f"<element {fields}, was {binding.value}>"
+        if isinstance(target, dict) and isinstance(last, str) and last in target:
+            target[last] = placeholder
+        elif isinstance(target, list) and isinstance(last, int) and 0 <= last < len(target):
+            target[last] = placeholder
+    text = json.dumps(args, ensure_ascii=False, indent=2)
+    for placeholder, description in descriptions.items():
+        text = text.replace(placeholder, description)
+    return text
+
+
 class PlaybackFactory:
     """:class:`~src.contracts.StepSourceFactory` over the session's recording store."""
 
@@ -403,4 +531,11 @@ class TextPlaybackAdapter:
         return select_region(text, select, ignore)
 
 
-__all__ = ["PlaybackFactory", "PlaybackSource", "StepRetargeter", "TextPlaybackAdapter"]
+__all__ = [
+    "PlaybackFactory",
+    "PlaybackSource",
+    "Retargeter",
+    "StepRetargeter",
+    "TextPlaybackAdapter",
+    "ToolDefResolver",
+]
