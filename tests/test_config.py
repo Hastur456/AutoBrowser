@@ -1618,3 +1618,49 @@ def test_the_config_file_is_read_as_utf8(
     (rule,) = settings().permissions.rules
 
     assert rule.reason == reason
+
+
+# --------------------------------------------------------------------------
+# Prices and task budgets
+# --------------------------------------------------------------------------
+
+
+def test_prices_and_task_budgets_default_to_unset(settings: Any) -> None:
+    current = settings()
+
+    assert current.llm.prices == {} and current.llm.currency == "USD"
+    assert (current.loop.max_task_model_calls, current.loop.max_task_tokens, current.loop.max_task_cost) == (
+        None,
+        None,
+        None,
+    )
+
+
+def test_prices_and_budgets_resolve_from_the_environment(settings: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "AUTOBROWSER_LLM__PRICES", '{"gemma4:31b-cloud": {"input_per_mtok": 0.2, "output_per_mtok": 0.6}}'
+    )
+    monkeypatch.setenv("AUTOBROWSER_LOOP__MAX_TASK_MODEL_CALLS", "30")
+    monkeypatch.setenv("AUTOBROWSER_LOOP__MAX_TASK_COST", "0.05")
+
+    current = settings()
+
+    price = current.llm.prices["gemma4:31b-cloud"]
+    assert (price.input_per_mtok, price.output_per_mtok, price.cached_input_per_mtok) == (0.2, 0.6, None)
+    assert (current.loop.max_task_model_calls, current.loop.max_task_cost) == (30, 0.05)
+
+
+@pytest.mark.parametrize(
+    "section, values",
+    [
+        ("llm", {"prices": {"m": {"input_per_mtok": -1, "output_per_mtok": 0}}}),
+        ("llm", {"prices": {"m": {"input_per_mtok": 1, "output_per_mtok": 1, "unknown": 1}}}),
+        ("llm", {"currency": ""}),
+        ("loop", {"max_task_model_calls": 0}),
+        ("loop", {"max_task_tokens": 0}),
+        ("loop", {"max_task_cost": 0}),
+    ],
+)
+def test_prices_and_budgets_bounds_are_enforced(settings: Any, section: str, values: dict) -> None:
+    with pytest.raises(ValueError):
+        settings(**{section: values})

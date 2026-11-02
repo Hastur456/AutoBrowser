@@ -72,7 +72,7 @@ from src.harness.session_store import (
 )
 from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolRegistry, to_tool_def, tool_name
-from src.llm import ChatModel
+from src.llm import ChatModel, ModelPrice, ModelTiers
 
 
 _LOG = logging.getLogger(__name__)
@@ -998,8 +998,24 @@ class SessionContext:
             approval=self.approval,
             memory=self.memory,
             steps=self._step_sources(),
+            models=ModelTiers.single(
+                self.llm, label=self.config.model, price=self._model_price(self.config.model)
+            ),
         )
         return Agent(resources, human_input=human_input)
+
+    @staticmethod
+    def _model_price(model: str) -> ModelPrice | None:
+        """The ``llm.prices`` entry of ``model``; ``None`` (an unknown cost) without one."""
+
+        spec = get_settings().llm.prices.get(model)
+        if spec is None:
+            return None
+        return ModelPrice(
+            input_per_mtok=spec.input_per_mtok,
+            output_per_mtok=spec.output_per_mtok,
+            cached_input_per_mtok=spec.cached_input_per_mtok,
+        )
 
     def _step_sources(self) -> PlaybackFactory | None:
         """The playback step sources when replay is enabled (``replay.enabled``)."""
@@ -1015,6 +1031,7 @@ class SessionContext:
                 settings,
                 tool_def=self._tool_def,
                 model_label=self.config.model,
+                price=self._model_price(self.config.model),
             )
         return PlaybackFactory(
             self.recording_store, self.playback_adapter, settings, retargeter=retargeter

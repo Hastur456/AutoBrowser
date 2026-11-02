@@ -97,6 +97,11 @@ llm:
   extra_body: {}                                # (default)
   # Characters of a provider error body quoted in error messages, >= 40.
   error_preview_chars: 300                      # (default)
+  # Price per 1M tokens by model id, for cost reports and money budgets
+  # (loop.max_task_cost). A model without a price has an unknown cost.
+  prices: {}                                    # (default) e.g.
+  #   gemma4:31b-cloud: {input_per_mtok: 0.2, output_per_mtok: 0.6}
+  currency: USD                                 # (default)
 
   # Service profiles -- replace the fields above with one of these blocks.
   #
@@ -160,6 +165,11 @@ loop:
   # Silence in the event stream that means "stalled", in seconds. Clamped to
   # task_timeout_seconds, so a smaller task budget shortens it automatically.
   progress_timeout_seconds: 120.0               # (default)
+  # Budget of one task; running out blocks it with stop_reason budget_exhausted
+  # before the next model call. null = no cap.
+  max_task_model_calls: null                    # (default) plan, turns, retargets, judge
+  max_task_tokens: null                         # (default) input + output tokens
+  max_task_cost: null                           # (default) in llm.currency; needs llm.prices
 
 # ---------------------------------------------------------------------------
 # How much tool output reaches the model. Lower = cheaper prompts, higher = less

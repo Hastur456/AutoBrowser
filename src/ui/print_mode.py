@@ -101,10 +101,12 @@ async def run_print(
         status, task_id = outcome.status, outcome.task_id
         final_answer, turns, error = outcome.final_answer, outcome.turns, outcome.error
         stop_reason, stage = outcome.stop_reason, outcome.stage
+        usage = asdict(outcome.usage) if outcome.usage is not None else None
     else:
         status = "cancelled" if cancelled else "failed"
         task_id, final_answer, turns = "", "", None
         stop_reason, stage = "", ""
+        usage = None
     summary: dict[str, object] = {
         "status": status,
         "final_answer": final_answer,
@@ -116,6 +118,8 @@ async def run_print(
         summary["stop_reason"] = stop_reason
     if stage:
         summary["stage"] = stage
+    if usage is not None:
+        summary["usage"] = usage
     if error:
         summary["error"] = error
     if output_format == "json":

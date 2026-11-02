@@ -204,6 +204,17 @@ def _null_string_to_none(value: Any) -> Any:
     return value
 
 
+class ModelPriceSpec(_Section):
+    """What one million tokens of a model cost, in ``llm.currency``."""
+
+    input_per_mtok: Annotated[float, Field(ge=0.0, description="Price of 1M input tokens.")]
+    output_per_mtok: Annotated[float, Field(ge=0.0, description="Price of 1M output tokens.")]
+    cached_input_per_mtok: Annotated[
+        float | None,
+        Field(ge=0.0, description="Price of 1M cached input tokens; None: the input price."),
+    ] = None
+
+
 class LLMSettings(_Section):
     """Provider-neutral chat model defaults.
 
@@ -379,6 +390,21 @@ class LLMSettings(_Section):
         ),
     ] = 300
 
+    prices: Annotated[
+        dict[str, ModelPriceSpec],
+        Field(
+            description=(
+                "Price per 1M tokens by model id, for cost reports and money budgets "
+                "(loop.max_task_cost). A model without a price has an unknown cost."
+            ),
+        ),
+    ] = {}
+
+    currency: Annotated[
+        str,
+        Field(min_length=1, description="Currency of llm.prices and of cost reports."),
+    ] = "USD"
+
     @field_validator("temperature", "timeout_seconds", "parallel_tool_calls", mode="before")
     @classmethod
     def _null_string_means_unset(cls, value: Any) -> Any:
@@ -526,6 +552,38 @@ class LoopSettings(_Section):
             description="Stall budget when a goal stream stops reporting progress.",
         ),
     ] = 120.0
+
+    max_task_model_calls: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            description=(
+                "Model calls one task may make (plan, turns, retargets, approval judge); "
+                "None: no cap. A run profile's own budget wins."
+            ),
+        ),
+    ] = None
+
+    max_task_tokens: Annotated[
+        int | None,
+        Field(ge=1, description="Input plus output tokens one task may use; None: no cap."),
+    ] = None
+
+    max_task_cost: Annotated[
+        float | None,
+        Field(
+            gt=0.0,
+            description=(
+                "Money one task may spend, in llm.currency (needs llm.prices); None: no cap. "
+                "Not checked while a call's cost is unknown."
+            ),
+        ),
+    ] = None
+
+    @field_validator("max_task_model_calls", "max_task_tokens", "max_task_cost", mode="before")
+    @classmethod
+    def _null_string_means_unset(cls, value: Any) -> Any:
+        return _null_string_to_none(value)
 
     @model_validator(mode="after")
     def _clamp_phase_timeouts(self) -> "LoopSettings":
@@ -2266,6 +2324,7 @@ __all__ = [
     "LLMSettings",
     "LoopSettings",
     "MemorySettings",
+    "ModelPriceSpec",
     "ObservationSettings",
     "PermissionRule",
     "PermissionsSettings",

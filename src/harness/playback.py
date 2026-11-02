@@ -24,6 +24,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from src.agent_loop.execution.usage import budget_exhausted
 from src.agent_loop.model import response_usage
 from src.agent_loop.prompts import PLAYBACK_RETARGET_SYSTEM_PROMPT, PLAYBACK_RETARGET_USER_PROMPT
 from src.agent_loop.recordings import (
@@ -299,7 +300,7 @@ class PlaybackSource:
             return False
         if self._retargets >= self._settings.max_retargets_per_run:
             return False
-        return not _budget_spent(self._budget, view)
+        return not budget_exhausted(view.usage, self._budget)
 
     def _record_stats(self, stage: str, *, diverged: str = "") -> None:
         """Count this playback in ``stats.json`` once; the recording itself never changes."""
@@ -311,17 +312,6 @@ class PlaybackSource:
             self._store.record_playback(self._recording.name, stage=stage, diverged=diverged)
         except OSError:
             _LOG.warning("playback stats of %s were not saved", self._recording.name, exc_info=True)
-
-
-def _budget_spent(budget: RunBudget, view: StepView) -> bool:
-    """No room for one more model call within the run budget."""
-
-    usage = view.usage
-    if budget.max_model_calls is not None and usage.model_calls >= budget.max_model_calls:
-        return True
-    if budget.max_tokens is not None and usage.tokens >= budget.max_tokens:
-        return True
-    return budget.max_cost is not None and usage.cost is not None and usage.cost >= budget.max_cost
 
 
 #: Resolves a recorded tool name to its current model-visible schema (``None``: gone).

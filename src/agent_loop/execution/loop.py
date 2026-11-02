@@ -68,6 +68,7 @@ from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import LoopState
 from src.agent_loop.execution.tools import PreparedToolCall, ToolBroker, tool_catalog
+from src.agent_loop.execution.usage import add_call, budget_exhausted, effective_budget
 from src.agent_loop.model import ModelDriver, response_usage
 from src.config import get_settings
 from src.contracts import (
@@ -79,6 +80,7 @@ from src.contracts import (
     PermissionCheck,
     PermissionVerdict,
     PlanStep,
+    RunBudget,
     RunProfile,
     StepFinal,
     StepHandoff,
@@ -122,6 +124,9 @@ class AgentLoopResult:
     turns: int = 0
     #: Machine-readable terminal reason (a ``StopReason``); empty only for foreign results.
     stop_reason: str = ""
+    #: The task's model accounting (calls, tokens, cost, ladder stage); ``None`` only for
+    #: foreign results.
+    usage: TaskUsage | None = None
 
 
 @dataclass(frozen=True)
@@ -331,6 +336,7 @@ class TurnController:
         source: str = EVENT_SOURCE,
         step_source: StepSource | None = None,
         profile: RunProfile | None = None,
+        budget: RunBudget | None = None,
     ) -> None:
         self._resources = resources
         self._tools = tools
@@ -365,8 +371,13 @@ class TurnController:
             self._model_tools, self._notes_colliding = offer_notes_argument(self._model_tools)
         # normalizers are registered with the tool registry (ToolRegistry.get_normalizers)
         self._broker = ToolBroker(resources.tool_registry)
+        # One tier in this phase (the cascade adds more): today's ``resources.llm`` unless the
+        # session passed its labelled, priced tier.
+        self._tier = resources.tiers().tier(0)
+        self._budget = budget or RunBudget()
+        self._source_calls_seen = 0
         self._model_driver = ModelDriver(
-            resources.llm,
+            self._tier.model,
             tool_registry=resources.tool_registry,
         )
         self._observation = ObservationCompiler()
@@ -428,8 +439,17 @@ class TurnController:
         return await self._model_step(state)
 
     async def _model_step(self, state: LoopState) -> dict[str, Any]:
-        """One model turn: ask the model and classify its action into a state update."""
+        """One model turn: ask the model and classify its action into a state update.
 
+        The run budget is checked first: a task that used it up ends ``blocked`` with
+        ``budget_exhausted`` before the call, and the call is added to ``usage`` after it.
+        """
+
+        exhausted = budget_exhausted(state.usage, self._budget)
+        if exhausted:
+            return blocked_response(
+                state, f"Blocked: {exhausted}.", stop_reason="budget_exhausted"
+            )
         messages = self._history(state)
 
         mapping = self._prompt_mapping(state)
@@ -452,19 +472,32 @@ class TurnController:
                 **({"usage": usage} if usage else {}),
             },
         )
+        accounted = self._account(state.usage, "agent", model_turn.response, usage)
 
         actions = list(model_turn.actions or [])
         if not actions:
             # ActionParser always returns >=1 action; this is a defensive terminal only.
-            return blocked_response(
-                state, "Blocked: the model returned no actionable step.", stop_reason="no_action"
-            )
+            return {
+                **blocked_response(
+                    state, "Blocked: the model returned no actionable step.", stop_reason="no_action"
+                ),
+                "usage": accounted,
+            }
         update = self._classify_action(state, actions[0], messages)
         # Only a successful completion *from the model* is checked; guard terminals (limits)
         # and blocked/cancelled stops are never second-guessed.
         if update.get("decision") == "done" and update.get("completion_status") == "done":
             update = await self._stop_check(state, update)
-        return update
+        return {**update, "usage": accounted}
+
+    def _account(
+        self, usage: TaskUsage, stage: str, response: Any, tokens: Mapping[str, int] | None
+    ) -> TaskUsage:
+        """``usage`` plus one call of the current tier's model."""
+
+        tier = self._tier
+        price = tier.price.cost(getattr(response, "usage", None)) if tier.price else None
+        return add_call(usage, stage=stage, model=tier.label, tokens=tokens, cost=price)
 
     async def _stop_check(self, state: LoopState, update: dict[str, Any]) -> dict[str, Any]:
         """Run ``stop`` hooks on a model ``done`` before it is applied to state.
@@ -530,6 +563,14 @@ class TurnController:
             )
         else:
             outcome = await source.next(self._step_view(state))
+        # The source's own model calls (retargets) count toward the task's usage.
+        state = self._with_source_usage(state)
+        update = await self._source_outcome(state, outcome)
+        update.setdefault("usage", state.usage)
+        return update
+
+    async def _source_outcome(self, state: LoopState, outcome: Any) -> dict[str, Any]:
+        """Turn the source's answer into the state update of this turn."""
 
         if isinstance(outcome, StepProposal):
             request: ToolRequest = dict(outcome.request)  # type: ignore[assignment]
@@ -589,6 +630,22 @@ class TurnController:
                 detail=f"unexpected step outcome {type(outcome).__name__}",
             )
         return await self._handoff(state, outcome)
+
+    def _with_source_usage(self, state: LoopState) -> LoopState:
+        source = self._step_source
+        records = list(source.usage) if source is not None else []
+        fresh, self._source_calls_seen = records[self._source_calls_seen :], len(records)
+        usage = state.usage
+        for record in fresh:
+            usage = add_call(
+                usage, stage=record.phase, model=record.model, tokens=record.usage, cost=record.cost
+            )
+        return state.apply({"usage": usage}) if fresh else state
+
+    def _call_stage(self, state: LoopState) -> str:
+        """The ladder stage a model call of this turn is accounted to."""
+
+        return state.ladder_stage if self._step_source is not None else "agent"
 
     async def _handoff(self, state: LoopState, handoff: StepHandoff) -> dict[str, Any]:
         """The source gives up: the model drives the rest of the task (sticky), unless the
@@ -895,6 +952,11 @@ class TurnController:
             and not check.read_only
         ):
             reason = await self._classify(state, prepared, check, snapshot)
+            # The judge's call counts toward the task; it reports no tokens, so its cost is
+            # unknown.
+            state = state.apply(
+                {"usage": add_call(state.usage, stage=self._call_stage(state), tokens={}, cost=None)}
+            )
             if reason:
                 check = dataclasses.replace(check, classifier_ask_reason=reason)
                 verdict = self._permissions.evaluate(check, snapshot)
@@ -1163,6 +1225,7 @@ class AgentLoopEngine:
         self._source = source
         self._completion = CompletionController()
         self._event_ctx: dict[str, Any] = {}
+        self._budget = RunBudget()
 
     async def run(
         self,
@@ -1189,6 +1252,7 @@ class AgentLoopEngine:
         }
         turn_cap = max(1, int(turn_cap or get_settings().loop.turn_cap))
         profile = profile or RunProfile()
+        self._budget = effective_budget(profile.budget, get_settings().loop)
 
         tools = list(await self._resources.tool_registry.get_all())
         step_source = self._build_step_source(task, profile)
@@ -1202,6 +1266,7 @@ class AgentLoopEngine:
             source=self._source,
             step_source=step_source,
             profile=profile,
+            budget=self._budget,
         )
 
         state = LoopState.from_state_overrides(state_overrides)
@@ -1225,6 +1290,9 @@ class AgentLoopEngine:
             # The recording's plan: no planner call (model call #0) for a replay.
             state = self._seed_plan(state, recorded_plan)
         else:
+            blocked = self._budget_block(state)
+            if blocked is not None:
+                return await self._finish(blocked, "blocked", turns=0)
             # Model call #0: build the initial plan (consumes the planner response).
             state = await self._run_plan(state)
 
@@ -1262,6 +1330,10 @@ class AgentLoopEngine:
                 final_status = result.status
                 break
             if result.replan:
+                blocked = self._budget_block(state)
+                if blocked is not None:
+                    state, final_status = blocked, "blocked"
+                    break
                 state = await self._run_plan(state)
                 continue
 
@@ -1283,7 +1355,7 @@ class AgentLoopEngine:
         source = factory.build(
             request,
             task=task,
-            budget=profile.budget,
+            budget=self._budget,
             max_stage=profile.max_stage,
             emit=self._emit,
         )
@@ -1352,6 +1424,7 @@ class AgentLoopEngine:
             state=state,
             turns=turns,
             stop_reason=state.stop_reason,
+            usage=state.usage,
         )
 
     async def _run_hooks(self, event: HookEvent) -> HookOutcome:
@@ -1376,9 +1449,12 @@ class AgentLoopEngine:
             mapping, memory=self._resources.memory.render(mapping)
         )
         self._emit("model.requested", {"phase": "plan"})
-        response = await self._resources.llm.complete([*messages, user_message(plan_prompt)])
+        tier = self._resources.tiers().tier(0)
+        response = await tier.model.complete([*messages, user_message(plan_prompt)])
         usage = response_usage(response)
         self._emit("model.responded", {"phase": "plan", **({"usage": usage} if usage else {})})
+        cost = tier.price.cost(getattr(response, "usage", None)) if tier.price else None
+        accounted = add_call(state.usage, stage="agent", model=tier.label, tokens=usage, cost=cost)
 
         data = _json_object(_message_content(response))
         plan = _normalize_steps(data.get("steps"), state.task or "Complete the task.")
@@ -1390,10 +1466,21 @@ class AgentLoopEngine:
                 "replan_count": replan_count,
                 "error": "",
                 "messages": messages,
+                "usage": accounted,
             }
         )
         self._emit_plan(state)
         return state
+
+    def _budget_block(self, state: LoopState) -> LoopState | None:
+        """The blocked state when the run budget has no room for the next model call."""
+
+        exhausted = budget_exhausted(state.usage, self._budget)
+        if not exhausted:
+            return None
+        return state.apply(
+            blocked_response(state, f"Blocked: {exhausted}.", stop_reason="budget_exhausted")
+        )
 
     def _emit_plan(self, state: LoopState) -> None:
         """Publish the plan's content: every (re)plan and every change of step status."""

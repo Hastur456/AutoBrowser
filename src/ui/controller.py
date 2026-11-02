@@ -196,6 +196,7 @@ class SessionController:
             turns=result.turns,
             stop_reason=str(result.stop_reason or ""),
             stage=_stage_reached(result),
+            usage=getattr(result, "usage", None),
         )
 
     async def wait(self) -> TaskView | None:

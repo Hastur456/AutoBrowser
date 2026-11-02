@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 
+from src.contracts import TaskUsage
+
 #: What a projected event means for a feed, decided by the event ``type`` alone.
 FeedKind = Literal[
     "goal_started",
@@ -96,6 +98,8 @@ class TaskOutcome:
     stop_reason: str = ""
     #: The highest cost-ladder stage the task reached (``playback``, ``retarget``, ``agent``).
     stage: str = ""
+    #: The task's model accounting (``TaskUsage``); ``None`` when the task did not finish.
+    usage: TaskUsage | None = None
 
 
 @dataclass(frozen=True)
