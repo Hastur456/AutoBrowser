@@ -432,3 +432,72 @@ def test_doctor_survives_a_legacy_code_page_stdout(monkeypatch: pytest.MonkeyPat
     stream.flush()
     assert code in (0, 1)
     assert b"skills" in raw.getvalue()
+
+
+# -- recordings ------------------------------------------------------------------------------
+
+
+def enable_replay(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    profile = tmp_path / "replay.yaml"
+    profile.write_text("replay: {enabled: true}\n", encoding="utf-8")
+    monkeypatch.setenv(CONFIG_FILE_ENV_VAR, str(profile))
+    get_settings.cache_clear()
+
+
+def save_recording(name: str) -> None:
+    from src.agent_loop.recordings import RecordedStep, Recording
+    from src.harness.recording_store import RecordingStore
+
+    settings = get_settings()
+    RecordingStore.from_settings(settings.replay, settings.storage).save(
+        Recording(
+            name=name,
+            task="read the price",
+            steps=(
+                RecordedStep(index=1, tool="open", args={"url": "https://shop.example"}),
+                RecordedStep(index=2, tool="fill", args={"password": "[REDACTED]"}, redacted=True),
+            ),
+            created_at="2026-11-02T10:00:00+00:00",
+        )
+    )
+
+
+def test_recordings_list_show_and_rm(capsys: pytest.CaptureFixture[str]) -> None:
+    assert entry.main(["recordings", "list"]) == 0
+    assert "No recordings" in capsys.readouterr().out
+
+    save_recording("price-watch")
+    assert entry.main(["recordings", "list"]) == 0
+    assert "price-watch" in capsys.readouterr().out
+
+    assert entry.main(["recordings", "show", "price-watch"]) == 0
+    shown = capsys.readouterr().out
+    assert "1. open" in shown and "redacted" in shown and "read the price" in shown
+
+    assert entry.main(["recordings", "rm", "price-watch"]) == 0
+    assert entry.main(["recordings", "rm", "price-watch"]) == 1
+    assert entry.main(["recordings", "show", "../etc"]) == 1
+    assert "invalid recording name" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "argv, enabled, message",
+    [
+        (["-p", "--record", "x", "task"], False, "replay.enabled"),
+        (["-p", "--record", "Bad Name", "task"], True, "invalid recording name"),
+        (["--classic", "--record", "x", "task"], True, "not --classic"),
+    ],
+)
+def test_record_flag_problems_are_usage_errors(
+    argv: list[str],
+    enabled: bool,
+    message: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    if enabled:
+        enable_replay(tmp_path, monkeypatch)
+
+    assert entry.main(argv) == 2
+    assert message in capsys.readouterr().err

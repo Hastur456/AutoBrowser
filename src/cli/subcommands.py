@@ -1,4 +1,4 @@
-"""``autobrowser doctor | sessions | replay | completion`` (§7.6 of the terminal UI design).
+"""``autobrowser doctor | sessions | replay | recordings | completion`` (§7.6 of the terminal UI design).
 
 The entry point dispatches here when the first argument is one of :data:`SUBCOMMANDS`; a task
 that is literally one of these words goes through ``--task`` or after ``--``.
@@ -7,6 +7,7 @@ that is literally one of these words goes through ``--task`` or after ``--``.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import socket
@@ -38,11 +39,12 @@ from src.harness.session_store import (
     find_session,
     list_sessions,
 )
+from src.harness.recording_store import RecordingNotFoundError, RecordingStore
 from src.harness.otel_sink import invalid_otlp_headers, otlp_exporter_installed
 from src.harness.skills import SESSION_CAPABILITIES, SkillStore, skill_roots, user_skills_root
 from src.version import PACKAGE_NAME, package_version
 
-SUBCOMMANDS = ("doctor", "sessions", "replay", "completion")
+SUBCOMMANDS = ("doctor", "sessions", "replay", "recordings", "completion")
 SHELLS = ("bash", "zsh", "fish", "tcsh", "powershell")
 
 #: Check marks of ``doctor``: fine, worth a look, broken.
@@ -88,6 +90,18 @@ def build_subcommand_parser() -> argparse.ArgumentParser:
     target = replay.add_argument("target", help="Session id or prefix, a session folder, or an events.jsonl file.")
     target.completer = session_id_completer  # type: ignore[attr-defined]  # argcomplete
     replay.set_defaults(handler=_replay)
+
+    recordings = commands.add_parser(
+        "recordings", help="List, show or remove the recordings replay uses (replay.dir)."
+    )
+    actions = recordings.add_subparsers(dest="action", required=True)
+    actions.add_parser("list", help="List the stored recordings.").set_defaults(handler=_recordings_list)
+    show = actions.add_parser("show", help="Print the steps of a recording.")
+    show.add_argument("name")
+    show.set_defaults(handler=_recordings_show)
+    remove = actions.add_parser("rm", help="Remove a recording.")
+    remove.add_argument("name")
+    remove.set_defaults(handler=_recordings_rm)
 
     completion = commands.add_parser("completion", help="Print the shell completion script.")
     completion.add_argument("shell", choices=SHELLS)
@@ -359,6 +373,61 @@ def _trace_path(target: str) -> Path:
     if not trace.is_file():
         raise FileNotFoundError(f"Session {session.session_id[:12]} has no {EVENTS_FILE_NAME}.")
     return trace
+
+
+# -- recordings ------------------------------------------------------------------------------
+
+
+def _recording_store() -> RecordingStore:
+    settings = get_settings()
+    return RecordingStore.from_settings(settings.replay, settings.storage)
+
+
+def _recordings_list(args: argparse.Namespace, write: Callable[[str], None]) -> int:
+    store = _recording_store()
+    entries = store.entries()
+    if not entries:
+        write(f"No recordings in {store.root}.")
+        return 0
+    for entry in entries:
+        if entry.error:
+            write(f"{entry.name:<24} unreadable: {entry.error}")
+        else:
+            write(f"{entry.name:<24} {entry.steps:>3} steps  {entry.created_at[:19]}  {entry.task}")
+    return 0
+
+
+def _recordings_show(args: argparse.Namespace, write: Callable[[str], None]) -> int:
+    store = _recording_store()
+    try:
+        recording = store.load(args.name)
+    except (RecordingNotFoundError, ValueError) as exc:
+        write(str(exc))
+        return 1
+    limit = store.settings.detail_max_chars
+    write(f"{recording.name} · {len(recording.steps)} steps · answer: {recording.answer}")
+    write(f"task: {recording.task}")
+    stats = store.stats(args.name)
+    if stats:
+        write(f"played {stats.get('playbacks', 0)} times, last stage: {stats.get('last_stage', '-')}")
+    for step in recording.steps:
+        args_text = json.dumps(dict(step.args), ensure_ascii=False)[:limit]
+        marks = [f"{len(step.bindings)} refs"] if step.bindings else []
+        if step.redacted:
+            marks.append("redacted")
+        suffix = f"  [{', '.join(marks)}]" if marks else ""
+        write(f"{step.index:>3}. {step.tool} {args_text}{suffix}")
+    return 0
+
+
+def _recordings_rm(args: argparse.Namespace, write: Callable[[str], None]) -> int:
+    try:
+        removed = _recording_store().delete(args.name)
+    except ValueError as exc:
+        write(str(exc))
+        return 1
+    write(f"Removed {args.name}." if removed else f"No recording named {args.name!r}.")
+    return 0 if removed else 1
 
 
 # -- completion ------------------------------------------------------------------------------

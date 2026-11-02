@@ -22,6 +22,7 @@ from src.harness.session_store import SessionInUseError
 from src.cli.tasks import resolve_initial_task
 from src.agent_loop.events import EventSink
 from src.agent_loop.goals import GoalLimits
+from src.agent_loop.recordings import validate_recording_name
 from src.config import UiSettings, get_settings
 from src.harness.approvals import ApprovalBroker
 from src.harness.chrome import start_chrome_cdp, wait_for_port
@@ -165,6 +166,10 @@ def run_agent_cli(args: argparse.Namespace) -> int:
     except ResumeError as exc:
         print(f"autobrowser: {exc}", file=sys.stderr)
         return USAGE_EXIT_CODE
+    problem = replay_args_problem(args, classic=not print_mode and ui.frontend == "classic")
+    if problem:
+        print(f"autobrowser: {problem}", file=sys.stderr)
+        return USAGE_EXIT_CODE
     try:
         if print_mode:
             return run_print_cli(args, ui, resume_from=resume_from)
@@ -175,6 +180,31 @@ def run_agent_cli(args: argparse.Namespace) -> int:
         # Another process took the session between the check above and the restore.
         print(f"autobrowser: {exc}", file=sys.stderr)
         return USAGE_EXIT_CODE
+
+
+def replay_args_problem(args: argparse.Namespace, *, classic: bool) -> str:
+    """Why the replay flags cannot be used as given; ``""`` when they can."""
+
+    record = getattr(args, "record", None)
+    if record is None:
+        return ""
+    if classic:
+        return "--record needs the terminal UI, plain mode or -p (not --classic)."
+    if not get_settings().replay.enabled:
+        return "--record needs replay.enabled (AUTOBROWSER_REPLAY__ENABLED=true)."
+    try:
+        validate_recording_name(record)
+    except ValueError as exc:
+        return str(exc)
+    return ""
+
+
+def _arm_recording(controller: Any, args: argparse.Namespace) -> None:
+    """Arm ``--record`` for the first task (already checked by :func:`replay_args_problem`)."""
+
+    record = getattr(args, "record", None)
+    if record is not None:
+        controller.arm_recording(record)
 
 
 def run_print_cli(
@@ -218,6 +248,7 @@ def run_print_cli(
         resume_from=resume_from,
     )
     controller = SessionController(session, broadcaster=broadcaster)
+    _arm_recording(controller, args)
 
     def out(line: str) -> None:
         print(line, file=stdout, flush=True)
@@ -300,6 +331,7 @@ def run_frontend_cli(
         resume_from=resume_from,
     )
     controller = SessionController(session, broker=broker, broadcaster=broadcaster)
+    _arm_recording(controller, args)
     runtime = RuntimeLoop()
     try:
         return run_frontend(

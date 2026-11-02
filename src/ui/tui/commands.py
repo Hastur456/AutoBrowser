@@ -232,6 +232,34 @@ async def _history(host: CommandHost, args: str) -> CommandResult:
     return CommandResult(messages=(CommandOutput(title, tuple(rows) or ("-",)),))
 
 
+async def _record(host: CommandHost, args: str) -> CommandResult:
+    """``/record <name>`` records the next task as a replayable recording; ``/record off``
+    disarms; ``/record`` alone says what is armed."""
+
+    ru = host.locale == "ru"
+    parts = args.split()
+    if len(parts) > 1:
+        return _usage_error(host, "/record [<name>|off]")
+    if not parts:
+        view = await host.bridge.call(host.controller.session_view)
+        if view.recording_armed:
+            text = f"следующая задача запишется как {view.recording_armed}" if ru else (
+                f"the next task is recorded as {view.recording_armed}"
+            )
+        else:
+            text = "запись не включена" if ru else "no recording is armed"
+        return CommandResult(messages=(Notice(text),))
+    name = None if parts[0] == "off" else parts[0]
+    try:
+        armed = await host.bridge.call(lambda: host.controller.arm_recording(name))
+    except ValueError as exc:
+        return CommandResult(messages=(Notice(sanitize_text(str(exc)), "warn"),))
+    if armed is None:
+        return CommandResult(messages=(Notice("запись выключена" if ru else "recording is off"),))
+    text = f"следующая задача запишется как {armed}" if ru else f"the next task is recorded as {armed}"
+    return CommandResult(messages=(Notice(text),))
+
+
 async def _memory(host: CommandHost, _args: str) -> CommandResult:
     entries = await host.bridge.call(host.controller.memory_entries)
     ru = host.locale == "ru"
@@ -495,6 +523,12 @@ COMMANDS: tuple[SlashCommand, ...] = (
     ),
     SlashCommand("history", "/history [N]", {"ru": "история диалога", "en": "dialogue history"}, _history),
     SlashCommand("memory", "/memory", {"ru": "записи памяти", "en": "memory entries"}, _memory),
+    SlashCommand(
+        "record",
+        "/record [<name>|off]",
+        {"ru": "записать следующую задачу для replay", "en": "record the next task for replay"},
+        _record,
+    ),
     SlashCommand("skills", "/skills", {"ru": "скиллы агента", "en": "agent skills"}, _skills),
     SlashCommand("url", "/url", {"ru": "адрес текущей страницы", "en": "current page URL"}, _url),
     SlashCommand(

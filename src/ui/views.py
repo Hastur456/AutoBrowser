@@ -189,6 +189,8 @@ class SessionView:
     resumed: bool = False
     #: Tasks the session has run, including those of a resumed session.
     task_count: int = 0
+    #: The recording name the next task is recorded under (``/record``), else ``""``.
+    recording_armed: str = ""
 
 
 __all__ = [

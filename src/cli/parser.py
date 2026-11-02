@@ -162,6 +162,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print mode: show the task's progress on stderr.",
     )
+    parser.add_argument(
+        "--record",
+        metavar="NAME",
+        default=None,
+        help=(
+            "Record the first task's completed run as the replayable recording NAME "
+            "(needs replay.enabled; not with --classic)."
+        ),
+    )
     session = parser.add_mutually_exclusive_group()
     session.add_argument(
         "-c",

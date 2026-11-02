@@ -15,13 +15,16 @@ import contextlib
 import logging
 import os
 from collections.abc import AsyncIterator, Callable, Mapping
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from src.agent_loop.recordings import validate_recording_name
 from src.contracts import (
     ApprovalAnswer,
     ApprovalTicket,
     ApprovalVia,
     MemoryEntry,
+    RunProfile,
 )
 from src.harness.approvals import ApprovalBroker, ApprovalListener
 from src.harness.event_stream import EventBroadcaster, StreamCursor, StreamItem
@@ -87,6 +90,8 @@ class SessionController:
         #: would orphan a restored session and its lock).
         self._switching = False
         self._attached: SessionContext | None = None
+        #: ``/record <name>``: the next submitted task is recorded under this name.
+        self._armed_recording: str | None = None
 
     # ------------------------------------------------------------------ commands
 
@@ -97,15 +102,37 @@ class SessionController:
         await self._runtime.start()
         return self.session_view()
 
-    async def submit(self, text: str) -> TaskView:
+    def arm_recording(self, name: str | None) -> str | None:
+        """Record the next submitted task as ``name``; ``None`` disarms.
+
+        Raises ``ValueError`` for an invalid name or while replay is disabled
+        (``replay.enabled``). Returns the armed name.
+        """
+
+        if name is None:
+            self._armed_recording = None
+            return None
+        if not get_settings().replay.enabled:
+            raise ValueError("replay is disabled: set replay.enabled to record runs")
+        self._armed_recording = validate_recording_name(name)
+        return self._armed_recording
+
+    async def submit(self, text: str, *, profile: RunProfile | None = None) -> TaskView:
         """Start ``text`` as the session's next task and return it once it is tracked.
 
         Raises :class:`TaskBusyError` while another task runs. The task runs on in the
-        background; its progress and outcome arrive on :meth:`subscribe`.
+        background; its progress and outcome arrive on :meth:`subscribe`. ``profile`` (default:
+        today's behaviour) is the task's run profile; an armed recording (:meth:`arm_recording`)
+        is added to it and disarmed once the task starts.
         """
 
         if self.busy:
             raise TaskBusyError("A task is already running.")
+        armed = self._armed_recording
+        if armed is not None:
+            profile = profile or RunProfile()
+            if profile.record_as is None:
+                profile = replace(profile, record_as=armed)
         # Starting can take long (Chrome, MCP): run it as its own task so ``cancel()`` stops
         # the start alone, never the caller's task around ``submit``.
         starting = asyncio.ensure_future(self.start())
@@ -122,7 +149,9 @@ class SessionController:
         if starting.cancelled():
             raise asyncio.CancelledError
         known = len(self._runtime.context.tasks)
-        self._task = asyncio.create_task(self._runtime.run_task(text))
+        if armed is not None:
+            self._armed_recording = None
+        self._task = asyncio.create_task(self._runtime.run_task(text, profile=profile))
         self._task.add_done_callback(_log_task_failure)
         # ``run_task`` tracks the record before its first real suspension.
         while len(self._runtime.context.tasks) == known and not self._task.done():
@@ -132,20 +161,20 @@ class SessionController:
             return TaskView(index=0, task_id="", task=text, status="failed")
         return _task_view(len(tasks), tasks[-1])
 
-    async def run(self, text: str) -> AgentLoopResult:
+    async def run(self, text: str, *, profile: RunProfile | None = None) -> AgentLoopResult:
         """Submit ``text`` and wait for its terminal result (raises what the task raised)."""
 
-        await self.submit(text)
+        await self.submit(text, profile=profile)
         task = self._task
         assert task is not None
         return await task
 
-    async def run_outcome(self, text: str) -> TaskOutcome:
+    async def run_outcome(self, text: str, *, profile: RunProfile | None = None) -> TaskOutcome:
         """Submit ``text``, wait for it and report how it ended (never raises for the task
         itself: a failure is a ``failed`` outcome). A session that cannot start still raises,
         and a cancellation propagates."""
 
-        view = await self.submit(text)
+        view = await self.submit(text, profile=profile)
         task = self._task
         assert task is not None
         try:
@@ -362,6 +391,7 @@ class SessionController:
             turn_cap=config.turn_cap,
             resumed=context.resumed_from_sequence is not None,
             task_count=len(context.tasks),
+            recording_armed=self._armed_recording or "",
         )
 
     def task_views(self) -> list[TaskView]:

@@ -965,3 +965,54 @@ async def test_a_multi_line_skill_problem_is_one_row(tmp_path: Path) -> None:
 
     assert problem.startswith("user/yaml: ") and "\n" not in problem
     await runtime.close()
+
+
+# -- recordings ------------------------------------------------------------------------------
+
+
+def replay_on(monkeypatch: pytest.MonkeyPatch, enabled: bool = True) -> None:
+    from src.config import ReplaySettings, Settings
+
+    settings = Settings(replay=ReplaySettings(enabled=enabled))
+    monkeypatch.setattr("src.ui.controller.get_settings", lambda: settings)
+
+
+@pytest.mark.asyncio
+async def test_an_armed_recording_goes_to_the_next_task_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.contracts import RunProfile
+
+    replay_on(monkeypatch)
+    requests: list[TaskRequest] = []
+
+    async def run(request: TaskRequest) -> AgentLoopResult:
+        requests.append(request)
+        return native_result(final_answer="done")
+
+    install_fake_agent(monkeypatch, run)
+    controller, runtime, _, _ = build()
+
+    assert controller.arm_recording("price-watch") == "price-watch"
+    assert controller.session_view().recording_armed == "price-watch"
+    await controller.run_outcome("first")
+    await controller.run_outcome("second")
+    await controller.run_outcome("third", profile=RunProfile(max_stage="agent"))
+
+    assert requests[0].profile.record_as == "price-watch"
+    assert requests[1].profile == RunProfile()
+    assert requests[2].profile == RunProfile(max_stage="agent")
+    assert controller.session_view().recording_armed == ""
+    await runtime.close()
+
+
+def test_arming_needs_replay_and_a_valid_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    controller, _, _, _ = build()
+
+    replay_on(monkeypatch, enabled=False)
+    with pytest.raises(ValueError, match="replay is disabled"):
+        controller.arm_recording("x")
+    replay_on(monkeypatch)
+    with pytest.raises(ValueError, match="invalid recording name"):
+        controller.arm_recording("Bad Name")
+    controller.arm_recording("x")
+    assert controller.arm_recording(None) is None
+    assert controller.session_view().recording_armed == ""
