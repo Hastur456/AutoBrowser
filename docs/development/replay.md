@@ -57,7 +57,7 @@ hook) gave, the plan, a checkpoint fingerprint of each output and the catalog en
 `readOnlyHint`, schema digest) of each tool used. What stays out: failed calls, calls a
 guard, hook or permission blocked, the session's own `memory` and `skills` tools, and any
 secret: arguments go through the event redaction, a step that types into a field whose page
-label looks secret (password, PIN, CVV, token, ...) keeps no typed value, and a step with a
+label matches `replay.secret_field_pattern` (password, PIN, CVV, token, ...) keeps no typed value, and a step with a
 redacted value is marked and never replayed blindly (logins belong in the browser profile). Fingerprints are hashes,
 so a recording keeps no page text.
 
