@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from typing import Any
 
@@ -71,13 +72,12 @@ class FakeRetargeter:
         return self.args, ModelCallRecord(phase="retarget", model="cheap", usage={"input_tokens": 10, "output_tokens": 2})
 
 
-def source(rec: Recording, *, store: RecordingStore | None = None, retargeter: Any = None, **kwargs: Any) -> PlaybackSource:
+def source(rec: Recording, *, retargeter: Any = None, **kwargs: Any) -> PlaybackSource:
     return PlaybackSource(
         rec,
         PlaybackRequest(recording=rec.name),
         BrowserPlaybackAdapter(ReplaySettings()),
         kwargs.pop("settings", ReplaySettings()),
-        store=store,
         retargeter=retargeter,
         **kwargs,
     )
@@ -249,18 +249,32 @@ async def test_an_unexpected_page_after_a_step_hands_over_as_checkpoint() -> Non
 
 
 @pytest.mark.asyncio
-async def test_playback_stats_are_counted_once(tmp_path: Path) -> None:
+async def test_the_factory_reports_the_divergence_of_the_last_replay_once(tmp_path: Path) -> None:
     store = RecordingStore(tmp_path, ReplaySettings())
-    rec = recording(OPEN)
-    store.save(rec)
-    src = source(rec, store=store)
+    store.save(recording(dataclasses.replace(CLICK, index=1)))
+    factory = PlaybackFactory(store, BrowserPlaybackAdapter(), ReplaySettings())
 
+    src = factory.build(PlaybackRequest(recording="kettle"), task="t", budget=RunBudget(), max_stage="human", emit=lambda *_: None)
+    await src.next(view("- Page URL: x"))  # the Specs tab is gone
+
+    assert factory.diverged("kettle") == "binding"
+    assert factory.diverged("kettle") == ""  # consumed
+
+
+@pytest.mark.asyncio
+async def test_an_empty_output_region_hands_over_instead_of_an_empty_answer() -> None:
+    src = PlaybackSource(
+        recording(OPEN),
+        PlaybackRequest(recording="kettle", answer="output", select="no such text"),
+        BrowserPlaybackAdapter(ReplaySettings()),
+        ReplaySettings(),
+    )
     done(src, await src.next(view()))
-    await src.next(view())
-    await src.next(view())
 
-    stats = store.stats("kettle")
-    assert stats["playbacks"] == 1 and stats["by_stage"] == {"playback": 1}
+    handoff = await src.next(view())
+
+    assert isinstance(handoff, StepHandoff) and handoff.kind == "checkpoint"
+    assert handoff.detail == "the answer region is empty"
 
 
 def test_the_factory_loads_by_name_and_checks_regexes(tmp_path: Path) -> None:

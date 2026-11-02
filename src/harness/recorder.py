@@ -87,10 +87,26 @@ class Recorder:
 
     # -- arming -------------------------------------------------------------------------
 
-    def arm(self, task_id: str, name: str, task: str) -> None:
-        """Record the task ``task_id`` as ``name``; raises for an invalid name."""
+    def arm(
+        self,
+        task_id: str,
+        name: str,
+        task: str,
+        *,
+        snapshots: Mapping[str, str] | None = None,
+    ) -> None:
+        """Record the task ``task_id`` as ``name``; raises for an invalid name.
 
-        self._captures[task_id] = _Capture(name=validate_recording_name(name), task=task)
+        ``snapshots`` are the kept outputs the task starts from (the carried
+        ``BrowserState.snapshots``): the engine's page view on the first step includes them,
+        so the mirror must too.
+        """
+
+        self._captures[task_id] = _Capture(
+            name=validate_recording_name(name),
+            task=task,
+            snapshots={str(key): str(value) for key, value in dict(snapshots or {}).items()},
+        )
 
     def disarm(self, task_id: str) -> None:
         self._captures.pop(task_id, None)
@@ -117,7 +133,8 @@ class Recorder:
         payload = record.payload or {}
         if record.type == "plan.updated":
             steps = payload.get("steps")
-            if isinstance(steps, list):
+            # The plan the steps were recorded against: the last one before the first step.
+            if isinstance(steps, list) and not capture.steps:
                 capture.plan = [
                     {**dict(step), "status": "pending"} for step in steps if isinstance(step, Mapping)
                 ]
@@ -164,10 +181,16 @@ class Recorder:
         adapter = self.adapter
         if not tool or adapter is None:
             return
+        bindings = tuple(adapter.describe(args, page_texts))
         redacted_args = redact_json_safe(args)
         redacted = REDACTED_VALUE in json.dumps(redacted_args, ensure_ascii=False) and (
             REDACTED_VALUE not in json.dumps(args, ensure_ascii=False, default=str)
         )
+        if any(binding.descriptor.get("sensitive") for binding in bindings):
+            # A secret field (by its page label, as the adapter marks it): keep the element
+            # references, drop every other string value.
+            redacted_args = _redact_values(redacted_args, {binding.path for binding in bindings})
+            redacted = True
         capture.steps.append(
             RecordedStep(
                 index=len(capture.steps) + 1,
@@ -177,7 +200,7 @@ class Recorder:
                 server=server,
                 read_only=read_only,
                 plan_step=capture.current_step,
-                bindings=tuple(adapter.describe(args, page_texts)),
+                bindings=bindings,
                 checkpoint=dict(adapter.checkpoint(content)),
                 redacted=redacted,
             )
@@ -233,6 +256,18 @@ class Recorder:
         if stage_reached in UNCHANGED_STAGES and self.store.exists(capture.name):
             return "the replay never left playback; the recording stays"
         return ""
+
+
+def _redact_values(value: Any, keep: set[tuple[str | int, ...]], path: tuple = ()) -> Any:
+    """``value`` with every string not at a ``keep`` path replaced by the redaction marker."""
+
+    if isinstance(value, Mapping):
+        return {key: _redact_values(item, keep, (*path, str(key))) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_values(item, keep, (*path, index)) for index, item in enumerate(value)]
+    if isinstance(value, str) and path not in keep:
+        return REDACTED_VALUE
+    return value
 
 
 __all__ = ["UNCHANGED_STAGES", "Recorder", "RecordingOutcome"]

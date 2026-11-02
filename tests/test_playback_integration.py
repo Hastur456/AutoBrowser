@@ -86,11 +86,18 @@ async def run(
             harness,
             llm=llm,
             events=emitter,
-            steps=PlaybackFactory(store, adapter, settings, retargeter=retargeter),
+            steps=(factory := PlaybackFactory(store, adapter, settings, retargeter=retargeter)),
         )
         if record:
             recorder.arm("task-1", "kettle-specs", TASK)
         result = await AgentLoopEngine(resources).run(TASK, task_id="task-1", session_id="s", profile=profile)
+        if profile is not None and profile.playback is not None and result.usage is not None:
+            # What the session does after a replayed task (SessionRuntime._record_playback).
+            store.record_playback(
+                profile.playback.recording,
+                stage=result.usage.stage_reached,
+                diverged=factory.diverged(profile.playback.recording),
+            )
         notes: list[str] = []
         if record:
             outcome = recorder.finish(

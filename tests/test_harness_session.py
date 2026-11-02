@@ -1210,10 +1210,10 @@ def test_the_cost_ladder_fields_are_reset_at_every_task_boundary() -> None:
     state = LoopState.from_state_overrides(overrides)
 
     assert overrides["usage"] == TaskUsage()
-    assert (state.ladder_stage, state.model_tier, state.retargets) == ("agent", 0, 0)
+    assert (state.ladder_stage, state.model_tier) == ("agent", 0)
     assert state.usage == TaskUsage()
     # Task-local: never carried to the next task.
-    assert not {"ladder_stage", "model_tier", "usage", "retargets"} & set(
+    assert not {"ladder_stage", "model_tier", "usage"} & set(
         state.to_session_state()
     )
 

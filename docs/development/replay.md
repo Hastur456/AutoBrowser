@@ -56,8 +56,9 @@ What goes in: the successful tool calls with the arguments the model (or a `pre_
 hook) gave, the plan, a checkpoint fingerprint of each output and the catalog entry (server,
 `readOnlyHint`, schema digest) of each tool used. What stays out: failed calls, calls a
 guard, hook or permission blocked, the session's own `memory` and `skills` tools, and any
-secret: arguments go through the event redaction, and a step with a redacted value is marked
-and never replayed blindly (logins belong in the browser profile). Fingerprints are hashes,
+secret: arguments go through the event redaction, a step that types into a field whose page
+label looks secret (password, PIN, CVV, token, ...) keeps no typed value, and a step with a
+redacted value is marked and never replayed blindly (logins belong in the browser profile). Fingerprints are hashes,
 so a recording keeps no page text.
 
 Names are 1–64 lowercase letters, digits and hyphens. Files live in
@@ -140,8 +141,10 @@ retarget); exhaustion ends the task `blocked` with `stop_reason=budget_exhausted
 steps call no model and are never blocked by it. A call without reported tokens or without a
 price makes the cost unknown (`None`); the money cap is then not checked and the call cap
 still is — set `max_task_model_calls` when you rely on a money cap. The approval classifier's
-calls count as calls with an unknown cost; memory consolidation runs after the task and is
-outside its budget.
+calls count as calls with an unknown cost; with no budget left for it, the classifier does not
+run and the call goes to the human instead (fail closed). Memory consolidation runs after the
+task and is outside its budget. `stats.json` counts each replay with the stage the task ended
+at and the divergence that stopped playback.
 
 ## Debugging
 

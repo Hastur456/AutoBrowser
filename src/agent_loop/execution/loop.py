@@ -951,12 +951,21 @@ class TurnController:
             and not verdict.rule_id
             and not check.read_only
         ):
-            reason = await self._classify(state, prepared, check, snapshot)
-            # The judge's call counts toward the task; it reports no tokens, so its cost is
-            # unknown.
-            state = state.apply(
-                {"usage": add_call(state.usage, stage=self._call_stage(state), tokens={}, cost=None)}
-            )
+            exhausted = budget_exhausted(state.usage, self._budget)
+            if exhausted:
+                # No room for the judge's model call: ask the human instead (fail closed).
+                reason = f"Approval needed: {exhausted}, so the approval classifier did not run."
+            else:
+                reason = await self._classify(state, prepared, check, snapshot)
+                # The judge's call counts toward the task; it reports no tokens, so its cost
+                # is unknown.
+                state = state.apply(
+                    {
+                        "usage": add_call(
+                            state.usage, stage=self._call_stage(state), tokens={}, cost=None
+                        )
+                    }
+                )
             if reason:
                 check = dataclasses.replace(check, classifier_ask_reason=reason)
                 verdict = self._permissions.evaluate(check, snapshot)
@@ -1286,6 +1295,11 @@ class AgentLoopEngine:
             return await self._finish(state, "blocked", turns=0)
 
         recorded_plan = step_source.plan() if step_source is not None else None
+        if step_source is not None and not recorded_plan and (
+            ladder_rank(profile.max_stage) < ladder_rank("agent")
+        ):
+            # This run may not use the model at all: a one-step plan instead of call #0.
+            recorded_plan = _normalize_steps(None, task or "Complete the task.")
         if recorded_plan:
             # The recording's plan: no planner call (model call #0) for a replay.
             state = self._seed_plan(state, recorded_plan)
@@ -1302,7 +1316,8 @@ class AgentLoopEngine:
         while True:
             turn += 1
             # Replayed steps are bounded by the recording; the cap counts the agent's turns.
-            if state.ladder_stage not in SOURCE_STAGES or step_source is None:
+            source_turn = step_source is not None and state.ladder_stage in SOURCE_STAGES
+            if not source_turn:
                 agent_turns += 1
             if agent_turns > turn_cap:
                 state = state.apply(
@@ -1324,6 +1339,9 @@ class AgentLoopEngine:
             turn_controller.turn = turn
             result = await turn_controller.run_turn(state)
             state = result.state
+            if source_turn and state.ladder_stage not in SOURCE_STAGES:
+                # A handoff ran a model step inside this playback turn.
+                agent_turns += 1
             if state.plan != plan_before or state.current_step != step_before:
                 self._emit_plan(state)
             if result.status is not None:

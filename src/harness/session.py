@@ -137,7 +137,6 @@ TASK_BOUNDARY_RESETS: dict[str, Any] = {
     "ladder_stage": "agent",
     "model_tier": 0,
     "usage": TaskUsage(),
-    "retargets": 0,
 }
 
 
@@ -547,6 +546,8 @@ class SessionContext:
     #: Reads the session's tool outputs for recording and playback: the browser snapshot
     #: format when a browser server is configured, plain text otherwise.
     playback_adapter: PlaybackAdapter | None = None
+    #: The step sources the agent replays recordings with (built by :meth:`build_agent`).
+    playback_factory: PlaybackFactory | None = None
     chrome_process: Any | None = None
     #: Open while MCP runs: the stderr log of the stdio servers (:data:`CHILD_STDERR_LOG_NAME`).
     child_stderr: TextIO | None = None
@@ -1033,9 +1034,10 @@ class SessionContext:
                 model_label=self.config.model,
                 price=self._model_price(self.config.model),
             )
-        return PlaybackFactory(
+        self.playback_factory = PlaybackFactory(
             self.recording_store, self.playback_adapter, settings, retargeter=retargeter
         )
+        return self.playback_factory
 
     async def _tool_def(self, name: str) -> ToolDef | None:
         """The current model-visible schema of the session tool ``name`` (``None``: gone)."""
@@ -1338,7 +1340,7 @@ class SessionRuntime:
             events=self.context.event_emitter,
             limits=GoalLimits.from_settings(get_settings().loop),
         )
-        self._arm_recording(task, task_id, profile)
+        self._arm_recording(task, task_id, profile, request.state_overrides)
         try:
             goal_result = await runner.run(request)
         except asyncio.CancelledError as exc:
@@ -1353,15 +1355,18 @@ class SessionRuntime:
             raise
         result = goal_result.result
         self.context.state.replace(dict(result.session_state))
-        await self._save_recording(task_id, goal_result.status, result)
         try:
+            self._record_playback(profile, result)
+            await self._save_recording(task_id, goal_result.status, result)
             await self._update_memory(task, task_id, goal_result.status, result)
         except BaseException:
             self._forget_memory(task_id)
             raise
         finally:
-            # The goal already ended: a cancellation during memory consolidation must not
-            # leave the record running (it would block ``reset()`` for good).
+            self._disarm_recording(task_id)
+            # The goal already ended: a cancellation while saving the recording or during
+            # memory consolidation must not leave the record running (it would block
+            # ``reset()`` for good).
             self.context.finish_task(
                 record,
                 result,
@@ -1371,7 +1376,13 @@ class SessionRuntime:
             )
         return result
 
-    def _arm_recording(self, task: str, task_id: str, profile: RunProfile) -> None:
+    def _arm_recording(
+        self,
+        task: str,
+        task_id: str,
+        profile: RunProfile,
+        state_overrides: Mapping[str, Any],
+    ) -> None:
         name = profile.record_as
         if name is None:
             return
@@ -1383,7 +1394,30 @@ class SessionRuntime:
                 task_id=task_id,
             )
             return
-        recorder.arm(task_id, name, task)
+        # The engine starts from the carried snapshots: so must the recorder's page view.
+        snapshots = state_overrides.get("snapshots")
+        recorder.arm(
+            task_id, name, task, snapshots=snapshots if isinstance(snapshots, Mapping) else None
+        )
+
+    def _record_playback(self, profile: RunProfile, result: AgentLoopResult) -> None:
+        """Count a replay in the recording's ``stats.json`` with the stage the run ended at.
+
+        Never fails the task; the recording itself is never rewritten here.
+        """
+
+        request = profile.playback
+        store = self.context.recording_store
+        if request is None or store is None or result.usage is None:
+            return
+        factory = self.context.playback_factory
+        diverged = factory.diverged(request.recording) if factory is not None else ""
+        try:
+            store.record_playback(
+                request.recording, stage=str(result.usage.stage_reached), diverged=diverged
+            )
+        except (OSError, ValueError):
+            _LOG.warning("playback stats of %s were not saved", request.recording, exc_info=True)
 
     def _disarm_recording(self, task_id: str) -> None:
         if self.context.recorder is not None:

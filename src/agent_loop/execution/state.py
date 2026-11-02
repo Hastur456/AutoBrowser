@@ -103,12 +103,12 @@ class LoopState:
     working_notes: str = ""
 
     # Cost ladder (task-local): who proposes the next step (``playback``/``retarget`` while a
-    # step source drives, ``agent`` otherwise), the model tier the agent runs on, the task's
-    # model accounting and the number of retargeted steps. Not part of ``to_session_state``.
+    # step source drives, ``agent`` otherwise), the model tier the agent runs on (always 0
+    # until the model cascade of phase 4) and the task's model accounting. Not part of
+    # ``to_session_state``.
     ladder_stage: str = "agent"
     model_tier: int = 0
     usage: TaskUsage = field(default_factory=TaskUsage)
-    retargets: int = 0
 
     final_answer: str = ""
     # Explicit terminal status ("done"/"blocked"/"cancelled") set by whoever ends the run;

@@ -110,7 +110,6 @@ class PlaybackSource:
         budget: RunBudget | None = None,
         max_stage: LadderStage = "human",
         emit: EventCallback | None = None,
-        store: RecordingStore | None = None,
         retargeter: StepRetargeter | None = None,
     ) -> None:
         self._recording = recording
@@ -121,7 +120,6 @@ class PlaybackSource:
         self._budget = budget or RunBudget()
         self._max_stage = max_stage
         self._emit = emit or (lambda _type, _payload: None)
-        self._store = store
         self._retargeter = retargeter
         self._index = 0
         self._divergence: _Divergence | None = None
@@ -129,7 +127,8 @@ class PlaybackSource:
         self._retargets = 0
         self._retargeted_step: int | None = None
         self._stage: LadderStage = "playback"
-        self._finished = False
+        #: The divergence that ended playback (``""``: none), for ``stats.json``.
+        self.diverged_kind = ""
 
     # -- the StepSource protocol ----------------------------------------------------------
 
@@ -192,7 +191,9 @@ class PlaybackSource:
             self._divergence = _Divergence("denied", blocked)
             return
         if result.get("status") != "success":
-            self._divergence = _Divergence("tool_error", str(result.get("error") or "")[:200])
+            self._divergence = _Divergence(
+                "tool_error", str(result.get("error") or "")[: self._settings.detail_max_chars]
+            )
             return
         if step.checkpoint:
             current = self._adapter.checkpoint(str(result.get("content") or ""))
@@ -213,23 +214,26 @@ class PlaybackSource:
     def _answer(self, view: StepView) -> StepOutcome:
         mode = self._answer_mode
         if mode == "agent":
-            self._record_stats("agent")
             return StepHandoff(reason=_ANSWER, kind="answer")
         if mode == "output":
             text = self._adapter.region(
                 str(view.tool_result.get("content") or ""), self._request.select, self._request.ignore
             )
+            if not text and self._recording.steps:
+                # The answer region is gone: the page changed in a way the checkpoints missed.
+                return self._handoff(
+                    "checkpoint", self._recording.steps[-1], "the answer region is empty"
+                )
         else:
             count = len(self._recording.steps)
             text = f"Replayed {count} recorded step{'s' if count != 1 else ''} of {self._recording.name}."
-        self._record_stats(self._stage)
         return StepFinal(final_answer=text, stage=self._stage)  # type: ignore[arg-type]
 
     def _handoff(self, kind: str, step: RecordedStep, detail: str) -> StepHandoff:
         template = _HANDOFF_REASONS.get(kind, "playback stopped at recorded step {step}")
         reason = template.format(step=step.index, tool=step.tool, detail=detail or "no reason given")
         handoff_kind: StepHandoffKind = "binding" if kind == "redacted" else kind  # type: ignore[assignment]
-        self._record_stats("agent", diverged=handoff_kind)
+        self.diverged_kind = handoff_kind
         return StepHandoff(
             reason=f"Playback stopped: {reason}. {_CONTINUE}",
             kind=handoff_kind,
@@ -279,7 +283,8 @@ class PlaybackSource:
             )
         except Exception:  # noqa: BLE001 - a failed retarget is a handoff, never a crash
             _LOG.warning("retargeting step %s failed", step.index, exc_info=True)
-            args, call = None, None
+            # The call may have run (and cost tokens): count it with an unknown cost.
+            args, call = None, ModelCallRecord(phase="retarget")
         if call is not None:
             self._usage.append(call)
         if args is None:
@@ -302,16 +307,6 @@ class PlaybackSource:
             return False
         return not budget_exhausted(view.usage, self._budget)
 
-    def _record_stats(self, stage: str, *, diverged: str = "") -> None:
-        """Count this playback in ``stats.json`` once; the recording itself never changes."""
-
-        if self._finished or self._store is None:
-            return
-        self._finished = True
-        try:
-            self._store.record_playback(self._recording.name, stage=stage, diverged=diverged)
-        except OSError:
-            _LOG.warning("playback stats of %s were not saved", self._recording.name, exc_info=True)
 
 
 #: Resolves a recorded tool name to its current model-visible schema (``None``: gone).
@@ -380,8 +375,13 @@ class Retargeter:
                 self._llm.complete(messages, tools=[tool]),
                 timeout=self._settings.retarget_timeout_seconds,
             )
-        except (TimeoutError, ModelProviderError) as exc:
-            error = "timeout" if isinstance(exc, TimeoutError) else str(exc)
+        except Exception as exc:  # noqa: BLE001 - any failed call is a rejection, still counted
+            if isinstance(exc, TimeoutError):
+                error = "timeout"
+            elif isinstance(exc, ModelProviderError):
+                error = str(exc)
+            else:
+                error = type(exc).__name__
             emit("model.responded", {"phase": "retarget", "tier": self._tier, "error": error})
             return None, ModelCallRecord(phase="retarget", model=self._label, tier=self._tier)
         usage = response_usage(response) or {}
@@ -450,6 +450,13 @@ class PlaybackFactory:
         self._adapter = adapter
         self._settings = settings
         self._retargeter = retargeter
+        self._sources: dict[str, PlaybackSource] = {}
+
+    def diverged(self, recording: str) -> str:
+        """The divergence kind that ended the last replay of ``recording`` (``""``: none)."""
+
+        source = self._sources.pop(recording, None)
+        return source.diverged_kind if source is not None else ""
 
     def build(
         self,
@@ -466,7 +473,7 @@ class PlaybackFactory:
                     re.compile(pattern)
                 except re.error as exc:
                     raise ValueError(f"invalid playback regex {pattern!r}: {exc}") from exc
-        return PlaybackSource(
+        source = PlaybackSource(
             self._store.load(request.recording),
             request,
             self._adapter,
@@ -475,9 +482,10 @@ class PlaybackFactory:
             budget=budget,
             max_stage=max_stage,
             emit=emit,
-            store=self._store,
             retargeter=self._retargeter,
         )
+        self._sources[request.recording] = source
+        return source
 
 
 class TextPlaybackAdapter:
