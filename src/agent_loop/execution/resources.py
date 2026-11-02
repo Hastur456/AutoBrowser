@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from src.agent_loop.context import ContextAssembler
 from src.agent_loop.events import EventEmitter
 from src.agent_loop.execution.approval import ApprovalJudge
-from src.contracts import MemoryRenderer
+from src.contracts import MemoryRenderer, StepSourceFactory
 from src.harness.hooks import HookEngine, NullHookEngine
 from src.harness.memory import NullMemoryContext
 from src.harness.normalization import ToolCallNormalizer
@@ -62,6 +62,9 @@ class EngineResources:
     permissions: PermissionEngine = field(default_factory=PermissionEngine.from_settings)
     approval: ApprovalJudge = field(default_factory=ApprovalJudge)
     memory: MemoryRenderer = field(default_factory=NullMemoryContext)
+    #: Session-scoped source of recorded steps (playback); ``None`` (the default, and
+    #: whenever replay is off) means a task with ``RunProfile.playback`` cannot run.
+    steps: StepSourceFactory | None = None
 
     @classmethod
     def from_harness(
@@ -74,6 +77,7 @@ class EngineResources:
         permissions: PermissionEngine | None = None,
         approval: ApprovalJudge | None = None,
         memory: MemoryRenderer | None = None,
+        steps: StepSourceFactory | None = None,
     ) -> EngineResources:
         """Compose resources from an initialized ``BrowserHarness`` plus the ``llm``.
 
@@ -99,6 +103,7 @@ class EngineResources:
             permissions=permissions if permissions is not None else PermissionEngine.from_settings(),
             approval=approval if approval is not None else ApprovalJudge(),
             memory=memory if memory is not None else NullMemoryContext(),
+            steps=steps,
         )
 
 
