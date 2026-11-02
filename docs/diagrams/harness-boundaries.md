@@ -23,6 +23,11 @@ flowchart LR
   SessionCtx --> Harness[BrowserHarness]
   SessionCtx --> Hooks[HookEngine]
   SessionCtx --> Permissions[PermissionEngine: rules, mode, grants]
+  SessionCtx --> Recorder[Recorder: event sink, replay.enabled]
+  Recorder --> RecordingStore[RecordingStore: home/recordings]
+  SessionCtx --> PlaybackFactory[PlaybackFactory + Retargeter]
+  PlaybackFactory --> RecordingStore
+  PlaybackFactory --> Adapter[PlaybackAdapter: browser snapshot format or plain text]
   SessionCtx --> Skills[SkillStore: built-in + user skills, capability browser iff a browser server]
   Skills --> Sections[PromptSections: Skills catalog + always-on bodies]
   Skills --> SkillView[skill_view tool, server skills]
@@ -45,6 +50,8 @@ flowchart LR
   Resources --> LLM
   Resources --> Hooks
   Resources --> Permissions
+  Resources -->|steps| PlaybackFactory
+  Resources -->|models: one priced tier| LLM
   Tools --> StaticTools[Static tools]
   Tools --> Providers[Generic providers]
   Tools --> ToolSource

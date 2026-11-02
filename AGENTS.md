@@ -217,10 +217,11 @@ uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
 uv run scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.jsonl
 ```
 
-Run deterministic fake-browser eval baselines:
+Run deterministic fake-browser eval baselines (agent scenarios; replay scenarios):
 
 ```powershell
 uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v2.json
+uv run scripts/run_evals.py --scenarios tests\evals\playback_scenarios --baseline tests\evals\baselines\playback_v1.json
 ```
 
 Start the interactive terminal UI with:
@@ -231,7 +232,8 @@ uv run main.py --classic  # the cmd2 shell described below
 ```
 
 The terminal UI takes free-form tasks and slash commands (`/help`, `/status`, `/model [id]`, `/tasks`,
-`/cancel`, `/mcp [reconnect <name>]`, `/history [N]`, `/memory`, `/permissions`, `/detail`,
+`/cancel`, `/mcp [reconnect <name>]`, `/history [N]`, `/memory`, `/record [<name>|off]`,
+`/permissions`, `/detail`,
 `/theme`, `/doctor`, `/resume`, `/clear` = new session (aliases `/reset`, `/new`), `/exit`); keys and terminals are listed in
 `docs/development/terminal-ui.md`.
 
@@ -253,8 +255,10 @@ The terminal UI takes free-form tasks and slash commands (`/help`, `/status`, `/
 Useful CLI flags include `--loop`, `--show-state`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap`, `--permission-mode`, the front-end flags `--classic`,
 `--plain`, `--ascii`, `--no-color`, `--theme`, session flags `--continue`/`-c` and
 `--resume [id]`/`-r`, and print mode `-p` with `--output-format text|json|stream-json` and
-`--verbose`. Subcommands: `autobrowser doctor`, `sessions [--all]`, `replay <id|path>`,
-`completion <shell>`. Runtime data lives in the AutoBrowser home (`AUTOBROWSER_HOME`, else
+`--verbose`, and replay flags `--record NAME` (record the first task) and, in print mode,
+`--recording NAME` with `--answer agent|output|summary` (`docs/development/replay.md`).
+Subcommands: `autobrowser doctor`, `sessions [--all]`, `replay <id|path>` (trace viewer),
+`recordings list|show|rm`, `completion <shell>`. Runtime data lives in the AutoBrowser home (`AUTOBROWSER_HOME`, else
 `~/.autobrowser`); see `docs/development/terminal-ui.md`.
 
 ## Coding Style & Naming Conventions

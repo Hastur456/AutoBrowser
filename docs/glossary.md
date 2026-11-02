@@ -124,3 +124,13 @@
 | Kept snapshots | `BrowserState.snapshots`: per tool server, the output of its latest successful read-only (MCP `readOnlyHint`) call; a successful state-changing call of that server drops the entry. Decided by annotations, never by tool names; replaces the removed `ToolRoles`. |
 | Trace replay | Loading `events.jsonl` records to summarize terminal status and print compact action sequences for diagnostics or eval failures. |
 | Turn cap | `settings.loop.turn_cap` (default 50) upper bound on engine turns before the run is blocked; set via `AUTOBROWSER_LOOP__TURN_CAP`. |
+| Cost ladder | Stages a run climbs only when needed and never above `RunProfile.max_stage`: `probe` (0, stand only) → `playback` (1) → `retarget` (2) → `agent` (3) → `human` (4). `LADDER_ORDER` in `src/contracts.py`; transitions emit `ladder.escalated`. |
+| Recording | A completed run kept for replay: steps, bindings, checkpoints, plan and tool catalog, format `autobrowser.recording/1` (`src/agent_loop/recordings.py`), stored under `<home>/recordings/<name>/` by `RecordingStore`. |
+| Recorder | Session-scoped event sink (`src/harness/recorder.py`) that turns an armed task's successful tool calls into a recording after `goal_end`. |
+| Playback | Replaying a recording through the engine's `StepSource` branch (`PlaybackSource`) without the model; every step still passes guards, hooks, permissions and approvals. |
+| Binding | A recorded argument value that the page text before the step showed as `[ref=…]`, plus a descriptor of its element (role, name, position, ancestors, frame) used to rebind it before replaying. |
+| Retarget | Ladder stage 2: one model call (`Retargeter`) re-chooses the arguments of one diverged recorded step; accepted only as one call of the recorded tool with live references. |
+| Handoff | A step source giving up (`StepHandoff`): the model drives the rest of the task with one `[harness]` note and the replayed history. |
+| Run profile | `RunProfile` on `TaskRequest.profile`: playback request, ladder cap, run budget, recording name, context carry, labels. The default changes nothing. |
+| Task usage | `TaskUsage`: model calls, tokens and cost of one task, by ladder stage and by model; `cost` is `None` once a call had no usage or price. On `AgentLoopResult.usage` and the terminal `goal.*` events. |
+| Run budget | `RunBudget` caps (model calls, tokens, money) checked before every model call; exhaustion is `blocked` with `stop_reason=budget_exhausted`. Defaults come from `loop.max_task_*`. |

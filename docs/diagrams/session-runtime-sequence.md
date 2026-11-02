@@ -43,8 +43,11 @@ sequenceDiagram
   loop For each user task
     Session->>Context: reset_task(task)
     Context->>Files: Update session.json, tasks.json, state.json
-    Session->>Context: Build carried state and reset task-local fields
-    Session->>Goals: run(TaskRequest: task, ids, carried state, turn cap)
+    Session->>Context: Build carried state (none with profile.carry_context=False) and reset task-local fields
+    opt profile.record_as and replay.enabled
+      Session->>Context: Recorder.arm(task_id, name)
+    end
+    Session->>Goals: run(TaskRequest: task, ids, carried state, turn cap, run profile)
     Goals->>Engine: Agent.run(TaskRequest) -> AgentLoopEngine.run
     Engine->>Engine: plan + bounded TurnController loop
     Engine->>MCP: Execute approved tool calls
@@ -52,6 +55,9 @@ sequenceDiagram
     Engine-->>Goals: Terminal AgentLoopResult
     Goals-->>Session: GoalRunResult with explicit status
     Session->>Context: Remember result.session_state (messages, observation, snapshots)
+    opt recording armed
+      Session->>Context: Recorder.finish -> recording.saved / recording.skipped (never fails the task)
+    end
     Session->>Context: finish_task(result) (also when memory consolidation is cancelled)
     Context->>Files: Update session.json, tasks.json, state.json
     Session-->>User: Show the outcome and wait for the next task

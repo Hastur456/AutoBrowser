@@ -20,6 +20,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Trace Export Guide](development/telemetry.md): OTLP trace export (off by default) —
   the span tree, enabling, Langfuse first (keys, headers, aliases, finding a run, privacy),
   Phoenix and Jaeger.
+- [Replay Guide](development/replay.md): record a completed run and replay it without the
+  model (`--record`, `/record`, `-p --recording`) — the cost ladder, ref rebinding,
+  divergences and handoff, retargeting, task usage and run budgets, debugging.
 - [Agent Skills Guide](development/skills.md): `SKILL.md` skills — format, built-in and
   your skills, the catalog and `skill_view`, enabling, debugging and tests.
 - [Lifecycle Hooks Guide](development/lifecycle-hooks.md): how hooks work, their

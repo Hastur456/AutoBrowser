@@ -349,6 +349,30 @@ Agent Skills `SKILL.md` folders (`docs/decisions/2026-10-26-agent-skills.md`; gu
 - Tests build `SkillStore.load(SkillsSettings(...), roots=[...])` over `tmp_path`, never
   `get_settings()`.
 
+## Replay and Budgets
+
+Record a completed run and replay it without the model; the model steps in only where the
+page diverged (`docs/decisions/2026-11-02-serve-mode-and-cost-ladder.md`; guide:
+`docs/development/replay.md`). **Off by default** (`replay.enabled`).
+
+- Cost ladder `probe -> playback -> retarget -> agent -> human` (`LADDER_ORDER`); a run never
+  climbs above `TaskRequest.profile.max_stage` (`RunProfile`, default = today's behaviour).
+- The engine asks a neutral `StepSource` (`EngineResources.steps`, session-scoped
+  `PlaybackFactory` in `src/harness/playback.py`) before the model while `ladder_stage` is
+  `playback`/`retarget`; a recorded plan skips model call #0; proposals are synthetic tool
+  calls through the normal guard/hooks/permissions pipeline; a `StepHandoff` hands the rest to
+  the model (or `ladder_cap`). Replayed turns don't count toward `turn_cap`.
+- Only `src/browser/playback.py` reads the snapshot format (`[ref=...]`, element lines) to
+  describe and rebind references; the engine and replay modules never mention it
+  (`tests/test_engine_boundaries.py`).
+- `Recorder` (`src/harness/recorder.py`) is a session event sink; recordings live in
+  `<home>/recordings/<name>/` (`RecordingStore`). Redacted steps are never replayed blindly.
+- `Retargeter` (stage 2) makes one model call per diverged step; its prompt
+  `PLAYBACK_RETARGET_SYSTEM_PROMPT` is a draft awaiting the user's edit.
+- Every model call is added to `LoopState.usage` (`TaskUsage`, `execution/usage.py`); the run
+  budget (`RunBudget`, defaults `loop.max_task_*`, prices `llm.prices`) is checked right before
+  each call -> `blocked`/`budget_exhausted`. Usage reaches `goal.*`, `TaskOutcome`, batch rows.
+
 ## Feature Flags (env vars)
 
 - `AUTOBROWSER_FLAGS__AGENT_LOOP` (also `--agent-loop`) — **inert.** The engine-native path is the
@@ -369,6 +393,9 @@ uv run pytest tests/ui tests/test_ui_feed.py   # terminal UI: render snapshots, 
 uv run main.py --no-mcp --task "inspect page" # dry run, no browser/MCP (dev checks)
 uv run main.py --continue                     # resume the latest session (state.json)
 uv run main.py -p "task" --output-format json # print mode: result only, exit 0/1/2/3/130
+uv run main.py -p --record NAME "task"        # record the run (replay.enabled)
+uv run main.py -p --recording NAME            # replay it without the model (--answer agent|output|summary)
+uv run main.py recordings list                # list | show NAME | rm NAME
 uv run main.py doctor                         # paths, config source, llm provider, node/npx, Chrome, terminal
 uv run main.py doctor --llm                   # + list the provider's models over the network
 uv run main.py --show-state --task "..."      # debug state per step
@@ -377,6 +404,7 @@ uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --no-mcp --continue
 uv run scripts/compare_batches.py             # latest batch vs the previous one of the same set
 uv run scripts/langfuse_sync.py experiment push --pending  # Langfuse sync (eval_platform; docs/development/eval-platform.md)
 uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v2.json
+uv run scripts/run_evals.py --scenarios tests\evals\playback_scenarios --baseline tests\evals\baselines\playback_v1.json
 uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
 ```
 
