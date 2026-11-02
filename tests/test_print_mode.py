@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import io
 import json
 from collections.abc import AsyncIterator
@@ -131,7 +132,7 @@ def test_verbose_progress_goes_to_stderr_only(monkeypatch: pytest.MonkeyPatch) -
 class StartFailsOnResumedSession:
     """A controller whose session already has a finished task and cannot start again."""
 
-    async def run_outcome(self, text: str) -> object:
+    async def run_outcome(self, text: str, *, profile: object = None) -> object:
         raise RuntimeError("chrome did not start")
 
     def session_view(self) -> SessionView:
@@ -190,3 +191,67 @@ def test_print_mode_on_a_resumed_session_reports_only_the_new_task(monkeypatch: 
 
 async def _blocked() -> AgentLoopResult:
     return native_result(final_answer="Blocked: no", status="blocked")
+
+
+# -- -p --recording ---------------------------------------------------------------------------
+
+
+def enable_replay_with_recording(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.agent_loop.recordings import RecordedStep, Recording
+    from src.harness.recording_store import RecordingStore
+
+    profile = tmp_path / "replay.yaml"
+    profile.write_text("replay: {enabled: true}\n", encoding="utf-8")
+    monkeypatch.setenv(CONFIG_FILE_ENV_VAR, str(profile))
+    get_settings.cache_clear()
+    settings = get_settings()
+    RecordingStore.from_settings(settings.replay, settings.storage).save(
+        Recording(name="kettle", task="Read the kettle price", steps=(RecordedStep(index=1, tool="open", args={}),))
+    )
+
+
+def test_recording_replays_the_recorded_task_with_a_playback_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    enable_replay_with_recording(tmp_path, monkeypatch)
+
+    code, out, _err, requests = run(
+        monkeypatch,
+        dataclasses.replace(native_result(final_answer="42"), stop_reason="playback_completed"),
+        "--recording", "kettle", "--answer", "output", "--output-format", "json",
+    )
+
+    (request,) = requests
+    assert code == 0
+    assert request.task == "Read the kettle price"
+    assert request.profile.playback is not None
+    assert (request.profile.playback.recording, request.profile.playback.answer) == ("kettle", "output")
+    data = json.loads(out)
+    assert data["stop_reason"] == "playback_completed" and data["stage"] == "agent"
+
+
+def test_an_explicit_task_overrides_the_recorded_one(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    enable_replay_with_recording(tmp_path, monkeypatch)
+
+    _code, _out, _err, requests = run(monkeypatch, native_result(final_answer="ok"), "--recording", "kettle", "other task")
+
+    assert requests[0].task == "other task"
+
+
+@pytest.mark.parametrize(
+    "argv, message",
+    [
+        (["--recording", "kettle", "t"], "needs print mode"),
+        (["-p", "--answer", "output", "t"], "--answer needs --recording"),
+        (["-p", "--recording", "missing", "t"], "no recording named 'missing'"),
+    ],
+)
+def test_recording_flag_problems_are_usage_errors(
+    argv: list[str], message: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from src.cli import entry
+
+    enable_replay_with_recording(tmp_path, monkeypatch)
+
+    assert entry.main(argv) == 2
+    assert message in capsys.readouterr().err

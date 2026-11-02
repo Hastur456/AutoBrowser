@@ -23,6 +23,8 @@ from src.cli.tasks import resolve_initial_task
 from src.agent_loop.events import EventSink
 from src.agent_loop.goals import GoalLimits
 from src.agent_loop.recordings import validate_recording_name
+from src.contracts import PlaybackRequest, RunProfile
+from src.harness.recording_store import RecordingStore
 from src.config import UiSettings, get_settings
 from src.harness.approvals import ApprovalBroker
 from src.harness.chrome import start_chrome_cdp, wait_for_port
@@ -166,7 +168,9 @@ def run_agent_cli(args: argparse.Namespace) -> int:
     except ResumeError as exc:
         print(f"autobrowser: {exc}", file=sys.stderr)
         return USAGE_EXIT_CODE
-    problem = replay_args_problem(args, classic=not print_mode and ui.frontend == "classic")
+    problem = replay_args_problem(
+        args, classic=not print_mode and ui.frontend == "classic", print_mode=print_mode
+    )
     if problem:
         print(f"autobrowser: {problem}", file=sys.stderr)
         return USAGE_EXIT_CODE
@@ -182,21 +186,47 @@ def run_agent_cli(args: argparse.Namespace) -> int:
         return USAGE_EXIT_CODE
 
 
-def replay_args_problem(args: argparse.Namespace, *, classic: bool) -> str:
+def replay_args_problem(
+    args: argparse.Namespace, *, classic: bool, print_mode: bool = False
+) -> str:
     """Why the replay flags cannot be used as given; ``""`` when they can."""
 
     record = getattr(args, "record", None)
-    if record is None:
+    recording = getattr(args, "recording", None)
+    if getattr(args, "answer", None) is not None and recording is None:
+        return "--answer needs --recording."
+    if record is None and recording is None:
         return ""
-    if classic:
+    if record is not None and classic:
         return "--record needs the terminal UI, plain mode or -p (not --classic)."
+    if recording is not None and not print_mode:
+        return "--recording needs print mode (-p)."
     if not get_settings().replay.enabled:
-        return "--record needs replay.enabled (AUTOBROWSER_REPLAY__ENABLED=true)."
+        flag = "--record" if record is not None else "--recording"
+        return f"{flag} needs replay.enabled (AUTOBROWSER_REPLAY__ENABLED=true)."
     try:
-        validate_recording_name(record)
-    except ValueError as exc:
+        for name in (record, recording):
+            if name is not None:
+                validate_recording_name(name)
+        if recording is not None:
+            _recording_store().load(recording)
+    except (OSError, ValueError) as exc:
         return str(exc)
     return ""
+
+
+def _recording_store() -> RecordingStore:
+    settings = get_settings()
+    return RecordingStore.from_settings(settings.replay, settings.storage)
+
+
+def playback_profile(args: argparse.Namespace) -> RunProfile | None:
+    """The run profile of ``-p --recording NAME [--answer MODE]``; ``None`` without it."""
+
+    recording = getattr(args, "recording", None)
+    if recording is None:
+        return None
+    return RunProfile(playback=PlaybackRequest(recording=recording, answer=getattr(args, "answer", None)))
 
 
 def _arm_recording(controller: Any, args: argparse.Namespace) -> None:
@@ -229,6 +259,10 @@ def run_print_cli(
     _utf8_when_redirected(stdout)
     _utf8_when_redirected(stdin)
     task = resolve_initial_task(args)
+    profile = playback_profile(args)
+    if not task and profile is not None:
+        # A replay repeats the recorded task unless the command line says otherwise.
+        task = _recording_store().load(args.recording).task
     if not task and not stdin.isatty():
         task = stdin.read().strip()
     if not task:
@@ -261,6 +295,7 @@ def run_print_cli(
             return await run_print(
                 controller,
                 task,
+                profile=profile,
                 output_format=args.output_format or ui.print_format,
                 verbose=bool(getattr(args, "verbose", False)),
                 settings=ui,

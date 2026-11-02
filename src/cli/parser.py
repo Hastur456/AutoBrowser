@@ -171,6 +171,25 @@ def build_parser() -> argparse.ArgumentParser:
             "(needs replay.enabled; not with --classic)."
         ),
     )
+    parser.add_argument(
+        "--recording",
+        metavar="NAME",
+        default=None,
+        help=(
+            "Print mode: replay the recording NAME without the model; the agent takes over "
+            "only where the page diverges (needs replay.enabled). The task defaults to the "
+            "recorded one."
+        ),
+    )
+    parser.add_argument(
+        "--answer",
+        choices=("agent", "output", "summary"),
+        default=None,
+        help=(
+            "With --recording: answer with one agent turn, the region of the last output, or "
+            "a fixed summary. Default: the recording's own mode."
+        ),
+    )
     session = parser.add_mutually_exclusive_group()
     session.add_argument(
         "-c",

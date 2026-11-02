@@ -1371,3 +1371,24 @@ async def test_the_profile_reaches_the_agent_and_carry_context_false_carries_not
     assert "observation" not in requests[1].state_overrides
     assert requests[1].state_overrides["plan"] == []
     await runtime.close()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.asyncio
+async def test_the_agent_gets_step_sources_only_with_replay_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, enabled: bool
+) -> None:
+    from src.harness.playback import PlaybackFactory, TextPlaybackAdapter
+
+    use_replay(monkeypatch, tmp_path, enabled=enabled)
+    built = install_runner(monkeypatch, _answer)
+    runtime = make_runtime()
+
+    await runtime.start()
+
+    steps = built[0].resources.steps
+    assert isinstance(steps, PlaybackFactory) is enabled
+    assert steps is None or not enabled
+    # No browser server in a --no-mcp session: the plain-text adapter reads the outputs.
+    assert isinstance(runtime.context.playback_adapter, TextPlaybackAdapter)
+    await runtime.close()

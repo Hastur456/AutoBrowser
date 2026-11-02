@@ -194,6 +194,8 @@ class SessionController:
             status=status if status in _OUTCOME_STATUSES else "failed",  # type: ignore[arg-type]
             final_answer=str(result.final_answer or ""),
             turns=result.turns,
+            stop_reason=str(result.stop_reason or ""),
+            stage=_stage_reached(result),
         )
 
     async def wait(self) -> TaskView | None:
@@ -611,6 +613,13 @@ def _message_view(message: Any) -> dict[str, object]:
     if isinstance(message, Message):
         return {"role": message.role, "content": str(message.content or "")}
     return {"role": "", "content": str(message)}
+
+
+def _stage_reached(result: Any) -> str:
+    """The cost-ladder stage a task reached; ``""`` for a result without accounting."""
+
+    usage = getattr(getattr(result, "state", None), "usage", None)
+    return str(getattr(usage, "stage_reached", "") or "")
 
 
 def _log_task_failure(task: asyncio.Task[Any]) -> None:

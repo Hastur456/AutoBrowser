@@ -92,6 +92,10 @@ class TaskOutcome:
     turns: int | None = None
     #: ``Type: message`` of the exception a failed task raised.
     error: str = ""
+    #: Machine-readable reason the task ended (``AgentLoopResult.stop_reason``).
+    stop_reason: str = ""
+    #: The highest cost-ladder stage the task reached (``playback``, ``retarget``, ``agent``).
+    stage: str = ""
 
 
 @dataclass(frozen=True)

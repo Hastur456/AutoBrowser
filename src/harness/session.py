@@ -41,7 +41,7 @@ from src.harness.memory import MemoryManager, NullMemoryContext
 from src.harness.memory_consolidation import MemoryConsolidator
 from src.harness.memory_store import MemoryContext, MemoryStore
 from src.harness.memory_tool import MEMORY_SERVER, memory_tools
-from src.harness.playback import TextPlaybackAdapter
+from src.harness.playback import PlaybackFactory, TextPlaybackAdapter
 from src.harness.recorder import Recorder
 from src.harness.recording_store import RecordingStore
 from src.harness.skill_tool import skill_tools
@@ -990,8 +990,18 @@ class SessionContext:
             permissions=self.permissions,
             approval=self.approval,
             memory=self.memory,
+            steps=self._step_sources(),
         )
         return Agent(resources, human_input=human_input)
+
+    def _step_sources(self) -> PlaybackFactory | None:
+        """The playback step sources when replay is enabled (``replay.enabled``)."""
+
+        if self.recording_store is None or self.playback_adapter is None:
+            return None
+        return PlaybackFactory(
+            self.recording_store, self.playback_adapter, self.recording_store.settings
+        )
 
     def _memory_snapshot(self) -> dict[str, Any]:
         store = self.memory_store
