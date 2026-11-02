@@ -127,7 +127,7 @@ def test_equal_lines_whose_count_changed_are_ambiguous(adapter: BrowserPlaybackA
     result = adapter.rebind(args, bindings, [fewer])
 
     assert result.args is None
-    assert "2 lines match" in result.detail
+    assert "2 of 3 recorded" in result.detail
 
 
 def test_verify_accepts_only_live_references(adapter: BrowserPlaybackAdapter) -> None:

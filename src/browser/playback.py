@@ -40,12 +40,8 @@ _ROLE_NAME = re.compile(r'^([A-Za-z][\w-]*)(?:\s+"((?:[^"\\]|\\.)*)")?')
 _ATTRIBUTE = re.compile(r"\s*\[[^\]]*\]")
 #: Markers an output region drops: references and cursor hints change on every load.
 _REGION_DROP = (re.compile(r"\s*\[ref=[^\]]*\]"), re.compile(r"\s*\[cursor=[^\]]*\]"))
-#: Accessible names of fields whose typed value is a secret; a step acting on one is
-#: recorded redacted and never replayed blindly.
-_SENSITIVE_NAME = re.compile(
-    r"pass(word|code|phrase)?|\bpin\b|secret|token|cvv|cvc|card number|one-time code|пароль|пин-?код",
-    re.IGNORECASE,
-)
+#: ARIA roles a value is typed into; only these can hold a secret the step typed.
+_TEXT_ENTRY_ROLES = frozenset({"textbox", "searchbox", "spinbutton", "combobox"})
 #: Lines without a name that only group others (``- generic [ref=e3]:``).
 _ANONYMOUS_GROUP_ROLES = frozenset({"generic", "group", "none", "presentation"})
 
@@ -166,6 +162,8 @@ class BrowserPlaybackAdapter:
 
     def __init__(self, settings: ReplaySettings | None = None) -> None:
         self._settings = settings or ReplaySettings()
+        pattern = self._settings.secret_field_pattern
+        self._secret_field = re.compile(pattern, re.IGNORECASE) if pattern else None
 
     # -- recording ----------------------------------------------------------------------
 
@@ -178,6 +176,7 @@ class BrowserPlaybackAdapter:
             if line is None:
                 continue
             equal = [other for other in lines if (other.role, other.name) == (line.role, line.name)]
+            same_context = [other for other in equal if other.context == line.context]
             bindings.append(
                 Binding(
                     path=path,
@@ -188,12 +187,21 @@ class BrowserPlaybackAdapter:
                         "nth": equal.index(line) + 1,
                         "count": len(equal),
                         "context": list(line.context),
+                        # The context alone told this element from its equals.
+                        "context_unique": len(same_context) == 1,
                         "frame": line.frame,
-                        **({"sensitive": True} if _SENSITIVE_NAME.search(line.name) else {}),
+                        **({"sensitive": True} if self._is_secret_field(line) else {}),
                     },
                 )
             )
         return bindings
+
+    def _is_secret_field(self, line: _Line) -> bool:
+        return (
+            self._secret_field is not None
+            and line.role in _TEXT_ENTRY_ROLES
+            and self._secret_field.search(line.name) is not None
+        )
 
     # -- playback -----------------------------------------------------------------------
 
@@ -277,21 +285,24 @@ class BrowserPlaybackAdapter:
         if not candidates:
             return None, f"no {label} on the page"
         count = int(descriptor.get("count") or 0)
-        if len(candidates) == 1 and (count <= 1 or candidates[0].context == context):
+        # Several equal elements were recorded: only the context (when it told them apart)
+        # or the unchanged position may pick one. A lone survivor is never a guess.
+        unique = count <= 1 or bool(descriptor.get("context_unique"))
+        if count <= 1 and len(candidates) == 1:
             return candidates[0], ""
-        if len(candidates) == 1:
-            # One of several equal elements is left: which one it is cannot be told.
-            return None, f"1 of {count} recorded {label} lines is left"
         in_context = [line for line in candidates if line.context == context]
-        if len(in_context) == 1:
+        if unique and len(in_context) == 1:
             return in_context[0], ""
         nth = int(descriptor.get("nth") or 0)
-        if count == len(candidates) and 1 <= nth <= count:
+        if count > 1 and count == len(candidates) and 1 <= nth <= count:
             return candidates[nth - 1], ""
-        frame = str(descriptor.get("frame") or "")
-        in_frame = [line for line in (in_context or candidates) if line.frame == frame]
-        if len(in_frame) == 1:
-            return in_frame[0], ""
+        if count <= 1:
+            frame = str(descriptor.get("frame") or "")
+            in_frame = [line for line in (in_context or candidates) if line.frame == frame]
+            if len(in_frame) == 1:
+                return in_frame[0], ""
+        if count > 1 and len(candidates) != count:
+            return None, f"{len(candidates)} of {count} recorded {label} lines are left"
         return None, f"{len(candidates)} lines match {label}"
 
 

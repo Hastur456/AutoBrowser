@@ -127,8 +127,6 @@ class PlaybackSource:
         self._retargets = 0
         self._retargeted_step: int | None = None
         self._stage: LadderStage = "playback"
-        #: The divergence that ended playback (``""``: none), for ``stats.json``.
-        self.diverged_kind = ""
 
     # -- the StepSource protocol ----------------------------------------------------------
 
@@ -233,7 +231,6 @@ class PlaybackSource:
         template = _HANDOFF_REASONS.get(kind, "playback stopped at recorded step {step}")
         reason = template.format(step=step.index, tool=step.tool, detail=detail or "no reason given")
         handoff_kind: StepHandoffKind = "binding" if kind == "redacted" else kind  # type: ignore[assignment]
-        self.diverged_kind = handoff_kind
         return StepHandoff(
             reason=f"Playback stopped: {reason}. {_CONTINUE}",
             kind=handoff_kind,
@@ -283,8 +280,9 @@ class PlaybackSource:
             )
         except Exception:  # noqa: BLE001 - a failed retarget is a handoff, never a crash
             _LOG.warning("retargeting step %s failed", step.index, exc_info=True)
-            # The call may have run (and cost tokens): count it with an unknown cost.
-            args, call = None, ModelCallRecord(phase="retarget")
+            # The retargeter answers every failed model call itself (with its record); an
+            # error here came before any call, so nothing is counted.
+            args, call = None, None
         if call is not None:
             self._usage.append(call)
         if args is None:
@@ -450,13 +448,6 @@ class PlaybackFactory:
         self._adapter = adapter
         self._settings = settings
         self._retargeter = retargeter
-        self._sources: dict[str, PlaybackSource] = {}
-
-    def diverged(self, recording: str) -> str:
-        """The divergence kind that ended the last replay of ``recording`` (``""``: none)."""
-
-        source = self._sources.pop(recording, None)
-        return source.diverged_kind if source is not None else ""
 
     def build(
         self,
@@ -473,7 +464,7 @@ class PlaybackFactory:
                     re.compile(pattern)
                 except re.error as exc:
                     raise ValueError(f"invalid playback regex {pattern!r}: {exc}") from exc
-        source = PlaybackSource(
+        return PlaybackSource(
             self._store.load(request.recording),
             request,
             self._adapter,
@@ -484,8 +475,6 @@ class PlaybackFactory:
             emit=emit,
             retargeter=self._retargeter,
         )
-        self._sources[request.recording] = source
-        return source
 
 
 class TextPlaybackAdapter:

@@ -259,13 +259,14 @@ class Recorder:
 
 
 def _redact_values(value: Any, keep: set[tuple[str | int, ...]], path: tuple = ()) -> Any:
-    """``value`` with every string not at a ``keep`` path replaced by the redaction marker."""
+    """``value`` with every scalar not at a ``keep`` path replaced by the redaction marker
+    (a PIN may come as a number); booleans and ``None`` carry no secret."""
 
     if isinstance(value, Mapping):
         return {key: _redact_values(item, keep, (*path, str(key))) for key, item in value.items()}
     if isinstance(value, list):
         return [_redact_values(item, keep, (*path, index)) for index, item in enumerate(value)]
-    if isinstance(value, str) and path not in keep:
+    if isinstance(value, (str, int, float)) and not isinstance(value, bool) and path not in keep:
         return REDACTED_VALUE
     return value
 

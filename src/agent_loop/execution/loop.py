@@ -656,13 +656,14 @@ class TurnController:
             self._emit(
                 "playback.diverged", {"step": handoff.step, "kind": handoff.kind, "detail": detail}
             )
+        diverged = {} if handoff.kind == "answer" else {"playback_diverged": handoff.kind}
         max_stage = self._profile.max_stage
         if ladder_rank(max_stage) < ladder_rank("agent"):
             reason = (
                 f"Blocked: playback stopped ({handoff.kind}) and this run may not go above "
                 f"the {max_stage} stage."
             )
-            return blocked_response(state, reason, stop_reason="ladder_cap")
+            return {**blocked_response(state, reason, stop_reason="ladder_cap"), **diverged}
         self._emit(
             "ladder.escalated",
             {"from": state.ladder_stage, "to": "agent", "reason": handoff.kind, "step": handoff.step},
@@ -679,6 +680,7 @@ class TurnController:
             "ladder_stage": "agent",
             "usage": handed.usage,
             "messages": handed.messages,
+            **diverged,
             **update,
         }
 

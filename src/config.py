@@ -1064,6 +1064,26 @@ class ReplaySettings(_Section):
         ),
     ] = 300
 
+    secret_field_pattern: Annotated[
+        str,
+        Field(
+            description=(
+                "Case-insensitive regex over the accessible name of a text-entry field; a "
+                "recorded step typing into a matching field keeps no typed value and is "
+                "never replayed blindly. Empty: only key-based redaction."
+            ),
+        ),
+    ] = '(?<![a-zа-яё])(password|passcode|passphrase|pin|pin code|cvv|cvc|security code|card number|one-time code|secret|api key|access token|пароль|пин-код|пин)(?![a-zа-яё])'
+
+    @field_validator("secret_field_pattern", mode="after")
+    @classmethod
+    def _secret_field_pattern_compiles(cls, value: str) -> str:
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise ValueError(f"replay.secret_field_pattern is not a regex: {exc}") from exc
+        return value
+
 
 class EventSettings(_Section):
     """Truncation limits for persisted events and the agent trace sidecar."""

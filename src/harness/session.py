@@ -137,6 +137,7 @@ TASK_BOUNDARY_RESETS: dict[str, Any] = {
     "ladder_stage": "agent",
     "model_tier": 0,
     "usage": TaskUsage(),
+    "playback_diverged": "",
 }
 
 
@@ -1410,11 +1411,11 @@ class SessionRuntime:
         store = self.context.recording_store
         if request is None or store is None or result.usage is None:
             return
-        factory = self.context.playback_factory
-        diverged = factory.diverged(request.recording) if factory is not None else ""
         try:
             store.record_playback(
-                request.recording, stage=str(result.usage.stage_reached), diverged=diverged
+                request.recording,
+                stage=str(result.usage.stage_reached),
+                diverged=str(result.state.playback_diverged or ""),
             )
         except (OSError, ValueError):
             _LOG.warning("playback stats of %s were not saved", request.recording, exc_info=True)

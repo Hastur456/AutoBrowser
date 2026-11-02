@@ -109,6 +109,8 @@ class LoopState:
     ladder_stage: str = "agent"
     model_tier: int = 0
     usage: TaskUsage = field(default_factory=TaskUsage)
+    # The divergence that ended playback (``StepHandoffKind``), ``""`` when none did.
+    playback_diverged: str = ""
 
     final_answer: str = ""
     # Explicit terminal status ("done"/"blocked"/"cancelled") set by whoever ends the run;

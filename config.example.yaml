@@ -282,6 +282,8 @@ replay:
   default_answer: agent                         # (default) agent | output | summary
   keep_previous: true                           # (default) previous.json on replace
   detail_max_chars: 300                         # (default) divergence detail in events
+  # Text-entry fields whose typed value is never recorded (regex over the field label).
+  secret_field_pattern: '(?<![a-zа-яё])(password|passcode|passphrase|pin|pin code|cvv|cvc|security code|card number|one-time code|secret|api key|access token|пароль|пин-код|пин)(?![a-zа-яё])'   # (default)
 
 # ---------------------------------------------------------------------------
 # Persisted event/trace detail under .autobrowser/sessions/<session_id>/.

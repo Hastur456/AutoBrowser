@@ -86,7 +86,7 @@ async def run(
             harness,
             llm=llm,
             events=emitter,
-            steps=(factory := PlaybackFactory(store, adapter, settings, retargeter=retargeter)),
+            steps=PlaybackFactory(store, adapter, settings, retargeter=retargeter),
         )
         if record:
             recorder.arm("task-1", "kettle-specs", TASK)
@@ -96,7 +96,7 @@ async def run(
             store.record_playback(
                 profile.playback.recording,
                 stage=result.usage.stage_reached,
-                diverged=factory.diverged(profile.playback.recording),
+                diverged=result.state.playback_diverged,
             )
         notes: list[str] = []
         if record:

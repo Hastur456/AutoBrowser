@@ -172,6 +172,36 @@ def test_a_secret_typed_into_a_password_field_is_never_stored(tmp_path: Path) ->
     assert step.args["target"] == "e20"  # the reference stays for diagnostics
 
 
+def test_one_survivor_of_equal_elements_in_equal_lists_is_not_guessed() -> None:
+    """A cart with three Delete buttons under unnamed list items: deleting the third one
+    must not delete the only one left."""
+
+    adapter = BrowserPlaybackAdapter()
+    cart = "- list \"Cart\":\n" + "\n".join(
+        f"  - listitem:\n    - button \"Delete\" [ref=e{i}]" for i in (1, 2, 3)
+    )
+    (binding,) = adapter.describe({"target": "e3"}, [cart])
+    left = '- list "Cart":\n  - listitem:\n    - button "Delete" [ref=e7]'
+
+    result = adapter.rebind({"target": "e3"}, [binding], [left])
+
+    assert binding.descriptor["context_unique"] is False
+    assert result.args is None and "1 of 3" in result.detail
+
+
+def test_a_survivor_told_apart_by_its_context_is_rebound() -> None:
+    adapter = BrowserPlaybackAdapter()
+    page = (
+        '- region "Fruit":\n  - button "Delete" [ref=e1]\n'
+        '- region "Vegetables":\n  - button "Delete" [ref=e2]'
+    )
+    (binding,) = adapter.describe({"target": "e2"}, [page])
+    left = '- region "Vegetables":\n  - button "Delete" [ref=e9]'
+
+    assert binding.descriptor["context_unique"] is True
+    assert adapter.rebind({"target": "e2"}, [binding], [left]).args == {"target": "e9"}
+
+
 def test_one_survivor_of_several_equal_elements_is_not_guessed() -> None:
     adapter = BrowserPlaybackAdapter()
     page = "\n".join(f'- listitem:\n  - button "Delete" [ref=e{i}]' for i in (1, 2, 3))
@@ -180,6 +210,74 @@ def test_one_survivor_of_several_equal_elements_is_not_guessed() -> None:
     result = adapter.rebind({"target": "e3"}, [binding], ['- toolbar:\n  - button "Delete" [ref=e9]'])
 
     assert result.args is None and "1 of 3" in result.detail
+
+
+@pytest.mark.parametrize("name", ["Boarding pass", "Passenger details", "Compass", "Tokens pricing"])
+def test_ordinary_fields_are_not_taken_for_secrets(name: str) -> None:
+    page = f'- textbox "{name}" [ref=e1]'
+
+    (binding,) = BrowserPlaybackAdapter().describe({"target": "e1"}, [page])
+
+    assert "sensitive" not in binding.descriptor
+
+
+def test_only_text_entry_fields_are_secret_and_numbers_are_redacted_too(tmp_path: Path) -> None:
+    page = '- button "Show password" [ref=e1]\n- textbox "PIN" [ref=e2]'
+    adapter = BrowserPlaybackAdapter()
+    (button,) = adapter.describe({"target": "e1"}, [page])
+    assert "sensitive" not in button.descriptor
+
+    store = RecordingStore(tmp_path, ReplaySettings())
+    recorder = Recorder(store, ReplaySettings(), adapter=adapter)
+    recorder.arm("t", "pin", "Enter the PIN", snapshots={"web": page})
+    call_events(recorder, "type", {"target": "e2", "text": 1234, "submit": True})
+    finish(recorder)
+
+    (step,) = store.load("pin").steps
+    assert step.redacted and step.args["text"] != 1234 and step.args["submit"] is True
+
+
+def test_the_secret_field_pattern_is_a_setting() -> None:
+    page = '- textbox "Mother\'s maiden name" [ref=e1]'
+    custom = BrowserPlaybackAdapter(ReplaySettings(secret_field_pattern="maiden"))
+    off = BrowserPlaybackAdapter(ReplaySettings(secret_field_pattern=""))
+
+    assert custom.describe({"target": "e1"}, [page])[0].descriptor.get("sensitive") is True
+    assert "sensitive" not in off.describe({"target": "e1"}, [page])[0].descriptor
+    with pytest.raises(ValueError):
+        ReplaySettings(secret_field_pattern="(unclosed")
+
+
+@pytest.mark.asyncio
+async def test_a_divergence_raised_by_the_engine_reaches_the_result() -> None:
+    from tests.test_agent_loop_playback import propose
+
+    same = [propose(index, "open_page", url="https://same.example") for index in (1, 2, 3)]
+
+    result, _, _, _ = await run_playback(ScriptedSource(same), [DONE])
+
+    assert result.state.playback_diverged == "repeat"
+
+
+@pytest.mark.asyncio
+async def test_a_retarget_that_fails_before_its_call_is_not_counted() -> None:
+    from src.contracts import StepProposal
+    from src.harness.playback import PlaybackSource
+
+    class Exploding:
+        async def retarget(self, **kwargs: Any) -> Any:
+            raise TypeError("a binding path does not fit the arguments")
+
+    step = RecordedStep(index=1, tool="click", args={"target": "e1"}, bindings=(Binding(path=("target",), value="e1", descriptor={"role": "tab", "name": "Specs"}),))
+    source = PlaybackSource(
+        Recording(name="r", task="t", steps=(step,)), PlaybackRequest(recording="r"),
+        BrowserPlaybackAdapter(), ReplaySettings(), retargeter=Exploding(),
+    )
+
+    outcome = await source.next(StepView(task="t", turn=1, tool_result={}, snapshots={}, tool_schemas={"click": {}}))
+
+    assert isinstance(outcome, StepHandoff) and outcome.kind == "binding"
+    assert source.usage == ()
 
 
 # -- a failed retarget call still counts ----------------------------------------------------

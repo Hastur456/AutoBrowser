@@ -249,19 +249,6 @@ async def test_an_unexpected_page_after_a_step_hands_over_as_checkpoint() -> Non
 
 
 @pytest.mark.asyncio
-async def test_the_factory_reports_the_divergence_of_the_last_replay_once(tmp_path: Path) -> None:
-    store = RecordingStore(tmp_path, ReplaySettings())
-    store.save(recording(dataclasses.replace(CLICK, index=1)))
-    factory = PlaybackFactory(store, BrowserPlaybackAdapter(), ReplaySettings())
-
-    src = factory.build(PlaybackRequest(recording="kettle"), task="t", budget=RunBudget(), max_stage="human", emit=lambda *_: None)
-    await src.next(view("- Page URL: x"))  # the Specs tab is gone
-
-    assert factory.diverged("kettle") == "binding"
-    assert factory.diverged("kettle") == ""  # consumed
-
-
-@pytest.mark.asyncio
 async def test_an_empty_output_region_hands_over_instead_of_an_empty_answer() -> None:
     src = PlaybackSource(
         recording(OPEN),
