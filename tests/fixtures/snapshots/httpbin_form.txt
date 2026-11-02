@@ -1,0 +1,59 @@
+### Page
+- Page URL: https://httpbin.org/forms/post
+- Console: 1 errors, 0 warnings
+### Snapshot
+```yaml
+- generic [ref=f3e2]:
+  - paragraph [ref=f3e3]:
+    - generic [ref=f3e4]:
+      - text: "Customer name:"
+      - textbox "Customer name:" [ref=f3e5]
+  - paragraph [ref=f3e6]:
+    - generic [ref=f3e7]:
+      - text: "Telephone:"
+      - textbox "Telephone:" [ref=f3e8]
+  - paragraph [ref=f3e9]:
+    - generic [ref=f3e10]:
+      - text: "E-mail address:"
+      - textbox "E-mail address:" [ref=f3e11]
+  - group "Pizza Size" [ref=f3e12]:
+    - paragraph [ref=f3e14]:
+      - generic [ref=f3e15]:
+        - radio "Small" [ref=f3e16]
+        - text: Small
+    - paragraph [ref=f3e17]:
+      - generic [ref=f3e18]:
+        - radio "Medium" [ref=f3e19]
+        - text: Medium
+    - paragraph [ref=f3e20]:
+      - generic [ref=f3e21]:
+        - radio "Large" [ref=f3e22]
+        - text: Large
+  - group "Pizza Toppings" [ref=f3e23]:
+    - paragraph [ref=f3e25]:
+      - generic [ref=f3e26]:
+        - checkbox "Bacon" [ref=f3e27]
+        - text: Bacon
+    - paragraph [ref=f3e28]:
+      - generic [ref=f3e29]:
+        - checkbox "Extra Cheese" [ref=f3e30]
+        - text: Extra Cheese
+    - paragraph [ref=f3e31]:
+      - generic [ref=f3e32]:
+        - checkbox "Onion" [ref=f3e33]
+        - text: Onion
+    - paragraph [ref=f3e34]:
+      - generic [ref=f3e35]:
+        - checkbox "Mushroom" [ref=f3e36]
+        - text: Mushroom
+  - paragraph [ref=f3e37]:
+    - generic [ref=f3e38]:
+      - text: "Preferred delivery time:"
+      - textbox "Preferred delivery time:" [ref=f3e39]
+  - paragraph [ref=f3e40]:
+    - generic [ref=f3e41]:
+      - text: "Delivery instructions:"
+      - textbox "Delivery instructions:" [ref=f3e42]
+  - paragraph [ref=f3e43]:
+    - button "Submit order" [ref=f3e44]
+```

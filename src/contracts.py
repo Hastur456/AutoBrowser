@@ -539,7 +539,8 @@ class StepHandoff:
     reason: str
     kind: StepHandoffKind
     step: int | None = None
-    #: Short operator-facing detail for ``playback.diverged`` (never page text).
+    #: Short operator-facing detail for ``playback.diverged`` (an element label at most,
+    #: never a page excerpt; truncated to ``replay.detail_max_chars``).
     detail: str = ""
 
 

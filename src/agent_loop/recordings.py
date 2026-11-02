@@ -47,6 +47,59 @@ def validate_recording_name(name: str) -> str:
     return name
 
 
+#: Digits in fingerprinted text: a changed price or count is not a changed page.
+_DIGITS = re.compile(r"\d+")
+_SPACES = re.compile(r"[ \t\r\f\v]+")
+#: Characters of a fingerprint key: a short hash, so a recording keeps no page text.
+FINGERPRINT_KEY_CHARS = 12
+
+
+def fingerprint_key(text: str) -> str:
+    """A short, number-blind hash of ``text`` for a checkpoint multiset."""
+
+    masked = _DIGITS.sub("#", " ".join(str(text).split()).lower())
+    return hashlib.sha256(masked.encode("utf-8")).hexdigest()[:FINGERPRINT_KEY_CHARS]
+
+
+def multiset_similarity(recorded: Mapping[str, Any], current: Mapping[str, Any]) -> float:
+    """Weighted Jaccard of two ``key -> count`` multisets; ``1.0`` when nothing was recorded."""
+
+    if not recorded:
+        return 1.0
+    if not current:
+        return 0.0
+    keys = set(recorded) | set(current)
+    shared = sum(min(int(recorded.get(key, 0)), int(current.get(key, 0))) for key in keys)
+    total = sum(max(int(recorded.get(key, 0)), int(current.get(key, 0))) for key in keys)
+    return shared / total if total else 1.0
+
+
+def select_region(
+    text: str,
+    select: str | None,
+    ignore: Sequence[str],
+    *,
+    drop: Sequence[re.Pattern[str]] = (),
+) -> str:
+    """The region of ``text`` an ``output`` answer returns, normalized for comparison.
+
+    ``select`` (a regex) picks the first match, ``""`` when it does not match; every
+    ``ignore`` match and every ``drop`` pattern (format markers an adapter strips) is
+    removed; spaces collapse and blank lines go.
+    """
+
+    region = str(text or "")
+    if select:
+        match = re.search(select, region)
+        region = match.group(0) if match else ""
+    for pattern in ignore:
+        region = re.sub(pattern, "", region)
+    for pattern in drop:
+        region = pattern.sub("", region)
+    lines = (_SPACES.sub(" ", line).strip() for line in region.splitlines())
+    return "\n".join(line for line in lines if line)
+
+
 def schema_digest(schema: Mapping[str, Any] | None) -> str:
     """A stable digest of a tool's input schema (canonical JSON, sha256)."""
 
@@ -222,6 +275,7 @@ def _binding_from_json(raw: Any, position: int) -> Binding:
 
 __all__ = [
     "DIGEST_PREFIX",
+    "FINGERPRINT_KEY_CHARS",
     "RECORDING_FORMAT",
     "RECORDING_NAME",
     "RecordedStep",
@@ -229,7 +283,10 @@ __all__ = [
     "RecordingFormatError",
     "RecordingNameError",
     "recording_from_json",
+    "fingerprint_key",
+    "multiset_similarity",
     "recording_to_json",
     "schema_digest",
+    "select_region",
     "validate_recording_name",
 ]

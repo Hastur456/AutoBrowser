@@ -178,6 +178,47 @@ def test_no_source_module_decides_by_a_browser_tool_name(path: Path) -> None:
     assert not literals, f"{path.relative_to(SRC)} uses tool-name literals {literals}"
 
 
+# -- replay ---------------------------------------------------------------------------------
+# Snapshot text formats (``[ref=…]`` markers, the ``- Page URL:`` line) are read only by the
+# browser layer; the engine and the replay machinery see neutral protocols.
+
+SNAPSHOT_FORMAT_MARKERS = ("[ref", "Page URL")
+FORMAT_FREE_MODULES = sorted(
+    {
+        *ENGINE_MODULES,
+        SRC / "agent_loop" / "recordings.py",
+        *sorted((SRC / "harness").glob("playback*.py")),
+        *sorted((SRC / "harness").glob("record*.py")),
+    }
+)
+
+
+@pytest.mark.parametrize(
+    "path", FORMAT_FREE_MODULES, ids=lambda path: path.relative_to(SRC).as_posix()
+)
+def test_replay_and_the_engine_never_read_the_snapshot_format(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+
+    assert not [marker for marker in SNAPSHOT_FORMAT_MARKERS if marker in text]
+
+
+def test_the_engine_imports_no_replay_infrastructure() -> None:
+    forbidden = ("src.harness.playback", "src.harness.recorder", "src.harness.recording_store")
+    for path in ENGINE_MODULES:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        modules = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module
+        } | {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        }
+        assert not modules & set(forbidden), f"{path.name} imports {sorted(modules & set(forbidden))}"
+
+
 def test_the_fence_sees_the_source_modules() -> None:
     names = {path.relative_to(SRC).as_posix() for path in SOURCE_MODULES}
 
