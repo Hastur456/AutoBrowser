@@ -82,6 +82,9 @@ MemoryKind = Literal["site", "procedure"]
 MemoryStatus = Literal["user", "verified", "unverified", "stale"]
 #: Stages of the cost ladder, cheapest first: an output probe without the model, playback of
 #: a recording, a one-step model retarget, the agent, a human approval.
+#: Names of recordings and stand jobs: lowercase letters, digits and single hyphens, 1-64
+#: characters (the Agent Skills naming rule), so a name can never leave its directory.
+RECORDING_NAME_PATTERN = r"^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$"
 LadderStage = Literal["probe", "playback", "retarget", "agent", "human"]
 #: The order of the cost ladder; a run never climbs above ``RunProfile.max_stage``.
 LADDER_ORDER: tuple[LadderStage, ...] = ("probe", "playback", "retarget", "agent", "human")
@@ -694,6 +697,7 @@ __all__ = [
     "ApprovalResolution",
     "ApprovalTicket",
     "ApprovalVia",
+    "RECORDING_NAME_PATTERN",
     "BindResult",
     "Binding",
     "CompactToolObservation",

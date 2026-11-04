@@ -586,3 +586,57 @@ hooks:
   #     event: stop
   #     type: command
   #     command: python scripts/hooks/grounded_urls.py
+
+# ---------------------------------------------------------------------------
+# The stand, `autobrowser serve` (docs/development/serve-mode.md). Nothing runs
+# unless the command is started. Keep the token in the environment
+# (AUTOBROWSER_SERVE__TOKEN): this file does not expand ${VAR}.
+serve:
+  host: 127.0.0.1                               # (default) a remote host needs allow_remote + token
+  port: 8765                                    # (default)
+  allow_remote: false                           # (default)
+  dir: serve                                    # (default) ledger, events, job state
+  profiles_dir: serve/profiles                  # (default) worker browser profiles
+  cdp_port_base: 9300                           # (default) CDP port of worker w0
+  queue_size: 20                                # (default)
+  coalesce: drop                                # (default) drop | queue_one
+  cooldown_seconds: 0.0                         # (default)
+  min_interval_seconds: 60.0                    # (default) least trigger period
+  catch_up: none                                # (default) none | one
+  timezone: ""                                  # (default) IANA zone; empty: the system zone
+  daily_max_runs: null                          # (default) null = no cap
+  daily_max_tokens: null                        # (default)
+  daily_max_cost: null                          # (default) in llm.currency
+  default_run_budget: {max_model_calls: 30}     # (default) max_model_calls is required
+  default_max_stage: agent                      # (default) human only with api_approvals
+  session_max_runs: 200                         # (default) runs before the session is recreated
+  shutdown_grace_seconds: 60.0                  # (default)
+  rate_limit_per_minute: 60                     # (default)
+  max_body_bytes: 65536                         # (default)
+  idempotency_window_seconds: 3600.0            # (default)
+  free_tasks: false                             # (default) POST /v1/tasks
+  free_task_domains: []                         # (default) task scope of free tasks
+  api_approvals: false                          # (default) off: approvals are denied
+  log_client_addresses: false                   # (default)
+  channels: [log]                               # (default) log | webhook
+  notify_max_chars: 1500                        # (default)
+  # webhook_out: {url: https://hooks.example/autobrowser, timeout_seconds: 10.0}
+  #   # secret: AUTOBROWSER_SERVE__WEBHOOK_OUT__SECRET in the environment
+  jobs: {}                                      # (default) e.g.
+  #   price-watch:
+  #     task: "Open https://shop.example/item/1 and report the current price."
+  #     triggers:
+  #       - {id: hourly, type: interval, every_seconds: 3600}
+  #       - {id: ci, type: webhook, secret_env: PRICE_WATCH_HOOK_SECRET, auth: hmac_sha256}
+  #     probe:                                  # stage 0: no model while nothing changed
+  #       steps:
+  #         - {tool: browser_navigate, args: {url: "https://shop.example/item/1"}}
+  #         - {tool: browser_snapshot}
+  #       select: "(?s)Price.*?USD"
+  #       ignore: ['\d+ reviews?']
+  #     recording: price-watch                  # replay it first (replay.enabled)
+  #     record_on_success: true
+  #     max_stage: agent
+  #     budget: {max_model_calls: 20, max_cost: 0.02}
+  #     domains: [shop.example]
+  #     notify_on: [change, failure, blocked, budget]

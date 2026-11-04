@@ -106,7 +106,14 @@ from pydantic_settings import (
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
-from src.contracts import ApprovalJudgeMode, HookEventName, PermissionDecision, PermissionMode
+from src.contracts import (
+    RECORDING_NAME_PATTERN,
+    ApprovalJudgeMode,
+    HookEventName,
+    LadderStage,
+    PermissionDecision,
+    PermissionMode,
+)
 from src.mcp.config import MCPServerConfig
 
 #: Env var namespace for every setting.
@@ -2270,6 +2277,346 @@ class EvalPlatformSettings(_Section):
     ] = 50
 
 
+#: What a stand job reports on (``serve.jobs.<id>.notify_on``) and what a channel sends.
+NotifyKind = Literal["change", "success", "failure", "blocked", "budget", "approval"]
+#: Notification channels of ``autobrowser serve`` (Telegram arrives in phase 4).
+ServeChannel = Literal["log", "webhook"]
+#: What a job does when a trigger fires while its run is busy (design section 6.3).
+CoalesceMode = Literal["drop", "queue_one"]
+#: Fire missed cron slots after downtime: never, or one catch-up run.
+CatchUpMode = Literal["none", "one"]
+#: Kinds of job triggers.
+TriggerType = Literal["interval", "webhook"]
+#: How a webhook trigger authenticates its caller.
+WebhookAuth = Literal["bearer", "hmac_sha256"]
+#: Hosts that only this machine can reach: ``serve.host`` needs no token on them.
+LOCAL_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+_DEFAULT_NOTIFY_ON: tuple[NotifyKind, ...] = ("change", "failure", "blocked", "budget")
+
+
+def _check_name(value: str, what: str) -> str:
+    if not re.match(RECORDING_NAME_PATTERN, str(value)):
+        raise ValueError(f"invalid {what} {value!r}: use 1-64 lowercase letters, digits and hyphens")
+    return value
+
+
+def _normalize_domains(values: list[str]) -> list[str]:
+    return [domain for domain in (normalize_domain(value) for value in values) if domain]
+
+
+class RunBudgetSpec(_Section):
+    """Caps of one stand run (``src.contracts.RunBudget``); ``None``: no cap."""
+
+    max_model_calls: Annotated[
+        int | None, Field(ge=1, description="Model calls per run.")
+    ] = None
+    max_tokens: Annotated[
+        int | None, Field(ge=1, description="Input + output tokens per run.")
+    ] = None
+    max_cost: Annotated[
+        float | None, Field(gt=0.0, description="Money per run in llm.currency (needs llm.prices).")
+    ] = None
+
+
+class TriggerSpec(_Section):
+    """One way a job starts: a period or an HTTP webhook."""
+
+    id: Annotated[str, Field(min_length=1, description="Trigger id, unique in the job.")]
+    type: Annotated[TriggerType, Field(description="interval | webhook.")]
+    every_seconds: Annotated[
+        float | None, Field(gt=0.0, description="interval: the period, >= serve.min_interval_seconds.")
+    ] = None
+    secret: Annotated[
+        SecretStr | None, Field(description="webhook: the shared secret (or secret_env).")
+    ] = None
+    secret_env: Annotated[
+        str | None,
+        Field(min_length=1, description="webhook: the environment variable holding the secret."),
+    ] = None
+    auth: Annotated[
+        WebhookAuth,
+        Field(description="webhook: bearer (Authorization header) or hmac_sha256 (signed body)."),
+    ] = "bearer"
+
+    @field_validator("id")
+    @classmethod
+    def _id_is_a_name(cls, value: str) -> str:
+        return _check_name(value, "trigger id")
+
+    @model_validator(mode="after")
+    def _fields_match_the_type(self) -> TriggerSpec:
+        if self.type == "interval" and self.every_seconds is None:
+            raise ValueError(f"interval trigger {self.id!r} needs every_seconds")
+        if self.type == "webhook" and (self.secret is None) == (self.secret_env is None):
+            raise ValueError(f"webhook trigger {self.id!r} needs exactly one of secret, secret_env")
+        if self.type != "webhook" and (self.secret is not None or self.secret_env is not None):
+            raise ValueError(f"{self.type} trigger {self.id!r} takes no secret")
+        return self
+
+
+class ProbeStepSpec(_Section):
+    """One model-free tool call of a probe; the tool name is the user's data."""
+
+    server: Annotated[
+        str, Field(description="MCP server of the tool; empty: whichever server exposes it.")
+    ] = ""
+    tool: Annotated[str, Field(min_length=1, description="Exposed tool name.")]
+    args: Annotated[dict[str, Any], Field(description="Arguments, passed as written.")] = Field(
+        default_factory=dict
+    )
+
+
+class ProbeSpec(_Section):
+    """Stage 0: a few tool calls without the model and a fingerprint of their output."""
+
+    steps: Annotated[
+        list[ProbeStepSpec], Field(min_length=1, description="The calls, in order.")
+    ]
+    select: Annotated[
+        str | None, Field(description="Regex of the output region to fingerprint; None: all of it.")
+    ] = None
+    ignore: Annotated[
+        list[str], Field(description="Regexes removed from the region before fingerprinting.")
+    ] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _patterns_compile(self) -> ProbeSpec:
+        for pattern in (self.select, *self.ignore):
+            if pattern is not None:
+                _compile(pattern, "probe regex")
+        return self
+
+
+class JobSpec(_Section):
+    """One stand job: a browser task, its triggers and how far and how dear it may go."""
+
+    task: Annotated[str, Field(min_length=1, description="The task text given to the agent.")]
+    enabled: Annotated[bool, Field(description="A disabled job never runs.")] = True
+    triggers: Annotated[list[TriggerSpec], Field(description="What starts the job.")] = Field(
+        default_factory=list
+    )
+    probe: Annotated[
+        ProbeSpec | None, Field(description="Stage 0: skip the run while the probe output is unchanged.")
+    ] = None
+    recording: Annotated[
+        str | None, Field(description="Recording to replay first (and to save with record_on_success).")
+    ] = None
+    record_on_success: Annotated[
+        bool, Field(description="Save a completed run that needed a model as the recording.")
+    ] = False
+    max_stage: Annotated[
+        LadderStage | None, Field(description="Ladder cap of the run; None: serve.default_max_stage.")
+    ] = None
+    budget: Annotated[
+        RunBudgetSpec | None, Field(description="Run budget; None: serve.default_run_budget.")
+    ] = None
+    domains: Annotated[
+        list[str], Field(description="Domains the run may act on (empty: no task scope).")
+    ] = Field(default_factory=list)
+    notify_on: Annotated[
+        list[NotifyKind], Field(description="Outcomes the channels are told about.")
+    ] = Field(default_factory=lambda: list(_DEFAULT_NOTIFY_ON))
+    coalesce: Annotated[
+        CoalesceMode | None, Field(description="None: serve.coalesce.")
+    ] = None
+    cooldown_seconds: Annotated[
+        float | None, Field(ge=0.0, description="None: serve.cooldown_seconds.")
+    ] = None
+
+    @field_validator("recording")
+    @classmethod
+    def _recording_is_a_name(cls, value: str | None) -> str | None:
+        return None if value is None else _check_name(value, "recording name")
+
+    @field_validator("domains")
+    @classmethod
+    def _domains_are_hosts(cls, values: list[str]) -> list[str]:
+        return _normalize_domains(values)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> JobSpec:
+        if self.record_on_success and self.recording is None:
+            raise ValueError("record_on_success needs a recording name")
+        ids = [trigger.id for trigger in self.triggers]
+        duplicates = sorted({item for item in ids if ids.count(item) > 1})
+        if duplicates:
+            raise ValueError(f"duplicate trigger id(s) {duplicates}")
+        return self
+
+
+class WebhookOutSettings(_Section):
+    """The outgoing webhook channel: notifications POSTed as signed JSON."""
+
+    url: Annotated[str, Field(min_length=1, description="Where notifications are POSTed (http/https).")]
+    secret: Annotated[
+        SecretStr | None,
+        Field(description="HMAC-SHA256 key of the X-AutoBrowser-Signature header; None: unsigned."),
+    ] = None
+    timeout_seconds: Annotated[
+        float, Field(gt=0.0, description="Timeout of one POST; a failure is logged, not retried.")
+    ] = 10.0
+
+    @field_validator("url")
+    @classmethod
+    def _http_url(cls, value: str) -> str:
+        if not value.startswith(("http://", "https://")):
+            raise ValueError(f"webhook_out.url must be an http(s) URL, got {value!r}")
+        return value
+
+
+class ServeSettings(_Section):
+    """The stand, ``autobrowser serve`` (``docs/development/serve-mode.md``,
+    ``docs/development/2026-11-02-serve-mode-design.md`` section 9.4).
+
+    Nothing runs unless the command is started. The API listens on localhost; a remote
+    ``host`` needs ``allow_remote`` and a non-empty ``token``.
+    """
+
+    host: Annotated[str, Field(min_length=1, description="Address of the HTTP API.")] = "127.0.0.1"
+    port: Annotated[int, Field(ge=1, le=65535, description="Port of the HTTP API.")] = 8765
+    token: Annotated[
+        SecretStr | None,
+        Field(description="Bearer token of /v1/*; required for a remote host. Set it in the env."),
+    ] = None
+    allow_remote: Annotated[
+        bool, Field(description="Allow a host other than 127.0.0.1, ::1 or localhost.")
+    ] = False
+    dir: Annotated[
+        str, Field(min_length=1, description="Stand files (ledger, events, job state) under storage.root_dir.")
+    ] = "serve"
+    profiles_dir: Annotated[
+        str, Field(min_length=1, description="Browser profiles of the workers under storage.root_dir.")
+    ] = "serve/profiles"
+    cdp_port_base: Annotated[
+        int, Field(ge=1, le=65535, description="CDP port of worker w0 (launch: cdp).")
+    ] = 9300
+    queue_size: Annotated[int, Field(ge=1, description="Queued runs at most.")] = 20
+    coalesce: Annotated[
+        CoalesceMode,
+        Field(description="drop: a trigger on a busy job is skipped; queue_one: one waits."),
+    ] = "drop"
+    cooldown_seconds: Annotated[
+        float, Field(ge=0.0, description="Least time between the end of a job's run and its next start.")
+    ] = 0.0
+    min_interval_seconds: Annotated[
+        float, Field(ge=1.0, description="Least period of a trigger.")
+    ] = 60.0
+    catch_up: Annotated[
+        CatchUpMode, Field(description="Missed cron slots after downtime: none, or one catch-up run.")
+    ] = "none"
+    timezone: Annotated[
+        str, Field(description="IANA zone of cron and day budgets; empty: the system zone.")
+    ] = ""
+    daily_max_runs: Annotated[int | None, Field(ge=1, description="Runs per day.")] = None
+    daily_max_tokens: Annotated[int | None, Field(ge=1, description="Tokens per day.")] = None
+    daily_max_cost: Annotated[
+        float | None, Field(gt=0.0, description="Money per day in llm.currency.")
+    ] = None
+    default_run_budget: Annotated[
+        RunBudgetSpec,
+        Field(description="Budget of a run without its own; max_model_calls is required."),
+    ] = Field(default_factory=lambda: RunBudgetSpec(max_model_calls=30))
+    default_max_stage: Annotated[
+        LadderStage,
+        Field(description="Ladder cap of a run without its own (human: only with api_approvals)."),
+    ] = "agent"
+    session_max_runs: Annotated[
+        int, Field(ge=1, description="Runs before the worker's session is recreated.")
+    ] = 200
+    shutdown_grace_seconds: Annotated[
+        float, Field(gt=0.0, description="How long a running run may finish on shutdown.")
+    ] = 60.0
+    rate_limit_per_minute: Annotated[
+        int, Field(ge=1, description="Requests per minute per token, trigger or failing client.")
+    ] = 60
+    max_body_bytes: Annotated[
+        int, Field(ge=1024, description="Largest request body.")
+    ] = 65536
+    idempotency_window_seconds: Annotated[
+        float, Field(ge=0.0, description="How long an Idempotency-Key is remembered.")
+    ] = 3600.0
+    free_tasks: Annotated[
+        bool, Field(description="Accept free-form tasks on POST /v1/tasks.")
+    ] = False
+    free_task_domains: Annotated[
+        list[str], Field(description="Task scope of free tasks (empty: none).")
+    ] = Field(default_factory=list)
+    api_approvals: Annotated[
+        bool,
+        Field(
+            description=(
+                "Answer approvals on POST /v1/approvals/{id} (tickets go to the channels); "
+                "off: every approval is denied (dont_ask)."
+            ),
+        ),
+    ] = False
+    log_client_addresses: Annotated[
+        bool, Field(description="Write client addresses into the stand events.")
+    ] = False
+    channels: Annotated[
+        list[ServeChannel], Field(description="Notification channels: log, webhook.")
+    ] = Field(default_factory=lambda: ["log"])
+    notify_max_chars: Annotated[
+        int, Field(ge=100, description="Longest notification body.")
+    ] = 1500
+    webhook_out: Annotated[
+        WebhookOutSettings | None, Field(description="The outgoing webhook channel.")
+    ] = None
+    jobs: Annotated[
+        dict[str, JobSpec], Field(description="The stand's jobs, by name.")
+    ] = Field(default_factory=dict)
+
+    @field_validator("daily_max_runs", "daily_max_tokens", "daily_max_cost", mode="before")
+    @classmethod
+    def _null_string(cls, value: Any) -> Any:
+        return _null_string_to_none(value)
+
+    @field_validator("free_task_domains")
+    @classmethod
+    def _free_task_domains_are_hosts(cls, values: list[str]) -> list[str]:
+        return _normalize_domains(values)
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_zone(cls, value: str) -> str:
+        if value:
+            import zoneinfo
+
+            try:
+                zoneinfo.ZoneInfo(value)
+            except (zoneinfo.ZoneInfoNotFoundError, ValueError) as exc:
+                raise ValueError(
+                    f"unknown time zone {value!r}; on Windows install the IANA database "
+                    f"(uv add tzdata) or leave serve.timezone empty for the system zone"
+                ) from exc
+        return value
+
+    @model_validator(mode="after")
+    def _safe_and_consistent(self) -> ServeSettings:
+        token = self.token.get_secret_value().strip() if self.token is not None else ""
+        if self.host not in LOCAL_HOSTS:
+            if not self.allow_remote:
+                raise ValueError(
+                    f"serve.host {self.host!r} is reachable from other machines: set "
+                    f"serve.allow_remote: true (and a token) to allow it"
+                )
+            if not token:
+                raise ValueError(f"serve.host {self.host!r} needs a non-empty serve.token")
+        if self.default_run_budget.max_model_calls is None:
+            raise ValueError("serve.default_run_budget needs max_model_calls")
+        if "webhook" in self.channels and self.webhook_out is None:
+            raise ValueError("the webhook channel needs serve.webhook_out.url")
+        for name, job in self.jobs.items():
+            _check_name(name, "job name")
+            for trigger in job.triggers:
+                if trigger.type == "interval" and (trigger.every_seconds or 0) < self.min_interval_seconds:
+                    raise ValueError(
+                        f"job {name!r}, trigger {trigger.id!r}: every_seconds is below "
+                        f"serve.min_interval_seconds ({self.min_interval_seconds})"
+                    )
+        return self
+
+
 class Settings(BaseSettings):
     """Root settings object; build once per process via :func:`get_settings`.
 
@@ -2305,6 +2652,7 @@ class Settings(BaseSettings):
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     eval_platform: EvalPlatformSettings = Field(default_factory=EvalPlatformSettings)
+    serve: ServeSettings = Field(default_factory=ServeSettings)
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
     #: Name of the ``mcp_servers`` entry that provides browser tools (exposed unprefixed).
     #: ``None`` falls back to ``"playwright"`` when such an entry exists.

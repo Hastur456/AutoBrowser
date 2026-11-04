@@ -18,13 +18,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, get_args
 
-from src.contracts import Binding, PlanStep, PlaybackAnswer
+from src.contracts import RECORDING_NAME_PATTERN, Binding, PlanStep, PlaybackAnswer
 
 #: Version tag of the file format; a file with another tag is refused.
 RECORDING_FORMAT = "autobrowser.recording/1"
 #: Recording names: lowercase letters, digits and single hyphens, 1-64 characters (the
 #: Agent Skills naming rule), so a name can never leave the recordings directory.
-RECORDING_NAME = re.compile(r"^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$")
+RECORDING_NAME = re.compile(RECORDING_NAME_PATTERN)
 #: Prefix of a schema digest.
 DIGEST_PREFIX = "sha256:"
 

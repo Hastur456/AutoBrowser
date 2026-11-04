@@ -1668,3 +1668,143 @@ def test_prices_and_budgets_resolve_from_the_environment(settings: Any, monkeypa
 def test_prices_and_budgets_bounds_are_enforced(settings: Any, section: str, values: dict) -> None:
     with pytest.raises(ValueError):
         settings(**{section: values})
+
+
+# --------------------------------------------------------------------------
+# The serve section (autobrowser serve; docs/development/serve-mode.md)
+# --------------------------------------------------------------------------
+
+
+def _job(**fields: Any) -> dict[str, Any]:
+    return {"task": "Open the page and report the price.", **fields}
+
+
+def test_serve_defaults_are_safe(settings: Any) -> None:
+    serve = settings().serve
+
+    assert serve.host == "127.0.0.1"
+    assert serve.port == 8765
+    assert serve.token is None
+    assert serve.allow_remote is False
+    assert serve.free_tasks is False
+    assert serve.api_approvals is False
+    assert serve.channels == ["log"]
+    assert serve.jobs == {}
+    assert serve.default_run_budget.max_model_calls == 30
+    assert serve.default_max_stage == "agent"
+    assert serve.timezone == ""
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.5", "example.org"])
+def test_a_remote_host_needs_allow_remote_and_a_token(settings: Any, host: str) -> None:
+    with pytest.raises(ValueError, match="allow_remote"):
+        settings(serve={"host": host, "token": "t0ken"})
+    with pytest.raises(ValueError, match="token"):
+        settings(serve={"host": host, "allow_remote": True})
+    with pytest.raises(ValueError, match="token"):
+        settings(serve={"host": host, "allow_remote": True, "token": "  "})
+
+    serve = settings(serve={"host": host, "allow_remote": True, "token": "t0ken"}).serve
+    assert serve.token.get_secret_value() == "t0ken"
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])
+def test_a_local_host_needs_no_token(settings: Any, host: str) -> None:
+    assert settings(serve={"host": host}).serve.host == host
+
+
+def test_the_serve_token_comes_from_the_environment_and_stays_secret(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_SERVE__TOKEN", "env-t0ken")
+
+    serve = settings().serve
+
+    assert serve.token.get_secret_value() == "env-t0ken"
+    assert "env-t0ken" not in repr(serve)
+
+
+def test_a_job_with_its_triggers_probe_and_budget(settings: Any) -> None:
+    job = _job(
+        triggers=[
+            {"id": "hourly", "type": "interval", "every_seconds": 3600},
+            {"id": "ci", "type": "webhook", "secret": "s3cret", "auth": "hmac_sha256"},
+        ],
+        probe={"steps": [{"tool": "browser_navigate", "args": {"url": "https://shop.example/1"}}],
+               "select": "(?s)Price.*?USD", "ignore": [r"\d+ reviews"]},
+        recording="price-watch",
+        record_on_success=True,
+        max_stage="playback",
+        budget={"max_model_calls": 5, "max_cost": 0.02},
+        domains=["WWW.Shop.Example"],
+    )
+
+    spec = settings(serve={"jobs": {"price-watch": job}}).serve.jobs["price-watch"]
+
+    assert [t.id for t in spec.triggers] == ["hourly", "ci"]
+    assert spec.triggers[1].secret.get_secret_value() == "s3cret"
+    assert spec.probe.steps[0].tool == "browser_navigate"
+    assert spec.probe.steps[0].server == ""
+    assert spec.domains == ["shop.example"]
+    assert spec.budget.max_model_calls == 5
+    assert spec.enabled is True
+    assert spec.notify_on == ["change", "failure", "blocked", "budget"]
+    assert spec.coalesce is None and spec.cooldown_seconds is None
+
+
+@pytest.mark.parametrize(
+    "jobs, message",
+    [
+        ({"Bad Name": _job()}, "job name"),
+        ({"j": _job(recording="../x")}, "recording"),
+        ({"j": _job(record_on_success=True)}, "record_on_success"),
+        ({"j": _job(triggers=[{"id": "t", "type": "interval"}])}, "every_seconds"),
+        ({"j": _job(triggers=[{"id": "t", "type": "interval", "every_seconds": 5}])}, "min_interval_seconds"),
+        ({"j": _job(triggers=[{"id": "t", "type": "webhook"}])}, "secret"),
+        ({"j": _job(triggers=[{"id": "t", "type": "webhook", "secret": "a", "secret_env": "B"}])}, "secret"),
+        ({"j": _job(triggers=[{"id": "t", "type": "interval", "every_seconds": 60},
+                              {"id": "t", "type": "interval", "every_seconds": 90}])}, "duplicate"),
+        ({"j": _job(probe={"steps": []})}, "steps"),
+        ({"j": _job(probe={"steps": [{"tool": "x"}], "select": "("})}, "regex"),
+        ({"j": _job(domains=["https://shop.example/"])}, "domain"),
+        ({"j": _job(notify_on=["sometimes"])}, "notify_on"),
+        ({"j": _job(surprise=True)}, "surprise"),
+    ],
+)
+def test_invalid_jobs_are_rejected(settings: Any, jobs: dict[str, Any], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        settings(serve={"jobs": jobs})
+
+
+def test_a_webhook_secret_may_name_an_environment_variable(settings: Any) -> None:
+    job = _job(triggers=[{"id": "ci", "type": "webhook", "secret_env": "PRICE_HOOK_SECRET"}])
+
+    spec = settings(serve={"jobs": {"j": job}}).serve.jobs["j"]
+
+    assert spec.triggers[0].secret is None
+    assert spec.triggers[0].secret_env == "PRICE_HOOK_SECRET"
+
+
+def test_the_default_run_budget_must_cap_model_calls(settings: Any) -> None:
+    with pytest.raises(ValueError, match="max_model_calls"):
+        settings(serve={"default_run_budget": {"max_tokens": 1000}})
+
+
+def test_the_webhook_channel_needs_an_outgoing_url(settings: Any) -> None:
+    with pytest.raises(ValueError, match="webhook_out"):
+        settings(serve={"channels": ["log", "webhook"]})
+
+    serve = settings(
+        serve={"channels": ["webhook"], "webhook_out": {"url": "https://hooks.example/x", "secret": "k"}}
+    ).serve
+    assert serve.webhook_out.timeout_seconds == 10.0
+    assert serve.webhook_out.secret.get_secret_value() == "k"
+
+
+def test_free_task_domains_are_normalized(settings: Any) -> None:
+    assert settings(serve={"free_task_domains": ["*.Example.COM"]}).serve.free_task_domains == ["example.com"]
+
+
+def test_an_unknown_time_zone_is_rejected_with_a_hint(settings: Any) -> None:
+    with pytest.raises(ValueError, match="tzdata"):
+        settings(serve={"timezone": "Mars/Olympus_Mons"})
