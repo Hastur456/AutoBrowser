@@ -127,6 +127,10 @@ def test_defaults_match_the_constants_they_replaced(settings: Any) -> None:
         r"C:\Program Files\Google\Chrome\Application\chrome.exe"
     )
     assert config.browser.user_data_dir == Path(r"C:\temp\chrome_debug_profile")
+    # The session launches a visible Chrome over CDP unless told otherwise (serve mode).
+    assert config.browser.launch == "cdp"
+    assert config.browser.headless is False
+    assert config.browser.extra_args == []
 
     # was: the hardcoded ".autobrowser" storage literals (now under the home directory)
     home = home_dir()

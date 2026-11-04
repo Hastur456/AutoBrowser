@@ -13,6 +13,7 @@ from src.cli import bootstrap
 from src.cli.output import format_state, print_tools
 from src.cli.parser import build_parser
 from src.cli.tasks import resolve_task
+from src.config import BrowserSettings, get_settings
 from src.harness import chrome
 from src.harness.chrome import start_chrome_cdp
 from tests.session_fakes import install_fake_agent
@@ -214,6 +215,47 @@ def test_start_chrome_launches_when_port_closed(monkeypatch) -> None:
     # Chrome's own output never reaches the terminal.
     assert streams[0]["stdout"] == chrome.subprocess.DEVNULL
     assert streams[0]["stderr"] == chrome.subprocess.DEVNULL
+    # No headless flag and no extra arguments by default: the visible browser of today.
+    assert not any(arg.startswith("--headless") for arg in calls[0])
+
+
+def test_chrome_flags_follow_headless_then_extra_args() -> None:
+    assert chrome.chrome_flags(BrowserSettings()) == []
+    assert chrome.chrome_flags(
+        BrowserSettings(headless=True, extra_args=["--no-sandbox", "--lang=en"])
+    ) == ["--headless=new", "--no-sandbox", "--lang=en"]
+    assert chrome.chrome_flags(BrowserSettings(extra_args=["--no-sandbox"])) == ["--no-sandbox"]
+
+
+def _capture_popen(monkeypatch) -> list[list[str]]:
+    calls: list[list[str]] = []
+
+    class FakePopen:
+        def __init__(self, command: list[str], **_kwargs: Any) -> None:
+            calls.append(command)
+
+    monkeypatch.setattr(chrome, "is_port_open", lambda port: False)
+    monkeypatch.setattr(chrome.subprocess, "Popen", FakePopen)
+    return calls
+
+
+def test_start_chrome_appends_explicit_extra_args(monkeypatch) -> None:
+    calls = _capture_popen(monkeypatch)
+
+    start_chrome_cdp("chrome.exe", "profile", 9333, extra_args=["--headless=new", "--no-sandbox"])
+
+    assert calls[0][-2:] == ["--headless=new", "--no-sandbox"]
+
+
+def test_start_chrome_reads_its_flags_from_the_browser_settings(monkeypatch) -> None:
+    calls = _capture_popen(monkeypatch)
+    monkeypatch.setenv("AUTOBROWSER_BROWSER__HEADLESS", "true")
+    monkeypatch.setenv("AUTOBROWSER_BROWSER__EXTRA_ARGS", '["--no-sandbox"]')
+    get_settings.cache_clear()
+
+    start_chrome_cdp("chrome.exe", "profile", 9333)
+
+    assert calls[0][-2:] == ["--headless=new", "--no-sandbox"]
 
 
 @pytest.mark.asyncio

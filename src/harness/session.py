@@ -679,15 +679,17 @@ class SessionContext:
         else:
             mcp: MCPRuntime | None = None
             try:
-                self.chrome_process = start_chrome_cdp(
-                    self.config.chrome_path,
-                    self.config.user_data_dir,
-                    self.config.cdp_port,
-                )
-                if self.chrome_process is not None:
-                    output_fn(CONNECTING_MESSAGE)
-                await wait_for_port(self.config.cdp_port, self.config.cdp_timeout)
-                output_fn(SERVER_CONNECTED_MESSAGE)
+                # ``external``: the MCP server launches its own browser (a stand in Docker).
+                if settings.browser.launch == "cdp":
+                    self.chrome_process = start_chrome_cdp(
+                        self.config.chrome_path,
+                        self.config.user_data_dir,
+                        self.config.cdp_port,
+                    )
+                    if self.chrome_process is not None:
+                        output_fn(CONNECTING_MESSAGE)
+                    await wait_for_port(self.config.cdp_port, self.config.cdp_timeout)
+                    output_fn(SERVER_CONNECTED_MESSAGE)
                 self.child_stderr = (self.session_dir / CHILD_STDERR_LOG_NAME).open(
                     "a", encoding="utf-8", buffering=1
                 )

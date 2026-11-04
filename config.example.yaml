@@ -144,6 +144,23 @@ browser:
   cdp_port: 9222                                # (default)
   # How long to wait for the CDP connection, in seconds.
   cdp_timeout_seconds: 30.0                     # (default)
+  # How often the CDP port is probed while waiting (and one probe's timeout).
+  cdp_poll_seconds: 0.5                         # (default)
+  # Who runs the browser. cdp: the session starts Chrome and waits for its CDP
+  # port. external: the session starts no browser; the MCP server launches its
+  # own, so its entry must not use {cdp_port}/{cdp_endpoint}. A stand in Docker:
+  #   browser: {launch: external}
+  #   mcp_servers:
+  #     playwright:
+  #       transport: stdio
+  #       command: npx
+  #       args: [-y, "@playwright/mcp@latest", --headless, --browser, chromium,
+  #              --user-data-dir, /data/serve/profiles/w0]
+  launch: cdp                                   # (default)
+  # --headless=new for the Chrome the session starts (launch: cdp only).
+  headless: false                               # (default)
+  # Further Chrome arguments, e.g. [--no-sandbox] in a container (cdp only).
+  extra_args: []                                # (default)
 
 # ---------------------------------------------------------------------------
 # Loop guards. Each counter aborts or forces a replan rather than letting the

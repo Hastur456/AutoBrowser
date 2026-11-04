@@ -346,6 +346,73 @@ async def test_session_context_closes_owned_chrome_process(
 
 
 @pytest.mark.asyncio
+async def test_an_external_browser_is_neither_launched_nor_awaited(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """``browser.launch: external``: the MCP server owns the browser (a stand in Docker)."""
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AUTOBROWSER_BROWSER__LAUNCH", "external")
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def start_chrome(_path: str, _dir: str, _port: int) -> None:
+        calls.append("start")
+
+    async def wait(_port: int, _timeout: float) -> None:
+        calls.append("wait")
+
+    runtime = FakeMCPRuntime([])
+    context = SessionContext(make_config(no_mcp=False))
+    await context.initialize(
+        llm_factory=llm_factory,
+        start_chrome_cdp=start_chrome,
+        wait_for_port=wait,
+        mcp_runtime_factory=lambda _port, _errlog: runtime,
+        output_fn=lambda *_args, **_kwargs: None,
+        print_tools=None,
+        harness_factory=FakeHarness,
+    )
+    try:
+        assert calls == []
+        assert runtime.started is True
+        assert context.chrome_process is None
+    finally:
+        await context.close()
+
+
+@pytest.mark.asyncio
+async def test_the_default_launch_starts_chrome_and_waits_for_its_port(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    calls: list[str] = []
+
+    def start_chrome(_path: str, _dir: str, _port: int) -> None:
+        calls.append("start")
+
+    async def wait(_port: int, _timeout: float) -> None:
+        calls.append("wait")
+
+    context = SessionContext(make_config(no_mcp=False))
+    await context.initialize(
+        llm_factory=llm_factory,
+        start_chrome_cdp=start_chrome,
+        wait_for_port=wait,
+        mcp_runtime_factory=no_mcp_runtime,
+        output_fn=lambda *_args, **_kwargs: None,
+        print_tools=None,
+        harness_factory=FakeHarness,
+    )
+    try:
+        assert calls == ["start", "wait"]
+    finally:
+        await context.close()
+
+
+@pytest.mark.asyncio
 async def test_session_runtime_reuses_context_and_records_task_history(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

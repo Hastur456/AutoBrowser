@@ -171,11 +171,16 @@ def _doctor(args: argparse.Namespace, write: Callable[[str], None]) -> int:
             check(_FAIL if settings.mcp_servers else _WARN, tool, "not on PATH (Playwright MCP needs Node.js >= 18)")
             continue
         check(_OK, tool, f"{_version(path, timeout)} · {path}")
-    chrome = Path(settings.browser.chrome_path)
-    check(_OK if chrome.is_file() else _FAIL, "chrome", chrome)
-    port = settings.browser.cdp_port
-    free = _port_free(port)
-    check(_OK if free else _WARN, "cdp port", f"{port}" if free else f"{port} in use (a Chrome may already listen)")
+    browser = settings.browser
+    if browser.launch == "external":
+        check(_OK, "browser launch", "external (the MCP server launches its own browser)")
+    else:
+        check(_OK, "browser launch", "cdp, headless" if browser.headless else "cdp")
+        chrome = Path(browser.chrome_path)
+        check(_OK if chrome.is_file() else _FAIL, "chrome", chrome)
+        port = browser.cdp_port
+        free = _port_free(port)
+        check(_OK if free else _WARN, "cdp port", f"{port}" if free else f"{port} in use (a Chrome may already listen)")
     servers = ", ".join(f"{name} ({config.transport})" for name, config in settings.mcp_servers.items())
     check(_OK if servers else _WARN, "mcp servers", servers or "none configured")
     _doctor_skills(settings, check)

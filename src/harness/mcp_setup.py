@@ -98,6 +98,17 @@ def render_runtime_placeholders(config: Any, values: Mapping[str, str]) -> Any:
     return config
 
 
+def cdp_placeholder_servers(servers: Mapping[str, Any], values: Mapping[str, str]) -> list[str]:
+    """Servers whose config still names a runtime placeholder (``{cdp_port}``,
+    ``{cdp_endpoint}``): they expect a browser the session launched."""
+
+    return [
+        name
+        for name, config in servers.items()
+        if render_runtime_placeholders(config, values) != config
+    ]
+
+
 @dataclass
 class MCPRuntime:
     """Everything the session needs from MCP: the manager, the live tool source for the
@@ -145,6 +156,15 @@ def build_mcp_runtime(
     raw_servers = getattr(settings, "mcp_servers", None) or default_mcp_servers()
     servers = parse_server_configs(raw_servers)
     values = runtime_values(cdp_port)
+    browser = getattr(settings, "browser", None)
+    if getattr(browser, "launch", "cdp") == "external":
+        still_cdp = cdp_placeholder_servers(servers, values)
+        if still_cdp:
+            raise ValueError(
+                f"browser.launch: external starts no Chrome, but mcp_servers "
+                f"{', '.join(repr(name) for name in still_cdp)} still connect over CDP "
+                f"({{cdp_port}}/{{cdp_endpoint}}); configure them to launch their own browser"
+            )
     registry = ServerRegistry(
         {name: render_runtime_placeholders(config, values) for name, config in servers.items()}
     )
@@ -182,6 +202,7 @@ __all__ = [
     "BrowserServerUnavailableError",
     "MCPRuntime",
     "build_mcp_runtime",
+    "cdp_placeholder_servers",
     "default_mcp_servers",
     "render_runtime_placeholders",
     "runtime_values",

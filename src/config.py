@@ -176,6 +176,8 @@ class _Section(BaseModel):
 #: Wire protocols a chat model adapter can speak (``src/providers/``). These name
 #: protocols, not vendors: any service speaking Chat Completions is ``openai_compat``.
 LLMProvider = Literal["ollama", "openai_compat"]
+#: Who runs the browser: the session over CDP, or the MCP server itself (``browser.launch``).
+BrowserLaunch = Literal["cdp", "external"]
 
 #: Request-body keys ``llm.extra_body`` may not set: each has a typed field of its own
 #: (or is owned by the adapter), so a vendor profile cannot silently override them.
@@ -461,6 +463,45 @@ class BrowserSettings(_Section):
             description="Seconds to wait for the CDP port to accept connections.",
         ),
     ] = 30.0
+
+    cdp_poll_seconds: Annotated[
+        float,
+        Field(
+            gt=0.0,
+            le=10.0,
+            description=(
+                "How often the CDP port is probed while waiting for Chrome, and how long one "
+                "probe may take."
+            ),
+        ),
+    ] = 0.5
+
+    launch: Annotated[
+        BrowserLaunch,
+        Field(
+            description=(
+                "Who runs the browser. cdp: the session starts Chrome with a CDP port and "
+                "waits for it; external: the session starts no browser and the MCP server "
+                "launches its own (a stand in Docker), so no mcp_servers entry may still use "
+                "{cdp_port} or {cdp_endpoint}."
+            ),
+        ),
+    ] = "cdp"
+
+    headless: Annotated[
+        bool,
+        Field(description="Start Chrome with --headless=new (launch: cdp only)."),
+    ] = False
+
+    extra_args: Annotated[
+        list[str],
+        Field(
+            description=(
+                "Further Chrome command-line arguments after the headless flag, e.g. "
+                "--no-sandbox in a container (launch: cdp only)."
+            ),
+        ),
+    ] = Field(default_factory=list)
 
     @field_validator("chrome_path", "user_data_dir", mode="after")
     @classmethod

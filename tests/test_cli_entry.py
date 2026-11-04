@@ -104,6 +104,27 @@ def test_doctor_reports_paths_and_tools(monkeypatch: pytest.MonkeyPatch, capsys:
     assert "not on PATH" in out
 
 
+def test_doctor_reports_the_browser_launch_mode(capsys: pytest.CaptureFixture[str]) -> None:
+    entry.main(["doctor"])
+
+    assert "browser launch" in capsys.readouterr().out
+
+
+def test_doctor_skips_chrome_when_the_mcp_server_owns_the_browser(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_BROWSER__LAUNCH", "external")
+    monkeypatch.setenv("AUTOBROWSER_BROWSER__CHROME_PATH", "C:/nowhere/chrome.exe")
+    get_settings.cache_clear()
+
+    entry.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert "external" in out
+    assert "nowhere" not in out
+    assert "cdp port" not in out
+
+
 def test_version(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exit_info:
         build_parser().parse_args(["--version"])
