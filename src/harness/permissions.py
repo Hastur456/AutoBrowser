@@ -9,6 +9,9 @@ session's approval grants.
 Evaluation (order and specificity of rules do not matter):
 
 1. any matching ``deny`` rule → deny (no mode, grant or hook lifts it);
+1a. the task scope: with ``allowed_domains`` on the check, a call on another domain, or a
+   state-changing call whose domain is unknown, → deny (``source: task_scope``); it only
+   narrows, and no allow rule, grant or mode lifts it;
 2. ``read_only`` mode, a tool without ``readOnlyHint`` and no matching ``allow`` → deny;
 3. matching ``ask`` rules, or an ``ask`` from a hook, the acting model (its own
    ``approval_request``) or the approval classifier → a session grant, ``bypass`` (unless
@@ -125,6 +128,28 @@ def _in_domains(domain: str, domains: Iterable[str]) -> bool:
     return any(domain == item or domain.endswith(f".{item}") for item in domains)
 
 
+def _task_scope_deny(check: PermissionCheck, domain: str) -> PermissionVerdict | None:
+    """The deny of a call outside the task's ``allowed_domains``; ``None`` when it may run.
+
+    A read-only call on no known domain passes (a snapshot of ``about:blank``); a
+    state-changing one does not (fail closed)."""
+
+    if not check.allowed_domains:
+        return None
+    if domain:
+        if _in_domains(domain, check.allowed_domains):
+            return None
+        reason = f"Not executed: {domain} is outside the domains this task may use."
+    elif check.read_only:
+        return None
+    else:
+        reason = (
+            f"Not executed: this task may only act on its own domains, and the domain "
+            f"{check.tool} acts on is unknown."
+        )
+    return PermissionVerdict(decision="deny", reason=reason, source="task_scope")
+
+
 class PermissionEngine:
     """Session-scoped authorization over rules, a mode and session grants."""
 
@@ -223,6 +248,10 @@ class PermissionEngine:
                 source=first.source,
                 rule_id=first.rule.id,
             )
+
+        scope = _task_scope_deny(check, str(resources.get("domain", "") or ""))
+        if scope is not None:
+            return scope
 
         if self._mode == "read_only" and not check.read_only and not by_decision["allow"]:
             return PermissionVerdict(

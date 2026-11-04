@@ -1427,7 +1427,7 @@ async def test_the_profile_reaches_the_agent_and_carry_context_false_carries_not
 
     install_runner(monkeypatch, run)
     runtime = make_runtime()
-    profile = RunProfile(carry_context=False, labels={"job": "j"})
+    profile = RunProfile(carry_context=False, allowed_domains=("shop.example",), labels={"job": "j"})
 
     await runtime.run_task("first")
     await runtime.run_task("second", profile=profile)

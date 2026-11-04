@@ -944,6 +944,7 @@ class TurnController:
             read_only=tool_is_read_only(prepared.tool),
             hook_ask_reason=hook_ask_reason,
             model_ask_reason=model_ask_reason,
+            allowed_domains=tuple(self._profile.allowed_domains),
         )
         verdict = self._permissions.evaluate(check, snapshot)
         if (

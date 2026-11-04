@@ -61,7 +61,7 @@ PermissionMode = Literal["default", "read_only", "dont_ask", "bypass"]
 #: classifier, the mode default, the ``readOnlyHint`` annotation, a session grant, or a failed
 #: evaluation (always ``deny``).
 PermissionSource = Literal[
-    "rule", "hook", "model", "classifier", "mode", "annotation", "grant", "error"
+    "rule", "hook", "model", "classifier", "mode", "annotation", "grant", "error", "task_scope"
 ]
 #: Who besides the rules may escalate a call to human approval
 #: (``settings.permissions.approval_judge``): nobody, the acting model, a separate classifier
@@ -282,6 +282,9 @@ class PermissionCheck:
     model_ask_reason: str = ""
     #: Reason of the approval classifier's "needs approval"; escalates the call to approval.
     classifier_ask_reason: str = ""
+    #: The task's allowlist (``RunProfile.allowed_domains``, normalized); non-empty: a call on
+    #: another domain, or a state-changing call on no known domain, is denied (task scope).
+    allowed_domains: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

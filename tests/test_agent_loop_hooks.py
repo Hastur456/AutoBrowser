@@ -320,6 +320,7 @@ async def run_engine(
     permissions: Any = None,
     turn_cap: int = 10,
     task: str = "Do the task.",
+    profile: Any = None,
 ) -> tuple[AgentLoopResult, list[EventRecord], CountingModel]:
     sink = InMemoryEventSink()
     emitter = EventEmitter(sink, session_id="session-1")
@@ -347,6 +348,7 @@ async def run_engine(
         goal_id="task-1",
         session_id="session-1",
         turn_cap=turn_cap,
+        profile=profile,
     )
     return result, list(sink.records), llm
 

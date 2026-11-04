@@ -323,3 +323,72 @@ def test_rule_domains_are_normalized() -> None:
     parsed = rule("d", "deny", domains=["WWW.Ozon.ru", "*.example.com", "пример.рф"])
     assert parsed.domains == ["ozon.ru", "example.com", "xn--e1afmkfd.xn--p1ai"]
     assert normalize_domain("") == ""
+
+
+# --------------------------------------------------------------------------- task scope
+
+
+def scoped(*domains: str, **fields: Any) -> PermissionCheck:
+    return check(allowed_domains=domains, **fields)
+
+
+@pytest.mark.parametrize("domain", ["shop.example", "m.shop.example"])
+def test_a_call_inside_the_task_domains_follows_the_usual_rules(domain: str) -> None:
+    verdict = engine(resolver=Resolver(domain=domain)).evaluate(scoped("shop.example"))
+
+    assert (verdict.decision, verdict.source) == ("allow", "mode")
+
+
+def test_a_call_outside_the_task_domains_is_denied_by_the_task_scope() -> None:
+    verdict = engine(resolver=Resolver(domain="evil.example")).evaluate(
+        scoped("shop.example", args={"url": "https://evil.example/?token=secret"})
+    )
+
+    assert (verdict.decision, verdict.source, verdict.rule_id) == ("deny", "task_scope", "")
+    assert "evil.example" in verdict.reason
+    assert "secret" not in verdict.reason
+
+
+def test_a_lookalike_suffix_is_not_a_subdomain() -> None:
+    verdict = engine(resolver=Resolver(domain="evilshop.example")).evaluate(scoped("shop.example"))
+
+    assert verdict.source == "task_scope"
+
+
+def test_without_a_resolved_domain_only_read_only_calls_pass_the_task_scope() -> None:
+    perms = engine(resolver=Resolver())
+
+    read = perms.evaluate(scoped("shop.example", read_only=True))
+    write = perms.evaluate(scoped("shop.example"))
+
+    assert read.decision == "allow"
+    assert (write.decision, write.source) == ("deny", "task_scope")
+
+
+def test_no_task_domains_means_no_task_scope() -> None:
+    verdict = engine(resolver=Resolver(domain="evil.example")).evaluate(check())
+
+    assert verdict.decision == "allow"
+
+
+def test_a_deny_rule_still_wins_inside_the_task_domains() -> None:
+    perms = engine(rule("no-click", "deny", tool="browser_click"), resolver=Resolver(domain="shop.example"))
+
+    verdict = perms.evaluate(scoped("shop.example"))
+
+    assert (verdict.source, verdict.rule_id) == ("rule", "no-click")
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_no_mode_allow_rule_or_grant_lifts_the_task_scope(mode: str) -> None:
+    perms = engine(
+        rule("all", "allow", tool=".*"),
+        rule("ask-all", "ask", tool=".*"),
+        mode=mode,
+        resolver=Resolver(domain="evil.example"),
+    )
+    perms.grant(("playwright", "browser_click", "evil.example"))
+
+    verdict = perms.evaluate(scoped("shop.example"))
+
+    assert (verdict.decision, verdict.source) == ("deny", "task_scope")
