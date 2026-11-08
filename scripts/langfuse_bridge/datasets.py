@@ -30,7 +30,11 @@ from src.config import EvalPlatformSettings
 
 ITEM_ID_PREFIX = "ab-"
 #: Scenario sets synced as datasets: suite name -> tasks file, relative to the repository root.
-SUITES = {"golden": "tests/golden/tasks.jsonl", "smoke": "tests/golden/smoke.jsonl"}
+SUITES = {
+    "golden": "tests/golden/tasks.jsonl",
+    "smoke": "tests/golden/smoke.jsonl",
+    "benchmark": "tests/golden/benchmark.jsonl",
+}
 JOURNAL_FILE_NAME = "platform_datasets.jsonl"
 JOURNAL_SCHEMA_VERSION = 1
 ACTIVE, ARCHIVED = "ACTIVE", "ARCHIVED"

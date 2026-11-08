@@ -235,6 +235,9 @@ uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --continue-on-error
 uv run scripts/run_batch.py --tasks tests\golden\smoke.jsonl --continue-on-error --grade
     # the smoke suite: 2 quick scenarios (dataset autobrowser/smoke) to check the platform; a
     # tasks file that is no suite (SUITES in scripts/langfuse_bridge/datasets.py) is not synced
+uv run scripts/run_batch.py --tasks tests\golden\benchmark.jsonl --continue-on-error --grade
+    # the benchmark suite: 31 scenarios on stable sandbox sites and Wikipedia (dataset
+    # autobrowser/benchmark), tagged easy | medium | hard and by skill
     # enabled + auto_sync: synced right after the batch (summary on stderr); --no-platform-sync skips it
 uv run scripts/compare_batches.py              # as before, plus "langfuse: <batch> <url>" for synced batches
 
