@@ -1,0 +1,23 @@
+# The AutoBrowser stand in Docker (docs/development/serve-mode.md).
+#
+#   cp docker/serve.example.yaml data/serve.yaml       # then edit the jobs
+#   echo "AUTOBROWSER_SERVE_TOKEN=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')" >> .env
+#   docker compose up -d --build
+#
+# The API is published on 127.0.0.1 only: put a reverse proxy with TLS in front of it to
+# reach it from elsewhere. The token and the model key come from .env, never from the image.
+services:
+  autobrowser:
+    build: .
+    image: autobrowser-serve
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - ./data:/data
+    environment:
+      AUTOBROWSER_SERVE__TOKEN: ${AUTOBROWSER_SERVE_TOKEN:?set AUTOBROWSER_SERVE_TOKEN in .env}
+      AUTOBROWSER_LLM__API_KEY: ${AUTOBROWSER_LLM_API_KEY:-}
+    # Chromium needs more than Docker's default 64 MB of shared memory.
+    shm_size: 1gb
+    stop_grace_period: 75s   # > serve.shutdown_grace_seconds: a running run may finish

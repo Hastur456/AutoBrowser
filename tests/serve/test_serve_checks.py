@@ -80,3 +80,20 @@ def test_problems_never_quote_a_secret() -> None:
     text = " ".join(startup_problems(config))
 
     assert "t0ken-value" not in text and "s3cret" not in text
+
+
+def test_the_docker_stand_profile_is_valid_and_startable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pathlib import Path
+
+    from src.config import CONFIG_FILE_ENV_VAR
+
+    profile = Path(__file__).resolve().parents[2] / "docker" / "serve.example.yaml"
+    monkeypatch.setenv(CONFIG_FILE_ENV_VAR, str(profile))
+    monkeypatch.setenv("AUTOBROWSER_SERVE__TOKEN", "t0ken")
+
+    loaded = Settings(_env_file=None)
+
+    assert loaded.browser.launch == "external"
+    assert loaded.serve.host == "0.0.0.0" and loaded.serve.allow_remote
+    assert "price-watch" in loaded.serve.jobs
+    assert startup_problems(loaded) == []

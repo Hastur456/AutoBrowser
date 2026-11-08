@@ -53,3 +53,6 @@ examples/
 
 # Cache uv
 .uv/
+
+# The stand's Docker volume (compose.yaml): profile, browser data, ledger.
+/data/
