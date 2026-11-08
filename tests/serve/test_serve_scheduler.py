@@ -198,3 +198,40 @@ async def test_a_daily_cron_is_not_lost_across_the_spring_dst_change(tmp_path: P
     assert days[0].isoformat() == "2026-03-28"
     assert "2026-03-30" in [day.isoformat() for day in days]
     assert len(set(days)) == len(days)
+
+
+@pytest.mark.skipif(not zoneinfo.available_timezones(), reason="no IANA time zone database")
+@pytest.mark.asyncio
+async def test_a_quarter_hour_cron_fires_each_wall_slot_once_when_the_clocks_go_back(tmp_path: Path) -> None:
+    berlin = zoneinfo.ZoneInfo("Europe/Berlin")
+    clock = FakeClock(datetime(2026, 10, 25, 1, 50, tzinfo=berlin))
+    scheduler, fires, _ = make(
+        tmp_path, [{"id": "c", "type": "cron", "schedule": "*/15 * * * *"}], limit=9, clock=clock, tz=berlin,
+        timezone="Europe/Berlin", min_interval_seconds=60,
+    )
+
+    await scheduler.run()
+
+    walls = [moment.astimezone(berlin).strftime("%H:%M") for moment in times(fires)]
+    assert len(walls) == len(set(walls)), walls
+    assert walls[:6] == ["02:00", "02:15", "02:30", "02:45", "03:00", "03:15"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_firing_does_not_stop_the_schedule(tmp_path: Path) -> None:
+    scheduler, fires, _ = make(tmp_path, [{"id": "t", "type": "interval", "every_seconds": 600}], limit=2)
+    calls = {"n": 0}
+    original = fires.fire
+
+    async def flaky(job_id, trigger):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise PermissionError("[WinError 5] state.json is open elsewhere")
+        return await original(job_id, trigger)
+
+    scheduler._fire = flaky
+
+    await scheduler.run()
+
+    assert calls["n"] == 3
+    assert len(fires.fired) == 2

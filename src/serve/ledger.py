@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from datetime import date, datetime, tzinfo
 from pathlib import Path
 
-from src.agent_loop.events import read_jsonl_lines
 from src.serve.reports import RunReport
 
 _LOG = logging.getLogger(__name__)
@@ -35,8 +34,11 @@ class Ledger:
         self._path = Path(path)
         self._tz = tz
         self._days: dict[date, DayTotals] = {}
-        for report in self._read():
+        #: run_id -> byte offset of its line, so a lookup reads one line, not the ledger.
+        self._offsets: dict[str, int] = {}
+        for offset, report in self._read():
             self._count(report)
+            self._offsets[report.run_id] = offset
 
     @property
     def path(self) -> Path:
@@ -44,9 +46,11 @@ class Ledger:
 
     def append(self, report: RunReport) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        with self._path.open("a", encoding="utf-8") as file:
-            file.write(json.dumps(report.to_json(), ensure_ascii=False))
-            file.write("\n")
+        line = (json.dumps(report.to_json(), ensure_ascii=False) + "\n").encode("utf-8")
+        with self._path.open("ab") as file:
+            offset = file.tell()
+            file.write(line)
+        self._offsets[report.run_id] = offset
         self._count(report)
 
     def day_totals(self, day: date) -> DayTotals:
@@ -56,12 +60,18 @@ class Ledger:
         return moment.astimezone(self._tz).date()
 
     def find(self, run_id: str) -> RunReport | None:
-        """The report of ``run_id``, newest first; ``None`` when the ledger has none."""
+        """The report of ``run_id``; ``None`` when the ledger has none."""
 
-        for report in reversed(list(self._read())):
-            if report.run_id == run_id:
-                return report
-        return None
+        offset = self._offsets.get(run_id)
+        if offset is None:
+            return None
+        try:
+            with self._path.open("rb") as file:
+                file.seek(offset)
+                return RunReport.from_json(json.loads(file.readline().decode("utf-8")))
+        except (OSError, ValueError, KeyError, TypeError):
+            _LOG.warning("ledger %s: the line of %s is unreadable", self._path, run_id)
+            return None
 
     def _count(self, report: RunReport) -> None:
         try:
@@ -75,15 +85,22 @@ class Ledger:
             cost=totals.cost + (report.cost or 0.0),
         )
 
-    def _read(self) -> list[RunReport]:
+    def _read(self) -> list[tuple[int, RunReport]]:
+        """``(byte offset, report)`` of every readable line; a record ends only at ``\n``."""
+
         if not self._path.is_file():
             return []
-        reports: list[RunReport] = []
-        for number, line in enumerate(read_jsonl_lines(self._path), start=1):
-            try:
-                reports.append(RunReport.from_json(json.loads(line)))
-            except (ValueError, KeyError, TypeError):
-                _LOG.warning("ledger %s: line %d is not a run report, skipped", self._path, number)
+        reports: list[tuple[int, RunReport]] = []
+        offset = 0
+        with self._path.open("rb") as file:
+            for number, raw in enumerate(file, start=1):
+                start, offset = offset, offset + len(raw)
+                if not raw.strip():
+                    continue
+                try:
+                    reports.append((start, RunReport.from_json(json.loads(raw.decode("utf-8")))))
+                except (ValueError, KeyError, TypeError):
+                    _LOG.warning("ledger %s: line %d is not a run report, skipped", self._path, number)
         return reports
 
 

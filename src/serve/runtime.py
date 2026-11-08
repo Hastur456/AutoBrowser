@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
@@ -20,6 +21,7 @@ from src.serve.dispatcher import Dispatcher
 from src.serve.worker import WorkerPort
 
 _SOURCE = "serve.runtime"
+_LOG = logging.getLogger(__name__)
 
 #: A long-running part of the stand (the scheduler); cancelled when the stand stops.
 Service = Callable[[], Awaitable[Any]]
@@ -27,6 +29,11 @@ Service = Callable[[], Awaitable[Any]]
 
 class ServeStartError(RuntimeError):
     """The stand cannot start as configured (the message says why, without secrets)."""
+
+
+class ServeServiceError(RuntimeError):
+    """A part of the stand (the dispatcher, the scheduler) died: the stand stops rather than
+    keep answering ``/healthz`` while nothing runs (a container restart policy brings it back)."""
 
 
 class ServeRuntime:
@@ -60,9 +67,21 @@ class ServeRuntime:
                 "channels": list(self._settings.channels),
                 "api_approvals": self._settings.api_approvals,
             })
-            tasks = [asyncio.create_task(self._dispatcher.run())]
-            tasks += [asyncio.create_task(service()) for service in self._services]
-            await waiting
+            tasks = [asyncio.create_task(self._dispatcher.run(), name="dispatcher")]
+            tasks += [
+                asyncio.create_task(service(), name=getattr(service, "__qualname__", "service"))
+                for service in self._services
+            ]
+            died: asyncio.Future[BaseException] = asyncio.get_running_loop().create_future()
+            for task in tasks:
+                task.add_done_callback(lambda done, died=died: _report_death(done, died))
+            await asyncio.wait({waiting, died}, return_when=asyncio.FIRST_COMPLETED)
+            if died.done():
+                failure = died.result()
+                raise ServeServiceError(
+                    f"a stand service stopped: {type(failure).__name__}"
+                ) from failure
+            waiting.result()  # re-raise what ended the wait (a signal, an error)
         finally:
             waiting.cancel()
             with contextlib.suppress(BaseException):
@@ -99,4 +118,13 @@ class ServeRuntime:
         self._events.emit(event_type, source=_SOURCE, payload=payload)  # type: ignore[arg-type]
 
 
-__all__ = ["ServeRuntime", "ServeStartError", "Service"]
+def _report_death(task: asyncio.Task[Any], died: asyncio.Future[BaseException]) -> None:
+    if task.cancelled() or died.done():
+        return
+    failure = task.exception()
+    if failure is not None:
+        _LOG.error("stand service %s stopped: %s", task.get_name(), type(failure).__name__, exc_info=failure)
+        died.set_result(failure)
+
+
+__all__ = ["ServeRuntime", "ServeServiceError", "ServeStartError", "Service"]

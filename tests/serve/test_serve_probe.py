@@ -130,3 +130,18 @@ async def test_the_report_adds_up_the_probe_and_the_main_task(tmp_path: Path) ->
     usage = stand.ledger.find(fired.run_id).usage
     assert (usage["model_calls"], usage["input_tokens"] + usage["output_tokens"]) == (2, 300)
     assert usage["cost"] == pytest.approx(0.03)
+
+
+@pytest.mark.asyncio
+async def test_a_long_change_still_shows_the_new_value(tmp_path: Path) -> None:
+    old, new = "Price " + "1" * 400, "Price " + "2" * 400
+    stand = rig(tmp_path, probed(old), outcome(), probed(new), outcome())
+    await stand.dispatcher.fire("price-watch", HOURLY)
+    await stand.drain()
+    stand.channel.sent.clear()
+
+    await stand.dispatcher.fire("price-watch", HOURLY)
+    await stand.drain()
+
+    change, = [note for note in stand.channel.sent if note.kind == "change"]
+    assert change.body.startswith("now: Price 222")

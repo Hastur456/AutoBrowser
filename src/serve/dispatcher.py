@@ -24,7 +24,7 @@ from src.contracts import RunProfile, ladder_rank
 from src.serve.clock import Clock
 from src.serve.ledger import Ledger
 from src.serve.notify import Notification, Notifier
-from src.serve.profiles import DayLeft, main_profile, probe_profile
+from src.serve.profiles import DayLeft, free_task_profile, main_profile, probe_profile
 from src.serve.reports import RunReport, RunState, RunStatus, TaskKind, TaskSummary
 from src.serve.state import JobStateStore
 from src.serve.tally import RunTally
@@ -72,7 +72,6 @@ class _Run:
     queued_at: datetime
     #: A free task (``POST /v1/tasks``) instead of the job's task.
     task: str | None = None
-    profile: RunProfile | None = None
 
 
 @dataclass
@@ -116,6 +115,7 @@ class Dispatcher:
         self._clock = clock
         self._queue: deque[_Run] = deque()
         self._wakeup = asyncio.Event()
+        self._stopped = asyncio.Event()
         self._running: _Run | None = None
         self._current: asyncio.Task[None] | None = None
         self._stopping = False
@@ -154,17 +154,11 @@ class Dispatcher:
         self._enqueue(run)
         return FireResult(run.run_id, "queued")
 
-    async def submit_task(self, task: str, profile: RunProfile, trigger: TriggerRef) -> FireResult:
-        """Queue a free task (``serve.free_tasks``) under ``profile``."""
+    async def submit_task(self, task: str, trigger: TriggerRef) -> FireResult:
+        """Queue a free task (``serve.free_tasks``); its profile is built when it starts, so
+        its budget is what is left of the day then, not now."""
 
-        run = _Run(
-            run_id=str(profile.labels.get("run_id") or _run_id()),
-            job_id="",
-            trigger=trigger,
-            queued_at=self._clock.now(),
-            task=task,
-            profile=profile,
-        )
+        run = _Run(run_id=_run_id(), job_id="", trigger=trigger, queued_at=self._clock.now(), task=task)
         self._emit("serve.trigger.fired", self._payload(run))
         reason = "shutdown" if self._stopping else self._day_refusal() or self._queue_refusal()
         if reason:
@@ -274,6 +268,7 @@ class Dispatcher:
         cancel it."""
 
         self._stopping = True
+        self._stopped.set()
         while self._queue:
             await self._skip(self._queue.popleft(), "shutdown")
         self._wakeup.set()
@@ -281,12 +276,23 @@ class Dispatcher:
         if current is None or current.done():
             return
         done, _ = await asyncio.wait({current}, timeout=grace_seconds)
+        if done:
+            return
+        await self._worker.cancel()
+        done, _ = await asyncio.wait({current}, timeout=grace_seconds)
         if not done:
-            await self._worker.cancel()
+            # Nothing of the session was running to cancel (a reset, a reconnect): stop the
+            # run itself; its report is lost rather than the shutdown.
+            current.cancel()
             await asyncio.wait({current})
 
     async def _run_next(self) -> None:
         run = self._queue.popleft()
+        reason = await self._start_refusal(run)
+        if reason:
+            job = self._settings.jobs.get(run.job_id)
+            await self._skip(run, reason, job=job)
+            return
         self._running = run
         self._current = asyncio.create_task(self._execute(run))
         try:
@@ -296,6 +302,35 @@ class Dispatcher:
         finally:
             self._running = None
             self._current = None
+
+    async def _start_refusal(self, run: _Run) -> str:
+        """Why a queued run may not start after all: the day cap filled up while it waited, or
+        the stand stopped while it waited out its job's cooldown."""
+
+        if self._day_refusal():
+            return "budget"
+        job = self._settings.jobs.get(run.job_id)
+        if job is None:
+            return ""
+        cooldown = job.cooldown_seconds if job.cooldown_seconds is not None else self._settings.cooldown_seconds
+        last = self._states.load(run.job_id).last_finished_at
+        if cooldown and last is not None:
+            remaining = cooldown - (self._clock.now() - last).total_seconds()
+            if remaining > 0 and not await self._wait_unless_stopping(remaining):
+                return "shutdown"
+        return ""
+
+    async def _wait_unless_stopping(self, seconds: float) -> bool:
+        """Sleep ``seconds`` on the stand's clock; ``False`` when the stand stopped meanwhile."""
+
+        sleeping = asyncio.ensure_future(self._clock.sleep(seconds))
+        stopping = asyncio.ensure_future(self._stopped.wait())
+        try:
+            await asyncio.wait({sleeping, stopping}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (sleeping, stopping):
+                task.cancel()
+        return not self._stopping
 
     async def _execute(self, run: _Run) -> None:
         started = self._clock.now()
@@ -346,7 +381,7 @@ class Dispatcher:
             "trigger": run.trigger.label(),
         }
         if run.task is not None:
-            profile = run.profile or RunProfile(carry_context=False, labels=labels)
+            profile = free_task_profile(self._settings, day_left=self.day_left(), labels=labels)
             budget["run"] = _budget_dict(profile)
             return await self._run_main(run.task, profile, "free")
         assert job is not None
@@ -362,6 +397,9 @@ class Dispatcher:
             if probe.status != "completed":
                 return probe
             if probe.changed is False:
+                return probe
+            if self._stopping:
+                probe.status, probe.stop_reason, probe.changed = "cancelled", "shutdown", True
                 return probe
         profile = main_profile(
             job, self._settings, day_left=self.day_left(), labels=labels, has_recording=has_recording
@@ -380,7 +418,7 @@ class Dispatcher:
             main.notes.append((
                 "change",
                 f"{run.job_id}: changed",
-                f"was: {previous or '(first probe)'}\nnow: {probe.answer}",
+                f"now: {probe.answer}\nwas: {previous or '(first probe)'}",
             ))
         main.tasks = probe.tasks + main.tasks
         main.usage = _add_usage(probe.usage, main.usage)

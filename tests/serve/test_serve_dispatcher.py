@@ -443,3 +443,79 @@ def test_status_shows_the_day_and_the_jobs_without_secrets(tmp_path: Path) -> No
     assert status["queue"] == [] and status["running"] is None
     assert "price-watch" in status["jobs"]
     assert "t0ken-value" not in str(status)
+
+
+@pytest.mark.asyncio
+async def test_the_day_run_cap_holds_for_runs_already_queued(tmp_path: Path) -> None:
+    jobs = {name: job() for name in ("a", "b", "c")}
+    rig = Rig(tmp_path, jobs=jobs, daily_max_runs=2)
+
+    for name in ("a", "b", "c"):
+        assert (await rig.dispatcher.fire(name, HOURLY)).state == "queued"
+    await rig.drain()
+
+    assert len(rig.worker.calls) == 2
+    assert rig.payloads("serve.run.skipped")[-1]["reason"] == "budget"
+
+
+@pytest.mark.asyncio
+async def test_a_run_queued_behind_a_running_one_waits_for_the_cooldown(tmp_path: Path) -> None:
+    worker = FakeWorker()
+    worker.gate = asyncio.Event()
+    rig = Rig(tmp_path, worker, coalesce="queue_one", cooldown_seconds=600)
+    runner = asyncio.create_task(rig.dispatcher.run())
+
+    await rig.dispatcher.fire("price-watch", HOURLY)
+    await worker.started.wait()
+    behind = await rig.dispatcher.fire("price-watch", HOURLY)
+    finished_at = rig.clock.now()
+    worker.gate.set()
+    for _ in range(50):
+        await asyncio.sleep(0)
+        if len(worker.calls) == 2:
+            break
+    await rig.dispatcher.stop(grace_seconds=5)
+    await runner
+
+    assert behind.state == "queued"
+    assert len(worker.calls) == 2
+    assert (rig.clock.now() - finished_at).total_seconds() >= 600
+
+
+@pytest.mark.asyncio
+async def test_a_stop_after_the_probe_never_starts_the_main_task(tmp_path: Path) -> None:
+    probe = {"steps": [{"tool": "snapshot"}]}
+    worker = FakeWorker(outcome(answer="Price 10", stage="playback", calls=0))
+    rig = Rig(tmp_path, worker, jobs={"price-watch": job(probe=probe)})
+    fired = await rig.dispatcher.fire("price-watch", HOURLY)
+
+    def stop_now(_text, _profile, _result):
+        rig.dispatcher._stopping = True  # the shutdown arrives while the probe ends
+
+    worker.on_run = stop_now
+    await rig.dispatcher._run_next()
+
+    assert len(worker.calls) == 1
+    report = rig.ledger.find(fired.run_id)
+    assert (report.status, report.stop_reason) == ("cancelled", "shutdown")
+
+
+@pytest.mark.asyncio
+async def test_shutdown_ends_even_when_cancelling_the_session_does_not_stop_the_run(tmp_path: Path) -> None:
+    worker = FakeWorker()
+    worker.gate = asyncio.Event()
+
+    async def cancel_nothing() -> bool:  # e.g. the run sits in a session reset
+        worker.cancelled += 1
+        return False
+
+    worker.cancel = cancel_nothing  # type: ignore[method-assign]
+    rig = Rig(tmp_path, worker)
+    runner = asyncio.create_task(rig.dispatcher.run())
+    await rig.dispatcher.fire("price-watch", HOURLY)
+    await worker.started.wait()
+
+    await asyncio.wait_for(rig.dispatcher.stop(grace_seconds=0.01), 2)
+    await asyncio.wait_for(runner, 2)
+
+    assert worker.cancelled == 1

@@ -93,3 +93,22 @@ def test_a_damaged_line_is_skipped(tmp_path: Path) -> None:
 
     assert ledger.day_totals(date(2026, 11, 4)).runs == 2
     assert ledger.find("b") is not None
+
+
+def test_a_run_is_found_without_reading_the_whole_ledger(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "ledger.jsonl"
+    ledger = Ledger(path, UTC)
+    for index in range(3):
+        ledger.append(report(f"run-{index}", datetime(2026, 11, 4, 10, index, tzinfo=UTC)))
+    restarted = Ledger(path, UTC)  # the index is rebuilt on start
+    ledger.append(report("run-3", datetime(2026, 11, 4, 10, 3, tzinfo=UTC)))
+
+    def no_full_read(_self):
+        raise AssertionError("find() read the whole ledger")
+
+    monkeypatch.setattr(Ledger, "_read", no_full_read)
+
+    assert ledger.find("run-3").run_id == "run-3"
+    assert ledger.find("run-0").run_id == "run-0"
+    assert restarted.find("run-1").run_id == "run-1"
+    assert ledger.find("run-9") is None

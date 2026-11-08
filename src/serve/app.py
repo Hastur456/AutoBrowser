@@ -30,7 +30,6 @@ from src.serve.auth import (
 from src.serve.checks import trigger_secret
 from src.serve.clock import Clock
 from src.serve.dispatcher import Dispatcher, FireResult, TriggerRef
-from src.serve.profiles import free_task_profile
 
 IDEMPOTENCY_HEADER = "Idempotency-Key"
 _SOURCE = "serve.app"
@@ -97,16 +96,13 @@ class ServeApi:
     async def hook(self, request: Request) -> Response:
         job_id = request.path_params["job_id"]
         trigger_id = request.path_params["trigger_id"]
-        client_key = self._client_key(request)
-        if self._limiter.exceeded(client_key):
-            return Response(status_code=429)
         try:
             body = await self._read_body(request)
         except _TooLarge:
             return Response(status_code=413)
         trigger = self._webhook(job_id, trigger_id)
         if trigger is None or not self._hook_authentic(trigger, request, body):
-            return self._reject(request, client_key, "invalid")
+            return self._reject(request, "invalid")
         if not self._limiter.allow(f"hook:{job_id}/{trigger_id}"):
             return Response(status_code=429)
         return await self._fire(request, job_id, TriggerRef("webhook", trigger_id))
@@ -146,36 +142,32 @@ class ServeApi:
         task = data.get("task") if isinstance(data, dict) else None
         if not isinstance(task, str) or not task.strip():
             return JSONResponse({"error": "task must be a non-empty string"}, status_code=400)
-        run_id = self._dispatcher.new_run_id()
-        trigger = TriggerRef("api", "task")
-        profile = free_task_profile(
-            self._settings,
-            day_left=self._dispatcher.day_left(),
-            labels={"mode": "serve", "job_id": "", "run_id": run_id, "trigger": trigger.label()},
-        )
-        result = await self._dispatcher.submit_task(task.strip(), profile, trigger)
+        result = await self._dispatcher.submit_task(task.strip(), TriggerRef("api", "task"))
         return _fired(result)
 
     # ------------------------------------------------------------------ helpers
 
     def _authorize(self, request: Request) -> Response | None:
-        client_key = self._client_key(request)
-        if self._limiter.exceeded(client_key):
-            return Response(status_code=429)
-        token = self._settings.token
-        if token is None or not token.get_secret_value().strip():
-            return self._reject(request, client_key, "no_token")
-        given = bearer_secret(request.headers.get("authorization"))
-        if given is None:
-            return self._reject(request, client_key, "missing")
-        if not secret_matches(given, token):
-            return self._reject(request, client_key, "invalid")
-        if not self._limiter.allow(_TOKEN_KEY):
-            return Response(status_code=429)
-        return None
+        """``None`` when the request carries the API token (within its rate limit).
 
-    def _reject(self, request: Request, client_key: str, reason: str) -> Response:
-        self._limiter.allow(client_key)
+        Failures are limited per client address, but a valid credential is never refused for
+        its address: behind a reverse proxy every caller shares one.
+        """
+
+        token = self._settings.token
+        given = bearer_secret(request.headers.get("authorization"))
+        if token is None or not token.get_secret_value().strip():
+            return self._reject(request, "no_token")
+        if given is not None and secret_matches(given, token):
+            return None if self._limiter.allow(_TOKEN_KEY) else Response(status_code=429)
+        return self._reject(request, "missing" if given is None else "invalid")
+
+    def _reject(self, request: Request, reason: str) -> Response:
+        """A bodyless ``401`` (``429`` once the client keeps failing) and the event."""
+
+        client_key = self._client_key(request)
+        if not self._limiter.allow(client_key):
+            return Response(status_code=429)
         payload: dict[str, Any] = {"path": request.url.path, "reason": reason}
         if self._settings.log_client_addresses and request.client is not None:
             payload["client"] = request.client.host

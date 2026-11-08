@@ -12,6 +12,7 @@ firing: a faster cron is thinned (``serve.run.skipped{reason: min_interval}``).
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -23,6 +24,8 @@ from src.config import ServeSettings, TriggerSpec
 from src.serve.clock import Clock
 from src.serve.dispatcher import FireResult, TriggerRef
 from src.serve.state import JobStateStore
+
+_LOG = logging.getLogger(__name__)
 
 #: Trigger types the scheduler fires (webhooks are fired by the HTTP API).
 SCHEDULED_TYPES = frozenset({"interval", "cron"})
@@ -74,7 +77,12 @@ class Scheduler:
             if entry.due > now:
                 await self._clock.sleep((entry.due - now).total_seconds())
                 continue
-            await self._fire_entry(entry, now)
+            try:
+                await self._fire_entry(entry, now)
+            except Exception as exc:  # noqa: BLE001 - one bad firing never stops the schedule
+                _LOG.warning(
+                    "trigger %s of job %s did not fire: %s", entry.trigger.id, entry.job_id, type(exc).__name__
+                )
             entry.due = self._after(entry.trigger, now)
 
     def next_fire(self, trigger: TriggerSpec, after: datetime) -> datetime:
@@ -125,7 +133,7 @@ class Scheduler:
         local = moment.astimezone(self._tz)
         slots = croniter(trigger.schedule, local)
         following: datetime = slots.get_next(datetime)
-        if following.fold == 1 and following.replace(fold=0).astimezone(UTC) <= moment:
+        while following.fold == 1 and following.replace(fold=0).astimezone(UTC) <= moment:
             # The repeated hour of a DST change: this wall-clock slot already came round.
             following = slots.get_next(datetime)
         return _utc(following)

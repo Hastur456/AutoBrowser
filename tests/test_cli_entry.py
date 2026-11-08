@@ -676,3 +676,24 @@ def test_serve_builds_the_configured_channels() -> None:
     names = [channel.name for channel in build_channels(serve, EventEmitter(), print)]
 
     assert names == ["log", "webhook"]
+
+
+def test_an_invalid_stand_configuration_never_prints_a_secret(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_SERVE__HOST", "0.0.0.0")
+    monkeypatch.setenv("AUTOBROWSER_SERVE__TOKEN", "SUPERSECRETTOKEN123")
+    monkeypatch.setenv(
+        "AUTOBROWSER_SERVE__JOBS",
+        '{"j": {"task": "t", "triggers": [{"id": "ci", "type": "webhook", "secret": "HOOKSECRET999", "secret_env": "X"}]}}',
+    )
+    monkeypatch.setenv("AUTOBROWSER_SERVE__WEBHOOK_OUT", '{"url": "ftp://hooks.example/?key=URLSECRET42"}')
+    get_settings.cache_clear()
+
+    assert entry.main(["serve", "--check"]) == 2
+
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert "invalid configuration" in output
+    for secret in ("SUPERSECRETTOKEN123", "HOOKSECRET999", "URLSECRET42"):
+        assert secret not in output

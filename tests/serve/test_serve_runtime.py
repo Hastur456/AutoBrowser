@@ -54,3 +54,39 @@ async def test_the_started_event_carries_no_secret(tmp_path: Path) -> None:
     await runtime(rig).serve(until=asyncio.sleep(0))
 
     assert "t0ken-value" not in str(rig.sink.records)
+
+
+@pytest.mark.asyncio
+async def test_a_service_that_dies_ends_the_stand_with_its_error(tmp_path: Path) -> None:
+    from src.serve.runtime import ServeServiceError
+
+    rig = Rig(tmp_path)
+
+    async def broken() -> None:
+        raise RuntimeError("scheduler crashed")
+
+    stand = ServeRuntime(rig.settings, rig.worker, dispatcher=rig.dispatcher, events=rig.events, services=[broken])
+
+    with pytest.raises(ServeServiceError, match="RuntimeError"):
+        await asyncio.wait_for(stand.serve(until=asyncio.Event().wait()), 5)
+
+    assert rig.types()[-1] == "serve.stopped"
+
+
+@pytest.mark.asyncio
+async def test_a_service_that_finishes_normally_keeps_the_stand_running(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+
+    async def nothing_to_schedule() -> None:
+        return None
+
+    stop = asyncio.Event()
+    stand = ServeRuntime(rig.settings, rig.worker, dispatcher=rig.dispatcher, events=rig.events,
+                         services=[nothing_to_schedule])
+    serving = asyncio.create_task(stand.serve(until=stop.wait()))
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    assert not serving.done()
+    stop.set()
+    await serving

@@ -96,7 +96,9 @@ offset). The time zone database comes with the dependencies, also on Windows.
 | Run | the job's `budget`, else `serve.default_run_budget` (`max_model_calls` is required) | the task ends `blocked`, `budget_exhausted` |
 | Day | `serve.daily_max_runs`, `daily_max_tokens`, `daily_max_cost` | triggers are skipped (`budget`) and one `budget` notification is sent that day |
 
-A run's token and money caps are the smaller of its budget and what is left of the day. The
+A run's token and money caps are the smaller of its budget and what is left of the day when
+the run starts (a free task too). The day caps and the job's cooldown are checked again when a
+queued run starts: a run queued behind another waits out the cooldown. The
 day is counted in `serve.timezone` from the ledger, so a restart keeps the totals. An
 `unchanged` probe run costs nothing and is not counted as a run. A money cap needs
 `llm.prices` for the model (the stand refuses to start otherwise); a call without reported
@@ -128,12 +130,14 @@ Invoke-RestMethod -Method Post -Headers $h http://127.0.0.1:8765/v1/jobs/price-w
 - **The body of a webhook never reaches the job**: it is only measured and signature-checked.
   The task is the job's `task`, always.
 - **Limits.** `serve.max_body_bytes` (`413`, also for a chunked body), and
-  `serve.rate_limit_per_minute` per token, per webhook trigger and per failing client (`429`):
-  a client that keeps sending bad secrets is locked out for a minute.
+  `serve.rate_limit_per_minute` per token, per webhook trigger and per failing client address
+  (`429`): an address that keeps sending bad secrets gets `429` instead of `401` for a minute,
+  but a request with a valid credential is never refused for its address (behind a reverse
+  proxy every caller shares one).
 
 ## Notifications
 
-`notify_on` of a job picks the outcomes that go out: `change` (with what was and what is),
+`notify_on` of a job picks the outcomes that go out: `change` (the new value first, then the old),
 `success`, `failure`, `blocked`, `budget`. Channels (`serve.channels`):
 
 - `log` — a `serve.notified` event and one stdout line (the container log);
@@ -159,7 +163,7 @@ raise `loop.progress_timeout_seconds` in the stand profile to give a human more 
 - The API listens on `127.0.0.1`. Any other `serve.host` needs `serve.allow_remote: true` and
   a non-empty token, or the stand does not start. Without a token `/v1/*` is closed.
 - Tokens and secrets are compared in constant time and never written to events, reports or
-  `--check`. The YAML file does not expand `${VAR}`: put the token in
+  `--check`; an invalid configuration is reported by field and reason, never by value. The YAML file does not expand `${VAR}`: put the token in
   `AUTOBROWSER_SERVE__TOKEN` and webhook secrets in variables named by `secret_env`.
 - `permissions.mode: bypass` is refused. Jobs come from the configuration only; the API runs
   existing jobs; free tasks are off (`serve.free_tasks`), and when on they run within
@@ -219,7 +223,10 @@ restart); a failed MCP server is reconnected before the next run, else the sessi
 recreated.
 
 On SIGTERM or Ctrl+C the stand takes no new triggers, drops the queue (`skipped{shutdown}`),
-gives the running run `serve.shutdown_grace_seconds`, then cancels it.
+gives the running run `serve.shutdown_grace_seconds`, then cancels it; a probe that ends during
+the shutdown starts no main task. If the dispatcher or the scheduler dies, the stand stops with
+exit code 1 rather than answer `/healthz` while nothing runs (`restart: unless-stopped` in
+`compose.yaml` brings it back); a single failed firing is only logged.
 
 ## Code Map
 

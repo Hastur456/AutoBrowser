@@ -64,17 +64,25 @@ class RateLimiter:
         self._clock = clock
         self._hits: dict[str, deque[datetime]] = {}
 
-    def exceeded(self, key: str) -> bool:
-        return len(self._recent(key)) >= self._limit
-
     def allow(self, key: str) -> bool:
         """Count a hit on ``key`` unless it is over the limit; ``False`` when it is."""
 
+        self._forget_quiet_keys()
         hits = self._recent(key)
         if len(hits) >= self._limit:
             return False
         hits.append(self._clock.now())
         return True
+
+    def keys(self) -> set[str]:
+        return set(self._hits)
+
+    def _forget_quiet_keys(self) -> None:
+        """Drop keys without a hit in the last minute (one per client address otherwise)."""
+
+        horizon = self._clock.now() - RATE_WINDOW
+        for key in [key for key, hits in self._hits.items() if not hits or hits[-1] <= horizon]:
+            del self._hits[key]
 
     def _recent(self, key: str) -> deque[datetime]:
         hits = self._hits.setdefault(key, deque())

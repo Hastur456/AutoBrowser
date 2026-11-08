@@ -16,6 +16,7 @@ from typing import Any
 from uuid import uuid4
 
 import uvicorn
+from pydantic import ValidationError
 
 from src.agent_loop.events import EventEmitter, JsonlEventSink
 from src.agent_loop.goals import GoalLimits
@@ -31,12 +32,14 @@ from src.serve.dispatcher import Dispatcher
 from src.serve.ledger import Ledger
 from src.serve.notify import LogChannel, NotificationChannel, Notifier, WebhookOutChannel
 from src.serve.paths import ServePaths, serve_paths
-from src.serve.runtime import ServeRuntime, ServeStartError
+from src.serve.runtime import ServeRuntime, ServeServiceError, ServeStartError
 from src.serve.scheduler import Scheduler
 from src.serve.state import JobStateStore
 from src.serve.tally import RunTally
 from src.ui.controller import SessionController
 
+#: Exit code when a part of the running stand died (the dispatcher, the scheduler).
+SERVICE_FAILED_EXIT_CODE = 1
 #: Session id prefix of the stand's own event stream.
 SERVE_SESSION_PREFIX = "serve-"
 #: Labels of the worker session (``session.started``), so its traces are found by them.
@@ -53,7 +56,8 @@ def run_serve_cli(args: argparse.Namespace, write: Callable[[str], None] = print
     try:
         settings = get_settings()
     except ValueError as exc:
-        _err(f"invalid configuration: {exc}")
+        for line in config_error_lines(exc):
+            _err(f"invalid configuration: {line}")
         return USAGE_EXIT_CODE
     problems = startup_problems(settings)
     for problem in problems:
@@ -67,6 +71,18 @@ def run_serve_cli(args: argparse.Namespace, write: Callable[[str], None] = print
         return asyncio.run(_serve(settings, write))
     except KeyboardInterrupt:
         return 0
+
+
+def config_error_lines(exc: ValueError) -> list[str]:
+    """Where and why the configuration is invalid, never the offending values: pydantic's
+    own message repeats the input, and with it the token and the webhook secrets."""
+
+    if isinstance(exc, ValidationError):
+        return [
+            f"{'.'.join(str(part) for part in error['loc']) or 'settings'}: {error['msg']}"
+            for error in exc.errors(include_input=False, include_url=False)
+        ]
+    return [str(exc)]
 
 
 def summary(settings: Settings) -> str:
@@ -164,6 +180,9 @@ async def _serve(
     except ServeStartError as exc:
         _err(str(exc))
         return USAGE_EXIT_CODE
+    except ServeServiceError as exc:
+        _err(str(exc))
+        return SERVICE_FAILED_EXIT_CODE
     finally:
         if bridge is not None:
             bridge.stop()

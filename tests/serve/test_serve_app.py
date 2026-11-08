@@ -165,11 +165,35 @@ def test_repeated_bad_tokens_lock_the_client_out(tmp_path: Path) -> None:
     api = client(rig)
     bad = {"Authorization": "Bearer guess"}
 
-    codes = [api.get("/v1/status", headers=bad).status_code for _ in range(2)]
-    locked = api.get("/v1/status", headers=AUTH).status_code
+    codes = [api.get("/v1/status", headers=bad).status_code for _ in range(3)]
+    valid = api.get("/v1/status", headers=AUTH).status_code
 
-    assert codes == [401, 401]
-    assert locked == 429
+    assert codes == [401, 401, 429]  # the guessing client is locked out...
+    assert valid == 200  # ...but a valid token behind the same address is never refused
+
+
+def test_a_valid_webhook_secret_is_not_refused_by_a_client_lock_out(tmp_path: Path) -> None:
+    rig = stand(tmp_path, rate_limit_per_minute=2)
+    api = client(rig)
+    for _ in range(3):
+        api.post("/v1/hooks/price-watch/ci", headers={"Authorization": "Bearer wrong"})
+
+    response = api.post("/v1/hooks/price-watch/ci", headers={"Authorization": f"Bearer {HOOK_SECRET}"})
+
+    assert response.status_code == 202
+
+
+def test_rate_limit_keys_of_quiet_clients_are_forgotten(tmp_path: Path) -> None:
+    from src.serve.auth import RateLimiter
+
+    rig = stand(tmp_path)
+    limiter = RateLimiter(5, rig.clock)
+    for index in range(50):
+        limiter.allow(f"client:10.0.0.{index}")
+    rig.clock.advance(61)
+    limiter.allow("token")
+
+    assert limiter.keys() == {"token"}
 
 
 # ----------------------------------------------------------------------------- webhooks
@@ -295,3 +319,18 @@ def test_approvals_are_answered_only_with_api_approvals(tmp_path: Path) -> None:
     assert api.post("/v1/approvals/tk-1", headers=AUTH, json={"answer": "once"}).status_code == 200
     assert approvals.answered == [("tk-1", "once")]
     assert api.get("/v1/status", headers=AUTH).json()["approvals"][0]["ticket_id"] == "tk-1"
+
+
+def test_a_free_task_takes_the_day_budget_left_when_it_starts(tmp_path: Path) -> None:
+    from tests.serve.serve_fakes import FakeWorker, outcome
+
+    rig = stand(tmp_path, free_tasks=True, daily_max_cost=1.0)
+    rig.worker.results = [outcome(cost=0.7), outcome(cost=0.0)]
+    api = client(rig)
+
+    api.post("/v1/jobs/price-watch/runs", headers=AUTH)  # will spend 0.7
+    api.post("/v1/tasks", headers=AUTH, json={"task": "Find the opening hours."})
+    asyncio.run(rig.drain())
+
+    (_, _job), (_, free) = rig.worker.calls
+    assert free.budget.max_cost == pytest.approx(0.3)

@@ -2475,7 +2475,8 @@ class WebhookOutSettings(_Section):
     @classmethod
     def _http_url(cls, value: str) -> str:
         if not value.startswith(("http://", "https://")):
-            raise ValueError(f"webhook_out.url must be an http(s) URL, got {value!r}")
+            # The URL is not quoted: it often carries a token.
+            raise ValueError("webhook_out.url must be an http(s) URL")
         return value
 
 
