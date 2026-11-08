@@ -1,8 +1,11 @@
 # Serve Mode
 
-Accepted design (2026-11-02). This diagram shows the design, not the code that exists today. It covers the stand
-process (`autobrowser serve`), the cost ladder and replay (playback of a recording) inside the
-engine.
+Accepted design (2026-11-02). Implemented: replay and budgets (phase 1, 2026-11-02) and the
+minimal stand (phase 3, 2026-11-09): one worker, the dispatcher, the scheduler, the HTTP API, the
+probe, the `log` and `webhook` channels, approvals over the API and the Docker image. Not yet:
+the worker pool, model tiers (cascade) and Telegram (phase 4) — the diagrams show them dashed or
+marked. It covers the stand process (`autobrowser serve`), the cost ladder and replay (playback
+of a recording) inside the engine. Guide: [serve mode](../development/serve-mode.md).
 Design: [serve mode design](../development/2026-11-02-serve-mode-design.md);
 ADR: [2026-11-02 serve mode and cost ladder](../decisions/2026-11-02-serve-mode-and-cost-ladder.md).
 
@@ -66,8 +69,9 @@ flowchart TB
 Import fences (tests):
 
 - `src/serve` does not import `src.agent_loop.execution`, `src.browser`, `src.cli`,
-  `src.providers` or `src.channels`.
-- `src/agent_loop` and `src/harness` do not import `src.serve` or `src.channels`.
+  `src.providers`, `src.harness` or `src.channels` (`tests/test_serve_boundaries.py`).
+- `src/agent_loop`, `src/harness`, `src/ui`, `src/browser`, `src/mcp` and `src/providers` do
+  not import `src.serve`; only `src/cli/serve.py` composes the stand.
 - The engine imports no `src.browser` and holds no `browser_*` literals.
 
 ## Cost Ladder

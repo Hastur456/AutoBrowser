@@ -1,6 +1,7 @@
 # План реализации Фазы 3: стенд (`autobrowser serve`)
 
-Статус: Approved (2026-11-04): вопросы P1–P3 приняты по дефолтам.
+Статус: Implemented (2026-11-09), руководство — [serve-mode.md](serve-mode.md). Approved (2026-11-04): вопросы P1–P3 приняты по дефолтам.
+P1 разрешился сам: `croniter` тянет `python-dateutil` 4, а тот — `tzdata`, поэтому IANA-пояса работают и на Windows без прямой зависимости.
 Дата: 2026-11-04
 Ветка: `feat/serve-mode`
 Дизайн: [serve mode design](2026-11-02-serve-mode-design.md) (§4.4, §4.5, §6.1–§6.5, §7, §8, §9.3–§9.4,

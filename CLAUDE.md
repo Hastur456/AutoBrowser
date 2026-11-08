@@ -182,9 +182,9 @@ Every tunable lives in `src/config.py` — a pydantic-settings root read at call
 never imports it back). See
 `docs/decisions/2026-09-16-typed-settings-module.md` and the `.env.example` template.
 
-Names are `AUTOBROWSER_<SECTION>__<FIELD>` over sixteen sections (`llm`, `browser`, `loop`,
+Names are `AUTOBROWSER_<SECTION>__<FIELD>` over seventeen sections (`llm`, `browser`, `loop`,
 `observation`, `memory`, `skills`, `replay`, `events`, `storage`, `flags`, `hooks`, `permissions`, `ui`, `pipeline`,
-`telemetry`, `eval_platform`). Env outranks `.env` outranks the code
+`telemetry`, `eval_platform`, `serve`). Env outranks `.env` outranks the code
 defaults; an empty value means "not set"; sections are `frozen` with `extra="forbid"`.
 `AUTOBROWSER_LLM__API_KEY` is passed to the provider as an explicit `Authorization: Bearer`
 header — the vendor `OLLAMA_API_KEY` is no longer read. Adding a setting means updating
@@ -373,6 +373,32 @@ page diverged (`docs/decisions/2026-11-02-serve-mode-and-cost-ladder.md`; guide:
   budget (`RunBudget`, defaults `loop.max_task_*`, prices `llm.prices`) is checked right before
   each call -> `blocked`/`budget_exhausted`. Usage reaches `goal.*`, `TaskOutcome`, batch rows.
 
+## Serve Mode (the Stand)
+
+`autobrowser serve [--check]` runs configured jobs on triggers without a terminal
+(`docs/decisions/2026-11-02-serve-mode-and-cost-ladder.md`; guide:
+`docs/development/serve-mode.md`). Nothing runs unless the command is started.
+
+- `src/serve/` is a client of `SessionController` (one worker = one session, one run at a time):
+  `Dispatcher` (gate: coalesce, cooldown, day budgets, queue; runs; `RunReport` into
+  `<home>/serve/ledger.jsonl`), `Scheduler` (interval, cron via `croniter`, UTC arithmetic),
+  `app.py` (Starlette API: `/healthz`, `/v1/*` with `serve.token`, webhooks with their own
+  secret), the probe (stage 0: inline `PlaybackRequest.steps`, no model), channels `log` and
+  `webhook`, `ApprovalBridge` (`serve.api_approvals`). Only `src/cli/serve.py` composes it.
+- `src/serve/**` never imports `src.agent_loop.execution`, `src.browser`, `src.harness`,
+  `src.cli` or `src.providers`; no lower layer imports `src.serve`
+  (`tests/test_serve_boundaries.py`).
+- Every task of a run: `carry_context=False`, the job's `domains` as task scope
+  (`PermissionCheck.allowed_domains`, `source: task_scope` in `src/harness/permissions.py`),
+  the job's ladder cap and budget.
+- Safe defaults: bind `127.0.0.1`, a remote host needs `allow_remote` and a token; secrets via
+  `hmac.compare_digest`, never logged; the webhook body never reaches the task; `bypass` refused;
+  without `api_approvals` approvals are `dont_ask`; `free_tasks` off.
+- `browser.launch: external` lets the MCP server launch its own (headless) browser; the Docker
+  image (`Dockerfile`, `compose.yaml`, `docker/serve.example.yaml`) uses it.
+- Tests build `ServeSettings(...)` and the fakes in `tests/serve/serve_fakes.py` (fake worker,
+  UTC fake clock), never the personal config.
+
 ## Feature Flags (env vars)
 
 - `AUTOBROWSER_FLAGS__AGENT_LOOP` (also `--agent-loop`) — **inert.** The engine-native path is the
@@ -396,6 +422,8 @@ uv run main.py -p "task" --output-format json # print mode: result only, exit 0/
 uv run main.py -p --record NAME "task"        # record the run (replay.enabled)
 uv run main.py -p --recording NAME            # replay it without the model (--answer agent|output|summary)
 uv run main.py recordings list                # list | show NAME | rm NAME
+uv run main.py serve --check                  # validate the stand config (no browser); serve = run it
+uv run pytest tests/serve tests/test_serve_boundaries.py   # the stand
 uv run main.py doctor                         # paths, config source, llm provider, node/npx, Chrome, terminal
 uv run main.py doctor --llm                   # + list the provider's models over the network
 uv run main.py --show-state --task "..."      # debug state per step

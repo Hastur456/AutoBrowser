@@ -20,7 +20,7 @@ A run climbs only as far as it has to, and never above `RunProfile.max_stage`:
 | `agent` (3) | the agent finishes the task from where playback stopped, with the replayed history | as usual |
 | `human` (4) | approvals, as in any task | — |
 
-Stage 0 (`probe`) belongs to the stand (`autobrowser serve`, phase 3). Every step of every
+Stage 0 (`probe`) belongs to the stand (`autobrowser serve`, [serve mode guide](serve-mode.md)). Every step of every
 stage goes through the normal pipeline: progress guard, `pre_tool_use` hooks, permissions,
 approvals, the broker, `post_tool_use` and observation. A replay never skips a rule.
 

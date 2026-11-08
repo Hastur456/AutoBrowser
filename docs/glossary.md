@@ -133,4 +133,9 @@
 | Handoff | A step source giving up (`StepHandoff`): the model drives the rest of the task with one `[harness]` note and the replayed history. |
 | Run profile | `RunProfile` on `TaskRequest.profile`: playback request, ladder cap, run budget, recording name, context carry, labels. The default changes nothing. |
 | Task usage | `TaskUsage`: model calls, tokens and cost of one task, by ladder stage and by model; `cost` is `None` once a call had no usage or price. On `AgentLoopResult.usage` and the terminal `goal.*` events. |
+| Stand | `autobrowser serve`: a long-running process that runs configured jobs on triggers (interval, cron, webhook) without a terminal; a `SessionController` client in `src/serve/`. |
+| Job | A configured stand task (`serve.jobs.<id>`): task text, triggers, optional probe and recording, ladder cap, budget, domains, notifications. |
+| Run (stand) | One firing of a job, one `run_id`: possibly a probe task and a main task; reported as one `RunReport` line in `<home>/serve/ledger.jsonl`. |
+| Probe | Stage 0 of a stand run: the job's inline tool calls replayed without the model, a fingerprint of their output region; unchanged means no main task and zero model calls. |
+| Task scope | `RunProfile.allowed_domains` checked by `PermissionEngine` after the deny rules: calls on other domains (or state-changing calls on an unknown domain) are denied with `source: task_scope`. |
 | Run budget | `RunBudget` caps (model calls, tokens, money) checked before every model call; exhaustion is `blocked` with `stop_reason=budget_exhausted`. Defaults come from `loop.max_task_*`. |

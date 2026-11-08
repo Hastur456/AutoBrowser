@@ -36,7 +36,7 @@ sequenceDiagram
   Context->>Files: New session: take the OS lock on .lock (a resumed one already holds it)
   Context->>Context: Workspace, model, tools, telemetry; events continue the stored sequence
   opt Browser tools enabled
-    Context->>MCP: Start Chrome/CDP and load tools
+    Context->>MCP: Start Chrome/CDP (browser.launch cdp; none with external: the MCP server launches its own) and load tools
   end
   Context->>Harness: Build one harness for the session
   Session->>Context: build_agent() -> one Agent for the session
