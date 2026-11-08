@@ -1456,6 +1456,7 @@ def test_telemetry_is_off_and_neutral_by_default(settings: Any) -> None:
     assert telemetry.otlp_headers == {}
     assert telemetry.otlp_timeout_seconds == 10.0
     assert telemetry.capture_content == "none"
+    assert telemetry.trajectory is False
     assert telemetry.service_name == "autobrowser"
     assert telemetry.environment is None
     assert telemetry.attribute_aliases == {}
@@ -1465,6 +1466,7 @@ def test_telemetry_reads_the_environment_name_and_attribute_aliases(
     settings: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AUTOBROWSER_TELEMETRY__ENVIRONMENT", "staging")
+    monkeypatch.setenv("AUTOBROWSER_TELEMETRY__TRAJECTORY", "true")
     monkeypatch.setenv(
         "AUTOBROWSER_TELEMETRY__ATTRIBUTE_ALIASES",
         '{"autobrowser.batch.id": "backend.metadata.batch_id"}',
@@ -1473,6 +1475,7 @@ def test_telemetry_reads_the_environment_name_and_attribute_aliases(
     telemetry = settings().telemetry
 
     assert telemetry.environment == "staging"
+    assert telemetry.trajectory is True
     assert telemetry.attribute_aliases == {"autobrowser.batch.id": "backend.metadata.batch_id"}
 
 

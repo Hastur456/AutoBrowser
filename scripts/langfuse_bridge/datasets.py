@@ -29,6 +29,12 @@ from src.agent_loop.platform_records import (
 from src.config import EvalPlatformSettings
 
 ITEM_ID_PREFIX = "ab-"
+#: Scenario sets synced as datasets: suite name -> tasks file, relative to the repository root.
+SUITES = {
+    "golden": "tests/golden/tasks.jsonl",
+    "smoke": "tests/golden/smoke.jsonl",
+    "benchmark": "tests/golden/benchmark.jsonl",
+}
 JOURNAL_FILE_NAME = "platform_datasets.jsonl"
 JOURNAL_SCHEMA_VERSION = 1
 ACTIVE, ARCHIVED = "ACTIVE", "ARCHIVED"
@@ -291,3 +297,14 @@ def _version_of(item: Mapping[str, Any]) -> str:
 
 def _scenario_of(item: Mapping[str, Any]) -> str:
     return str((item.get("metadata") or {}).get("scenario_id") or item.get("id"))
+
+
+def suite_of(tasks_path: Path, root: Path) -> str | None:
+    """The suite whose tasks file is ``tasks_path``; ``None`` for any other file.
+
+    A batch of another file must not be synced as a suite: ``push_dataset`` would archive every
+    item of that suite's dataset the file lacks.
+    """
+
+    resolved = Path(tasks_path).resolve()
+    return next((name for name, path in SUITES.items() if (root / path).resolve() == resolved), None)

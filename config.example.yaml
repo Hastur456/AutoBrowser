@@ -468,6 +468,7 @@ telemetry:
   # otlp_endpoint: https://cloud.langfuse.com/api/public/otel/v1/traces  # Langfuse Cloud (EU)
   otlp_timeout_seconds: 10.0                    # (default) export request and final flush
   capture_content: none                         # (default) none | redacted (text leaves the machine)
+  trajectory: false                             # (default) task steps as one JSON object on the task span
   service_name: autobrowser                     # (default) service.name of the spans
   # environment: interactive                   # deployment.environment.name (default unset; batch runs label "batch")
   attribute_aliases: {}                         # (default) copy attribute A also under key B
@@ -476,6 +477,7 @@ telemetry:
   #   autobrowser.batch.id: langfuse.trace.metadata.batch_id
   #   autobrowser.scenario.id: langfuse.trace.metadata.scenario_id
   #   vcs.ref.head.revision: langfuse.release
+  #   autobrowser.trajectory: langfuse.observation.metadata  # with trajectory: true, for a root-observation judge
 
 # ---------------------------------------------------------------------------
 # Evaluation platform: batch results as datasets, experiments and scores

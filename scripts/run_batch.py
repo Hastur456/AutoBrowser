@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.langfuse_bridge.datasets import run_git
+from scripts.langfuse_bridge.datasets import SUITES, run_git, suite_of
 from scripts.langfuse_bridge.sync import push_batch
 from src.agent_loop.batch import (
     BatchScenario,
@@ -183,12 +183,18 @@ def _sync_platform(args: argparse.Namespace, result: Mapping[str, Any]) -> None:
     batch_id = str(result.get("batch_id") or Path(str(batch_dir)).name)
     settings = get_settings()
     retry = "rerun: uv run scripts/langfuse_sync.py experiment push --pending"
+    suite = suite_of(Path(args.tasks), ROOT)
+    if suite is None:
+        known = ", ".join(f"{name} ({path})" for name, path in SUITES.items())
+        print(f"warning: {args.tasks} is not a platform suite ({known}); {batch_id} is not synced", file=sys.stderr)
+        return
     try:
         report = push_batch(
             Path(str(batch_dir)),
             settings,
             repo_tasks=Path(args.tasks),
             git=run_git(ROOT),
+            suite=suite,
             deadline=time.monotonic() + settings.eval_platform.sync_timeout_seconds,
         )
     except Exception as exc:  # noqa: BLE001 - the batch result stands whatever the sync does
