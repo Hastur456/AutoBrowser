@@ -29,7 +29,7 @@ from src.serve.checks import startup_problems
 from src.serve.clock import SystemClock, resolve_timezone
 from src.serve.dispatcher import Dispatcher
 from src.serve.ledger import Ledger
-from src.serve.notify import LogChannel, NotificationChannel, Notifier
+from src.serve.notify import LogChannel, NotificationChannel, Notifier, WebhookOutChannel
 from src.serve.paths import ServePaths, serve_paths
 from src.serve.runtime import ServeRuntime, ServeStartError
 from src.serve.scheduler import Scheduler
@@ -99,7 +99,16 @@ def build_channels(
     channels: list[NotificationChannel] = []
     if "log" in serve.channels:
         channels.append(LogChannel(events, write))
+    if "webhook" in serve.channels and serve.webhook_out is not None:
+        channels.append(WebhookOutChannel(serve.webhook_out))
     return channels
+
+
+async def close_channels(channels: list[NotificationChannel]) -> None:
+    for channel in channels:
+        close = getattr(channel, "aclose", None)
+        if close is not None:
+            await close()
 
 
 async def _serve(
@@ -128,12 +137,13 @@ async def _serve(
         worker_args(serve, paths), human_input=broker, event_sinks=(tally,), output_fn=write
     )
     controller = SessionController(session, broker=broker)
+    channels = build_channels(serve, events, write)
     dispatcher = Dispatcher(
         serve,
         controller,
         ledger=Ledger(paths.ledger, tz),
         states=states,
-        notifier=Notifier(build_channels(serve, events, write), events, max_chars=serve.notify_max_chars),
+        notifier=Notifier(channels, events, max_chars=serve.notify_max_chars),
         events=events,
         tally=tally,
         clock=clock,
@@ -157,6 +167,7 @@ async def _serve(
     finally:
         if bridge is not None:
             bridge.stop()
+        await close_channels(channels)
         await session.close()
     return 0
 

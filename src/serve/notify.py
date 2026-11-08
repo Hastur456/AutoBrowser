@@ -8,13 +8,17 @@ becomes ``serve.notify.failed`` (the error type only, never its message).
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+import httpx
+
 from src.agent_loop.events import EventEmitter
-from src.config import NotifyKind
+from src.config import NotifyKind, WebhookOutSettings
+from src.serve.auth import SIGNATURE_HEADER, sign
 from src.ui.feed import sanitize_text
 
 _LOG = logging.getLogger(__name__)
@@ -117,4 +121,41 @@ class LogChannel:
         self._write(f"{line}: {item.body}" if item.body else line)
 
 
-__all__ = ["TRUNCATED", "LogChannel", "Notification", "NotificationChannel", "Notifier"]
+
+class WebhookOutChannel:
+    """The ``webhook`` channel: each notification POSTed as JSON to ``serve.webhook_out.url``,
+    signed with ``X-AutoBrowser-Signature`` when a secret is set. A bridge to any messenger;
+    no retries (a failure is ``serve.notify.failed``)."""
+
+    name = "webhook"
+
+    def __init__(self, settings: WebhookOutSettings, *, client: httpx.AsyncClient | None = None) -> None:
+        self._settings = settings
+        self._client = client or httpx.AsyncClient()
+
+    async def send(self, item: Notification) -> None:
+        body = json.dumps(
+            {
+                "kind": item.kind,
+                "job_id": item.job_id,
+                "run_id": item.run_id,
+                "title": item.title,
+                "body": item.body,
+                "cost": item.cost,
+                "ticket_id": item.ticket_id,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if self._settings.secret is not None and self._settings.secret.get_secret_value():
+            headers[SIGNATURE_HEADER] = sign(body, self._settings.secret.get_secret_value())
+        response = await self._client.post(
+            self._settings.url, content=body, headers=headers, timeout=self._settings.timeout_seconds
+        )
+        response.raise_for_status()
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+
+__all__ = ["TRUNCATED", "LogChannel", "Notification", "NotificationChannel", "Notifier", "WebhookOutChannel"]

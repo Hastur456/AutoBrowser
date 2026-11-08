@@ -664,3 +664,15 @@ def test_the_serve_http_server_keeps_client_addresses_out_of_its_log() -> None:
 
     assert server.config.access_log is False
     assert (server.config.host, server.config.port) == ("127.0.0.1", 8799)
+
+
+def test_serve_builds_the_configured_channels() -> None:
+    from src.agent_loop.events import EventEmitter
+    from src.cli.serve import build_channels
+    from src.config import ServeSettings
+
+    serve = ServeSettings(channels=["log", "webhook"], webhook_out={"url": "https://hooks.example/x"})
+
+    names = [channel.name for channel in build_channels(serve, EventEmitter(), print)]
+
+    assert names == ["log", "webhook"]
