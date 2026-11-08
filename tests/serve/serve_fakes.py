@@ -22,10 +22,11 @@ START = datetime(2026, 11, 4, 9, 0, tzinfo=UTC)
 
 
 class FakeClock:
-    """Aware time that only moves when told to, or when someone sleeps."""
+    """Aware time that only moves when told to, or when someone sleeps (kept in UTC, so a
+    jump across a DST change is real elapsed time, not wall-clock arithmetic)."""
 
     def __init__(self, now: datetime = START) -> None:
-        self.current = now
+        self.current = now.astimezone(UTC)
         self.sleeps: list[float] = []
 
     def now(self) -> datetime:

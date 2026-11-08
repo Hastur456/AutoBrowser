@@ -609,3 +609,48 @@ async def test_serve_composes_the_stand_and_writes_its_event_stream(
     assert built[0].labels == {"mode": "serve", "worker": "w0"}
     events = (settings.storage.root_dir / "serve" / "events.jsonl").read_text(encoding="utf-8")
     assert '"serve.started"' in events and '"serve.stopped"' in events
+
+
+@pytest.mark.asyncio
+async def test_serve_fires_a_due_interval_job_on_start(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import asyncio
+
+    from src.cli import serve as serve_cli
+    from src.harness.session import SessionRuntime
+    from tests.session_fakes import install_fake_agent
+    from tests.test_harness_session import llm_factory, make_config, native_result, no_mcp_runtime, no_start, noop_wait
+
+    tasks: list[str] = []
+
+    async def run(request):
+        tasks.append(request.task)
+        return native_result(final_answer="price 10")
+
+    install_fake_agent(monkeypatch, run)
+    monkeypatch.setattr(
+        serve_cli,
+        "build_session",
+        lambda args, *, human_input, event_sinks, output_fn: SessionRuntime(
+            make_config(), llm_factory=llm_factory, start_chrome_cdp=no_start, wait_for_port=noop_wait,
+            mcp_runtime_factory=no_mcp_runtime, human_input=human_input, event_sinks=list(event_sinks),
+        ),
+    )
+    monkeypatch.setenv(
+        "AUTOBROWSER_SERVE__JOBS",
+        '{"price-watch": {"task": "Report the price.", '
+        '"triggers": [{"id": "hourly", "type": "interval", "every_seconds": 3600}]}}',
+    )
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    async def until_reported() -> None:
+        ledger = settings.storage.root_dir / "serve" / "ledger.jsonl"
+        while not ledger.is_file():
+            await asyncio.sleep(0.01)
+
+    code = await asyncio.wait_for(serve_cli._serve(settings, lambda _line: None, until=until_reported()), 10)
+
+    assert code == 0
+    assert tasks == ["Report the price."]

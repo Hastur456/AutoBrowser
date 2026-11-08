@@ -25,6 +25,7 @@ dependencies = [
     "cloudpickle==3.1.2",
     "cmd2==4.1.2",
     "colorama==0.4.6",
+    "croniter>=6.2,<7",
     "cryptography==46.0.3",
     "cyclopts==4.4.4",
     "diskcache==5.6.3",

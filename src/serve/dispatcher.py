@@ -165,6 +165,13 @@ class Dispatcher:
     def new_run_id(self) -> str:
         return _run_id()
 
+    async def skip(self, job_id: str, trigger: TriggerRef, reason: str) -> None:
+        """Record a trigger that did not fire for a reason of its own (the scheduler's
+        ``min_interval``): counted in the job state and reported as ``serve.run.skipped``."""
+
+        run = _Run(run_id=_run_id(), job_id=job_id, trigger=trigger, queued_at=self._clock.now())
+        await self._skip(run, reason)
+
     def _refusal(self, job: JobSpec, run: _Run) -> str:
         if self._stopping:
             return "shutdown"

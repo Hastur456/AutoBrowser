@@ -1808,3 +1808,17 @@ def test_free_task_domains_are_normalized(settings: Any) -> None:
 def test_an_unknown_time_zone_is_rejected_with_a_hint(settings: Any) -> None:
     with pytest.raises(ValueError, match="tzdata"):
         settings(serve={"timezone": "Mars/Olympus_Mons"})
+
+
+def test_a_cron_trigger_needs_a_valid_schedule(settings: Any) -> None:
+    ok = _job(triggers=[{"id": "c", "type": "cron", "schedule": "0 9 * * 1-5"}])
+    assert settings(serve={"jobs": {"j": ok}}).serve.jobs["j"].triggers[0].schedule == "0 9 * * 1-5"
+
+    for trigger, message in [
+        ({"id": "c", "type": "cron"}, "needs a schedule"),
+        ({"id": "c", "type": "cron", "schedule": "61 * * * *"}, "invalid schedule"),
+        ({"id": "c", "type": "interval", "every_seconds": 60, "schedule": "* * * * *"}, "takes no schedule"),
+        ({"id": "c", "type": "cron", "schedule": "* * * * *", "every_seconds": 60}, "takes no every_seconds"),
+    ]:
+        with pytest.raises(ValueError, match=message):
+            settings(serve={"jobs": {"j": _job(triggers=[trigger])}})

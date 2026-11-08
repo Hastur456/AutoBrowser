@@ -28,6 +28,7 @@ from src.serve.ledger import Ledger
 from src.serve.notify import LogChannel, NotificationChannel, Notifier
 from src.serve.paths import ServePaths, serve_paths
 from src.serve.runtime import ServeRuntime, ServeStartError
+from src.serve.scheduler import Scheduler
 from src.serve.state import JobStateStore
 from src.serve.tally import RunTally
 from src.ui.controller import SessionController
@@ -109,6 +110,8 @@ async def _serve(
         JsonlEventSink(paths.events), session_id=f"{SERVE_SESSION_PREFIX}{uuid4().hex[:8]}"
     )
     tally = RunTally()
+    clock = SystemClock(tz)
+    states = JobStateStore(paths.root)
     broker = (
         ApprovalBroker(
             settings.permissions,
@@ -125,13 +128,18 @@ async def _serve(
         serve,
         controller,
         ledger=Ledger(paths.ledger, tz),
-        states=JobStateStore(paths.root),
+        states=states,
         notifier=Notifier(build_channels(serve, events, write), events, max_chars=serve.notify_max_chars),
         events=events,
         tally=tally,
-        clock=SystemClock(tz),
+        clock=clock,
     )
-    runtime = ServeRuntime(serve, controller, dispatcher=dispatcher, events=events)
+    scheduler = Scheduler(
+        serve, dispatcher.fire, skip=dispatcher.skip, clock=clock, states=states, tz=tz
+    )
+    runtime = ServeRuntime(
+        serve, controller, dispatcher=dispatcher, events=events, services=[scheduler.run]
+    )
     try:
         await runtime.serve(until=until if until is not None else asyncio.Event().wait())
     except ServeStartError as exc:

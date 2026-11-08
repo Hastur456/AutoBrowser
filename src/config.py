@@ -2285,8 +2285,8 @@ ServeChannel = Literal["log", "webhook"]
 CoalesceMode = Literal["drop", "queue_one"]
 #: Fire missed cron slots after downtime: never, or one catch-up run.
 CatchUpMode = Literal["none", "one"]
-#: Kinds of job triggers.
-TriggerType = Literal["interval", "webhook"]
+#: Kinds of job triggers (``cron`` schedules are parsed by ``croniter``).
+TriggerType = Literal["interval", "cron", "webhook"]
 #: How a webhook trigger authenticates its caller.
 WebhookAuth = Literal["bearer", "hmac_sha256"]
 #: Hosts that only this machine can reach: ``serve.host`` needs no token on them.
@@ -2319,12 +2319,16 @@ class RunBudgetSpec(_Section):
 
 
 class TriggerSpec(_Section):
-    """One way a job starts: a period or an HTTP webhook."""
+    """One way a job starts: a period, a cron schedule or an HTTP webhook."""
 
     id: Annotated[str, Field(min_length=1, description="Trigger id, unique in the job.")]
-    type: Annotated[TriggerType, Field(description="interval | webhook.")]
+    type: Annotated[TriggerType, Field(description="interval | cron | webhook.")]
     every_seconds: Annotated[
         float | None, Field(gt=0.0, description="interval: the period, >= serve.min_interval_seconds.")
+    ] = None
+    schedule: Annotated[
+        str | None,
+        Field(min_length=1, description="cron: a five-field cron expression in serve.timezone."),
     ] = None
     secret: Annotated[
         SecretStr | None, Field(description="webhook: the shared secret (or secret_env).")
@@ -2347,6 +2351,17 @@ class TriggerSpec(_Section):
     def _fields_match_the_type(self) -> TriggerSpec:
         if self.type == "interval" and self.every_seconds is None:
             raise ValueError(f"interval trigger {self.id!r} needs every_seconds")
+        if self.type == "cron":
+            if not self.schedule:
+                raise ValueError(f"cron trigger {self.id!r} needs a schedule")
+            from croniter import croniter  # imported here: only cron triggers need it
+
+            if not croniter.is_valid(self.schedule):
+                raise ValueError(f"cron trigger {self.id!r}: invalid schedule {self.schedule!r}")
+        if self.type != "interval" and self.every_seconds is not None:
+            raise ValueError(f"{self.type} trigger {self.id!r} takes no every_seconds")
+        if self.type != "cron" and self.schedule is not None:
+            raise ValueError(f"{self.type} trigger {self.id!r} takes no schedule")
         if self.type == "webhook" and (self.secret is None) == (self.secret_env is None):
             raise ValueError(f"webhook trigger {self.id!r} needs exactly one of secret, secret_env")
         if self.type != "webhook" and (self.secret is not None or self.secret_env is not None):
@@ -2499,7 +2514,7 @@ class ServeSettings(_Section):
         float, Field(ge=0.0, description="Least time between the end of a job's run and its next start.")
     ] = 0.0
     min_interval_seconds: Annotated[
-        float, Field(ge=1.0, description="Least period of a trigger.")
+        float, Field(ge=1.0, description="Least period of a trigger (interval and cron).")
     ] = 60.0
     catch_up: Annotated[
         CatchUpMode, Field(description="Missed cron slots after downtime: none, or one catch-up run.")
