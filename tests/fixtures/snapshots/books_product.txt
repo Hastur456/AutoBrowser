@@ -1,0 +1,50 @@
+### Page
+- Page URL: https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html
+- Page Title: A Light in the Attic | Books to Scrape - Sandbox
+- Console: 1 errors, 0 warnings
+### Snapshot
+```yaml
+- generic [ref=f4e1]:
+  - banner [ref=f4e2]:
+    - generic [ref=f4e5]:
+      - link "Books to Scrape" [ref=f4e6] [cursor=pointer]:
+        - /url: ../../index.html
+      - text: We love being scraped!
+  - generic [ref=f4e8]:
+    - list [ref=f4e9]:
+      - listitem [ref=f4e10]:
+        - link "Home" [ref=f4e11] [cursor=pointer]:
+          - /url: ../../index.html
+      - listitem [ref=f4e12]:
+        - text: /
+        - link "Books" [ref=f4e13] [cursor=pointer]:
+          - /url: ../category/books_1/index.html
+      - listitem [ref=f4e14]:
+        - text: /
+        - link "Poetry" [ref=f4e15] [cursor=pointer]:
+          - /url: ../category/books/poetry_23/index.html
+      - listitem [ref=f4e16]: / A Light in the Attic
+    - article [ref=f4e19]:
+      - generic [ref=f4e20]:
+        - img "A Light in the Attic" [ref=f4e26]
+        - generic [ref=f4e27]:
+          - heading "A Light in the Attic" [level=1] [ref=f4e28]
+          - paragraph [ref=f4e29]: £51.77
+          - paragraph [ref=f4e30]
+          - paragraph [ref=f4e32]
+          - separator [ref=f4e38]
+          - alert [ref=f4e39]
+      - heading "Product Description" [level=2] [ref=f4e42]
+      - paragraph [ref=f4e43]: It's hard to imagine a world without A Light in the Attic. ...more
+      - heading "Product Information" [level=2] [ref=f4e45]
+      - table [ref=f4e46]:
+        - rowgroup [ref=f4e47]:
+          - row "UPC a897fe39b1053632" [ref=f4e48]
+          - row "Product Type Books" [ref=f4e51]
+          - row "Price (excl. tax) £51.77" [ref=f4e54]
+          - row "Price (incl. tax) £51.77" [ref=f4e57]
+          - row "Tax £0.00" [ref=f4e60]
+          - row "Availability In stock (22 available)" [ref=f4e63]
+          - row "Number of reviews 0" [ref=f4e66]
+  - contentinfo
+```

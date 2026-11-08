@@ -106,7 +106,14 @@ from pydantic_settings import (
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
-from src.contracts import ApprovalJudgeMode, HookEventName, PermissionDecision, PermissionMode
+from src.contracts import (
+    RECORDING_NAME_PATTERN,
+    ApprovalJudgeMode,
+    HookEventName,
+    LadderStage,
+    PermissionDecision,
+    PermissionMode,
+)
 from src.mcp.config import MCPServerConfig
 
 #: Env var namespace for every setting.
@@ -176,6 +183,8 @@ class _Section(BaseModel):
 #: Wire protocols a chat model adapter can speak (``src/providers/``). These name
 #: protocols, not vendors: any service speaking Chat Completions is ``openai_compat``.
 LLMProvider = Literal["ollama", "openai_compat"]
+#: Who runs the browser: the session over CDP, or the MCP server itself (``browser.launch``).
+BrowserLaunch = Literal["cdp", "external"]
 
 #: Request-body keys ``llm.extra_body`` may not set: each has a typed field of its own
 #: (or is owned by the adapter), so a vendor profile cannot silently override them.
@@ -202,6 +211,17 @@ def _null_string_to_none(value: Any) -> Any:
     if isinstance(value, str) and value.strip().lower() in _NULL_STRINGS:
         return None
     return value
+
+
+class ModelPriceSpec(_Section):
+    """What one million tokens of a model cost, in ``llm.currency``."""
+
+    input_per_mtok: Annotated[float, Field(ge=0.0, description="Price of 1M input tokens.")]
+    output_per_mtok: Annotated[float, Field(ge=0.0, description="Price of 1M output tokens.")]
+    cached_input_per_mtok: Annotated[
+        float | None,
+        Field(ge=0.0, description="Price of 1M cached input tokens; None: the input price."),
+    ] = None
 
 
 class LLMSettings(_Section):
@@ -379,6 +399,21 @@ class LLMSettings(_Section):
         ),
     ] = 300
 
+    prices: Annotated[
+        dict[str, ModelPriceSpec],
+        Field(
+            description=(
+                "Price per 1M tokens by model id, for cost reports and money budgets "
+                "(loop.max_task_cost). A model without a price has an unknown cost."
+            ),
+        ),
+    ] = {}
+
+    currency: Annotated[
+        str,
+        Field(min_length=1, description="Currency of llm.prices and of cost reports."),
+    ] = "USD"
+
     @field_validator("temperature", "timeout_seconds", "parallel_tool_calls", mode="before")
     @classmethod
     def _null_string_means_unset(cls, value: Any) -> Any:
@@ -435,6 +470,45 @@ class BrowserSettings(_Section):
             description="Seconds to wait for the CDP port to accept connections.",
         ),
     ] = 30.0
+
+    cdp_poll_seconds: Annotated[
+        float,
+        Field(
+            gt=0.0,
+            le=10.0,
+            description=(
+                "How often the CDP port is probed while waiting for Chrome, and how long one "
+                "probe may take."
+            ),
+        ),
+    ] = 0.5
+
+    launch: Annotated[
+        BrowserLaunch,
+        Field(
+            description=(
+                "Who runs the browser. cdp: the session starts Chrome with a CDP port and "
+                "waits for it; external: the session starts no browser and the MCP server "
+                "launches its own (a stand in Docker), so no mcp_servers entry may still use "
+                "{cdp_port} or {cdp_endpoint}."
+            ),
+        ),
+    ] = "cdp"
+
+    headless: Annotated[
+        bool,
+        Field(description="Start Chrome with --headless=new (launch: cdp only)."),
+    ] = False
+
+    extra_args: Annotated[
+        list[str],
+        Field(
+            description=(
+                "Further Chrome command-line arguments after the headless flag, e.g. "
+                "--no-sandbox in a container (launch: cdp only)."
+            ),
+        ),
+    ] = Field(default_factory=list)
 
     @field_validator("chrome_path", "user_data_dir", mode="after")
     @classmethod
@@ -526,6 +600,38 @@ class LoopSettings(_Section):
             description="Stall budget when a goal stream stops reporting progress.",
         ),
     ] = 120.0
+
+    max_task_model_calls: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            description=(
+                "Model calls one task may make (plan, turns, retargets, approval judge); "
+                "None: no cap. A run profile's own budget wins."
+            ),
+        ),
+    ] = None
+
+    max_task_tokens: Annotated[
+        int | None,
+        Field(ge=1, description="Input plus output tokens one task may use; None: no cap."),
+    ] = None
+
+    max_task_cost: Annotated[
+        float | None,
+        Field(
+            gt=0.0,
+            description=(
+                "Money one task may spend, in llm.currency (needs llm.prices); None: no cap. "
+                "Not checked while a call's cost is unknown."
+            ),
+        ),
+    ] = None
+
+    @field_validator("max_task_model_calls", "max_task_tokens", "max_task_cost", mode="before")
+    @classmethod
+    def _null_string_means_unset(cls, value: Any) -> Any:
+        return _null_string_to_none(value)
 
     @model_validator(mode="after")
     def _clamp_phase_timeouts(self) -> "LoopSettings":
@@ -880,6 +986,151 @@ class SkillsSettings(_Section):
             ),
         ),
     ] = 12_000
+
+
+#: What of the page URL must match at a playback checkpoint.
+CheckpointUrlMode = Literal["path", "host", "off"]
+
+
+class ReplaySettings(_Section):
+    """Recordings of completed runs and their playback without the model
+    (``docs/development/2026-11-02-serve-mode-design.md`` §5, §9.1).
+
+    Off by default: nothing is recorded or replayed until ``enabled``.
+    """
+
+    enabled: Annotated[
+        bool,
+        Field(
+            description=(
+                "Record completed runs (--record, /record) and replay recordings "
+                "(-p --recording, autobrowser recordings)."
+            ),
+        ),
+    ] = False
+
+    dir: Annotated[
+        str,
+        Field(min_length=1, description="Folder of the recordings, relative to storage.root_dir."),
+    ] = "recordings"
+
+    max_steps: Annotated[
+        int,
+        Field(ge=1, description="Steps of one recording; a longer run is not recorded."),
+    ] = 100
+
+    checkpoint_min_similarity: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=1.0,
+            description=(
+                "Lowest similarity of a step's output to the recorded one before playback "
+                "hands the task to the agent."
+            ),
+        ),
+    ] = 0.6
+
+    checkpoint_url: Annotated[
+        CheckpointUrlMode,
+        Field(
+            description=(
+                "What of the page URL must match at a checkpoint: the path (with the host), "
+                "the host only, or nothing."
+            ),
+        ),
+    ] = "path"
+
+    describe_context_lines: Annotated[
+        int,
+        Field(
+            ge=0,
+            le=10,
+            description="Ancestor lines kept in a recorded element descriptor.",
+        ),
+    ] = 2
+
+    text_shingle_words: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=10,
+            description=(
+                "Words per shingle in the checkpoint fingerprint of a non-browser tool output."
+            ),
+        ),
+    ] = 3
+
+    retarget_enabled: Annotated[
+        bool,
+        Field(
+            description=(
+                "Let a model retarget one diverged step (ladder stage 2) before the agent "
+                "takes over."
+            ),
+        ),
+    ] = True
+
+    max_retargets_per_run: Annotated[
+        int,
+        Field(ge=0, description="Retargeted steps per task."),
+    ] = 3
+
+    retarget_context_chars: Annotated[
+        int,
+        Field(ge=1_000, description="Characters of page text sent with a retarget request."),
+    ] = 12_000
+
+    retarget_timeout_seconds: Annotated[
+        float,
+        Field(gt=0, description="Timeout of one retarget model call."),
+    ] = 30.0
+
+    default_answer: Annotated[
+        Literal["agent", "output", "summary"],
+        Field(
+            description=(
+                "How a new recording answers after its steps: one agent turn, the region of "
+                "the last output, or a fixed summary."
+            ),
+        ),
+    ] = "agent"
+
+    keep_previous: Annotated[
+        bool,
+        Field(description="Keep the replaced recording as previous.json."),
+    ] = True
+
+    detail_max_chars: Annotated[
+        int,
+        Field(
+            ge=1,
+            description=(
+                "Characters of a divergence detail or a skip reason in recording and "
+                "playback events."
+            ),
+        ),
+    ] = 300
+
+    secret_field_pattern: Annotated[
+        str,
+        Field(
+            description=(
+                "Case-insensitive regex over the accessible name of a text-entry field; a "
+                "recorded step typing into a matching field keeps no typed value and is "
+                "never replayed blindly. Empty: only key-based redaction."
+            ),
+        ),
+    ] = '(?<![a-zа-яё])(password|passcode|passphrase|pin|pin code|cvv|cvc|security code|card number|one-time code|secret|api key|access token|пароль|пин-код|пин)(?![a-zа-яё])'
+
+    @field_validator("secret_field_pattern", mode="after")
+    @classmethod
+    def _secret_field_pattern_compiles(cls, value: str) -> str:
+        try:
+            re.compile(value)
+        except re.error as exc:
+            raise ValueError(f"replay.secret_field_pattern is not a regex: {exc}") from exc
+        return value
 
 
 class EventSettings(_Section):
@@ -1787,6 +2038,17 @@ class TelemetrySettings(_Section):
         ),
     ] = "none"
 
+    trajectory: Annotated[
+        bool,
+        Field(
+            description=(
+                "Put the task's steps (tool calls, gate decisions, outcome; content per "
+                "capture_content) on its task span as one JSON object, "
+                "autobrowser.trajectory, for evaluators that read one observation only."
+            ),
+        ),
+    ] = False
+
     service_name: Annotated[
         str,
         Field(min_length=1, description="service.name resource attribute of the spans."),
@@ -2026,6 +2288,362 @@ class EvalPlatformSettings(_Section):
     ] = 50
 
 
+#: What a stand job reports on (``serve.jobs.<id>.notify_on``) and what a channel sends.
+NotifyKind = Literal["change", "success", "failure", "blocked", "budget", "approval"]
+#: Notification channels of ``autobrowser serve`` (Telegram arrives in phase 4).
+ServeChannel = Literal["log", "webhook"]
+#: What a job does when a trigger fires while its run is busy (design section 6.3).
+CoalesceMode = Literal["drop", "queue_one"]
+#: Fire missed cron slots after downtime: never, or one catch-up run.
+CatchUpMode = Literal["none", "one"]
+#: Kinds of job triggers (``cron`` schedules are parsed by ``croniter``).
+TriggerType = Literal["interval", "cron", "webhook"]
+#: How a webhook trigger authenticates its caller.
+WebhookAuth = Literal["bearer", "hmac_sha256"]
+#: Hosts that only this machine can reach: ``serve.host`` needs no token on them.
+LOCAL_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+_DEFAULT_NOTIFY_ON: tuple[NotifyKind, ...] = ("change", "failure", "blocked", "budget")
+
+
+def _check_name(value: str, what: str) -> str:
+    if not re.match(RECORDING_NAME_PATTERN, str(value)):
+        raise ValueError(f"invalid {what} {value!r}: use 1-64 lowercase letters, digits and hyphens")
+    return value
+
+
+def _normalize_domains(values: list[str]) -> list[str]:
+    return [domain for domain in (normalize_domain(value) for value in values) if domain]
+
+
+class RunBudgetSpec(_Section):
+    """Caps of one stand run (``src.contracts.RunBudget``); ``None``: no cap."""
+
+    max_model_calls: Annotated[
+        int | None, Field(ge=1, description="Model calls per run.")
+    ] = None
+    max_tokens: Annotated[
+        int | None, Field(ge=1, description="Input + output tokens per run.")
+    ] = None
+    max_cost: Annotated[
+        float | None, Field(gt=0.0, description="Money per run in llm.currency (needs llm.prices).")
+    ] = None
+
+
+class TriggerSpec(_Section):
+    """One way a job starts: a period, a cron schedule or an HTTP webhook."""
+
+    id: Annotated[str, Field(min_length=1, description="Trigger id, unique in the job.")]
+    type: Annotated[TriggerType, Field(description="interval | cron | webhook.")]
+    every_seconds: Annotated[
+        float | None, Field(gt=0.0, description="interval: the period, >= serve.min_interval_seconds.")
+    ] = None
+    schedule: Annotated[
+        str | None,
+        Field(min_length=1, description="cron: a five-field cron expression in serve.timezone."),
+    ] = None
+    secret: Annotated[
+        SecretStr | None, Field(description="webhook: the shared secret (or secret_env).")
+    ] = None
+    secret_env: Annotated[
+        str | None,
+        Field(min_length=1, description="webhook: the environment variable holding the secret."),
+    ] = None
+    auth: Annotated[
+        WebhookAuth,
+        Field(description="webhook: bearer (Authorization header) or hmac_sha256 (signed body)."),
+    ] = "bearer"
+
+    @field_validator("id")
+    @classmethod
+    def _id_is_a_name(cls, value: str) -> str:
+        return _check_name(value, "trigger id")
+
+    @model_validator(mode="after")
+    def _fields_match_the_type(self) -> TriggerSpec:
+        if self.type == "interval" and self.every_seconds is None:
+            raise ValueError(f"interval trigger {self.id!r} needs every_seconds")
+        if self.type == "cron":
+            if not self.schedule:
+                raise ValueError(f"cron trigger {self.id!r} needs a schedule")
+            from croniter import croniter  # imported here: only cron triggers need it
+
+            if not croniter.is_valid(self.schedule):
+                raise ValueError(f"cron trigger {self.id!r}: invalid schedule {self.schedule!r}")
+        if self.type != "interval" and self.every_seconds is not None:
+            raise ValueError(f"{self.type} trigger {self.id!r} takes no every_seconds")
+        if self.type != "cron" and self.schedule is not None:
+            raise ValueError(f"{self.type} trigger {self.id!r} takes no schedule")
+        if self.type == "webhook" and (self.secret is None) == (self.secret_env is None):
+            raise ValueError(f"webhook trigger {self.id!r} needs exactly one of secret, secret_env")
+        if self.type != "webhook" and (self.secret is not None or self.secret_env is not None):
+            raise ValueError(f"{self.type} trigger {self.id!r} takes no secret")
+        return self
+
+
+class ProbeStepSpec(_Section):
+    """One model-free tool call of a probe; the tool name is the user's data."""
+
+    server: Annotated[
+        str, Field(description="MCP server of the tool; empty: whichever server exposes it.")
+    ] = ""
+    tool: Annotated[str, Field(min_length=1, description="Exposed tool name.")]
+    args: Annotated[dict[str, Any], Field(description="Arguments, passed as written.")] = Field(
+        default_factory=dict
+    )
+
+
+class ProbeSpec(_Section):
+    """Stage 0: a few tool calls without the model and a fingerprint of their output."""
+
+    steps: Annotated[
+        list[ProbeStepSpec], Field(min_length=1, description="The calls, in order.")
+    ]
+    select: Annotated[
+        str | None, Field(description="Regex of the output region to fingerprint; None: all of it.")
+    ] = None
+    ignore: Annotated[
+        list[str], Field(description="Regexes removed from the region before fingerprinting.")
+    ] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _patterns_compile(self) -> ProbeSpec:
+        for pattern in (self.select, *self.ignore):
+            if pattern is not None:
+                _compile(pattern, "probe regex")
+        return self
+
+
+class JobSpec(_Section):
+    """One stand job: a browser task, its triggers and how far and how dear it may go."""
+
+    task: Annotated[str, Field(min_length=1, description="The task text given to the agent.")]
+    enabled: Annotated[bool, Field(description="A disabled job never runs.")] = True
+    triggers: Annotated[list[TriggerSpec], Field(description="What starts the job.")] = Field(
+        default_factory=list
+    )
+    probe: Annotated[
+        ProbeSpec | None, Field(description="Stage 0: skip the run while the probe output is unchanged.")
+    ] = None
+    recording: Annotated[
+        str | None, Field(description="Recording to replay first (and to save with record_on_success).")
+    ] = None
+    record_on_success: Annotated[
+        bool, Field(description="Save a completed run that needed a model as the recording.")
+    ] = False
+    max_stage: Annotated[
+        LadderStage | None, Field(description="Ladder cap of the run; None: serve.default_max_stage.")
+    ] = None
+    budget: Annotated[
+        RunBudgetSpec | None, Field(description="Run budget; None: serve.default_run_budget.")
+    ] = None
+    domains: Annotated[
+        list[str], Field(description="Domains the run may act on (empty: no task scope).")
+    ] = Field(default_factory=list)
+    notify_on: Annotated[
+        list[NotifyKind], Field(description="Outcomes the channels are told about.")
+    ] = Field(default_factory=lambda: list(_DEFAULT_NOTIFY_ON))
+    coalesce: Annotated[
+        CoalesceMode | None, Field(description="None: serve.coalesce.")
+    ] = None
+    cooldown_seconds: Annotated[
+        float | None, Field(ge=0.0, description="None: serve.cooldown_seconds.")
+    ] = None
+
+    @field_validator("recording")
+    @classmethod
+    def _recording_is_a_name(cls, value: str | None) -> str | None:
+        return None if value is None else _check_name(value, "recording name")
+
+    @field_validator("domains")
+    @classmethod
+    def _domains_are_hosts(cls, values: list[str]) -> list[str]:
+        return _normalize_domains(values)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> JobSpec:
+        if self.record_on_success and self.recording is None:
+            raise ValueError("record_on_success needs a recording name")
+        ids = [trigger.id for trigger in self.triggers]
+        duplicates = sorted({item for item in ids if ids.count(item) > 1})
+        if duplicates:
+            raise ValueError(f"duplicate trigger id(s) {duplicates}")
+        return self
+
+
+class WebhookOutSettings(_Section):
+    """The outgoing webhook channel: notifications POSTed as signed JSON."""
+
+    url: Annotated[str, Field(min_length=1, description="Where notifications are POSTed (http/https).")]
+    secret: Annotated[
+        SecretStr | None,
+        Field(description="HMAC-SHA256 key of the X-AutoBrowser-Signature header; None: unsigned."),
+    ] = None
+    timeout_seconds: Annotated[
+        float, Field(gt=0.0, description="Timeout of one POST; a failure is logged, not retried.")
+    ] = 10.0
+
+    @field_validator("url")
+    @classmethod
+    def _http_url(cls, value: str) -> str:
+        if not value.startswith(("http://", "https://")):
+            # The URL is not quoted: it often carries a token.
+            raise ValueError("webhook_out.url must be an http(s) URL")
+        return value
+
+
+class ServeSettings(_Section):
+    """The stand, ``autobrowser serve`` (``docs/development/serve-mode.md``,
+    ``docs/development/2026-11-02-serve-mode-design.md`` section 9.4).
+
+    Nothing runs unless the command is started. The API listens on localhost; a remote
+    ``host`` needs ``allow_remote`` and a non-empty ``token``.
+    """
+
+    host: Annotated[str, Field(min_length=1, description="Address of the HTTP API.")] = "127.0.0.1"
+    port: Annotated[int, Field(ge=1, le=65535, description="Port of the HTTP API.")] = 8765
+    token: Annotated[
+        SecretStr | None,
+        Field(description="Bearer token of /v1/*; required for a remote host. Set it in the env."),
+    ] = None
+    allow_remote: Annotated[
+        bool, Field(description="Allow a host other than 127.0.0.1, ::1 or localhost.")
+    ] = False
+    dir: Annotated[
+        str, Field(min_length=1, description="Stand files (ledger, events, job state) under storage.root_dir.")
+    ] = "serve"
+    profiles_dir: Annotated[
+        str, Field(min_length=1, description="Browser profiles of the workers under storage.root_dir.")
+    ] = "serve/profiles"
+    cdp_port_base: Annotated[
+        int, Field(ge=1, le=65535, description="CDP port of worker w0 (launch: cdp).")
+    ] = 9300
+    queue_size: Annotated[int, Field(ge=1, description="Queued runs at most.")] = 20
+    coalesce: Annotated[
+        CoalesceMode,
+        Field(description="drop: a trigger on a busy job is skipped; queue_one: one waits."),
+    ] = "drop"
+    cooldown_seconds: Annotated[
+        float, Field(ge=0.0, description="Least time between the end of a job's run and its next start.")
+    ] = 0.0
+    min_interval_seconds: Annotated[
+        float, Field(ge=1.0, description="Least period of a trigger (interval and cron).")
+    ] = 60.0
+    catch_up: Annotated[
+        CatchUpMode, Field(description="Missed cron slots after downtime: none, or one catch-up run.")
+    ] = "none"
+    timezone: Annotated[
+        str, Field(description="IANA zone of cron and day budgets; empty: the system zone.")
+    ] = ""
+    daily_max_runs: Annotated[int | None, Field(ge=1, description="Runs per day.")] = None
+    daily_max_tokens: Annotated[int | None, Field(ge=1, description="Tokens per day.")] = None
+    daily_max_cost: Annotated[
+        float | None, Field(gt=0.0, description="Money per day in llm.currency.")
+    ] = None
+    default_run_budget: Annotated[
+        RunBudgetSpec,
+        Field(description="Budget of a run without its own; max_model_calls is required."),
+    ] = Field(default_factory=lambda: RunBudgetSpec(max_model_calls=30))
+    default_max_stage: Annotated[
+        LadderStage,
+        Field(description="Ladder cap of a run without its own (human: only with api_approvals)."),
+    ] = "agent"
+    session_max_runs: Annotated[
+        int, Field(ge=1, description="Runs before the worker's session is recreated.")
+    ] = 200
+    shutdown_grace_seconds: Annotated[
+        float, Field(gt=0.0, description="How long a running run may finish on shutdown.")
+    ] = 60.0
+    rate_limit_per_minute: Annotated[
+        int, Field(ge=1, description="Requests per minute per token, trigger or failing client.")
+    ] = 60
+    max_body_bytes: Annotated[
+        int, Field(ge=1024, description="Largest request body.")
+    ] = 65536
+    idempotency_window_seconds: Annotated[
+        float, Field(ge=0.0, description="How long an Idempotency-Key is remembered.")
+    ] = 3600.0
+    free_tasks: Annotated[
+        bool, Field(description="Accept free-form tasks on POST /v1/tasks.")
+    ] = False
+    free_task_domains: Annotated[
+        list[str], Field(description="Task scope of free tasks (empty: none).")
+    ] = Field(default_factory=list)
+    api_approvals: Annotated[
+        bool,
+        Field(
+            description=(
+                "Answer approvals on POST /v1/approvals/{id} (tickets go to the channels); "
+                "off: every approval is denied (dont_ask)."
+            ),
+        ),
+    ] = False
+    log_client_addresses: Annotated[
+        bool, Field(description="Write client addresses into the stand events.")
+    ] = False
+    channels: Annotated[
+        list[ServeChannel], Field(description="Notification channels: log, webhook.")
+    ] = Field(default_factory=lambda: ["log"])
+    notify_max_chars: Annotated[
+        int, Field(ge=100, description="Longest notification body.")
+    ] = 1500
+    webhook_out: Annotated[
+        WebhookOutSettings | None, Field(description="The outgoing webhook channel.")
+    ] = None
+    jobs: Annotated[
+        dict[str, JobSpec], Field(description="The stand's jobs, by name.")
+    ] = Field(default_factory=dict)
+
+    @field_validator("daily_max_runs", "daily_max_tokens", "daily_max_cost", mode="before")
+    @classmethod
+    def _null_string(cls, value: Any) -> Any:
+        return _null_string_to_none(value)
+
+    @field_validator("free_task_domains")
+    @classmethod
+    def _free_task_domains_are_hosts(cls, values: list[str]) -> list[str]:
+        return _normalize_domains(values)
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_zone(cls, value: str) -> str:
+        if value:
+            import zoneinfo
+
+            try:
+                zoneinfo.ZoneInfo(value)
+            except (zoneinfo.ZoneInfoNotFoundError, ValueError) as exc:
+                raise ValueError(
+                    f"unknown time zone {value!r}; on Windows install the IANA database "
+                    f"(uv add tzdata) or leave serve.timezone empty for the system zone"
+                ) from exc
+        return value
+
+    @model_validator(mode="after")
+    def _safe_and_consistent(self) -> ServeSettings:
+        token = self.token.get_secret_value().strip() if self.token is not None else ""
+        if self.host not in LOCAL_HOSTS:
+            if not self.allow_remote:
+                raise ValueError(
+                    f"serve.host {self.host!r} is reachable from other machines: set "
+                    f"serve.allow_remote: true (and a token) to allow it"
+                )
+            if not token:
+                raise ValueError(f"serve.host {self.host!r} needs a non-empty serve.token")
+        if self.default_run_budget.max_model_calls is None:
+            raise ValueError("serve.default_run_budget needs max_model_calls")
+        if "webhook" in self.channels and self.webhook_out is None:
+            raise ValueError("the webhook channel needs serve.webhook_out.url")
+        for name, job in self.jobs.items():
+            _check_name(name, "job name")
+            for trigger in job.triggers:
+                if trigger.type == "interval" and (trigger.every_seconds or 0) < self.min_interval_seconds:
+                    raise ValueError(
+                        f"job {name!r}, trigger {trigger.id!r}: every_seconds is below "
+                        f"serve.min_interval_seconds ({self.min_interval_seconds})"
+                    )
+        return self
+
+
 class Settings(BaseSettings):
     """Root settings object; build once per process via :func:`get_settings`.
 
@@ -2051,6 +2669,7 @@ class Settings(BaseSettings):
     observation: ObservationSettings = Field(default_factory=ObservationSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
     skills: SkillsSettings = Field(default_factory=SkillsSettings)
+    replay: ReplaySettings = Field(default_factory=ReplaySettings)
     events: EventSettings = Field(default_factory=EventSettings)
     storage: StorageSettings = Field(default_factory=StorageSettings)
     flags: FlagsSettings = Field(default_factory=FlagsSettings)
@@ -2060,6 +2679,7 @@ class Settings(BaseSettings):
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     eval_platform: EvalPlatformSettings = Field(default_factory=EvalPlatformSettings)
+    serve: ServeSettings = Field(default_factory=ServeSettings)
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
     #: Name of the ``mcp_servers`` entry that provides browser tools (exposed unprefixed).
     #: ``None`` falls back to ``"playwright"`` when such an entry exists.
@@ -2140,10 +2760,12 @@ __all__ = [
     "LLMSettings",
     "LoopSettings",
     "MemorySettings",
+    "ModelPriceSpec",
     "ObservationSettings",
     "PermissionRule",
     "PermissionsSettings",
     "PipelineSettings",
+    "ReplaySettings",
     "Settings",
     "StorageSettings",
     "TOOL_HOOK_EVENTS",

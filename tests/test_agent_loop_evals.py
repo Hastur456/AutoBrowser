@@ -241,3 +241,18 @@ async def test_the_closed_fake_schemas_drop_undeclared_arguments() -> None:
 
     assert result.error_count == 0
     assert result.summary.terminal_status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_the_playback_scenarios_meet_their_assertions() -> None:
+    from src.agent_loop.evals import collect_eval_metrics
+    from tests.evals.runner import PLAYBACK_SCENARIO_DIR, load_scenarios
+
+    scenarios = load_scenarios(PLAYBACK_SCENARIO_DIR)
+    runs = await collect_eval_metrics(scenarios)
+
+    assert len(runs) >= 6
+    assert {run.name: run.problems for run in runs if run.problems} == {}
+    clean = next(run for run in runs if run.name == "playback_clean_replay")
+    assert clean.result.summary.model_turn_count == 0
+    assert clean.result.stage_reached == "playback"

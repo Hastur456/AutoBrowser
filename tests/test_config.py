@@ -127,6 +127,10 @@ def test_defaults_match_the_constants_they_replaced(settings: Any) -> None:
         r"C:\Program Files\Google\Chrome\Application\chrome.exe"
     )
     assert config.browser.user_data_dir == Path(r"C:\temp\chrome_debug_profile")
+    # The session launches a visible Chrome over CDP unless told otherwise (serve mode).
+    assert config.browser.launch == "cdp"
+    assert config.browser.headless is False
+    assert config.browser.extra_args == []
 
     # was: the hardcoded ".autobrowser" storage literals (now under the home directory)
     home = home_dir()
@@ -1332,6 +1336,63 @@ def test_skills_bounds_are_enforced(settings: Any, field: str, value: Any) -> No
 
 
 # --------------------------------------------------------------------------
+# The replay section
+# --------------------------------------------------------------------------
+
+
+def test_replay_defaults_are_off_and_conservative(settings: Any) -> None:
+    replay = settings().replay
+
+    assert replay.enabled is False
+    assert replay.dir == "recordings"
+    assert replay.max_steps == 100
+    assert replay.checkpoint_min_similarity == 0.6
+    assert replay.checkpoint_url == "path"
+    assert replay.describe_context_lines == 2
+    assert replay.text_shingle_words == 3
+    assert replay.retarget_enabled is True
+    assert replay.max_retargets_per_run == 3
+    assert replay.retarget_context_chars == 12_000
+    assert replay.retarget_timeout_seconds == 30.0
+    assert replay.default_answer == "agent"
+    assert replay.keep_previous is True
+    assert replay.detail_max_chars == 300
+
+
+def test_replay_env_names_resolve(settings: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AUTOBROWSER_REPLAY__ENABLED", "true")
+    monkeypatch.setenv("AUTOBROWSER_REPLAY__CHECKPOINT_URL", "host")
+    monkeypatch.setenv("AUTOBROWSER_REPLAY__DEFAULT_ANSWER", "summary")
+
+    replay = settings().replay
+
+    assert (replay.enabled, replay.checkpoint_url, replay.default_answer) == (True, "host", "summary")
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("dir", ""),
+        ("max_steps", 0),
+        ("checkpoint_min_similarity", 1.5),
+        ("checkpoint_min_similarity", -0.1),
+        ("checkpoint_url", "query"),
+        ("describe_context_lines", 11),
+        ("text_shingle_words", 0),
+        ("max_retargets_per_run", -1),
+        ("retarget_context_chars", 999),
+        ("retarget_timeout_seconds", 0),
+        ("default_answer", "maybe"),
+        ("detail_max_chars", 0),
+        ("unknown", 1),
+    ],
+)
+def test_replay_bounds_are_enforced(settings: Any, field: str, value: Any) -> None:
+    with pytest.raises(ValueError):
+        settings(replay={field: value})
+
+
+# --------------------------------------------------------------------------
 # The pipeline section: tolerances of the regression tools
 # --------------------------------------------------------------------------
 
@@ -1395,6 +1456,7 @@ def test_telemetry_is_off_and_neutral_by_default(settings: Any) -> None:
     assert telemetry.otlp_headers == {}
     assert telemetry.otlp_timeout_seconds == 10.0
     assert telemetry.capture_content == "none"
+    assert telemetry.trajectory is False
     assert telemetry.service_name == "autobrowser"
     assert telemetry.environment is None
     assert telemetry.attribute_aliases == {}
@@ -1404,6 +1466,7 @@ def test_telemetry_reads_the_environment_name_and_attribute_aliases(
     settings: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AUTOBROWSER_TELEMETRY__ENVIRONMENT", "staging")
+    monkeypatch.setenv("AUTOBROWSER_TELEMETRY__TRAJECTORY", "true")
     monkeypatch.setenv(
         "AUTOBROWSER_TELEMETRY__ATTRIBUTE_ALIASES",
         '{"autobrowser.batch.id": "backend.metadata.batch_id"}',
@@ -1412,6 +1475,7 @@ def test_telemetry_reads_the_environment_name_and_attribute_aliases(
     telemetry = settings().telemetry
 
     assert telemetry.environment == "staging"
+    assert telemetry.trajectory is True
     assert telemetry.attribute_aliases == {"autobrowser.batch.id": "backend.metadata.batch_id"}
 
 
@@ -1561,3 +1625,203 @@ def test_the_config_file_is_read_as_utf8(
     (rule,) = settings().permissions.rules
 
     assert rule.reason == reason
+
+
+# --------------------------------------------------------------------------
+# Prices and task budgets
+# --------------------------------------------------------------------------
+
+
+def test_prices_and_task_budgets_default_to_unset(settings: Any) -> None:
+    current = settings()
+
+    assert current.llm.prices == {} and current.llm.currency == "USD"
+    assert (current.loop.max_task_model_calls, current.loop.max_task_tokens, current.loop.max_task_cost) == (
+        None,
+        None,
+        None,
+    )
+
+
+def test_prices_and_budgets_resolve_from_the_environment(settings: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "AUTOBROWSER_LLM__PRICES", '{"gemma4:31b-cloud": {"input_per_mtok": 0.2, "output_per_mtok": 0.6}}'
+    )
+    monkeypatch.setenv("AUTOBROWSER_LOOP__MAX_TASK_MODEL_CALLS", "30")
+    monkeypatch.setenv("AUTOBROWSER_LOOP__MAX_TASK_COST", "0.05")
+
+    current = settings()
+
+    price = current.llm.prices["gemma4:31b-cloud"]
+    assert (price.input_per_mtok, price.output_per_mtok, price.cached_input_per_mtok) == (0.2, 0.6, None)
+    assert (current.loop.max_task_model_calls, current.loop.max_task_cost) == (30, 0.05)
+
+
+@pytest.mark.parametrize(
+    "section, values",
+    [
+        ("llm", {"prices": {"m": {"input_per_mtok": -1, "output_per_mtok": 0}}}),
+        ("llm", {"prices": {"m": {"input_per_mtok": 1, "output_per_mtok": 1, "unknown": 1}}}),
+        ("llm", {"currency": ""}),
+        ("loop", {"max_task_model_calls": 0}),
+        ("loop", {"max_task_tokens": 0}),
+        ("loop", {"max_task_cost": 0}),
+    ],
+)
+def test_prices_and_budgets_bounds_are_enforced(settings: Any, section: str, values: dict) -> None:
+    with pytest.raises(ValueError):
+        settings(**{section: values})
+
+
+# --------------------------------------------------------------------------
+# The serve section (autobrowser serve; docs/development/serve-mode.md)
+# --------------------------------------------------------------------------
+
+
+def _job(**fields: Any) -> dict[str, Any]:
+    return {"task": "Open the page and report the price.", **fields}
+
+
+def test_serve_defaults_are_safe(settings: Any) -> None:
+    serve = settings().serve
+
+    assert serve.host == "127.0.0.1"
+    assert serve.port == 8765
+    assert serve.token is None
+    assert serve.allow_remote is False
+    assert serve.free_tasks is False
+    assert serve.api_approvals is False
+    assert serve.channels == ["log"]
+    assert serve.jobs == {}
+    assert serve.default_run_budget.max_model_calls == 30
+    assert serve.default_max_stage == "agent"
+    assert serve.timezone == ""
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.5", "example.org"])
+def test_a_remote_host_needs_allow_remote_and_a_token(settings: Any, host: str) -> None:
+    with pytest.raises(ValueError, match="allow_remote"):
+        settings(serve={"host": host, "token": "t0ken"})
+    with pytest.raises(ValueError, match="token"):
+        settings(serve={"host": host, "allow_remote": True})
+    with pytest.raises(ValueError, match="token"):
+        settings(serve={"host": host, "allow_remote": True, "token": "  "})
+
+    serve = settings(serve={"host": host, "allow_remote": True, "token": "t0ken"}).serve
+    assert serve.token.get_secret_value() == "t0ken"
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost"])
+def test_a_local_host_needs_no_token(settings: Any, host: str) -> None:
+    assert settings(serve={"host": host}).serve.host == host
+
+
+def test_the_serve_token_comes_from_the_environment_and_stays_secret(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_SERVE__TOKEN", "env-t0ken")
+
+    serve = settings().serve
+
+    assert serve.token.get_secret_value() == "env-t0ken"
+    assert "env-t0ken" not in repr(serve)
+
+
+def test_a_job_with_its_triggers_probe_and_budget(settings: Any) -> None:
+    job = _job(
+        triggers=[
+            {"id": "hourly", "type": "interval", "every_seconds": 3600},
+            {"id": "ci", "type": "webhook", "secret": "s3cret", "auth": "hmac_sha256"},
+        ],
+        probe={"steps": [{"tool": "browser_navigate", "args": {"url": "https://shop.example/1"}}],
+               "select": "(?s)Price.*?USD", "ignore": [r"\d+ reviews"]},
+        recording="price-watch",
+        record_on_success=True,
+        max_stage="playback",
+        budget={"max_model_calls": 5, "max_cost": 0.02},
+        domains=["WWW.Shop.Example"],
+    )
+
+    spec = settings(serve={"jobs": {"price-watch": job}}).serve.jobs["price-watch"]
+
+    assert [t.id for t in spec.triggers] == ["hourly", "ci"]
+    assert spec.triggers[1].secret.get_secret_value() == "s3cret"
+    assert spec.probe.steps[0].tool == "browser_navigate"
+    assert spec.probe.steps[0].server == ""
+    assert spec.domains == ["shop.example"]
+    assert spec.budget.max_model_calls == 5
+    assert spec.enabled is True
+    assert spec.notify_on == ["change", "failure", "blocked", "budget"]
+    assert spec.coalesce is None and spec.cooldown_seconds is None
+
+
+@pytest.mark.parametrize(
+    "jobs, message",
+    [
+        ({"Bad Name": _job()}, "job name"),
+        ({"j": _job(recording="../x")}, "recording"),
+        ({"j": _job(record_on_success=True)}, "record_on_success"),
+        ({"j": _job(triggers=[{"id": "t", "type": "interval"}])}, "every_seconds"),
+        ({"j": _job(triggers=[{"id": "t", "type": "interval", "every_seconds": 5}])}, "min_interval_seconds"),
+        ({"j": _job(triggers=[{"id": "t", "type": "webhook"}])}, "secret"),
+        ({"j": _job(triggers=[{"id": "t", "type": "webhook", "secret": "a", "secret_env": "B"}])}, "secret"),
+        ({"j": _job(triggers=[{"id": "t", "type": "interval", "every_seconds": 60},
+                              {"id": "t", "type": "interval", "every_seconds": 90}])}, "duplicate"),
+        ({"j": _job(probe={"steps": []})}, "steps"),
+        ({"j": _job(probe={"steps": [{"tool": "x"}], "select": "("})}, "regex"),
+        ({"j": _job(domains=["https://shop.example/"])}, "domain"),
+        ({"j": _job(notify_on=["sometimes"])}, "notify_on"),
+        ({"j": _job(surprise=True)}, "surprise"),
+    ],
+)
+def test_invalid_jobs_are_rejected(settings: Any, jobs: dict[str, Any], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        settings(serve={"jobs": jobs})
+
+
+def test_a_webhook_secret_may_name_an_environment_variable(settings: Any) -> None:
+    job = _job(triggers=[{"id": "ci", "type": "webhook", "secret_env": "PRICE_HOOK_SECRET"}])
+
+    spec = settings(serve={"jobs": {"j": job}}).serve.jobs["j"]
+
+    assert spec.triggers[0].secret is None
+    assert spec.triggers[0].secret_env == "PRICE_HOOK_SECRET"
+
+
+def test_the_default_run_budget_must_cap_model_calls(settings: Any) -> None:
+    with pytest.raises(ValueError, match="max_model_calls"):
+        settings(serve={"default_run_budget": {"max_tokens": 1000}})
+
+
+def test_the_webhook_channel_needs_an_outgoing_url(settings: Any) -> None:
+    with pytest.raises(ValueError, match="webhook_out"):
+        settings(serve={"channels": ["log", "webhook"]})
+
+    serve = settings(
+        serve={"channels": ["webhook"], "webhook_out": {"url": "https://hooks.example/x", "secret": "k"}}
+    ).serve
+    assert serve.webhook_out.timeout_seconds == 10.0
+    assert serve.webhook_out.secret.get_secret_value() == "k"
+
+
+def test_free_task_domains_are_normalized(settings: Any) -> None:
+    assert settings(serve={"free_task_domains": ["*.Example.COM"]}).serve.free_task_domains == ["example.com"]
+
+
+def test_an_unknown_time_zone_is_rejected_with_a_hint(settings: Any) -> None:
+    with pytest.raises(ValueError, match="tzdata"):
+        settings(serve={"timezone": "Mars/Olympus_Mons"})
+
+
+def test_a_cron_trigger_needs_a_valid_schedule(settings: Any) -> None:
+    ok = _job(triggers=[{"id": "c", "type": "cron", "schedule": "0 9 * * 1-5"}])
+    assert settings(serve={"jobs": {"j": ok}}).serve.jobs["j"].triggers[0].schedule == "0 9 * * 1-5"
+
+    for trigger, message in [
+        ({"id": "c", "type": "cron"}, "needs a schedule"),
+        ({"id": "c", "type": "cron", "schedule": "61 * * * *"}, "invalid schedule"),
+        ({"id": "c", "type": "interval", "every_seconds": 60, "schedule": "* * * * *"}, "takes no schedule"),
+        ({"id": "c", "type": "cron", "schedule": "* * * * *", "every_seconds": 60}, "takes no every_seconds"),
+    ]:
+        with pytest.raises(ValueError, match=message):
+            settings(serve={"jobs": {"j": _job(triggers=[trigger])}})

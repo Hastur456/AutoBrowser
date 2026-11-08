@@ -43,6 +43,7 @@ engine-native execution loop. The CLI entry point is `main.py`. Core code lives 
 - `src/cli/`: the `autobrowser` entry point (`entry.py`), parser, bootstrap wiring that picks the front end, and the `cmd2` shell kept as `--classic`.
 - `src/ui/`: front ends over the session — `SessionController`, `RuntimeLoop`, the event feed projection, the inline terminal UI (`src/ui/tui/`), plain line mode and the launcher. Guide: `docs/development/terminal-ui.md`.
 - `src/harness/`: session runtime and runtime infrastructure bundled into `EngineResources` for the engine.
+- `src/serve/`: the stand (`autobrowser serve`), a `SessionController` client: dispatcher, scheduler, HTTP API, probe, ledger, channels. It imports no engine, browser, harness, CLI or provider module; `src/cli/serve.py` composes it. Guide: `docs/development/serve-mode.md`.
 - `src/mcp/`: Playwright MCP process/session lifecycle helpers and provider loading.
 - `docs/`: architecture, development setup, decisions, diagrams, research notes, and glossary.
 
@@ -169,6 +170,8 @@ uv run pytest tests\test_context_assembler.py tests\test_goal_runner.py
 uv run pytest tests\test_harness_hooks.py tests\test_agent_loop_hooks.py tests\test_browser_hooks.py tests\test_builtin_hooks.py tests\test_command_hooks.py tests\test_hook_scripts.py
 uv run pytest tests\test_harness_memory.py tests\test_memory_store.py tests\test_memory_tool.py tests\test_memory_consolidation.py tests\test_working_notes.py tests\test_browser_memory.py tests\test_memory_boundaries.py
 uv run pytest tests\test_skills.py tests\test_skill_tool.py tests\test_session_skills.py tests\test_skill_boundaries.py
+uv run pytest tests\serve tests\test_serve_boundaries.py         # the stand (dispatcher, scheduler, API, probe)
+uv run pytest -m live tests\pipeline\test_docker_smoke.py      # the Docker image (needs a Docker daemon)
 uv run scripts/run_evals.py --memory-seed tests\evals\memory_seed   # evals with and without seed memory
 ```
 
@@ -217,10 +220,11 @@ uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
 uv run scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.jsonl
 ```
 
-Run deterministic fake-browser eval baselines:
+Run deterministic fake-browser eval baselines (agent scenarios; replay scenarios):
 
 ```powershell
 uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v2.json
+uv run scripts/run_evals.py --scenarios tests\evals\playback_scenarios --baseline tests\evals\baselines\playback_v1.json
 ```
 
 Start the interactive terminal UI with:
@@ -231,7 +235,8 @@ uv run main.py --classic  # the cmd2 shell described below
 ```
 
 The terminal UI takes free-form tasks and slash commands (`/help`, `/status`, `/model [id]`, `/tasks`,
-`/cancel`, `/mcp [reconnect <name>]`, `/history [N]`, `/memory`, `/permissions`, `/detail`,
+`/cancel`, `/mcp [reconnect <name>]`, `/history [N]`, `/memory`, `/record [<name>|off]`,
+`/permissions`, `/detail`,
 `/theme`, `/doctor`, `/resume`, `/clear` = new session (aliases `/reset`, `/new`), `/exit`); keys and terminals are listed in
 `docs/development/terminal-ui.md`.
 
@@ -253,8 +258,10 @@ The terminal UI takes free-form tasks and slash commands (`/help`, `/status`, `/
 Useful CLI flags include `--loop`, `--show-state`, `--show-tools`, `--json`, `--no-mcp`, `--compress-tools`, `--model`, `--temperature`, `--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap`, `--permission-mode`, the front-end flags `--classic`,
 `--plain`, `--ascii`, `--no-color`, `--theme`, session flags `--continue`/`-c` and
 `--resume [id]`/`-r`, and print mode `-p` with `--output-format text|json|stream-json` and
-`--verbose`. Subcommands: `autobrowser doctor`, `sessions [--all]`, `replay <id|path>`,
-`completion <shell>`. Runtime data lives in the AutoBrowser home (`AUTOBROWSER_HOME`, else
+`--verbose`, and replay flags `--record NAME` (record the first task) and, in print mode,
+`--recording NAME` with `--answer agent|output|summary` (`docs/development/replay.md`).
+Subcommands: `autobrowser doctor`, `sessions [--all]`, `replay <id|path>` (trace viewer),
+`recordings list|show|rm`, `serve [--check]` (the stand, `docs/development/serve-mode.md`), `completion <shell>`. Runtime data lives in the AutoBrowser home (`AUTOBROWSER_HOME`, else
 `~/.autobrowser`); see `docs/development/terminal-ui.md`.
 
 ## Coding Style & Naming Conventions

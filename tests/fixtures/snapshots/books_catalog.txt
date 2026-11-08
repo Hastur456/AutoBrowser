@@ -1,0 +1,31 @@
+### Page
+- Page URL: https://books.toscrape.com/
+- Page Title: All products | Books to Scrape - Sandbox
+- Console: 1 errors, 0 warnings
+### Snapshot
+```yaml
+- list [ref=f3e16]:
+  - listitem [ref=f3e17]:
+    - link "Books" [ref=f3e18] [cursor=pointer]:
+      - /url: catalogue/category/books_1/index.html
+    - list [ref=f3e19]:
+      - listitem [ref=f3e20]:
+        - link "Travel" [ref=f3e21] [cursor=pointer]:
+          - /url: catalogue/category/books/travel_2/index.html
+      - listitem [ref=f3e22]:
+        - link "Mystery" [ref=f3e23] [cursor=pointer]:
+          - /url: catalogue/category/books/mystery_3/index.html
+      - listitem [ref=f3e24]:
+        - link "Historical Fiction" [ref=f3e25] [cursor=pointer]:
+          - /url: catalogue/category/books/historical-fiction_4/index.html
+      - listitem [ref=f3e26]:
+        - link "Sequential Art" [ref=f3e27] [cursor=pointer]:
+          - /url: catalogue/category/books/sequential-art_5/index.html
+      - listitem [ref=f3e28]:
+        - link "Classics" [ref=f3e29] [cursor=pointer]:
+          - /url: catalogue/category/books/classics_6/index.html
+      - listitem [ref=f3e30]:
+        - link "Philosophy" [ref=f3e31] [cursor=pointer]:
+          - /url: catalogue/category/books/philosophy_7/index.html
+      - listitem [ref=f3e32]:
+```

@@ -5,7 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Callable, Sequence
+import tempfile
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -29,10 +30,15 @@ from src.agent_loop.replay import (
 )
 from src.browser.errors import BROWSER_ERROR_ACTION_FAILED, BROWSER_ERROR_INVALID_REF
 from src.browser.permissions import BrowserResourceResolver
-from src.config import PermissionsSettings, SkillsSettings
+from src.agent_loop.recordings import recording_from_json
+from src.browser.playback import BrowserPlaybackAdapter
+from src.config import PermissionsSettings, ReplaySettings, SkillsSettings
 from src.contracts import (
     ApprovalAnswer,
     PermissionVerdict,
+    PlaybackRequest,
+    RunBudget,
+    RunProfile,
     TaskRequest,
     Tool,
     ToolRequest,
@@ -40,6 +46,8 @@ from src.contracts import (
     goal_status_from_completion,
 )
 from src.harness.permissions import PermissionEngine
+from src.harness.playback import PlaybackFactory
+from src.harness.recording_store import RecordingStore
 from src.harness.normalization import SchemaArgsNormalizer
 from src.harness.runtime import BrowserHarness
 from src.harness.skill_tool import skill_tools
@@ -356,6 +364,10 @@ class EvalAssertions:
     max_policy_blocks: int | None = None
     #: Most tool calls that may finish with ``status: error``.
     max_errors: int | None = None
+    #: Most model calls of the task (plan and turns); ``0`` asserts a model-free replay.
+    max_model_turns: int | None = None
+    #: The cost-ladder stage the task must end at (``playback``, ``retarget``, ``agent``).
+    expected_stage_reached: str | None = None
 
 
 @dataclass(frozen=True)
@@ -376,6 +388,9 @@ class EvalScenario:
     human_answers: list[str] = field(default_factory=list)
     #: Fail on a model call past the script instead of cycling (see :class:`FakeChatModel`).
     strict: bool = False
+    #: Replay: ``{"recording": <recording document>, "answer", "select", "ignore",
+    #: "max_stage", "max_model_calls"}``; the recording is stored for the run only.
+    playback: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -403,6 +418,8 @@ class EvalResult:
     #: ``sha256:`` of the proposed calls as ``(tool, sorted argument keys)``, see
     #: :func:`action_signature`.
     action_signature: str = ""
+    #: The cost-ladder stage the task reached; not part of the baseline metrics.
+    stage_reached: str = ""
 
     def metrics(self) -> dict[str, Any]:
         """The v1 baseline metrics (``agent_loop_v1.json`` plus ``final_answer``)."""
@@ -497,11 +514,14 @@ def load_scenario(path: Path) -> EvalScenario:
             max_repeated_actions=assertions.get("max_repeated_actions"),
             max_policy_blocks=assertions.get("max_policy_blocks"),
             max_errors=assertions.get("max_errors"),
+            max_model_turns=assertions.get("max_model_turns"),
+            expected_stage_reached=assertions.get("expected_stage_reached"),
         ),
         turn_cap=int(data.get("turn_cap", 25) or 25),
         permissions=PermissionsSettings(**{"mode": "dont_ask", **(data.get("permissions") or {})}),
         human_answers=[str(item) for item in (data.get("human") or {}).get("answers") or []],
         strict=bool(data.get("strict", False)),
+        playback=data.get("playback"),
     )
 
 
@@ -577,6 +597,8 @@ async def run_scenario(
         ),
         event_emitter=emitter,
     )
+    playback_dir = tempfile.TemporaryDirectory(prefix="autobrowser-eval-recordings-")
+    steps, profile = _scenario_playback(scenario, Path(playback_dir.name))
     # The session's browser permission wiring, over the scenario's rules and mode.
     resources = EngineResources.from_harness(
         harness,
@@ -587,6 +609,7 @@ async def run_scenario(
             resolver=BrowserResourceResolver(),
         ),
         memory=memory,
+        steps=steps,
     )
     emitter.emit(
         "goal.started",
@@ -601,7 +624,10 @@ async def run_scenario(
         task_id=task_id,
         session_id=session_id,
         turn_cap=scenario.turn_cap,
+        profile=profile,
     )
+    stage_reached = ""
+    final_state: dict[str, Any] = {}
     try:
         result = await agent.run(request)
     except Exception as exc:
@@ -612,8 +638,8 @@ async def run_scenario(
             task_id=task_id,
             goal_id=task_id,
         )
-        final_state: dict[str, Any] = {}
     else:
+        stage_reached = str(result.usage.stage_reached) if result.usage is not None else ""
         final_state = {
             **dict(result.session_state),
             "final_answer": str(result.final_answer or ""),
@@ -633,6 +659,8 @@ async def run_scenario(
             task_id=task_id,
             goal_id=task_id,
         )
+    finally:
+        playback_dir.cleanup()
     events = sink.records
     summary = summarize_trace(events)
     return EvalResult(
@@ -648,7 +676,39 @@ async def run_scenario(
         approval_request_count=_event_count(events, "approval.requested"),
         observation_count=_event_count(events, "observation.compiled"),
         action_signature=action_signature(events),
+        stage_reached=stage_reached,
     )
+
+
+def _scenario_playback(
+    scenario: EvalScenario, root: Path
+) -> tuple[PlaybackFactory | None, RunProfile]:
+    """The step sources and run profile of a replay scenario; none for an agent scenario.
+
+    The recording is stored under ``root`` for this run only, with the code-default replay
+    settings and the browser adapter (the fake browser prints Playwright-style snapshots);
+    there is no retargeter (a scripted model answers in JSON text, not tool calls).
+    """
+
+    spec = scenario.playback
+    if not spec:
+        return None, RunProfile()
+    settings = ReplaySettings()
+    document = {"format": "autobrowser.recording/1", **dict(spec["recording"])}
+    recording = recording_from_json(document)
+    store = RecordingStore(root, settings)
+    store.save(recording)
+    profile = RunProfile(
+        playback=PlaybackRequest(
+            recording=recording.name,
+            answer=spec.get("answer"),
+            select=spec.get("select"),
+            ignore=tuple(spec.get("ignore") or ()),
+        ),
+        max_stage=spec.get("max_stage", "human"),
+        budget=RunBudget(max_model_calls=spec.get("max_model_calls")),
+    )
+    return PlaybackFactory(store, BrowserPlaybackAdapter(settings), settings), profile
 
 
 async def collect_eval_metrics(
@@ -706,10 +766,14 @@ def check_scenario_result(scenario: EvalScenario, result: EvalResult) -> list[st
         ("repeated_action_count", summary.repeated_action_count, assertions.max_repeated_actions),
         ("policy_block_count", summary.policy_block_count, assertions.max_policy_blocks),
         ("error_count", result.error_count, assertions.max_errors),
+        ("model_turn_count", summary.model_turn_count, assertions.max_model_turns),
     )
     for metric, actual, limit in limits:
         if limit is not None and actual > limit:
             problems.append(f"{metric}: {actual} exceeds the limit {limit}")
+    expected_stage = assertions.expected_stage_reached
+    if expected_stage is not None and result.stage_reached != expected_stage:
+        problems.append(f"stage_reached: expected {expected_stage!r}, got {result.stage_reached!r}")
     if summary.trace_complete is not True:
         problems.append("trace_complete: the trace has no goal.started or no terminal event")
     return problems

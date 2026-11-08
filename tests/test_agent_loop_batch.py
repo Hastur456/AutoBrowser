@@ -852,3 +852,44 @@ def test_the_settings_fingerprint_never_holds_an_export_header() -> None:
     second = Settings.model_construct(telemetry=TelemetrySettings(otlp_headers={"Authorization": "Basic two"}))
 
     assert settings_provenance(first)["settings_sha256"] == settings_provenance(second)["settings_sha256"]
+
+
+@pytest.mark.asyncio
+async def test_rows_carry_the_ladder_stage_and_the_usage_of_their_tasks(tmp_path: Path) -> None:
+    from src.contracts import TaskUsage
+
+    usages = iter(
+        [
+            TaskUsage(model_calls=0, stage_reached="playback"),
+            TaskUsage(model_calls=3, input_tokens=900, output_tokens=60, cost=None, stage_reached="agent"),
+        ]
+    )
+
+    class UsageSession(FakeBatchSession):
+        async def run_task(self, task: str) -> SimpleNamespace:
+            result = await super().run_task(task)
+            result.usage = next(usages)
+            return result
+
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["replay", "fallback"]}])
+
+    result = await run_batch(
+        tasks_path=tasks_path, session_factory=lambda scenario: UsageSession("session-1"), batches_dir=tmp_path / "b"
+    )
+
+    (row,) = _read_jsonl(Path(result["run_index_path"]))
+    assert row["stage_reached"] == "agent"
+    assert row["usage"] == {"model_calls": 3, "input_tokens": 900, "output_tokens": 60, "cost": None}
+    assert [usage["stage_reached"] for usage in row["task_usage"]] == ["playback", "agent"]
+
+
+@pytest.mark.asyncio
+async def test_results_without_accounting_leave_the_usage_empty(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.jsonl"
+    _write_jsonl(tasks_path, [{"scenario_id": "s1", "tasks": ["a"]}])
+
+    result = await run_batch(tasks_path=tasks_path, session_factory=FakeSessionFactory(), batches_dir=tmp_path / "b")
+
+    (row,) = _read_jsonl(Path(result["run_index_path"]))
+    assert (row["stage_reached"], row["usage"], row["task_usage"]) == (None, None, [None])

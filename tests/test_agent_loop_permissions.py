@@ -7,7 +7,14 @@ from typing import Any
 import pytest
 
 from src.config import PermissionRule, PermissionsSettings
-from src.contracts import HookResult, PermissionVerdict, Tool, ToolRequest
+from src.contracts import (
+    HookResult,
+    PermissionCheck,
+    PermissionVerdict,
+    RunProfile,
+    Tool,
+    ToolRequest,
+)
 from src.harness.hooks import HookEngine
 from src.harness.permissions import PermissionEngine
 from tests.test_agent_loop_hooks import (
@@ -280,3 +287,47 @@ async def test_unknown_tools_skip_permissions() -> None:
 
     assert "permission.decided" not in types_of(records)
     assert "Unknown tool: missing" in tool_messages(result)[0]
+
+
+class UrlResolver:
+    """The domain of a ``url`` argument, as the browser resolver reads it."""
+
+    def resources(self, check: PermissionCheck, state: Any) -> dict[str, str]:
+        url = str(check.args.get("url") or "")
+        return {"domain": url.split("//", 1)[-1].split("/", 1)[0]} if url else {}
+
+
+@pytest.mark.asyncio
+async def test_the_task_domains_of_the_profile_reach_the_permission_check() -> None:
+    echo = EchoTool()
+    perms = PermissionEngine.from_settings(PermissionsSettings(), resolver=UrlResolver())
+
+    result, records, llm = await run_engine(
+        [PLAN, call("echo", "c1", url="https://evil.example/x"), call("echo", "c2", url="https://shop.example/"), DONE],
+        tools=echo.tools(),
+        permissions=perms,
+        profile=RunProfile(allowed_domains=("shop.example",)),
+    )
+
+    assert echo.calls == [{"url": "https://shop.example/"}]
+    assert result.status == "done"  # the task-scope deny is not terminal
+    assert llm.calls == 4
+    denied, allowed = permission_events(records)
+    assert (denied["decision"], denied["source"]) == ("deny", "task_scope")
+    assert allowed["decision"] == "allow"
+    assert "outside the domains this task may use" in tool_messages(result)[0]
+
+
+@pytest.mark.asyncio
+async def test_without_task_domains_the_profile_changes_no_permission() -> None:
+    echo = EchoTool()
+    perms = PermissionEngine.from_settings(PermissionsSettings(), resolver=UrlResolver())
+
+    _, records, _ = await run_engine(
+        [PLAN, call("echo", "c1", url="https://evil.example/x"), DONE],
+        tools=echo.tools(),
+        permissions=perms,
+        profile=RunProfile(),
+    )
+
+    assert [event["decision"] for event in permission_events(records)] == ["allow"]

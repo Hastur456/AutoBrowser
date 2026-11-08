@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Any, Literal, Protocol
 
 from src.config import UiSettings
+from src.contracts import RunProfile
 from src.ui.feed import project_event
 from src.ui.plain import PlainState, format_item
 from src.ui.tui.ports import StreamItemView
@@ -35,7 +36,7 @@ INTERRUPTED_EXIT_CODE = 130
 class PrintController(Protocol):
     """What print mode needs from :class:`src.ui.controller.SessionController`."""
 
-    async def run_outcome(self, text: str) -> TaskOutcome: ...
+    async def run_outcome(self, text: str, *, profile: RunProfile | None = None) -> TaskOutcome: ...
     def session_view(self) -> SessionView: ...
     def subscribe(self, after: Any = None) -> AsyncIterator[StreamItemView]: ...
 
@@ -49,8 +50,10 @@ async def run_print(
     settings: UiSettings,
     write_out: Callable[[str], None],
     write_err: Callable[[str], None],
+    profile: RunProfile | None = None,
 ) -> int:
-    """Run ``task`` to its end, print the result, return the exit code."""
+    """Run ``task`` (with its run ``profile``, e.g. a playback) to its end, print the
+    result, return the exit code."""
 
     outcome_seen = asyncio.Event()
     state = PlainState()
@@ -77,7 +80,7 @@ async def run_print(
     error = ""
     cancelled = False
     try:
-        outcome = await controller.run_outcome(task)
+        outcome = await controller.run_outcome(task, profile=profile)
     except asyncio.CancelledError:
         cancelled = True
     except Exception as exc:  # noqa: BLE001 - the session could not start: a failed run
@@ -97,9 +100,13 @@ async def run_print(
     if outcome is not None:
         status, task_id = outcome.status, outcome.task_id
         final_answer, turns, error = outcome.final_answer, outcome.turns, outcome.error
+        stop_reason, stage = outcome.stop_reason, outcome.stage
+        usage = asdict(outcome.usage) if outcome.usage is not None else None
     else:
         status = "cancelled" if cancelled else "failed"
         task_id, final_answer, turns = "", "", None
+        stop_reason, stage = "", ""
+        usage = None
     summary: dict[str, object] = {
         "status": status,
         "final_answer": final_answer,
@@ -107,6 +114,12 @@ async def run_print(
         "session_id": controller.session_view().session_id,
         "task_id": task_id,
     }
+    if stop_reason:
+        summary["stop_reason"] = stop_reason
+    if stage:
+        summary["stage"] = stage
+    if usage is not None:
+        summary["usage"] = usage
     if error:
         summary["error"] = error
     if output_format == "json":

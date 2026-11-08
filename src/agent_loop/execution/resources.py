@@ -19,13 +19,13 @@ from typing import TYPE_CHECKING
 from src.agent_loop.context import ContextAssembler
 from src.agent_loop.events import EventEmitter
 from src.agent_loop.execution.approval import ApprovalJudge
-from src.contracts import MemoryRenderer
+from src.contracts import MemoryRenderer, StepSourceFactory
 from src.harness.hooks import HookEngine, NullHookEngine
 from src.harness.memory import NullMemoryContext
 from src.harness.normalization import ToolCallNormalizer
 from src.harness.permissions import PermissionEngine
 from src.harness.tools import ToolRegistry
-from src.llm import ChatModel
+from src.llm import ChatModel, ModelTiers
 
 if TYPE_CHECKING:
     from src.harness.runtime import BrowserHarness
@@ -62,6 +62,15 @@ class EngineResources:
     permissions: PermissionEngine = field(default_factory=PermissionEngine.from_settings)
     approval: ApprovalJudge = field(default_factory=ApprovalJudge)
     memory: MemoryRenderer = field(default_factory=NullMemoryContext)
+    #: Session-scoped source of recorded steps (playback); ``None`` (the default, and
+    #: whenever replay is off) means a task with ``RunProfile.playback`` cannot run.
+    steps: StepSourceFactory | None = None
+    #: The models the engine may drive, with labels and prices for usage reports;
+    #: ``None`` means one tier over ``llm`` without a label or a price.
+    models: ModelTiers | None = None
+
+    def tiers(self) -> ModelTiers:
+        return self.models if self.models is not None else ModelTiers.single(self.llm)
 
     @classmethod
     def from_harness(
@@ -74,6 +83,8 @@ class EngineResources:
         permissions: PermissionEngine | None = None,
         approval: ApprovalJudge | None = None,
         memory: MemoryRenderer | None = None,
+        steps: StepSourceFactory | None = None,
+        models: ModelTiers | None = None,
     ) -> EngineResources:
         """Compose resources from an initialized ``BrowserHarness`` plus the ``llm``.
 
@@ -99,6 +110,8 @@ class EngineResources:
             permissions=permissions if permissions is not None else PermissionEngine.from_settings(),
             approval=approval if approval is not None else ApprovalJudge(),
             memory=memory if memory is not None else NullMemoryContext(),
+            steps=steps,
+            models=models,
         )
 
 

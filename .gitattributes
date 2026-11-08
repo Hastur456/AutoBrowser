@@ -2,3 +2,9 @@
 # Windows clone and a Linux clone compare the same bytes.
 tests/**/__snapshots__/** text eol=lf
 tests/pipeline/cassettes/*.json text eol=lf
+
+# Built and read inside Linux containers: keep LF in every checkout (a CRLF line in a RUN
+# instruction would end in a stray carriage return).
+Dockerfile text eol=lf
+compose.yaml text eol=lf
+docker/** text eol=lf

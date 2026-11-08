@@ -160,3 +160,33 @@ async def test_without_reported_usage_the_events_carry_none() -> None:
     responded = of_type(records, "model.responded")
     assert "usage" not in responded[0].payload
     assert "usage" not in responded[1].payload
+
+
+@pytest.mark.asyncio
+async def test_tool_started_reports_the_server_and_read_only_and_the_proposal_its_source() -> None:
+    from src.contracts import Tool
+
+    async def snapshot() -> str:
+        return "- Page URL: https://example.org"
+
+    tool = Tool(name="snapshot", func=snapshot, annotations={"readOnlyHint": True})
+    sink = InMemoryEventSink()
+    emitter = EventEmitter(sink, session_id="session-1")
+    llm = FakeChatModel(
+        [
+            json.dumps(PLAN),
+            json.dumps({"decision": "tool_call", "tool_request": {"name": "snapshot", "args": {}}}),
+            json.dumps(DONE),
+        ]
+    )
+    harness = BrowserHarness(llm=llm, tool_registry=ToolRegistry(tools=[tool]), event_emitter=emitter)
+    resources = EngineResources.from_harness(harness, llm=llm, events=emitter, hooks=NullHookEngine())
+
+    result = await AgentLoopEngine(resources).run("Look.", task_id="task-1", session_id="session-1")
+
+    assert result.status == "done"
+    (started,) = of_type(list(sink.records), "tool.started")
+    assert started.payload["server"] == ""
+    assert started.payload["read_only"] is True
+    (proposed,) = of_type(list(sink.records), "action.proposed")
+    assert proposed.payload["source"] == "model"

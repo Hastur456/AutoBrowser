@@ -1,0 +1,43 @@
+name: playback_binding_handoff
+task: Buy one pack of AA batteries on https://shop.example/batteries.
+strict: true
+playback:
+  answer: summary
+  recording:
+    name: batteries
+    task: Buy one pack of AA batteries on https://shop.example/batteries.
+    plan:
+    - {id: 1, description: Buy the batteries, status: pending}
+    steps:
+    - {index: 1, tool: browser_navigate, plan_step: 0, args: {url: 'https://shop.example/batteries'}}
+    - {index: 2, tool: browser_snapshot, plan_step: 0, read_only: true, args: {}}
+    - index: 3
+      tool: browser_click
+      plan_step: 0
+      args: {element: Buy now, target: e4}
+      bindings:
+      - path: [target]
+        value: e4
+        descriptor: {role: button, name: Buy now, nth: 1, count: 1, context: [], frame: ''}
+model:
+  responses:
+  - decision: tool_call
+    tool_request: {name: browser_click, args: {element: Add to order, target: e51}, reason: The buy button was renamed.}
+  - decision: done
+    final_answer: 'Bought one pack of AA batteries; order #7790 confirmed.'
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://shop.example/batteries
+    - listitem "AA batteries, 8 pack — $6.50" [ref=e50]
+    - button "Add to order" [ref=e51]
+  - |-
+    - Page URL: https://shop.example/orders/7790
+    - heading "Order #7790 confirmed" [ref=e56]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains: ['#7790']
+  expected_stage_reached: agent
+  max_model_turns: 2
+  max_tool_calls: 3

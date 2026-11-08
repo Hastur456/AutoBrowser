@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 
 from src.agent_loop.events import EventEmitter
@@ -114,6 +114,7 @@ class GoalRunner:
                 "final_answer": str(result.final_answer or ""),
                 "turns": result.turns,
                 **({"stop_reason": result.stop_reason} if result.stop_reason else {}),
+                **_usage_payload(result),
             },
         )
         return GoalRunResult(request=request, result=result, status=status)
@@ -179,6 +180,15 @@ class GoalRunner:
                 raise TimeoutError(
                     f"Goal runner made no progress for {timeout_seconds:g} seconds."
                 )
+
+
+def _usage_payload(result: Any) -> dict[str, Any]:
+    """``usage`` and ``stage_reached`` of a terminal result; nothing for a foreign one."""
+
+    usage = getattr(result, "usage", None)
+    if usage is None:
+        return {}
+    return {"usage": asdict(usage), "stage_reached": usage.stage_reached}
 
 
 def _failed_payload(request: TaskRequest, error: BaseException) -> dict[str, Any]:

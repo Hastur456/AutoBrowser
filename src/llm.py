@@ -132,9 +132,85 @@ class ChatModel(Protocol):
         ...
 
 
+#: Tokens per price unit: prices are quoted per million tokens.
+TOKENS_PER_PRICE_UNIT = 1_000_000
+
+
+@dataclass(frozen=True)
+class ModelPrice:
+    """What one million tokens of a model cost, in ``llm.currency``.
+
+    ``input_tokens`` is taken to include cached input tokens (the OpenAI-compatible
+    convention); with ``cached_input_per_mtok`` set, the cached part is charged at that rate.
+    """
+
+    input_per_mtok: float
+    output_per_mtok: float
+    cached_input_per_mtok: float | None = None
+
+    def cost(self, usage: ModelUsage | None) -> float | None:
+        """The price of one call; ``None`` when the provider did not report its tokens."""
+
+        if usage is None or usage.input_tokens is None or usage.output_tokens is None:
+            return None
+        cached = usage.cached_input_tokens or 0
+        cached_rate = self.input_per_mtok
+        if self.cached_input_per_mtok is not None:
+            cached_rate = self.cached_input_per_mtok
+        cached = min(cached, usage.input_tokens)
+        total = (
+            (usage.input_tokens - cached) * self.input_per_mtok
+            + cached * cached_rate
+            + usage.output_tokens * self.output_per_mtok
+        )
+        return total / TOKENS_PER_PRICE_UNIT
+
+
+@dataclass(frozen=True)
+class ModelTier:
+    """One model the engine may drive, with the label and price reports use."""
+
+    model: ChatModel
+    #: The model id, for events and reports; ``""`` when unknown.
+    label: str = ""
+    price: ModelPrice | None = None
+
+
+@dataclass(frozen=True)
+class ModelTiers:
+    """The models of a session; ``tiers[0]`` is the default and escalation only moves up.
+
+    One tier is today's behaviour (the cascade of several tiers is a later phase).
+    """
+
+    tiers: tuple[ModelTier, ...]
+    #: The tier a playback retarget uses.
+    retarget_tier: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.tiers:
+            raise ValueError("ModelTiers needs at least one tier.")
+        if not 0 <= self.retarget_tier < len(self.tiers):
+            raise ValueError("ModelTiers.retarget_tier is out of range.")
+
+    @classmethod
+    def single(
+        cls, model: ChatModel, *, label: str = "", price: ModelPrice | None = None
+    ) -> ModelTiers:
+        return cls((ModelTier(model, label, price),))
+
+    def tier(self, index: int) -> ModelTier:
+        """The tier at ``index``, clamped to the configured ones."""
+
+        return self.tiers[max(0, min(index, len(self.tiers) - 1))]
+
+
 __all__ = [
     "ChatModel",
+    "ModelPrice",
     "ModelProviderError",
     "ModelResponse",
+    "ModelTier",
+    "ModelTiers",
     "ModelUsage",
 ]

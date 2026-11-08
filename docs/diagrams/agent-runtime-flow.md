@@ -9,8 +9,21 @@ flowchart TD
   GoalRunner[GoalRunner] --> Engine[AgentLoopEngine.run]
   Engine --> GoalStart{{"hook: goal_start"}}
   GoalStart -->|deny| Result
-  GoalStart --> Plan[plan: model call #0]
+  GoalStart -->|no playback / no recorded plan| Budget0{run budget left?}
+  Budget0 -->|no: budget_exhausted| Result
+  Budget0 --> Plan[plan: model call #0]
+  GoalStart -->|profile.playback with a recorded plan| Seed[recorded plan, no model call]
+  Seed --> Turn
   Plan --> Turn[TurnController turn]
+  Turn -->|ladder_stage playback / retarget| Source[[StepSource.next]]
+  Source -->|StepProposal: synthetic tool call| Progress
+  Source -->|StepFinal: playback_completed| Stop
+  Source -->|StepHandoff, max_stage below agent: ladder_cap| Result
+  Source -->|StepHandoff: harness note, ladder.escalated| Model[model turn on the current tier]
+  Turn -->|ladder_stage agent| Budget{run budget left?}
+  Budget -->|no: budget_exhausted| Result
+  Budget --> Model
+  Model --> Turn
   Turn -->|decision: tool_call| Progress[progress guard]
   Turn -->|decision: replan| Plan
   Turn -->|model done| Stop{{"hook: stop"}}
@@ -60,6 +73,17 @@ the `Action History` block. The progress guard (`guards.progress_block_reason`, 
 terminal status is read from the explicit `LoopState.completion_status` set by
 whoever ended the run, so loop-protection stops and model `blocked`/`failed`
 stops end as `blocked`, never as `done`.
+
+Playback ([replay guide](../development/replay.md)) adds a branch before the model: with
+`TaskRequest.profile.playback` the session's step source (`EngineResources.steps`) supplies the
+recorded plan (no planner call) and proposes each recorded step as a synthetic assistant tool
+call, which then takes the same path as a model call. After the tool turn the source observes
+the result (or the block reason). A `StepHandoff` hands the rest of the task to the model in the
+same turn with a `[harness]` note, unless `RunProfile.max_stage` is below `agent` (then
+`ladder_cap`); a repeat-guard replan during playback becomes a handoff too. Replayed turns do
+not count toward `loop.turn_cap` and are bounded by the recording. Every model call (plan,
+agent turn, approval classifier, retarget) is added to `LoopState.usage`, and the run budget is
+checked right before each one (`budget_exhausted`).
 
 Lifecycle hooks (`src/harness/hooks.py`, see the
 [ADR](../decisions/2026-09-30-lifecycle-hooks-engine.md)) sit at the hexagon points and

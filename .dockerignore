@@ -1,0 +1,7 @@
+# Only pyproject.toml, uv.lock and src/ go into the build; keep everything else out of the
+# build context (secrets, local state, the data volume).
+*
+!pyproject.toml
+!uv.lock
+!src/
+**/__pycache__

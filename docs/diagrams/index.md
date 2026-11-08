@@ -34,6 +34,10 @@ development workflows.
 - [Trace Export](trace-export.md): session events through the sinks (`events.jsonl`,
   `agent_trace.jsonl`, the OTLP sink) to Langfuse or another OTLP backend, and the span tree
   of one task.
+- [Serve Mode](serve-mode.md) (phases 1 and 3 implemented; pool, cascade and Telegram in phase 4): the stand process (`autobrowser serve`) as a
+  `SessionController` client and its import fences, the cost ladder state machine
+  (probe → playback → retarget → agent → human), and one replayed step with ref rebinding,
+  retargeting and handoff.
 
 ## Update Guidance
 

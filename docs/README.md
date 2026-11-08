@@ -20,6 +20,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Trace Export Guide](development/telemetry.md): OTLP trace export (off by default) —
   the span tree, enabling, Langfuse first (keys, headers, aliases, finding a run, privacy),
   Phoenix and Jaeger.
+- [Replay Guide](development/replay.md): record a completed run and replay it without the
+  model (`--record`, `/record`, `-p --recording`) — the cost ladder, ref rebinding,
+  divergences and handoff, retargeting, task usage and run budgets, debugging.
 - [Agent Skills Guide](development/skills.md): `SKILL.md` skills — format, built-in and
   your skills, the catalog and `skill_view`, enabling, debugging and tests.
 - [Lifecycle Hooks Guide](development/lifecycle-hooks.md): how hooks work, their
@@ -107,6 +110,13 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   by the model with `skill_view`, built-in and `<home>/skills/` sources, the browser rules as
   the first built-in `always` skill, `skills.*` settings, layering, tests and rollout plan
   (Russian, Accepted; ADR [agent skills](decisions/2026-10-26-agent-skills.md)).
+- [Serve Mode Design](development/2026-11-02-serve-mode-design.md): accepted
+  `autobrowser serve` stand process. It covers jobs and triggers, the cost ladder (probe →
+  playback → retarget → agent → human), replay of recorded runs with name-free ref rebinding,
+  divergence detection and handoff, run and day budgets with cost reports, a headless browser
+  with its own profile, Docker, security defaults, model tiers, the Telegram channel, settings,
+  tests and a phased rollout (Russian, Accepted; ADR
+  [serve mode and cost ladder](decisions/2026-11-02-serve-mode-and-cost-ladder.md)).
 - [Browser Provider Boundary ADR](decisions/2026-07-26-browser-provider-boundary.md):
   superseded record for the former Playwright adapter boundary.
 - [Task Memory Isolation ADR](decisions/2026-07-24-task-memory-isolation-and-session-persistence.md):

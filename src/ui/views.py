@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 
+from src.contracts import TaskUsage
+
 #: What a projected event means for a feed, decided by the event ``type`` alone.
 FeedKind = Literal[
     "goal_started",
@@ -92,6 +94,12 @@ class TaskOutcome:
     turns: int | None = None
     #: ``Type: message`` of the exception a failed task raised.
     error: str = ""
+    #: Machine-readable reason the task ended (``AgentLoopResult.stop_reason``).
+    stop_reason: str = ""
+    #: The highest cost-ladder stage the task reached (``playback``, ``retarget``, ``agent``).
+    stage: str = ""
+    #: The task's model accounting (``TaskUsage``); ``None`` when the task did not finish.
+    usage: TaskUsage | None = None
 
 
 @dataclass(frozen=True)
@@ -189,6 +197,8 @@ class SessionView:
     resumed: bool = False
     #: Tasks the session has run, including those of a resumed session.
     task_count: int = 0
+    #: The recording name the next task is recorded under (``/record``), else ``""``.
+    recording_armed: str = ""
 
 
 __all__ = [

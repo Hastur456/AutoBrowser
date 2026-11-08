@@ -361,13 +361,14 @@ class FakeSync:
         return self.report
 
 
-def run_main(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, settings: Settings, sync: FakeSync, *extra: str) -> int:
+def run_main(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, settings: Settings, sync: FakeSync, *extra: str, suite: str | None = "golden") -> int:
     async def fake_run_batch_from_args(args: argparse.Namespace) -> dict[str, Any]:
         return {"batch_id": "batch-1", "batch_dir": str(tmp_path / "batch-1"), "status": "completed", "grades": {"passed": 0, "failed": 1, "ungraded": 0}}
 
     monkeypatch.setattr(run_batch_script, "run_batch_from_args", fake_run_batch_from_args)
     monkeypatch.setattr(run_batch_script, "get_settings", lambda: settings)
     monkeypatch.setattr(run_batch_script, "push_batch", sync)
+    monkeypatch.setattr(run_batch_script, "suite_of", lambda tasks, root: suite)
     return run_batch_script.main(["--tasks", str(tmp_path / "tasks.jsonl"), "--no-mcp", "--grade", *extra])
 
 
@@ -381,6 +382,7 @@ def test_an_enabled_platform_syncs_the_batch_without_changing_the_exit_code(
     assert code == 1  # the failed grade, as without the platform
     assert sync.calls[0]["batch_dir"] == tmp_path / "batch-1"
     assert sync.calls[0]["deadline"] is not None
+    assert sync.calls[0]["suite"] == "golden"
     captured = capsys.readouterr()
     json.loads(captured.out)  # stdout stays pure JSON
     assert "langfuse: batch-1 complete" in captured.err
@@ -422,3 +424,23 @@ def test_sessions_skip_the_live_export_when_the_batch_is_synced(
     factory(BatchScenario("s1", ["a"]))
 
     assert seen[0].otlp_export is exported
+
+
+def test_a_tasks_file_outside_the_suites_is_not_synced(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sync = FakeSync(SyncReport(state="complete"))
+
+    run_main(monkeypatch, tmp_path, platform_settings(), sync, suite=None)
+
+    assert sync.calls == []
+    assert "is not a platform suite" in capsys.readouterr().err
+
+
+def test_the_suite_is_found_by_its_tasks_file(tmp_path: Path) -> None:
+    from scripts.langfuse_bridge.datasets import SUITES, suite_of
+
+    root = Path(run_batch_script.ROOT)
+    assert {suite_of(root / path, root) for path in SUITES.values()} == set(SUITES)
+    assert all((root / path).is_file() for path in SUITES.values())
+    assert suite_of(tmp_path / "tasks.jsonl", root) is None

@@ -43,7 +43,7 @@ from src.agent_loop.comparison import (
 )
 from src.agent_loop.evals import ScenarioRun, collect_eval_metrics, run_findings
 from src.config import PipelineSettings, get_settings
-from tests.evals.runner import isolate_settings, load_scenarios, seed_memory
+from tests.evals.runner import SCENARIO_DIR, isolate_settings, load_scenarios, seed_memory
 
 DEFAULT_BASELINE = ROOT / "tests" / "evals" / "baselines" / "agent_loop_v2.json"
 SUITE = "agent_loop"
@@ -81,6 +81,15 @@ def _print_findings(suite: str, runs: list[ScenarioRun], findings: list[Finding]
                 print(f"  {line}")
 
 
+def _suite_names(directory: Path) -> tuple[str, str]:
+    """The suite names of a scenario directory: ``agent_loop`` for the default one."""
+
+    if directory.resolve() == SCENARIO_DIR.resolve():
+        return SUITE, MEMORY_SUITE
+    name = directory.name.removesuffix("_scenarios") or directory.name
+    return name, f"{name}+memory"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -94,6 +103,15 @@ def main() -> int:
         type=Path,
         default=None,
         help="Also run with a read-only Memory block over this seed directory.",
+    )
+    parser.add_argument(
+        "--scenarios",
+        type=Path,
+        default=SCENARIO_DIR,
+        help=(
+            "Directory of the scenario YAML files (default: the agent scenarios). The suite is "
+            "named after it, e.g. tests/evals/playback_scenarios -> playback."
+        ),
     )
     parser.add_argument(
         "--write-baseline",
@@ -111,12 +129,13 @@ def main() -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 2
 
-    scenarios = load_scenarios()
+    suite, memory_suite = _suite_names(args.scenarios)
+    scenarios = load_scenarios(args.scenarios)
     runs = asyncio.run(collect_eval_metrics(scenarios))
     findings = _findings(
-        runs, baseline.scenarios if baseline else None, suite=SUITE, settings=settings
+        runs, baseline.scenarios if baseline else None, suite=suite, settings=settings
     )
-    _print_findings(SUITE, runs, findings)
+    _print_findings(suite, runs, findings)
 
     memory_runs: list[ScenarioRun] | None = None
     if args.memory_seed is not None:
@@ -128,8 +147,8 @@ def main() -> int:
         if baseline is not None and memory_rows is None and not args.write_baseline:
             print(f"error: {args.baseline} has no scenarios_with_memory block", file=sys.stderr)
             return 2
-        memory_findings = _findings(memory_runs, memory_rows, suite=MEMORY_SUITE, settings=settings)
-        _print_findings(MEMORY_SUITE, memory_runs, memory_findings)
+        memory_findings = _findings(memory_runs, memory_rows, suite=memory_suite, settings=settings)
+        _print_findings(memory_suite, memory_runs, memory_findings)
         findings.extend(memory_findings)
         memory_chars = {run.name: run.result.request_chars for run in memory_runs}
         report = {
@@ -149,7 +168,7 @@ def main() -> int:
             memory_block = _records(memory_runs)
         else:
             memory_block = baseline.scenarios_with_memory if baseline else None
-        document = baseline_document(SUITE, _records(runs), memory_block)
+        document = baseline_document(suite, _records(runs), memory_block)
         args.baseline.write_text(
             json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )

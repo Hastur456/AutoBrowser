@@ -161,6 +161,22 @@ purchases and submissions, not as a boundary:
       target: '(?i)купить|оформить|оплатить|удалить|отправить|buy|pay|delete|submit'
 ```
 
+## Task Scope: Allowed Domains
+
+A task can carry its own allowlist, `RunProfile.allowed_domains` (the stand puts a job's
+`domains` there; `docs/development/serve-mode.md`). The engine copies it onto the
+`PermissionCheck`, and the engine evaluates it right after the `deny` rules:
+
+- a call whose resolved `domain` is neither one of the listed domains nor a subdomain of one
+  is denied with `source: task_scope`;
+- a call with no resolved domain passes only when it is read-only (a snapshot of
+  `about:blank`); a state-changing call on an unknown domain is denied (fail closed). That
+  includes non-browser tools without a URL, such as `memory_write`.
+
+The scope only narrows: no `allow` rule, session grant, mode (`bypass` included) or hook lifts
+it. Like any permission deny it is not terminal — the model reads the reason and may continue
+on an allowed domain. An empty list (the default) changes nothing.
+
 ## Approvals and Session Grants
 
 In a terminal the CLI asks:
@@ -226,7 +242,7 @@ permissions:
 ## Debugging a Decision
 
 Every evaluated call emits `permission.decided` — `tool`, `server`, `decision`, `source`
-(`rule`, `hook`, `model`, `classifier`, `mode`, `annotation`, `grant`, `error`), `rule_id`, `mode`,
+(`rule`, `hook`, `model`, `classifier`, `mode`, `annotation`, `grant`, `error`, `task_scope`), `rule_id`, `mode`,
 `reason`, **never the arguments**. Approvals emit `approval.requested` (with `rule_id`) and
 `approval.resolved` (`decision`, `by: hook|human|grant`, `scope: once|session`).
 

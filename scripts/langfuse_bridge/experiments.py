@@ -34,6 +34,8 @@ from src.harness.otel_spans import (
     SpanSpec,
     encode_otlp_json,
     task_span_specs,
+    task_trajectory,
+    trajectory_summary,
 )
 
 BATCH_FILE_NAME = "batch.json"
@@ -41,6 +43,10 @@ RUN_INDEX_FILE_NAME = "run_index.jsonl"
 TASKS_COPY_FILE_NAME = "tasks.jsonl"
 ROOT_KEY = "scenario"
 EXPERIMENT = "langfuse.experiment"
+#: The whole metadata object of an observation as one JSON attribute. Langfuse parses it on
+#: any span, while a per-key ``langfuse.observation.metadata.<key>`` JSON value is decoded only
+#: on spans of its own SDKs, so a nested value sent per key would stay a string.
+OBSERVATION_METADATA = "langfuse.observation.metadata"
 _NOT_FAILED = frozenset({"passed", "ungraded"})
 _NAME_SEPARATOR = " · "
 _SHORT_COMMIT = 7
@@ -170,6 +176,7 @@ def item_trace(
     events = _events(folder, row)
 
     children: list[SpanSpec] = []
+    steps: list[dict[str, Any]] = []
     task_context = SpanContext(
         model=provenance.get("model"),
         provider=provenance.get("provider"),
@@ -177,6 +184,7 @@ def item_trace(
     for task in split_by_task(events):
         for spec in task_span_specs(task, capture_content=capture, context=task_context):
             children.append(replace(spec, parent_key=spec.parent_key or ROOT_KEY))
+        steps.extend(task_trajectory(task, capture_content=capture))
     if events:
         start_ns, end_ns = _ns(events[0].timestamp), _ns(events[-1].timestamp)
     else:
@@ -196,6 +204,7 @@ def item_trace(
         "langfuse.observation.output": _output(row, capture),
         f"{EXPERIMENT}.description": experiment_description(metadata, folder.rows),
         f"{EXPERIMENT}.item.metadata.scenario_id": scenario,
+        OBSERVATION_METADATA: _json(_root_metadata(row, steps)),
     }
     if record is not None:
         if record.expected is not None:
@@ -246,6 +255,21 @@ def _common_attributes(
     if row.get("session_id"):
         common["session.id"] = str(row["session_id"])
     return common
+
+
+def _root_metadata(row: Mapping[str, Any], steps: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """The root observation's metadata: the whole run for an evaluator of that observation.
+
+    Langfuse v4 evaluators read the matched observation only, never its children, so the
+    steps of every task are flattened here (``$.full_trajectory`` in a variable mapping).
+    ``final_status`` is the last goal's (``None`` without a trace); ``run_status`` is the
+    scenario run's own (``completed``/``failed``), which also covers a failure outside a goal.
+    """
+
+    summary = trajectory_summary(steps)
+    summary["run_status"] = str(row["status"]) if row.get("status") else None
+    summary["task_statuses"] = list(row.get("task_statuses") or [])
+    return summary
 
 
 def _output(row: Mapping[str, Any], capture: str) -> str:

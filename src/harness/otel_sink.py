@@ -223,7 +223,12 @@ class OtlpEventSink:
             attribute_aliases=self._settings.attribute_aliases,
         )
         self._materialize(
-            task_span_specs(events, capture_content=self._settings.capture_content, context=context)
+            task_span_specs(
+                events,
+                capture_content=self._settings.capture_content,
+                context=context,
+                trajectory=self._settings.trajectory,
+            )
         )
 
     def _materialize(self, specs: list[SpanSpec]) -> None:

@@ -97,6 +97,11 @@ llm:
   extra_body: {}                                # (default)
   # Characters of a provider error body quoted in error messages, >= 40.
   error_preview_chars: 300                      # (default)
+  # Price per 1M tokens by model id, for cost reports and money budgets
+  # (loop.max_task_cost). A model without a price has an unknown cost.
+  prices: {}                                    # (default) e.g.
+  #   gemma4:31b-cloud: {input_per_mtok: 0.2, output_per_mtok: 0.6}
+  currency: USD                                 # (default)
 
   # Service profiles -- replace the fields above with one of these blocks.
   #
@@ -139,6 +144,23 @@ browser:
   cdp_port: 9222                                # (default)
   # How long to wait for the CDP connection, in seconds.
   cdp_timeout_seconds: 30.0                     # (default)
+  # How often the CDP port is probed while waiting (and one probe's timeout).
+  cdp_poll_seconds: 0.5                         # (default)
+  # Who runs the browser. cdp: the session starts Chrome and waits for its CDP
+  # port. external: the session starts no browser; the MCP server launches its
+  # own, so its entry must not use {cdp_port}/{cdp_endpoint}. A stand in Docker:
+  #   browser: {launch: external}
+  #   mcp_servers:
+  #     playwright:
+  #       transport: stdio
+  #       command: npx
+  #       args: [-y, "@playwright/mcp@latest", --headless, --browser, chromium,
+  #              --user-data-dir, /data/serve/profiles/w0]
+  launch: cdp                                   # (default)
+  # --headless=new for the Chrome the session starts (launch: cdp only).
+  headless: false                               # (default)
+  # Further Chrome arguments, e.g. [--no-sandbox] in a container (cdp only).
+  extra_args: []                                # (default)
 
 # ---------------------------------------------------------------------------
 # Loop guards. Each counter aborts or forces a replan rather than letting the
@@ -160,6 +182,11 @@ loop:
   # Silence in the event stream that means "stalled", in seconds. Clamped to
   # task_timeout_seconds, so a smaller task budget shortens it automatically.
   progress_timeout_seconds: 120.0               # (default)
+  # Budget of one task; running out blocks it with stop_reason budget_exhausted
+  # before the next model call. null = no cap.
+  max_task_model_calls: null                    # (default) plan, turns, retargets, judge
+  max_task_tokens: null                         # (default) input + output tokens
+  max_task_cost: null                           # (default) in llm.currency; needs llm.prices
 
 # ---------------------------------------------------------------------------
 # How much tool output reaches the model. Lower = cheaper prompts, higher = less
@@ -253,6 +280,27 @@ skills:
   body_max_chars: 20000                         # (default) a body returned by skill_view
   file_max_chars: 20000                         # (default) a skill file; a longer SKILL.md is skipped
   always_max_chars: 12000                       # (default) an always-on body; longer is skipped
+
+# ---------------------------------------------------------------------------
+# Recordings of completed runs and their playback without the model
+# (docs/development/replay.md). Off by default.
+replay:
+  enabled: false                                # (default) --record, /record, -p --recording
+  dir: recordings                               # (default) relative to storage.root_dir
+  max_steps: 100                                # (default) a longer run is not recorded
+  checkpoint_min_similarity: 0.6                # (default) below it the agent takes over
+  checkpoint_url: path                          # (default) path | host | off
+  describe_context_lines: 2                     # (default) ancestor lines of an element
+  text_shingle_words: 3                         # (default) fingerprint of non-browser output
+  retarget_enabled: true                        # (default) one model call per diverged step
+  max_retargets_per_run: 3                      # (default)
+  retarget_context_chars: 12000                 # (default) page text sent with a retarget
+  retarget_timeout_seconds: 30.0                # (default)
+  default_answer: agent                         # (default) agent | output | summary
+  keep_previous: true                           # (default) previous.json on replace
+  detail_max_chars: 300                         # (default) divergence detail in events
+  # Text-entry fields whose typed value is never recorded (regex over the field label).
+  secret_field_pattern: '(?<![a-zа-яё])(password|passcode|passphrase|pin|pin code|cvv|cvc|security code|card number|one-time code|secret|api key|access token|пароль|пин-код|пин)(?![a-zа-яё])'   # (default)
 
 # ---------------------------------------------------------------------------
 # Persisted event/trace detail under .autobrowser/sessions/<session_id>/.
@@ -420,6 +468,7 @@ telemetry:
   # otlp_endpoint: https://cloud.langfuse.com/api/public/otel/v1/traces  # Langfuse Cloud (EU)
   otlp_timeout_seconds: 10.0                    # (default) export request and final flush
   capture_content: none                         # (default) none | redacted (text leaves the machine)
+  trajectory: false                             # (default) task steps as one JSON object on the task span
   service_name: autobrowser                     # (default) service.name of the spans
   # environment: interactive                   # deployment.environment.name (default unset; batch runs label "batch")
   attribute_aliases: {}                         # (default) copy attribute A also under key B
@@ -428,6 +477,7 @@ telemetry:
   #   autobrowser.batch.id: langfuse.trace.metadata.batch_id
   #   autobrowser.scenario.id: langfuse.trace.metadata.scenario_id
   #   vcs.ref.head.revision: langfuse.release
+  #   autobrowser.trajectory: langfuse.observation.metadata  # with trajectory: true, for a root-observation judge
 
 # ---------------------------------------------------------------------------
 # Evaluation platform: batch results as datasets, experiments and scores
@@ -538,3 +588,57 @@ hooks:
   #     event: stop
   #     type: command
   #     command: python scripts/hooks/grounded_urls.py
+
+# ---------------------------------------------------------------------------
+# The stand, `autobrowser serve` (docs/development/serve-mode.md). Nothing runs
+# unless the command is started. Keep the token in the environment
+# (AUTOBROWSER_SERVE__TOKEN): this file does not expand ${VAR}.
+serve:
+  host: 127.0.0.1                               # (default) a remote host needs allow_remote + token
+  port: 8765                                    # (default)
+  allow_remote: false                           # (default)
+  dir: serve                                    # (default) ledger, events, job state
+  profiles_dir: serve/profiles                  # (default) worker browser profiles
+  cdp_port_base: 9300                           # (default) CDP port of worker w0
+  queue_size: 20                                # (default)
+  coalesce: drop                                # (default) drop | queue_one
+  cooldown_seconds: 0.0                         # (default)
+  min_interval_seconds: 60.0                    # (default) least trigger period
+  catch_up: none                                # (default) none | one
+  timezone: ""                                  # (default) IANA zone; empty: the system zone
+  daily_max_runs: null                          # (default) null = no cap
+  daily_max_tokens: null                        # (default)
+  daily_max_cost: null                          # (default) in llm.currency
+  default_run_budget: {max_model_calls: 30}     # (default) max_model_calls is required
+  default_max_stage: agent                      # (default) human only with api_approvals
+  session_max_runs: 200                         # (default) runs before the session is recreated
+  shutdown_grace_seconds: 60.0                  # (default)
+  rate_limit_per_minute: 60                     # (default)
+  max_body_bytes: 65536                         # (default)
+  idempotency_window_seconds: 3600.0            # (default)
+  free_tasks: false                             # (default) POST /v1/tasks
+  free_task_domains: []                         # (default) task scope of free tasks
+  api_approvals: false                          # (default) off: approvals are denied
+  log_client_addresses: false                   # (default)
+  channels: [log]                               # (default) log | webhook
+  notify_max_chars: 1500                        # (default)
+  # webhook_out: {url: https://hooks.example/autobrowser, timeout_seconds: 10.0}
+  #   # secret: AUTOBROWSER_SERVE__WEBHOOK_OUT__SECRET in the environment
+  jobs: {}                                      # (default) e.g.
+  #   price-watch:
+  #     task: "Open https://shop.example/item/1 and report the current price."
+  #     triggers:
+  #       - {id: hourly, type: interval, every_seconds: 3600}
+  #       - {id: ci, type: webhook, secret_env: PRICE_WATCH_HOOK_SECRET, auth: hmac_sha256}
+  #     probe:                                  # stage 0: no model while nothing changed
+  #       steps:
+  #         - {tool: browser_navigate, args: {url: "https://shop.example/item/1"}}
+  #         - {tool: browser_snapshot}
+  #       select: "(?s)Price.*?USD"
+  #       ignore: ['\d+ reviews?']
+  #     recording: price-watch                  # replay it first (replay.enabled)
+  #     record_on_success: true
+  #     max_stage: agent
+  #     budget: {max_model_calls: 20, max_cost: 0.02}
+  #     domains: [shop.example]
+  #     notify_on: [change, failure, blocked, budget]

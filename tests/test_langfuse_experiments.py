@@ -204,3 +204,25 @@ def test_an_item_trace_survives_a_real_http_round_trip(tmp_path: Path) -> None:
     assert request.headers["content-type"] == "application/json"
     span = fake.spans()[0]
     assert span["startTimeUnixNano"].isdigit() and len(span["traceId"]) == 32 and len(span["spanId"]) == 16
+
+
+def test_the_root_metadata_is_one_object_with_the_trajectory_of_every_task(tmp_path: Path) -> None:
+    trace = build(tmp_path, [Scenario("books-1", tasks=["open", "find"], tool_calls=2)])[0]
+
+    root = attrs(spans_of(trace)[0])
+    assert not any(key.startswith("langfuse.observation.metadata.") for key in root)
+    metadata = json.loads(root["langfuse.observation.metadata"])
+    steps = metadata["full_trajectory"]
+    assert [step["type"] for step in steps].count("task") == 2
+    assert [step["tool"] for step in steps if step["type"] == "tool_call"] == ["click"] * 4
+    assert [step["step"] for step in steps] == list(range(1, len(steps) + 1))
+    assert metadata["stop_reason"] == "answered" and metadata["final_status"] == "completed"
+    assert metadata["run_status"] == "completed"
+    assert metadata["task_statuses"] == ["done", "done"]
+
+
+def test_a_root_without_a_trace_has_an_empty_trajectory_and_only_the_run_status(tmp_path: Path) -> None:
+    trace = build(tmp_path, [Scenario("books-1", traced=False, failure_kind="provider_error", grade="failed", error={"type": "ModelProviderError", "message": "502"})])[0]
+
+    metadata = json.loads(attrs(spans_of(trace)[0])["langfuse.observation.metadata"])
+    assert metadata == {"full_trajectory": [], "stop_reason": None, "final_status": None, "run_status": "failed", "task_statuses": []}

@@ -1,0 +1,36 @@
+name: playback_budget_exhausted
+task: Buy one pack of AA batteries on https://shop.example/batteries.
+strict: true
+playback:
+  answer: summary
+  max_model_calls: 0
+  recording:
+    name: batteries
+    task: Buy one pack of AA batteries on https://shop.example/batteries.
+    plan:
+    - {id: 1, description: Buy the batteries, status: pending}
+    steps:
+    - {index: 1, tool: browser_navigate, plan_step: 0, args: {url: 'https://shop.example/batteries'}}
+    - {index: 2, tool: browser_snapshot, plan_step: 0, read_only: true, args: {}}
+    - index: 3
+      tool: browser_click
+      plan_step: 0
+      args: {element: Buy now, target: e4}
+      bindings:
+      - path: [target]
+        value: e4
+        descriptor: {role: button, name: Buy now, nth: 1, count: 1, context: [], frame: ''}
+model:
+  responses: []
+browser:
+  snapshots:
+  - '- Page URL: about:blank'
+  - |-
+    - Page URL: https://shop.example/batteries
+    - button "Add to order" [ref=e51]
+assertions:
+  expected_terminal_status: blocked
+  final_answer_contains: [model calls]
+  expected_stage_reached: agent
+  max_model_turns: 0
+  max_tool_calls: 2

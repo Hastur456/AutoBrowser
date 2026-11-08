@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 from scripts.langfuse_bridge.client import LangfuseClient, LangfuseError
 from scripts.langfuse_bridge.datasets import (
     JOURNAL_FILE_NAME,
+    SUITES,
     DatasetError,
     DatasetPlan,
     Git,
@@ -46,7 +47,6 @@ from src.agent_loop.platform_records import review_definitions, score_definition
 from src.config import EvalPlatformSettings, Settings, get_settings
 
 #: Scenario sets that can be pushed as datasets, and their files in the repository.
-SUITES = {"golden": "tests/golden/tasks.jsonl"}
 
 ClientFactory = Callable[[EvalPlatformSettings], LangfuseClient]
 

@@ -346,6 +346,73 @@ async def test_session_context_closes_owned_chrome_process(
 
 
 @pytest.mark.asyncio
+async def test_an_external_browser_is_neither_launched_nor_awaited(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """``browser.launch: external``: the MCP server owns the browser (a stand in Docker)."""
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AUTOBROWSER_BROWSER__LAUNCH", "external")
+    get_settings.cache_clear()
+    calls: list[str] = []
+
+    def start_chrome(_path: str, _dir: str, _port: int) -> None:
+        calls.append("start")
+
+    async def wait(_port: int, _timeout: float) -> None:
+        calls.append("wait")
+
+    runtime = FakeMCPRuntime([])
+    context = SessionContext(make_config(no_mcp=False))
+    await context.initialize(
+        llm_factory=llm_factory,
+        start_chrome_cdp=start_chrome,
+        wait_for_port=wait,
+        mcp_runtime_factory=lambda _port, _errlog: runtime,
+        output_fn=lambda *_args, **_kwargs: None,
+        print_tools=None,
+        harness_factory=FakeHarness,
+    )
+    try:
+        assert calls == []
+        assert runtime.started is True
+        assert context.chrome_process is None
+    finally:
+        await context.close()
+
+
+@pytest.mark.asyncio
+async def test_the_default_launch_starts_chrome_and_waits_for_its_port(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    calls: list[str] = []
+
+    def start_chrome(_path: str, _dir: str, _port: int) -> None:
+        calls.append("start")
+
+    async def wait(_port: int, _timeout: float) -> None:
+        calls.append("wait")
+
+    context = SessionContext(make_config(no_mcp=False))
+    await context.initialize(
+        llm_factory=llm_factory,
+        start_chrome_cdp=start_chrome,
+        wait_for_port=wait,
+        mcp_runtime_factory=no_mcp_runtime,
+        output_fn=lambda *_args, **_kwargs: None,
+        print_tools=None,
+        harness_factory=FakeHarness,
+    )
+    try:
+        assert calls == ["start", "wait"]
+    finally:
+        await context.close()
+
+
+@pytest.mark.asyncio
 async def test_session_runtime_reuses_context_and_records_task_history(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1197,3 +1264,225 @@ def test_session_config_reads_otlp_export_from_the_args() -> None:
 
     assert SessionConfig.from_args(SimpleNamespace(**fields)).otlp_export is True
     assert SessionConfig.from_args(SimpleNamespace(**fields, otlp_export=False)).otlp_export is False
+
+
+def test_the_cost_ladder_fields_are_reset_at_every_task_boundary() -> None:
+    from src.agent_loop.execution.state import LoopState
+    from src.contracts import TaskUsage
+    from src.harness.session import _task_state_overrides
+
+    carried = SessionState()
+    carried.replace({"messages": [], "observation": "page"})
+    overrides = _task_state_overrides(carried, task_id="task-2")
+    state = LoopState.from_state_overrides(overrides)
+
+    assert overrides["usage"] == TaskUsage()
+    assert (state.ladder_stage, state.model_tier) == ("agent", 0)
+    assert state.usage == TaskUsage()
+    # Task-local: never carried to the next task.
+    assert not {"ladder_stage", "model_tier", "usage"} & set(
+        state.to_session_state()
+    )
+
+
+# -- recordings (replay) ---------------------------------------------------------------------
+
+from src.config import ReplaySettings  # noqa: E402
+from src.contracts import RunProfile  # noqa: E402
+from src.harness.recording_store import RecordingStore  # noqa: E402
+
+
+def use_replay(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **fields: Any) -> RecordingStore:
+    root = tmp_path / ".autobrowser"
+    settings = Settings(replay=ReplaySettings(**fields), storage=StorageSettings(root_dir=root))
+    monkeypatch.setattr("src.harness.session.get_settings", lambda: settings)
+    return RecordingStore.from_settings(settings.replay, settings.storage)
+
+
+def tool_calling_runner(built: list[BuiltAgent]) -> Any:
+    """A scripted agent that emits one successful tool call through the session emitter."""
+
+    async def run(request: TaskRequest) -> AgentLoopResult:
+        events = built[-1].resources.events
+        ids = {"task_id": request.task_id, "goal_id": request.task_id}
+        events.emit("tool.started", source="test", payload={
+            "tool_request": {"name": "open", "args": {"url": "https://x.example"}},
+            "server": "", "read_only": False}, **ids)
+        events.emit("tool.finished", source="test", payload={
+            "tool_result": {"name": "open", "status": "success", "content": "opened"}}, **ids)
+        return native_result(final_answer="opened")
+
+    return run
+
+
+@pytest.mark.asyncio
+async def test_record_as_saves_a_recording_after_the_goal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = use_replay(monkeypatch, tmp_path, enabled=True)
+    built = install_runner(monkeypatch, lambda request: tool_calling_runner(built)(request))
+    runtime = make_runtime()
+
+    await runtime.run_task("open x", profile=RunProfile(record_as="open-x"))
+
+    (step,) = store.load("open-x").steps
+    assert step.args == {"url": "https://x.example"}
+    events = read_typed_events(runtime.context.session_dir)
+    (saved,) = [event for event in events if event["type"] == "recording.saved"]
+    assert saved["payload"] == {"name": "open-x", "steps": 1, "replaced": False}
+    types = [event["type"] for event in events]
+    assert types.index("goal.completed") < types.index("recording.saved")
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_without_record_as_nothing_is_recorded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = use_replay(monkeypatch, tmp_path, enabled=True)
+    built = install_runner(monkeypatch, lambda request: tool_calling_runner(built)(request))
+    runtime = make_runtime()
+
+    await runtime.run_task("open x")
+
+    assert store.entries() == []
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_record_as_with_replay_disabled_is_skipped_not_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_replay(monkeypatch, tmp_path, enabled=False)
+    install_runner(monkeypatch, lambda request: _answer(request))
+    runtime = make_runtime()
+
+    result = await runtime.run_task("open x", profile=RunProfile(record_as="open-x"))
+
+    assert result.final_answer == "ok"
+    events = read_typed_events(runtime.context.session_dir)
+    (skipped,) = [event for event in events if event["type"] == "recording.skipped"]
+    assert "replay.enabled" in skipped["payload"]["reason"]
+    await runtime.close()
+
+
+async def _answer(request: TaskRequest) -> AgentLoopResult:
+    return native_result(final_answer="ok")
+
+
+@pytest.mark.asyncio
+async def test_an_invalid_recording_name_fails_before_the_task(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    use_replay(monkeypatch, tmp_path, enabled=True)
+    calls: list[TaskRequest] = []
+
+    async def run(request: TaskRequest) -> AgentLoopResult:
+        calls.append(request)
+        return native_result(final_answer="ok")
+
+    install_runner(monkeypatch, run)
+    runtime = make_runtime()
+
+    with pytest.raises(ValueError, match="invalid recording name"):
+        await runtime.run_task("x", profile=RunProfile(record_as="../escape"))
+    assert calls == [] and runtime.context.tasks == []
+
+
+@pytest.mark.asyncio
+async def test_a_failed_recording_never_fails_the_task(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store = use_replay(monkeypatch, tmp_path, enabled=True)
+    built = install_runner(monkeypatch, lambda request: tool_calling_runner(built)(request))
+    runtime = make_runtime()
+
+    def broken_save(recording: Any) -> bool:
+        raise OSError("disk full")
+
+    await runtime.start()
+    monkeypatch.setattr(runtime.context.recording_store, "save", broken_save)
+    result = await runtime.run_task("open x", profile=RunProfile(record_as="open-x"))
+
+    assert result.final_answer == "opened"
+    assert runtime.context.tasks[-1].status == "completed"
+    events = read_typed_events(runtime.context.session_dir)
+    (skipped,) = [event for event in events if event["type"] == "recording.skipped"]
+    assert skipped["payload"] == {"name": "open-x", "reason": "OSError: disk full"}
+    assert not store.exists("open-x")
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_the_profile_reaches_the_agent_and_carry_context_false_carries_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    requests: list[TaskRequest] = []
+
+    async def run(request: TaskRequest) -> AgentLoopResult:
+        requests.append(request)
+        return native_result(final_answer="ok", messages=[system_message("s"), user_message("u")],
+                             observation="page")
+
+    install_runner(monkeypatch, run)
+    runtime = make_runtime()
+    profile = RunProfile(carry_context=False, allowed_domains=("shop.example",), labels={"job": "j"})
+
+    await runtime.run_task("first")
+    await runtime.run_task("second", profile=profile)
+
+    assert requests[0].profile == RunProfile()
+    assert requests[1].profile is profile
+    assert "messages" not in requests[1].state_overrides
+    assert "observation" not in requests[1].state_overrides
+    assert requests[1].state_overrides["plan"] == []
+    await runtime.close()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+@pytest.mark.asyncio
+async def test_the_agent_gets_step_sources_only_with_replay_enabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, enabled: bool
+) -> None:
+    from src.harness.playback import PlaybackFactory, TextPlaybackAdapter
+
+    use_replay(monkeypatch, tmp_path, enabled=enabled)
+    built = install_runner(monkeypatch, _answer)
+    runtime = make_runtime()
+
+    await runtime.start()
+
+    steps = built[0].resources.steps
+    assert isinstance(steps, PlaybackFactory) is enabled
+    assert (steps is None) is (not enabled)
+    # No browser server in a --no-mcp session: the plain-text adapter reads the outputs.
+    assert isinstance(runtime.context.playback_adapter, TextPlaybackAdapter)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_an_inline_probe_counts_no_playback_stats(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import dataclasses
+
+    from src.contracts import PlaybackRequest, ProbeStep, RunProfile, TaskUsage
+
+    store = use_replay(monkeypatch, tmp_path, enabled=True)
+    calls: list[str] = []
+    monkeypatch.setattr(RecordingStore, "record_playback", lambda self, name, **_k: calls.append(name))
+
+    async def run(request: TaskRequest) -> AgentLoopResult:
+        return dataclasses.replace(native_result(final_answer="Price 10"), usage=TaskUsage(stage_reached="playback"))
+
+    install_runner(monkeypatch, run)
+    runtime = make_runtime()
+    probe = PlaybackRequest(recording="probe:j", steps=(ProbeStep(tool="open"),), answer="output")
+
+    await runtime.run_task("watch", profile=RunProfile(playback=probe, max_stage="playback"))
+    await runtime.run_task("replay", profile=RunProfile(playback=PlaybackRequest(recording="kettle")))
+
+    assert calls == ["kettle"]
+    assert not store.root.exists() or not any(store.root.iterdir())
+    await runtime.close()

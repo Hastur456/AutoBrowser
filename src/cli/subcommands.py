@@ -1,4 +1,4 @@
-"""``autobrowser doctor | sessions | replay | completion`` (§7.6 of the terminal UI design).
+"""``autobrowser doctor | sessions | replay | recordings | serve | completion`` (§7.6 of the terminal UI design).
 
 The entry point dispatches here when the first argument is one of :data:`SUBCOMMANDS`; a task
 that is literally one of these words goes through ``--task`` or after ``--``.
@@ -7,6 +7,7 @@ that is literally one of these words goes through ``--task`` or after ``--``.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import socket
@@ -38,11 +39,12 @@ from src.harness.session_store import (
     find_session,
     list_sessions,
 )
+from src.harness.recording_store import RecordingNotFoundError, RecordingStore
 from src.harness.otel_sink import invalid_otlp_headers, otlp_exporter_installed
 from src.harness.skills import SESSION_CAPABILITIES, SkillStore, skill_roots, user_skills_root
 from src.version import PACKAGE_NAME, package_version
 
-SUBCOMMANDS = ("doctor", "sessions", "replay", "completion")
+SUBCOMMANDS = ("doctor", "sessions", "replay", "recordings", "serve", "completion")
 SHELLS = ("bash", "zsh", "fish", "tcsh", "powershell")
 
 #: Check marks of ``doctor``: fine, worth a look, broken.
@@ -89,10 +91,40 @@ def build_subcommand_parser() -> argparse.ArgumentParser:
     target.completer = session_id_completer  # type: ignore[attr-defined]  # argcomplete
     replay.set_defaults(handler=_replay)
 
+    recordings = commands.add_parser(
+        "recordings", help="List, show or remove the recordings replay uses (replay.dir)."
+    )
+    actions = recordings.add_subparsers(dest="action", required=True)
+    actions.add_parser("list", help="List the stored recordings.").set_defaults(handler=_recordings_list)
+    show = actions.add_parser("show", help="Print the steps of a recording.")
+    show.add_argument("name")
+    show.set_defaults(handler=_recordings_show)
+    remove = actions.add_parser("rm", help="Remove a recording.")
+    remove.add_argument("name")
+    remove.set_defaults(handler=_recordings_rm)
+
+    serve = commands.add_parser(
+        "serve", help="Run the stand: configured jobs on triggers, the HTTP API (serve.*)."
+    )
+    serve.add_argument(
+        "--check", action="store_true", help="Check the configuration and exit without a browser."
+    )
+    serve.set_defaults(handler=_serve)
+
     completion = commands.add_parser("completion", help="Print the shell completion script.")
     completion.add_argument("shell", choices=SHELLS)
     completion.set_defaults(handler=_completion)
     return parser
+
+
+# -- serve -----------------------------------------------------------------------------------
+
+
+def _serve(args: argparse.Namespace, write: Callable[[str], None]) -> int:
+    # Imported here: the stand pulls in the session, the browser server and uvicorn.
+    from src.cli.serve import run_serve_cli
+
+    return run_serve_cli(args, write)
 
 
 # -- doctor ----------------------------------------------------------------------------------
@@ -157,11 +189,16 @@ def _doctor(args: argparse.Namespace, write: Callable[[str], None]) -> int:
             check(_FAIL if settings.mcp_servers else _WARN, tool, "not on PATH (Playwright MCP needs Node.js >= 18)")
             continue
         check(_OK, tool, f"{_version(path, timeout)} · {path}")
-    chrome = Path(settings.browser.chrome_path)
-    check(_OK if chrome.is_file() else _FAIL, "chrome", chrome)
-    port = settings.browser.cdp_port
-    free = _port_free(port)
-    check(_OK if free else _WARN, "cdp port", f"{port}" if free else f"{port} in use (a Chrome may already listen)")
+    browser = settings.browser
+    if browser.launch == "external":
+        check(_OK, "browser launch", "external (the MCP server launches its own browser)")
+    else:
+        check(_OK, "browser launch", "cdp, headless" if browser.headless else "cdp")
+        chrome = Path(browser.chrome_path)
+        check(_OK if chrome.is_file() else _FAIL, "chrome", chrome)
+        port = browser.cdp_port
+        free = _port_free(port)
+        check(_OK if free else _WARN, "cdp port", f"{port}" if free else f"{port} in use (a Chrome may already listen)")
     servers = ", ".join(f"{name} ({config.transport})" for name, config in settings.mcp_servers.items())
     check(_OK if servers else _WARN, "mcp servers", servers or "none configured")
     _doctor_skills(settings, check)
@@ -359,6 +396,61 @@ def _trace_path(target: str) -> Path:
     if not trace.is_file():
         raise FileNotFoundError(f"Session {session.session_id[:12]} has no {EVENTS_FILE_NAME}.")
     return trace
+
+
+# -- recordings ------------------------------------------------------------------------------
+
+
+def _recording_store() -> RecordingStore:
+    settings = get_settings()
+    return RecordingStore.from_settings(settings.replay, settings.storage)
+
+
+def _recordings_list(args: argparse.Namespace, write: Callable[[str], None]) -> int:
+    store = _recording_store()
+    entries = store.entries()
+    if not entries:
+        write(f"No recordings in {store.root}.")
+        return 0
+    for entry in entries:
+        if entry.error:
+            write(f"{entry.name:<24} unreadable: {entry.error}")
+        else:
+            write(f"{entry.name:<24} {entry.steps:>3} steps  {entry.created_at[:19]}  {entry.task}")
+    return 0
+
+
+def _recordings_show(args: argparse.Namespace, write: Callable[[str], None]) -> int:
+    store = _recording_store()
+    try:
+        recording = store.load(args.name)
+    except (RecordingNotFoundError, ValueError) as exc:
+        write(str(exc))
+        return 1
+    limit = store.settings.detail_max_chars
+    write(f"{recording.name} · {len(recording.steps)} steps · answer: {recording.answer}")
+    write(f"task: {recording.task}")
+    stats = store.stats(args.name)
+    if stats:
+        write(f"played {stats.get('playbacks', 0)} times, last stage: {stats.get('last_stage', '-')}")
+    for step in recording.steps:
+        args_text = json.dumps(dict(step.args), ensure_ascii=False)[:limit]
+        marks = [f"{len(step.bindings)} refs"] if step.bindings else []
+        if step.redacted:
+            marks.append("redacted")
+        suffix = f"  [{', '.join(marks)}]" if marks else ""
+        write(f"{step.index:>3}. {step.tool} {args_text}{suffix}")
+    return 0
+
+
+def _recordings_rm(args: argparse.Namespace, write: Callable[[str], None]) -> int:
+    try:
+        removed = _recording_store().delete(args.name)
+    except ValueError as exc:
+        write(str(exc))
+        return 1
+    write(f"Removed {args.name}." if removed else f"No recording named {args.name!r}.")
+    return 0 if removed else 1
 
 
 # -- completion ------------------------------------------------------------------------------
