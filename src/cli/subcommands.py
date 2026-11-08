@@ -1,4 +1,4 @@
-"""``autobrowser doctor | sessions | replay | recordings | completion`` (§7.6 of the terminal UI design).
+"""``autobrowser doctor | sessions | replay | recordings | serve | completion`` (§7.6 of the terminal UI design).
 
 The entry point dispatches here when the first argument is one of :data:`SUBCOMMANDS`; a task
 that is literally one of these words goes through ``--task`` or after ``--``.
@@ -44,7 +44,7 @@ from src.harness.otel_sink import invalid_otlp_headers, otlp_exporter_installed
 from src.harness.skills import SESSION_CAPABILITIES, SkillStore, skill_roots, user_skills_root
 from src.version import PACKAGE_NAME, package_version
 
-SUBCOMMANDS = ("doctor", "sessions", "replay", "recordings", "completion")
+SUBCOMMANDS = ("doctor", "sessions", "replay", "recordings", "serve", "completion")
 SHELLS = ("bash", "zsh", "fish", "tcsh", "powershell")
 
 #: Check marks of ``doctor``: fine, worth a look, broken.
@@ -103,10 +103,28 @@ def build_subcommand_parser() -> argparse.ArgumentParser:
     remove.add_argument("name")
     remove.set_defaults(handler=_recordings_rm)
 
+    serve = commands.add_parser(
+        "serve", help="Run the stand: configured jobs on triggers, the HTTP API (serve.*)."
+    )
+    serve.add_argument(
+        "--check", action="store_true", help="Check the configuration and exit without a browser."
+    )
+    serve.set_defaults(handler=_serve)
+
     completion = commands.add_parser("completion", help="Print the shell completion script.")
     completion.add_argument("shell", choices=SHELLS)
     completion.set_defaults(handler=_completion)
     return parser
+
+
+# -- serve -----------------------------------------------------------------------------------
+
+
+def _serve(args: argparse.Namespace, write: Callable[[str], None]) -> int:
+    # Imported here: the stand pulls in the session, the browser server and uvicorn.
+    from src.cli.serve import run_serve_cli
+
+    return run_serve_cli(args, write)
 
 
 # -- doctor ----------------------------------------------------------------------------------

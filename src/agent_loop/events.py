@@ -51,6 +51,16 @@ EventType = Literal[
     # Recordings written after a task (src/harness/recorder.py).
     "recording.saved",
     "recording.skipped",
+    # The stand's own stream, <serve.dir>/events.jsonl (src/serve/).
+    "serve.started",
+    "serve.stopped",
+    "serve.trigger.fired",
+    "serve.run.queued",
+    "serve.run.skipped",
+    "serve.run.finished",
+    "serve.notified",
+    "serve.notify.failed",
+    "serve.auth.rejected",
 ]
 
 SENSITIVE_KEY_MARKERS = (

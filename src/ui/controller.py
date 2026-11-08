@@ -33,6 +33,7 @@ from src.agent_loop.replay import load_events, print_action_sequence, summarize_
 from src.browser.pages import current_page_url, page_url
 from src.config import get_settings
 from src.harness.session import SessionContext, SessionRuntime, TaskRecord
+from src.harness.tools import tool_name
 from src.harness.session_store import EVENTS_FILE_NAME, StoredSession, find_session, list_sessions
 from src.mcp import ConnectionState
 from src.messages import Message
@@ -464,6 +465,26 @@ class SessionController:
             if session.resumable and session.session_id != current
         ]
         return sessions[: settings.ui.resume_list_size]
+
+    async def tool_names(self) -> tuple[str, ...]:
+        """The exposed names of the session's tools (the stand checks its probe steps
+        against them); ``()`` before the session starts."""
+
+        registry = self._runtime.context.tool_registry
+        if registry is None:
+            return ()
+        return tuple(tool_name(tool) for tool in await registry.get_all())
+
+    def has_recording(self, name: str) -> bool:
+        """A recording ``name`` is stored (``replay.enabled`` and the session started)."""
+
+        store = self._runtime.context.recording_store
+        if store is None:
+            return False
+        try:
+            return store.exists(name)
+        except ValueError:  # not a recording name
+            return False
 
     def current_url(self) -> str:
         """The page the agent last saw, read from the carried state by its ``Page URL``

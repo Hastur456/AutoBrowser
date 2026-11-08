@@ -201,7 +201,7 @@ async def test_without_a_job_budget_the_default_run_budget_applies(tmp_path: Pat
 
 @pytest.mark.asyncio
 async def test_the_run_profile_isolates_and_scopes_the_task(tmp_path: Path) -> None:
-    rig = Rig(tmp_path, jobs={"price-watch": job(domains=["shop.example"], max_stage="retarget")})
+    rig = Rig(tmp_path, jobs={"price-watch": job(domains=["shop.example"], max_stage="human")})
 
     fired = await rig.dispatcher.fire("price-watch", HOURLY)
     await rig.drain()
@@ -209,7 +209,7 @@ async def test_the_run_profile_isolates_and_scopes_the_task(tmp_path: Path) -> N
     (_, profile), = rig.worker.calls
     assert profile.carry_context is False
     assert profile.allowed_domains == ("shop.example",)
-    assert profile.max_stage == "retarget"
+    assert profile.max_stage == "human"
     assert profile.playback is None and profile.record_as is None
     assert profile.labels == {
         "mode": "serve", "job_id": "price-watch", "run_id": fired.run_id, "trigger": "interval:hourly",

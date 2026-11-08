@@ -522,3 +522,90 @@ def test_record_flag_problems_are_usage_errors(
 
     assert entry.main(argv) == 2
     assert message in capsys.readouterr().err
+
+
+def test_serve_check_accepts_the_default_configuration(capsys: pytest.CaptureFixture[str]) -> None:
+    assert entry.main(["serve", "--check"]) == 0
+
+    out = capsys.readouterr().out
+    assert "127.0.0.1:8765" in out
+    assert "0 jobs" in out
+
+
+def test_serve_check_never_prints_the_token(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_SERVE__TOKEN", "t0ken-value")
+    get_settings.cache_clear()
+
+    assert entry.main(["serve", "--check"]) == 0
+
+    captured = capsys.readouterr()
+    assert "t0ken-value" not in captured.out + captured.err
+    assert "token set" in captured.out
+
+
+@pytest.mark.parametrize(
+    "env, message",
+    [
+        ({"AUTOBROWSER_PERMISSIONS__MODE": "bypass"}, "bypass"),
+        ({"AUTOBROWSER_SERVE__HOST": "0.0.0.0"}, "allow_remote"),
+        ({"AUTOBROWSER_SERVE__JOBS": '{"j": {"task": "t", "recording": "rec"}}'}, "replay.enabled"),
+        ({"AUTOBROWSER_SERVE__DAILY_MAX_COST": "1.0"}, "llm.prices"),
+    ],
+)
+def test_serve_check_refuses_an_unsafe_or_broken_stand(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], env: dict[str, str], message: str
+) -> None:
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    get_settings.cache_clear()
+
+    assert entry.main(["serve", "--check"]) == 2
+
+    captured = capsys.readouterr()
+    assert message in captured.out + captured.err
+
+
+def test_the_serve_worker_has_its_own_profile_port_and_labels() -> None:
+    from src.cli.serve import worker_args
+    from src.config import ServeSettings, StorageSettings
+    from src.serve.paths import serve_paths
+
+    serve = ServeSettings(cdp_port_base=9400)
+    args = worker_args(serve, serve_paths(serve, StorageSettings(root_dir=Path("C:/stand"))))
+
+    assert Path(args.user_data_dir) == Path("C:/stand/serve/profiles/w0")
+    assert args.cdp_port == 9400
+    assert args.labels == {"mode": "serve", "worker": "w0"}
+    assert args.interactive is False  # no approval channel: dont_ask
+
+
+@pytest.mark.asyncio
+async def test_serve_composes_the_stand_and_writes_its_event_stream(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import asyncio
+
+    from src.cli import serve as serve_cli
+    from src.harness.session import SessionRuntime
+    from tests.test_harness_session import llm_factory, make_config, no_mcp_runtime, no_start, noop_wait
+
+    built: list[object] = []
+
+    def build_session(args, *, human_input, event_sinks, output_fn):
+        built.append(args)
+        return SessionRuntime(
+            make_config(), llm_factory=llm_factory, start_chrome_cdp=no_start, wait_for_port=noop_wait,
+            mcp_runtime_factory=no_mcp_runtime, human_input=human_input, event_sinks=list(event_sinks),
+        )
+
+    monkeypatch.setattr(serve_cli, "build_session", build_session)
+    settings = get_settings()
+
+    code = await serve_cli._serve(settings, lambda _line: None, until=asyncio.sleep(0))
+
+    assert code == 0
+    assert built[0].labels == {"mode": "serve", "worker": "w0"}
+    events = (settings.storage.root_dir / "serve" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"serve.started"' in events and '"serve.stopped"' in events
