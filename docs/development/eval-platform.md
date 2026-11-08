@@ -232,13 +232,16 @@ to fix `expected`.
 
 ```powershell
 uv run scripts/run_batch.py --tasks tests\golden\tasks.jsonl --continue-on-error --grade
+uv run scripts/run_batch.py --tasks tests\golden\smoke.jsonl --continue-on-error --grade
+    # the smoke suite: 2 quick scenarios (dataset autobrowser/smoke) to check the platform; a
+    # tasks file that is no suite (SUITES in scripts/langfuse_bridge/datasets.py) is not synced
     # enabled + auto_sync: synced right after the batch (summary on stderr); --no-platform-sync skips it
 uv run scripts/compare_batches.py              # as before, plus "langfuse: <batch> <url>" for synced batches
 
 uv run scripts/langfuse_sync.py doctor                         # server >= 4.59.0, keys, project, configs
 uv run scripts/langfuse_sync.py setup                          # score configs (+ the annotation queue)
-uv run scripts/langfuse_sync.py dataset push   [--suite golden] [--tasks PATH] [--allow-dirty] [--dry-run]
-uv run scripts/langfuse_sync.py dataset status [--suite golden]
+uv run scripts/langfuse_sync.py dataset push   [--suite golden|smoke] [--tasks PATH] [--allow-dirty] [--dry-run]
+uv run scripts/langfuse_sync.py dataset status [--suite golden|smoke]
 uv run scripts/langfuse_sync.py experiment push --batch ID|DIR [--new-attempt] [--retry-rejected] [--dry-run]
 uv run scripts/langfuse_sync.py experiment push --pending      # every batch whose sync is unfinished
 uv run scripts/langfuse_sync.py scores pull --batch ID|DIR
