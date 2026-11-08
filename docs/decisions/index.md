@@ -4,6 +4,12 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-11-08 Trajectory on the Root Observation](2026-11-08-trajectory-on-the-root-observation.md)
+  (Accepted, Russian): Langfuse v4 evaluators read one observation and never its children, so
+  the item root of an experiment carries the whole run as one `langfuse.observation.metadata`
+  JSON object (`full_trajectory`, `stop_reason`, `final_status`, `run_status`, `task_statuses`), built by the
+  neutral `otel_spans.task_trajectory` under the usual content modes. Live traces get it on the
+  task span with `telemetry.trajectory` plus an alias. Extends the 2026-10-31 Langfuse ADR.
 - [2026-11-02 Serve Mode, Cost Ladder and Replay](2026-11-02-serve-mode-and-cost-ladder.md)
   (Accepted, Russian): `autobrowser serve`, a long-lived stand process in a new `src/serve/`
   package, built as a `SessionController` client. It has triggers (interval, cron, webhook,

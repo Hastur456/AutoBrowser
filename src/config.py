@@ -2038,6 +2038,17 @@ class TelemetrySettings(_Section):
         ),
     ] = "none"
 
+    trajectory: Annotated[
+        bool,
+        Field(
+            description=(
+                "Put the task's steps (tool calls, gate decisions, outcome; content per "
+                "capture_content) on its task span as one JSON object, "
+                "autobrowser.trajectory, for evaluators that read one observation only."
+            ),
+        ),
+    ] = False
+
     service_name: Annotated[
         str,
         Field(min_length=1, description="service.name resource attribute of the spans."),

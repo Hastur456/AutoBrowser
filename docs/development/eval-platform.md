@@ -71,11 +71,11 @@ All settings (section `eval_platform`, see `config.example.yaml`):
 Always sent: repository data (task texts, `expected`, `reference`, tags), ids, statuses, failure
 kinds, stop reasons, metrics, token usage and scores. What a run produced is opt-in:
 
-| `capture_content` | Item root output | Task spans | Model and tool spans |
-|---|---|---|---|
-| `none` (default) | `{"failure_kind", "grade", "task_statuses"}` | no task text, no answer | no arguments, results or messages |
-| `answers` | the last answer | task text and its answer | as `none` |
-| `redacted` | as `answers` | as `answers` | tool arguments and results |
+| `capture_content` | Item root output | Item root metadata (trajectory) | Task spans | Model and tool spans |
+|---|---|---|---|---|
+| `none` (default) | `{"failure_kind", "grade", "task_statuses"}` | tool names, statuses, gate decisions, stop reasons, error types | no task text, no answer | no arguments, results or messages |
+| `answers` | the last answer | + task texts and answers | task text and its answer | as `none` |
+| `redacted` | as `answers` | + tool arguments and results, reasons, plan steps, error messages | as `answers` | tool arguments and results |
 
 Answers and tool results can quote the pages the agent visited. Everything sent passes the
 event redaction (secret-named keys masked, strings truncated to `events.max_string_chars`), but a
@@ -173,6 +173,47 @@ judge them; it is informational only — never part of `failure_kind`, `compare_
 
 `reference` is an optional scenario field for this rubric (graders ignore it); the Golden Set
 has short ones for the scenarios with `fields`.
+
+### Trajectory Judge
+
+A Langfuse v4 evaluator reads only the observation it matched (input, output, metadata, tool
+calls), never its children: a judge on the item root sees no tool call of the task spans below
+it. So the root's metadata carries the whole run, sent as one `langfuse.observation.metadata`
+JSON object (Langfuse parses that key on any span; a per-key JSON value is decoded only on spans
+of its own SDKs and would stay a string):
+
+| Key | Content |
+|---|---|
+| `full_trajectory` | the steps of every task, numbered from 1 (`step`) |
+| `stop_reason`, `final_status` | of the last task's goal (`completed`, `blocked`, `failed`, `cancelled`, `incomplete`; `null` without a trace) |
+| `run_status` | the scenario run's status (`completed`/`failed`), also for a failure outside a goal |
+| `task_statuses` | as in `run_index.jsonl` |
+
+Step types (`src/harness/otel_spans.task_trajectory`): `task` (`task_id`; the text with
+`answers`), `plan` (the first plan and each replan: `replan_count`, `step_count`; the steps with
+`redacted`), `tool_call` (`tool`, `call_id`, `source`, `server`, `status`: the tool's status,
+`blocked` when a gate denied it, `not_executed` otherwise; `gates`: the notable permission,
+hook, approval and progress-guard decisions made for it, each naming its event under `gate`;
+`arguments`, `reason`, `result` and the error message with `redacted`), `gate` (a notable
+decision outside a call: goal-start and stop hooks, post-tool hooks), `model_error` (`phase`)
+and `outcome` (`status`, `stop_reason`,
+`turns`, `error.type`; the final answer with `answers`). Texts are redacted and truncated
+(`events.max_string_chars`) like every exported value.
+
+In the evaluator, map a variable `{{trajectory}}` to the root's **Metadata** with the JSONPath
+`$.full_trajectory` (or `$` for the whole object). The judge needs `capture_content: redacted`
+to see what the tools did; with `none` it gets the tool names and statuses only. A starting
+prompt:
+
+> You check how a browser agent solved a task. Task(s): {{input}}. Expected: {{expected_output}}.
+> Steps (JSON, in order): {{trajectory}}. Answer: {{output}}. Judge the path, not only the
+> answer: did each tool call move towards the goal, were blocked or failed calls handled
+> instead of repeated, and is the answer supported by what the tools returned? Reply true only
+> if the path is sound and the answer follows from it.
+
+Score it as `judge.trajectory` (boolean). With `telemetry.trajectory`, live session traces get a
+per-task object on each task span: `full_trajectory`, `stop_reason` and `final_status` of that
+task, without `run_status` and `task_statuses` (see [the trace export guide](telemetry.md#langfuse)).
 
 ## Annotation Queue
 

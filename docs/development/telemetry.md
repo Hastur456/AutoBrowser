@@ -48,6 +48,7 @@ Every task of a session becomes **one trace**, built when the task ends and sent
    | `otlp_headers` | `{}` | request headers (JSON object in env); secret, never logged or printed |
    | `otlp_timeout_seconds` | `10.0` | one export request, and the flush at session end |
    | `capture_content` | `none` | `none` or `redacted` (see [Content and privacy](#content-and-privacy)) |
+   | `trajectory` | `false` | the task's steps as one JSON object on its task span (`autobrowser.trajectory`) |
    | `service_name` | `autobrowser` | `service.name` of the spans |
    | `environment` | unset | `deployment.environment.name` (e.g. `interactive`); batch runs set `batch` |
    | `attribute_aliases` | `{}` | copy attribute A also under key B, for backend-specific keys |
@@ -96,6 +97,17 @@ AUTOBROWSER_TELEMETRY__ATTRIBUTE_ALIASES={"autobrowser.batch.id": "langfuse.trac
 code never names the vendor: `batch_id` and `scenario_id` become filterable trace metadata, the
 batch's git commit becomes the release. Leave them out and the labels are still on the spans as
 ordinary attributes.
+
+**Judging the trajectory.** A Langfuse v4 evaluator reads one observation — its input,
+output, metadata and tool calls — and never its children, so a judge on the task span sees no
+tool call by default. With `trajectory: true` the task span carries the whole task as one JSON
+object (`full_trajectory`, `stop_reason`, `final_status`; the steps are those of
+[the experiment root](eval-platform.md#trajectory-judge), content per `capture_content`). Add
+`"autobrowser.trajectory": "langfuse.observation.metadata"` to the aliases: the bare
+`langfuse.observation.metadata` key is the observation's whole metadata object, which Langfuse
+parses on any span (a per-key `langfuse.observation.metadata.<key>` JSON value is decoded only on
+spans of the Langfuse SDKs and would stay a string). Then map an evaluator variable to Metadata
+with the JSONPath `$.full_trajectory`.
 
 **Finding a run.**
 

@@ -13,13 +13,20 @@ branches. With ``capture_content="none"`` only ids, names, counts, statuses and 
 emitted; ``"answers"`` adds the task text and the final answer on the task span; ``"redacted"``
 also tool arguments/results, decision reasons and error messages. Values are read from
 ``EventRecord.to_json_dict()`` (redacted and truncated), never from the raw payload. See docs/decisions/2026-10-29-otlp-trace-export.md.
+
+``task_trajectory`` flattens the same events, under the same content modes, into a JSON list
+of steps (task, plan, tool calls with their gate decisions, model errors, outcome) for a
+backend whose evaluators read a single observation and never its children;
+``trajectory_summary`` wraps it with the stop reason and final status. With ``trajectory=True``
+the task span carries that summary as one JSON object under ``autobrowser.trajectory``. See
+docs/decisions/2026-11-08-trajectory-on-the-root-observation.md.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -32,6 +39,7 @@ ROOT_SPAN_NAME = f"invoke_agent {AGENT_NAME}"
 TERMINAL_EVENTS = {"goal.completed", "goal.failed", "goal.blocked", "goal.cancelled"}
 ENVIRONMENT_KEY = "deployment.environment.name"
 INCOMPLETE_KEY = "autobrowser.incomplete"
+TRAJECTORY_KEY = "autobrowser.trajectory"
 TOOL_ERROR_TYPE = "tool_error"
 _TOOL_ERROR_STATUSES = {"error", "failed", "failure"}
 #: ``model.responded`` usage keys -> span attributes.
@@ -52,6 +60,8 @@ _EVENT_FIELDS = {
     "hook.decided": ("hook_id", "event", "decision", "tool"),
     "policy.decided": ("decision", "source", "rule_id"),
 }
+#: Gate decisions that stop a tool call (permission and hook ``deny``, a progress ``blocked``).
+_DENY_DECISIONS = frozenset({"deny", "blocked"})
 _OTLP_STATUS_UNSET, _OTLP_STATUS_ERROR = 0, 2
 
 
@@ -108,8 +118,11 @@ def task_span_specs(
     *,
     capture_content: str,
     context: SpanContext | None = None,
+    trajectory: bool = False,
 ) -> list[SpanSpec]:
-    """The span tree of one task's events, the root first; ``[]`` without ``goal.started``."""
+    """The span tree of one task's events, the root first; ``[]`` without ``goal.started``.
+
+    ``trajectory`` adds the task's :func:`trajectory_summary` to the root span."""
 
     context = context or SpanContext()
     redacted = capture_content == "redacted"
@@ -181,7 +194,154 @@ def task_span_specs(
     children.sort(key=lambda spec: (spec.start_ns, spec.key))
 
     root = _root(start, terminal, root_key, end_ns, tuple(span_events), answers=answers, redacted=redacted)
+    if trajectory:
+        summary = trajectory_summary(task_trajectory(events, capture_content=capture_content))
+        root = replace(root, attributes={**root.attributes, TRAJECTORY_KEY: json.dumps(summary, ensure_ascii=False)})
     return [_with_common(spec, context) for spec in [root, *children]]
+
+
+def task_trajectory(events: Sequence[EventRecord], *, capture_content: str) -> list[dict[str, Any]]:
+    """One task's events as JSON steps, in order; ``[]`` without ``goal.started``.
+
+    Steps: ``task``; ``plan`` (the first plan and each replan); ``tool_call`` (from the proposal
+    to the result, with the notable gate decisions made meanwhile in ``gates``; ``status``
+    ``blocked`` when one of them denied it, ``not_executed`` when it never started otherwise);
+    ``gate`` (a notable decision outside a call: the goal-start and stop hooks, post-tool hooks);
+    ``model_error``; ``outcome`` (``incomplete`` without a terminal event). A decision names its
+    event under ``gate``. The content modes are those of
+    :func:`task_span_specs`: ``none`` keeps names, ids, statuses and counts; ``answers`` adds the
+    task text and the final answer; ``redacted`` adds tool arguments/results, reasons, plan
+    steps and error messages.
+    """
+
+    redacted = capture_content == "redacted"
+    answers = redacted or capture_content == "answers"
+    start = next((event for event in events if event.type == "goal.started"), None)
+    if start is None:
+        return []
+    task: dict[str, Any] = {"type": "task", "task_id": start.task_id or ""}
+    if answers:
+        task["task"] = _text(_payload(start).get("task") or "")
+    steps: list[dict[str, Any]] = [task]
+    action: dict[str, Any] | None = None  # the tool call between its proposal and its result
+    replans: int | None = None
+
+    def open_action(request: Mapping[str, Any], source: str) -> dict[str, Any]:
+        step: dict[str, Any] = {"type": "tool_call", "tool": str(request.get("name") or ""), "status": "proposed"}
+        if request.get("id"):
+            step["call_id"] = str(request["id"])
+        if source:
+            step["source"] = source
+        if redacted:
+            step["arguments"] = request.get("args") or {}
+            if request.get("reason"):
+                step["reason"] = _text(request["reason"])
+        steps.append(step)
+        return step
+
+    def close_action() -> None:
+        nonlocal action
+        if action is not None and action["status"] == "proposed":
+            denied = any(gate.get("decision") in _DENY_DECISIONS for gate in action.get("gates", ()))
+            action["status"] = "blocked" if denied else "not_executed"
+        action = None
+
+    for event in events[events.index(start) + 1 :]:
+        payload = _payload(event)
+        if event.type in TERMINAL_EVENTS:
+            close_action()
+            steps.append(_outcome(event, payload, answers=answers, redacted=redacted))
+            return steps
+        if event.type == "action.proposed":
+            close_action()
+            action = open_action(_mapping(payload.get("tool_request")), str(payload.get("source") or ""))
+        elif event.type == "tool.started":
+            request = _mapping(payload.get("tool_request"))
+            if action is None:
+                action = open_action(request, "")
+            action["status"] = "started"
+            if payload.get("server"):
+                action["server"] = str(payload["server"])
+            if redacted:  # the arguments that ran: a hook may have rewritten the proposal's
+                action["arguments"] = request.get("args") or {}
+        elif event.type == "tool.finished":
+            if action is not None:
+                _finish_action(action, _mapping(payload.get("tool_result")), redacted)
+            action = None
+        elif event.type == "plan.updated":
+            count = payload.get("replan_count")
+            count = count if isinstance(count, int) else 0
+            if count != replans:
+                replans = count
+                steps.append(_plan_step(payload, count, redacted))
+        elif event.type == "model.responded" and payload.get("error"):
+            error: dict[str, Any] = {"type": "model_error", "phase": str(payload.get("phase") or "")}
+            if redacted:
+                error["error"] = _text(payload["error"])
+            steps.append(error)
+        else:
+            mark = _span_event(event, payload, redacted)
+            if mark is not None:
+                gate = {"gate": mark.name, **mark.attributes}
+                if action is not None:
+                    action.setdefault("gates", []).append(gate)
+                else:
+                    steps.append({"type": "gate", **gate})
+    close_action()
+    steps.append({"type": "outcome", "status": "incomplete"})
+    return steps
+
+
+def trajectory_summary(steps: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """``full_trajectory`` (the steps numbered from 1), ``stop_reason`` and ``final_status``
+    of the last outcome (``None`` without one)."""
+
+    outcome = next((step for step in reversed(steps) if step.get("type") == "outcome"), {})
+    return {
+        "full_trajectory": [{"step": number, **step} for number, step in enumerate(steps, 1)],
+        "stop_reason": outcome.get("stop_reason"),
+        "final_status": outcome.get("status"),
+    }
+
+
+def _finish_action(action: dict[str, Any], result: Mapping[str, Any], redacted: bool) -> None:
+    error = str(result.get("error") or "")
+    status = str(result.get("status") or "").lower()
+    failed = bool(error) or status in _TOOL_ERROR_STATUSES
+    action["status"] = status or ("error" if failed else "success")
+    if redacted and "content" in result:
+        action["result"] = _text(result.get("content"))
+    if failed:
+        action["error"] = (error or status) if redacted else TOOL_ERROR_TYPE
+
+
+def _plan_step(payload: Mapping[str, Any], replans: int, redacted: bool) -> dict[str, Any]:
+    raw = payload.get("steps")
+    plan = [_mapping(item) for item in raw] if isinstance(raw, list) else []
+    step: dict[str, Any] = {"type": "plan", "replan_count": replans, "step_count": len(plan)}
+    if redacted:
+        step["steps"] = [
+            {"description": _text(item.get("description") or ""), "status": str(item.get("status") or "")}
+            for item in plan
+        ]
+    return step
+
+
+def _outcome(event: EventRecord, payload: Mapping[str, Any], *, answers: bool, redacted: bool) -> dict[str, Any]:
+    step: dict[str, Any] = {"type": "outcome", "status": event.type.removeprefix("goal.")}
+    if payload.get("stop_reason"):
+        step["stop_reason"] = str(payload["stop_reason"])
+    if isinstance(payload.get("turns"), int):
+        step["turns"] = payload["turns"]
+    if answers and payload.get("final_answer"):
+        step["final_answer"] = _text(payload["final_answer"])
+    failure = _mapping(payload.get("error"))
+    if failure:
+        error = {"type": str(failure.get("type") or "error")}
+        if redacted and failure.get("message"):
+            error["message"] = str(failure["message"])
+        step["error"] = error
+    return step
 
 
 def encode_otlp_json(
