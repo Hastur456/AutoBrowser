@@ -78,6 +78,8 @@ class FakeWorker:
         self.recordings = set(recordings)
         self.answers: list[tuple[str, str, str]] = []
         self.on_run: Callable[[str, RunProfile, TaskOutcome], None] | None = None
+        self.approval_listeners: list[Callable[[Any], None]] = []
+        self.tickets: list[Any] = []
 
     async def start(self) -> SessionView:
         return self.session_view()
@@ -128,6 +130,13 @@ class FakeWorker:
     def answer(self, ticket_id: str, answer: str, *, via: str) -> bool:
         self.answers.append((ticket_id, answer, via))
         return True
+
+    def subscribe_approvals(self, listener: Callable[[Any], None]) -> Callable[[], None]:
+        self.approval_listeners.append(listener)
+        return lambda: self.approval_listeners.remove(listener)
+
+    def pending_approvals(self) -> tuple[Any, ...]:
+        return tuple(self.tickets)
 
 
 class RecordingChannel:

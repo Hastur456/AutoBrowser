@@ -127,6 +127,16 @@ class Dispatcher:
     def settings(self) -> ServeSettings:
         return self._settings
 
+    @property
+    def notifier(self) -> Notifier:
+        return self._notifier
+
+    def running(self) -> tuple[str, str] | None:
+        """``(job_id, run_id)`` of the run in progress, if any."""
+
+        run = self._running
+        return None if run is None else (run.job_id, run.run_id)
+
     async def fire(self, job_id: str, trigger: TriggerRef) -> FireResult:
         """Queue a run of ``job_id``, or say why not. ``KeyError`` for an unknown job."""
 

@@ -15,12 +15,16 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
+import uvicorn
+
 from src.agent_loop.events import EventEmitter, JsonlEventSink
 from src.agent_loop.goals import GoalLimits
 from src.cli.bootstrap import USAGE_EXIT_CODE, build_session
 from src.cli.parser import build_parser
 from src.config import ServeSettings, Settings, get_settings
 from src.harness.approvals import ApprovalBroker
+from src.serve.app import build_app
+from src.serve.approvals import ApprovalBridge
 from src.serve.checks import startup_problems
 from src.serve.clock import SystemClock, resolve_timezone
 from src.serve.dispatcher import Dispatcher
@@ -137,17 +141,39 @@ async def _serve(
     scheduler = Scheduler(
         serve, dispatcher.fire, skip=dispatcher.skip, clock=clock, states=states, tz=tz
     )
+    bridge = ApprovalBridge(controller, dispatcher.notifier, dispatcher) if broker is not None else None
+    app = build_app(serve, dispatcher, events=events, clock=clock, approvals=bridge)
     runtime = ServeRuntime(
         serve, controller, dispatcher=dispatcher, events=events, services=[scheduler.run]
     )
+    if bridge is not None:
+        bridge.start()
     try:
-        await runtime.serve(until=until if until is not None else asyncio.Event().wait())
+        # The HTTP server ends the stand: uvicorn returns on SIGINT/SIGTERM (Ctrl+C on Windows).
+        await runtime.serve(until=until if until is not None else http_server(app, serve).serve())
     except ServeStartError as exc:
         _err(str(exc))
         return USAGE_EXIT_CODE
     finally:
+        if bridge is not None:
+            bridge.stop()
         await session.close()
     return 0
 
 
-__all__ = ["build_channels", "run_serve_cli", "summary", "worker_args"]
+def http_server(app: Any, serve: ServeSettings) -> uvicorn.Server:
+    """The API server: no access log (it would write client addresses), warnings only."""
+
+    return uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=serve.host,
+            port=serve.port,
+            access_log=False,
+            log_level="warning",
+            lifespan="off",
+        )
+    )
+
+
+__all__ = ["build_channels", "http_server", "run_serve_cli", "summary", "worker_args"]

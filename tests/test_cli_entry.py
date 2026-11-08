@@ -654,3 +654,13 @@ async def test_serve_fires_a_due_interval_job_on_start(
 
     assert code == 0
     assert tasks == ["Report the price."]
+
+
+def test_the_serve_http_server_keeps_client_addresses_out_of_its_log() -> None:
+    from src.cli.serve import http_server
+    from src.config import ServeSettings
+
+    server = http_server(object(), ServeSettings(port=8799))
+
+    assert server.config.access_log is False
+    assert (server.config.host, server.config.port) == ("127.0.0.1", 8799)

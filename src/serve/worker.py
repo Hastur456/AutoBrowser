@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any, Protocol
 
-from src.contracts import RunProfile
+from src.contracts import ApprovalTicket, RunProfile
 from src.ui.views import SessionView, TaskOutcome
 
 _LOG = logging.getLogger(__name__)
@@ -27,6 +28,8 @@ class WorkerPort(Protocol):
     def has_recording(self, name: str) -> bool: ...
     async def shutdown(self, timeout_seconds: float) -> None: ...
     def answer(self, ticket_id: str, answer: str, *, via: str) -> bool: ...
+    def subscribe_approvals(self, listener: Callable[[Any], None]) -> Callable[[], None]: ...
+    def pending_approvals(self) -> tuple[ApprovalTicket, ...]: ...
 
 
 async def ensure_healthy(worker: WorkerPort) -> None:
