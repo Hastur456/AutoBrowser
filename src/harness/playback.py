@@ -433,6 +433,21 @@ def _described_args(step: RecordedStep) -> str:
     return text
 
 
+def inline_recording(request: PlaybackRequest, task: str) -> Recording:
+    """The anonymous recording of a probe's inline steps: literal arguments, no bindings,
+    no checkpoints and an empty catalog (only the tool's presence is checked)."""
+
+    return Recording(
+        name=request.recording,
+        task=task,
+        steps=tuple(
+            RecordedStep(index=index, tool=step.tool, args=dict(step.args), server=step.server)
+            for index, step in enumerate(request.steps, start=1)
+        ),
+        answer=request.answer or "output",
+    )
+
+
 class PlaybackFactory:
     """:class:`~src.contracts.StepSourceFactory` over the session's recording store."""
 
@@ -465,7 +480,7 @@ class PlaybackFactory:
                 except re.error as exc:
                     raise ValueError(f"invalid playback regex {pattern!r}: {exc}") from exc
         return PlaybackSource(
-            self._store.load(request.recording),
+            inline_recording(request, task) if request.steps else self._store.load(request.recording),
             request,
             self._adapter,
             self._settings,
@@ -520,6 +535,7 @@ class TextPlaybackAdapter:
 
 __all__ = [
     "PlaybackFactory",
+    "inline_recording",
     "PlaybackSource",
     "Retargeter",
     "StepRetargeter",

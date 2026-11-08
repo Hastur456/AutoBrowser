@@ -1413,6 +1413,9 @@ class SessionRuntime:
         store = self.context.recording_store
         if request is None or store is None or result.usage is None:
             return
+        if request.steps:
+            return  # a probe's inline steps: no stored recording to count against
+
         try:
             store.record_playback(
                 request.recording,

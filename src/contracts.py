@@ -427,8 +427,19 @@ class RunBudget:
 
 
 @dataclass(frozen=True)
+class ProbeStep:
+    """One recorded-like tool call given inline (a stand probe); the tool name is user data."""
+
+    tool: str
+    args: Mapping[str, Any] = field(default_factory=dict)
+    #: MCP server of the tool; ``""``: whichever server exposes it.
+    server: str = ""
+
+
+@dataclass(frozen=True)
 class PlaybackRequest:
-    """What to replay: a stored recording by name (the step source factory loads it)."""
+    """What to replay: a stored recording by name (the step source factory loads it), or the
+    inline ``steps`` of a probe (an anonymous recording; ``recording`` is then only a label)."""
 
     recording: str
     #: ``None`` keeps the recording's own answer mode.
@@ -437,6 +448,8 @@ class PlaybackRequest:
     select: str | None = None
     #: ``answer="output"``: regexes removed from the region before it is returned.
     ignore: tuple[str, ...] = ()
+    #: Inline steps: no stored recording, no bindings, no checkpoints, no stats.
+    steps: tuple[ProbeStep, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -729,6 +742,7 @@ __all__ = [
     "PlaybackAdapter",
     "PlaybackAnswer",
     "PlaybackRequest",
+    "ProbeStep",
     "PolicyDecision",
     "PolicyEvent",
     "RecoveryCounters",

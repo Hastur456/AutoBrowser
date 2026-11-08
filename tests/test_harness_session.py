@@ -1459,3 +1459,30 @@ async def test_the_agent_gets_step_sources_only_with_replay_enabled(
     # No browser server in a --no-mcp session: the plain-text adapter reads the outputs.
     assert isinstance(runtime.context.playback_adapter, TextPlaybackAdapter)
     await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_an_inline_probe_counts_no_playback_stats(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import dataclasses
+
+    from src.contracts import PlaybackRequest, ProbeStep, RunProfile, TaskUsage
+
+    store = use_replay(monkeypatch, tmp_path, enabled=True)
+    calls: list[str] = []
+    monkeypatch.setattr(RecordingStore, "record_playback", lambda self, name, **_k: calls.append(name))
+
+    async def run(request: TaskRequest) -> AgentLoopResult:
+        return dataclasses.replace(native_result(final_answer="Price 10"), usage=TaskUsage(stage_reached="playback"))
+
+    install_runner(monkeypatch, run)
+    runtime = make_runtime()
+    probe = PlaybackRequest(recording="probe:j", steps=(ProbeStep(tool="open"),), answer="output")
+
+    await runtime.run_task("watch", profile=RunProfile(playback=probe, max_stage="playback"))
+    await runtime.run_task("replay", profile=RunProfile(playback=PlaybackRequest(recording="kettle")))
+
+    assert calls == ["kettle"]
+    assert not store.root.exists() or not any(store.root.iterdir())
+    await runtime.close()

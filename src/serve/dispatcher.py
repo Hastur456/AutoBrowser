@@ -10,6 +10,7 @@ the stand.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from collections import deque
 from dataclasses import dataclass, field
@@ -23,7 +24,7 @@ from src.contracts import RunProfile, ladder_rank
 from src.serve.clock import Clock
 from src.serve.ledger import Ledger
 from src.serve.notify import Notification, Notifier
-from src.serve.profiles import DayLeft, main_profile
+from src.serve.profiles import DayLeft, main_profile, probe_profile
 from src.serve.reports import RunReport, RunState, RunStatus, TaskKind, TaskSummary
 from src.serve.state import JobStateStore
 from src.serve.tally import RunTally
@@ -332,7 +333,6 @@ class Dispatcher:
             state = self._states.load(run.job_id)
             state.last_finished_at = finished
             state.last_run_id = run.run_id
-            self._after_run(run, result, state)
             self._save_state(run.job_id, state)
         self._emit("serve.run.finished", report.to_json())
         if result.tasks:
@@ -355,11 +355,57 @@ class Dispatcher:
         if ladder_rank(max_stage) < ladder_rank("agent") and not has_recording:
             # Nothing may run without the model, and there is nothing to replay.
             return _Result(status="blocked", stop_reason="ladder_cap")
+        probe: _Result | None = None
+        fingerprint = ""
+        if job.probe is not None:
+            probe, fingerprint = await self._run_probe(run, job, labels)
+            if probe.status != "completed":
+                return probe
+            if probe.changed is False:
+                return probe
         profile = main_profile(
             job, self._settings, day_left=self.day_left(), labels=labels, has_recording=has_recording
         )
         budget["run"] = _budget_dict(profile)
-        return await self._run_main(job.task, profile, "main")
+        main = await self._run_main(job.task, profile, "main")
+        if probe is None:
+            return main
+        if main.status == "completed":
+            # Only a handled change moves the fingerprint: a failed main task retries next tick.
+            state = self._states.load(run.job_id)
+            previous = state.last_region
+            state.last_digest = fingerprint
+            state.last_region = probe.answer[: self._settings.notify_max_chars]
+            self._save_state(run.job_id, state)
+            main.notes.append((
+                "change",
+                f"{run.job_id}: changed",
+                f"was: {previous or '(first probe)'}\nnow: {probe.answer}",
+            ))
+        main.tasks = probe.tasks + main.tasks
+        main.usage = _add_usage(probe.usage, main.usage)
+        main.changed = True
+        return main
+
+    async def _run_probe(self, run: _Run, job: JobSpec, labels: dict[str, str]) -> tuple[_Result, str]:
+        """Stage 0: ``(result, fingerprint)``; ``result.changed`` says whether the main task runs."""
+
+        outcome = await self._worker.run_outcome(job.task, profile=probe_profile(run.job_id, job, labels=labels))
+        result = self._result(outcome, "probe")
+        if result.status != "completed":
+            result.status = "failed"
+            result.stop_reason = result.stop_reason or f"probe_{outcome.status}"
+            result.error = result.error or f"the probe ended {outcome.status}"
+            return result, ""
+        fingerprint = "sha256:" + hashlib.sha256(result.answer.encode("utf-8")).hexdigest()
+        if fingerprint == self._states.load(run.job_id).last_digest:
+            result.status = "unchanged"
+            result.stop_reason = "unchanged"
+            result.stage = "probe"
+            result.changed = False
+            return result, fingerprint
+        result.changed = True
+        return result, fingerprint
 
     async def _run_main(self, task: str, profile: RunProfile, kind: TaskKind) -> _Result:
         outcome = await self._worker.run_outcome(task, profile=profile)
@@ -387,13 +433,10 @@ class Dispatcher:
             recording_updated=tally.recording_saved,
         )
 
-    def _after_run(self, run: _Run, result: _Result, state: Any) -> None:
-        """Hook for run kinds that update the job state further (the probe)."""
-
     async def _notify(self, run: _Run, job: JobSpec | None, result: _Result) -> tuple[str, ...]:
         notify_on = job.notify_on if job is not None else ["failure", "blocked", "budget", "success"]
         kinds: list[tuple[NotifyKind, str, str]] = list(result.notes)
-        kind = _outcome_kind(result)
+        kind = None if result.status == "unchanged" else _outcome_kind(result)
         if kind is not None:
             kinds.append((kind, f"{run.job_id or 'task'}: {result.status}", _body(result)))
         delivered: list[str] = []
@@ -522,6 +565,17 @@ def _usage_dict(outcome: TaskOutcome) -> dict[str, Any]:
         "by_stage": {key: dict(value) for key, value in usage.by_stage.items()},
         "by_model": {key: dict(value) for key, value in usage.by_model.items()},
     }
+
+
+def _add_usage(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
+    """The usage of two tasks of one run; the cost is unknown once either is."""
+
+    total = dict(second)
+    for key in ("model_calls", "input_tokens", "output_tokens"):
+        total[key] = int(first.get(key, 0) or 0) + int(second.get(key, 0) or 0)
+    costs = (first.get("cost"), second.get("cost"))
+    total["cost"] = None if None in costs else float(costs[0]) + float(costs[1])  # type: ignore[arg-type]
+    return total
 
 
 def _known_cost(usage: dict[str, Any]) -> float | None:

@@ -7,7 +7,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from src.config import JobSpec, RunBudgetSpec, ServeSettings
-from src.contracts import PlaybackRequest, RunBudget, RunProfile
+from src.contracts import PlaybackRequest, ProbeStep, RunBudget, RunProfile
+
+#: Label of a probe's anonymous recording in events (``probe:<job>``); never a file name.
+PROBE_LABEL = "probe:"
 
 
 @dataclass(frozen=True)
@@ -67,6 +70,29 @@ def main_profile(
     )
 
 
+def probe_profile(job_id: str, job: JobSpec, *, labels: Mapping[str, str]) -> RunProfile:
+    """Stage 0: the probe's steps replayed without the model, the output region as the answer.
+
+    ``max_stage="playback"``: no model can be called, so no budget is needed.
+    """
+
+    assert job.probe is not None
+    probe = job.probe
+    return RunProfile(
+        playback=PlaybackRequest(
+            recording=f"{PROBE_LABEL}{job_id}",
+            steps=tuple(ProbeStep(tool=step.tool, args=dict(step.args), server=step.server) for step in probe.steps),
+            answer="output",
+            select=probe.select,
+            ignore=tuple(probe.ignore),
+        ),
+        max_stage="playback",
+        carry_context=False,
+        allowed_domains=tuple(job.domains),
+        labels={**labels, "kind": "probe"},
+    )
+
+
 def free_task_profile(
     settings: ServeSettings, *, day_left: DayLeft, labels: Mapping[str, str]
 ) -> RunProfile:
@@ -81,4 +107,4 @@ def free_task_profile(
     )
 
 
-__all__ = ["DayLeft", "free_task_profile", "main_profile", "run_budget"]
+__all__ = ["PROBE_LABEL", "DayLeft", "free_task_profile", "main_profile", "probe_profile", "run_budget"]

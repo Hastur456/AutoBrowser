@@ -15,6 +15,7 @@ from src.contracts import (
     Binding,
     ModelCallRecord,
     PlaybackRequest,
+    ProbeStep,
     RunBudget,
     StepFinal,
     StepHandoff,
@@ -275,3 +276,55 @@ def test_the_factory_loads_by_name_and_checks_regexes(tmp_path: Path) -> None:
         build(PlaybackRequest(recording="other"))
     with pytest.raises(ValueError, match="invalid playback regex"):
         build(PlaybackRequest(recording="kettle", select="(unclosed"))
+
+
+def _probe_factory(tmp_path: Path) -> PlaybackFactory:
+    return PlaybackFactory(RecordingStore(tmp_path, ReplaySettings()), BrowserPlaybackAdapter(), ReplaySettings())
+
+
+def _build(factory: PlaybackFactory, request: PlaybackRequest) -> PlaybackSource:
+    return factory.build(request, task="Watch the price", budget=RunBudget(), max_stage="playback", emit=lambda *_: None)
+
+
+@pytest.mark.asyncio
+async def test_inline_probe_steps_replay_without_a_stored_recording(tmp_path: Path) -> None:
+    request = PlaybackRequest(
+        recording="probe:price-watch",
+        steps=(ProbeStep(tool="open", args={"url": "https://shop.example/item/1"}, server="web"), ProbeStep(tool="click")),
+        answer="output",
+        select=r'button "[^"]+"',
+    )
+    src = _build(_probe_factory(tmp_path), request)
+
+    first = await src.next(view())
+    done(src, first)
+    second = await src.next(view())
+    done(src, second)
+    final = await src.next(view())
+
+    assert src.plan() is None
+    assert first.request == {"name": "open", "args": {"url": "https://shop.example/item/1"}}
+    assert second.request == {"name": "click", "args": {}}
+    assert final == StepFinal('button "Buy now"', stage="playback")
+    assert src.info == {"recording": "probe:price-watch", "steps": 2, "answer": "output"}
+
+
+@pytest.mark.asyncio
+async def test_an_inline_probe_step_with_an_unknown_tool_is_a_catalog_divergence(tmp_path: Path) -> None:
+    request = PlaybackRequest(recording="probe:j", steps=(ProbeStep(tool="vanished"),), answer="output")
+    src = _build(_probe_factory(tmp_path), request)
+
+    handoff = await src.next(view())
+
+    assert isinstance(handoff, StepHandoff) and handoff.kind == "catalog"
+
+
+@pytest.mark.asyncio
+async def test_an_inline_probe_has_no_checkpoints(tmp_path: Path) -> None:
+    request = PlaybackRequest(recording="probe:j", steps=(ProbeStep(tool="open"),), answer="output")
+    src = _build(_probe_factory(tmp_path), request)
+
+    first = await src.next(view())
+    done(src, first, content="- Page URL: https://elsewhere.example/\n- heading \"Other\"")
+
+    assert await src.next(view("- heading \"Other\"")) == StepFinal('- heading "Other"', stage="playback")
