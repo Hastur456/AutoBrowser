@@ -4,7 +4,8 @@ How to look at AutoBrowser runs in a trace UI: what is exported, how to switch i
 send the traces to **Langfuse** (the primary receiver) or to a local Arize Phoenix or Jaeger,
 what leaves the machine, and how to find a batch scenario. The decision record is
 [ADR-2026-10-29: Neutral OTLP Trace Export](../decisions/2026-10-29-otlp-trace-export.md); the
-data flow is drawn in [Trace Export](../diagrams/trace-export.md).
+data flow is drawn in [Trace Export](../diagrams/trace-export.md). The step-by-step Langfuse setup,
+batch sync included, is the [Langfuse Integration Runbook](langfuse.md).
 
 The export is **off by default**. The local files (`events.jsonl`, `agent_trace.jsonl`, batch
 reports) stay the source of truth either way: grades, `failure_kind` and run comparisons are

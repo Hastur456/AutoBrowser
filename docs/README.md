@@ -20,6 +20,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   notes, task digest, persistent memory files — and how to enable, inspect and test them.
 - [Browser Agent Rules](development/browser-agent-rules.md): Playwright MCP
   interaction rules and search-flow debugging guidance.
+- [Langfuse Integration Runbook](development/langfuse.md): step-by-step Langfuse setup with
+  every command — project and keys, `<home>/.env`, `doctor`/`setup`, datasets, batch sync and
+  manual sync, live traces, judges and the annotation queue, recovery, turning it off.
 - [Eval Platform Guide](development/eval-platform.md): batch results as Langfuse datasets,
   experiments and scores (off by default) — connecting, content capture, dataset versions, the
   local verdict as scores, the LLM judge, the annotation queue, recovery.

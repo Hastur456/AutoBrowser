@@ -4,7 +4,8 @@ How AutoBrowser's local batch results become Langfuse datasets, experiments and 
 to read them there. The decision record is
 [ADR-2026-10-31: Langfuse as the Dataset, Experiment and Score Platform](../decisions/2026-10-31-langfuse-platform-integration.md);
 the design is [docs/development/2026-10-31-langfuse-integration-design.md](2026-10-31-langfuse-integration-design.md);
-the flow is drawn in [Eval Platform Sync](../diagrams/eval-platform-sync.md).
+the flow is drawn in [Eval Platform Sync](../diagrams/eval-platform-sync.md). For a step-by-step
+setup with every command, see the [Langfuse Integration Runbook](langfuse.md).
 
 **The local batch folder stays the source of truth and the only source of the regression
 verdict.** `compare_batches.py` decides, with its exit codes, without a network. Langfuse is a
@@ -243,8 +244,8 @@ uv run scripts/compare_batches.py              # as before, plus "langfuse: <bat
 
 uv run scripts/langfuse_sync.py doctor                         # server >= 4.59.0, keys, project, configs
 uv run scripts/langfuse_sync.py setup                          # score configs (+ the annotation queue)
-uv run scripts/langfuse_sync.py dataset push   [--suite golden|smoke] [--tasks PATH] [--allow-dirty] [--dry-run]
-uv run scripts/langfuse_sync.py dataset status [--suite golden|smoke]
+uv run scripts/langfuse_sync.py dataset push   [--suite golden|smoke|benchmark] [--tasks PATH] [--allow-dirty] [--dry-run]
+uv run scripts/langfuse_sync.py dataset status [--suite golden|smoke|benchmark]
 uv run scripts/langfuse_sync.py experiment push --batch ID|DIR [--new-attempt] [--retry-rejected] [--dry-run]
 uv run scripts/langfuse_sync.py experiment push --pending      # every batch whose sync is unfinished
 uv run scripts/langfuse_sync.py scores pull --batch ID|DIR
