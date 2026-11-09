@@ -183,6 +183,7 @@ def _doctor(args: argparse.Namespace, write: Callable[[str], None]) -> int:
     check(llm_mark, "llm", llm_line)
     if getattr(args, "llm", False):
         check(*_llm_probe(settings.llm, timeout))
+    _doctor_cascade(settings, check, probe=bool(getattr(args, "llm", False)), timeout=timeout)
     for tool in ("node", "npx"):
         path = shutil.which(tool)
         if path is None:
@@ -212,6 +213,56 @@ def _doctor(args: argparse.Namespace, write: Callable[[str], None]) -> int:
         f"{caps.level} · {caps.host} · colors {caps.color} · unicode {caps.unicode} · {caps.reason}",
     )
     return 1 if failures else 0
+
+
+def _doctor_cascade(
+    settings: Settings,
+    check: Callable[[str, str, object], None],
+    *,
+    probe: bool,
+    timeout: float,
+) -> None:
+    """One line per cascade tier (only while ``cascade.enabled``), offline: label, protocol,
+    public host, model, whether a key and a price are set. ``--llm`` probes each tier whose
+    provider or host differs from the session's."""
+
+    from src.cli.models import tier_llm_settings
+
+    cascade = settings.cascade
+    if not cascade.enabled:
+        return
+    if not cascade.tiers:
+        check(_WARN, "cascade", "on, but no tiers above the session model: one tier")
+        return
+    if cascade.escalate_after_failures >= settings.loop.max_consecutive_failures:
+        check(
+            _WARN,
+            "cascade",
+            f"escalate_after_failures {cascade.escalate_after_failures} is not below "
+            f"loop.max_consecutive_failures {settings.loop.max_consecutive_failures}: "
+            f"failures end the task before the tier goes up",
+        )
+    session = (settings.llm.provider, settings.llm.host)
+    for index, spec in enumerate(cascade.tiers, start=1):
+        try:
+            llm = tier_llm_settings(spec, settings.llm)
+        except ValueError as exc:
+            check(_FAIL, "cascade", f"tier {index}: {exc}")
+            continue
+        key = "key set" if llm.api_key and llm.api_key.get_secret_value().strip() else "no key"
+        priced = spec.model in settings.llm.prices
+        parts = [
+            f"tier {index} {spec.tier_label}",
+            llm.provider,
+            _public_url(llm.host) or "client default",
+            llm.model,
+            key,
+            "priced" if priced else "no price",
+        ]
+        check(_OK if priced else _WARN, "cascade", " · ".join(parts))
+        if probe and (llm.provider, llm.host) != session:
+            mark, _label, line = _llm_probe(llm, timeout)
+            check(mark, "cascade probe", f"tier {index}: {line}")
 
 
 def _doctor_skills(settings: Settings, check: Callable[[str, str, object], None]) -> None:

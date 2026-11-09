@@ -20,6 +20,7 @@ from pydantic import ValidationError
 
 from src.agent_loop.events import EventEmitter, JsonlEventSink
 from src.agent_loop.goals import GoalLimits
+from src.cli import models
 from src.cli.bootstrap import USAGE_EXIT_CODE, build_session
 from src.cli.parser import build_parser
 from src.config import ServeSettings, Settings, get_settings
@@ -59,7 +60,7 @@ def run_serve_cli(args: argparse.Namespace, write: Callable[[str], None] = print
         for line in config_error_lines(exc):
             _err(f"invalid configuration: {line}")
         return USAGE_EXIT_CODE
-    problems = startup_problems(settings)
+    problems = [*startup_problems(settings), *models.tier_problems(settings)]
     for problem in problems:
         _err(problem)
     if problems:
@@ -91,9 +92,12 @@ def summary(settings: Settings) -> str:
     serve = settings.serve
     token = "token set" if serve.token is not None and serve.token.get_secret_value().strip() else "no token"
     approvals = "approvals via the API" if serve.api_approvals else "approvals denied (dont_ask)"
+    cascade = settings.cascade
+    tiers = f", cascade {len(cascade.tiers)} tiers" if cascade.enabled and cascade.tiers else ""
     return (
         f"serve: {serve.host}:{serve.port}, {len(serve.jobs)} jobs, {token}, "
         f"channels {', '.join(serve.channels)}, {approvals}, browser launch {settings.browser.launch}"
+        f"{tiers}"
     )
 
 

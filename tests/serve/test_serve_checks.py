@@ -59,6 +59,36 @@ def test_a_money_cap_needs_a_price_for_the_model(serve: dict[str, Any]) -> None:
     assert priced == []
 
 
+PRICED = {"input_per_mtok": 1, "output_per_mtok": 2}
+CASCADE = {"enabled": True, "tiers": [{"model": "m2"}]}
+
+
+def test_a_money_cap_needs_a_price_for_every_cascade_tier() -> None:
+    money = {"daily_max_cost": 1.0}
+    unpriced = startup_problems(
+        settings(llm={"model": "m1", "prices": {"m1": PRICED}}, cascade=CASCADE, serve=money)
+    )
+    priced = startup_problems(
+        settings(llm={"model": "m1", "prices": {"m1": PRICED, "m2": PRICED}}, cascade=CASCADE, serve=money)
+    )
+    disabled = startup_problems(
+        settings(
+            llm={"model": "m1", "prices": {"m1": PRICED}},
+            cascade={**CASCADE, "enabled": False},
+            serve=money,
+        )
+    )
+
+    assert any("'m2'" in problem for problem in unpriced)
+    assert priced == [] and disabled == []
+
+
+def test_the_task_cost_cap_also_needs_the_prices() -> None:
+    problems = startup_problems(settings(llm={"model": "m1"}, loop={"max_task_cost": 0.2}))
+
+    assert any("llm.prices" in problem and "'m1'" in problem for problem in problems)
+
+
 def test_a_webhook_secret_from_an_unset_variable_is_a_problem(monkeypatch: pytest.MonkeyPatch) -> None:
     hook = {"id": "ci", "type": "webhook", "secret_env": "PRICE_HOOK_SECRET"}
     monkeypatch.delenv("PRICE_HOOK_SECRET", raising=False)

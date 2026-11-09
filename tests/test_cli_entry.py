@@ -408,6 +408,80 @@ def test_doctor_llm_probes_the_provider(
         assert code == 1
 
 
+CASCADE_PROFILE = (
+    "llm:\n"
+    "  model: cheap\n"
+    "  prices: {cheap: {input_per_mtok: 1, output_per_mtok: 1}}\n"
+    "cascade:\n"
+    "  enabled: true\n"
+    "  tiers:\n"
+    "    - {model: strong, label: big}\n"
+    "    - {model: gpt, provider: openai_compat, host: 'https://user:pw@api.test/v1?k=q', api_key: sk-tier}\n"
+)
+
+
+def test_doctor_prints_the_cascade_tiers_without_secrets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_profile(monkeypatch, tmp_path, CASCADE_PROFILE)
+    monkeypatch.setattr(subcommands.shutil, "which", lambda name: None)
+
+    entry.main(["doctor"])
+
+    out = capsys.readouterr().out
+    tiers = [line for line in out.splitlines() if line[4:].startswith("cascade ")]
+    assert len(tiers) == 2
+    assert "big" in tiers[0] and "strong" in tiers[0] and "no price" in tiers[0]
+    assert tiers[0].startswith("!!")
+    assert "https://api.test/v1" in tiers[1] and "key set" in tiers[1]
+    assert "sk-tier" not in out and "user:pw" not in out and "k=q" not in out
+
+
+def test_doctor_has_no_cascade_line_while_it_is_off(capsys: pytest.CaptureFixture[str]) -> None:
+    entry.main(["doctor"])
+
+    assert not any(line[4:].startswith("cascade ") for line in capsys.readouterr().out.splitlines())
+
+
+def test_doctor_fails_a_tier_that_cannot_be_built(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_profile(
+        monkeypatch,
+        tmp_path,
+        "cascade:\n  enabled: true\n  tiers: [{model: gpt, provider: openai_compat, api_key: sk-tier}]\n",
+    )
+    monkeypatch.setattr(subcommands.shutil, "which", lambda name: None)
+
+    assert entry.main(["doctor"]) == 1
+
+    out = capsys.readouterr().out
+    assert doctor_line(out, "cascade").startswith("xx")
+    assert "sk-tier" not in out
+
+
+def test_doctor_llm_probes_each_tier_on_another_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from src.providers.registry import ProviderProbe
+
+    use_profile(monkeypatch, tmp_path, CASCADE_PROFILE)
+    monkeypatch.setattr(subcommands.shutil, "which", lambda name: None)
+    hosts: list[object] = []
+
+    def fake_probe(settings: object, *, timeout: float) -> ProviderProbe:
+        hosts.append(getattr(settings, "host", None))
+        return ProviderProbe(reachable=True)
+
+    monkeypatch.setattr("src.providers.registry.probe_chat_provider", fake_probe)
+
+    entry.main(["doctor", "--llm"])
+
+    # The session's provider, then only the tier with another (provider, host).
+    assert hosts == [None, "https://user:pw@api.test/v1?k=q"]
+    assert "cascade probe" in capsys.readouterr().out
+
+
 def test_doctor_reports_skills_off_by_default(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -565,6 +639,34 @@ def test_serve_check_refuses_an_unsafe_or_broken_stand(
 
     captured = capsys.readouterr()
     assert message in captured.out + captured.err
+
+
+def test_serve_check_refuses_a_broken_cascade_tier_without_its_key(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_CASCADE__ENABLED", "true")
+    monkeypatch.setenv(
+        "AUTOBROWSER_CASCADE__TIERS", '[{"model": "gpt", "provider": "openai_compat", "api_key": "sk-tier"}]'
+    )
+    get_settings.cache_clear()
+
+    assert entry.main(["serve", "--check"]) == 2
+
+    captured = capsys.readouterr()
+    assert "cascade tier 'gpt'" in captured.err
+    assert "sk-tier" not in captured.out + captured.err
+
+
+def test_serve_check_summary_counts_the_cascade_tiers(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_CASCADE__ENABLED", "true")
+    monkeypatch.setenv("AUTOBROWSER_CASCADE__TIERS", '[{"model": "strong"}]')
+    get_settings.cache_clear()
+
+    assert entry.main(["serve", "--check"]) == 0
+
+    assert "cascade 1 tiers" in capsys.readouterr().out
 
 
 def test_the_serve_worker_has_its_own_profile_port_and_labels() -> None:
