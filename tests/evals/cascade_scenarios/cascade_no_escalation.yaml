@@ -1,0 +1,28 @@
+name: cascade_no_escalation
+task: What is the price of the item on the current page?
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Read the current page, status: pending}
+  - decision: tool_call
+    tool_request: {name: browser_snapshot, args: {}, reason: Read the price.}
+  - decision: done
+    final_answer: The item costs $24.99.
+cascade:
+  tiers:
+  # Never asked: the cheap model finishes on its own.
+  - label: strong
+    responses: []
+browser:
+  snapshots:
+  - |-
+    - Page URL: https://shop.example/item/42
+    - heading "Ceramic Mug" [ref=e1]
+    - text "$24.99" [ref=e2]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains: [$24.99]
+  expected_tier_reached: 0
+  max_model_turns: 3
+  max_tool_calls: 1

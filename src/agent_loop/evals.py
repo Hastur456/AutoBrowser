@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import yaml
 
-from src.llm import ModelResponse
+from src.llm import ModelResponse, ModelTier, ModelTiers
 from src.messages import Message
 
 from src.agent_loop.comparison import Finding
@@ -368,6 +368,8 @@ class EvalAssertions:
     max_model_turns: int | None = None
     #: The cost-ladder stage the task must end at (``playback``, ``retarget``, ``agent``).
     expected_stage_reached: str | None = None
+    #: The highest model tier the task must reach (a cascade scenario; 0 = the first model).
+    expected_tier_reached: int | None = None
 
 
 @dataclass(frozen=True)
@@ -391,6 +393,9 @@ class EvalScenario:
     #: Replay: ``{"recording": <recording document>, "answer", "select", "ignore",
     #: "max_stage", "max_model_calls"}``; the recording is stored for the run only.
     playback: Mapping[str, Any] | None = None
+    #: Model cascade: the tiers above the scenario model, ``(label, responses)`` each, cheapest
+    #: first. Empty: one tier, as without a cascade (``EngineResources.models`` stays ``None``).
+    cascade: list[tuple[str, list[str]]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -420,6 +425,9 @@ class EvalResult:
     action_signature: str = ""
     #: The cost-ladder stage the task reached; not part of the baseline metrics.
     stage_reached: str = ""
+    #: The highest model tier the task ran on (``ladder.escalated{tier}``); ``0`` without a
+    #: cascade. Not part of the baseline metrics: a cascade scenario asserts it.
+    tier_reached: int = 0
 
     def metrics(self) -> dict[str, Any]:
         """The v1 baseline metrics (``agent_loop_v1.json`` plus ``final_answer``)."""
@@ -516,12 +524,20 @@ def load_scenario(path: Path) -> EvalScenario:
             max_errors=assertions.get("max_errors"),
             max_model_turns=assertions.get("max_model_turns"),
             expected_stage_reached=assertions.get("expected_stage_reached"),
+            expected_tier_reached=assertions.get("expected_tier_reached"),
         ),
         turn_cap=int(data.get("turn_cap", 25) or 25),
         permissions=PermissionsSettings(**{"mode": "dont_ask", **(data.get("permissions") or {})}),
         human_answers=[str(item) for item in (data.get("human") or {}).get("answers") or []],
         strict=bool(data.get("strict", False)),
         playback=data.get("playback"),
+        cascade=[
+            (
+                str(tier["label"]),
+                [_json_response(response) for response in tier.get("responses") or []],
+            )
+            for tier in (data.get("cascade") or {}).get("tiers") or []
+        ],
     )
 
 
@@ -599,6 +615,23 @@ async def run_scenario(
     )
     playback_dir = tempfile.TemporaryDirectory(prefix="autobrowser-eval-recordings-")
     steps, profile = _scenario_playback(scenario, Path(playback_dir.name))
+    tier_models = [
+        FakeChatModel(responses=responses, strict=scenario.strict) for _, responses in scenario.cascade
+    ]
+    models = (
+        ModelTiers(
+            (
+                ModelTier(llm, label="tier-0"),
+                *(
+                    ModelTier(model, label=label)
+                    for model, (label, _) in zip(tier_models, scenario.cascade, strict=True)
+                ),
+            )
+        )
+        if tier_models
+        else None
+    )
+    every_model = [llm, *tier_models]
     # The session's browser permission wiring, over the scenario's rules and mode.
     resources = EngineResources.from_harness(
         harness,
@@ -610,6 +643,7 @@ async def run_scenario(
         ),
         memory=memory,
         steps=steps,
+        models=models,
     )
     emitter.emit(
         "goal.started",
@@ -668,15 +702,19 @@ async def run_scenario(
         summary=summary,
         action_sequence=print_action_sequence(events),
         final_state=final_state,
-        prompt_chars=llm.prompt_chars,
-        request_chars=llm.request_chars,
-        script_exhausted=llm.exhausted,
-        unused_responses=llm.unused_responses,
+        prompt_chars=sum(model.prompt_chars for model in every_model),
+        request_chars=sum(model.request_chars for model in every_model),
+        script_exhausted=any(model.exhausted for model in every_model),
+        unused_responses=sum(model.unused_responses for model in every_model),
         error_count=_tool_error_count(events),
         approval_request_count=_event_count(events, "approval.requested"),
         observation_count=_event_count(events, "observation.compiled"),
         action_signature=action_signature(events),
         stage_reached=stage_reached,
+        tier_reached=max(
+            (int(event.payload.get("tier") or 0) for event in events if event.type == "ladder.escalated"),
+            default=0,
+        ),
     )
 
 
@@ -774,6 +812,9 @@ def check_scenario_result(scenario: EvalScenario, result: EvalResult) -> list[st
     expected_stage = assertions.expected_stage_reached
     if expected_stage is not None and result.stage_reached != expected_stage:
         problems.append(f"stage_reached: expected {expected_stage!r}, got {result.stage_reached!r}")
+    expected_tier = assertions.expected_tier_reached
+    if expected_tier is not None and result.tier_reached != expected_tier:
+        problems.append(f"tier_reached: expected {expected_tier}, got {result.tier_reached}")
     if summary.trace_complete is not True:
         problems.append("trace_complete: the trace has no goal.started or no terminal event")
     return problems

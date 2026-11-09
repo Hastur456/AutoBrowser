@@ -12,6 +12,8 @@ from src.harness.memory_store import MemoryContext, MemoryStore
 SCENARIO_DIR = Path(__file__).parent / "scenarios"
 #: Replay scenarios: a recording plus the page it is replayed on (baseline ``playback_v1``).
 PLAYBACK_SCENARIO_DIR = Path(__file__).parent / "playback_scenarios"
+#: Model cascade scenarios: a scenario model plus scripted tiers above it (baseline ``cascade_v1``).
+CASCADE_SCENARIO_DIR = Path(__file__).parent / "cascade_scenarios"
 MEMORY_SEED_DIR = Path(__file__).parent / "memory_seed"
 #: The committed, empty settings profile of hermetic runs: every setting is the code default.
 HERMETIC_PROFILE = Path(__file__).resolve().parents[1] / "pipeline" / "hermetic.yaml"
