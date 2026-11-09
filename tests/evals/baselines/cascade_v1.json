@@ -11,7 +11,7 @@
       "observation_count": 1,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 84628,
+      "request_chars": 59406,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -25,7 +25,7 @@
       "observation_count": 1,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 63847,
+      "request_chars": 44723,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true
@@ -39,7 +39,7 @@
       "observation_count": 7,
       "policy_block_count": 1,
       "repeated_action_count": 0,
-      "request_chars": 219663,
+      "request_chars": 157853,
       "terminal_status": "completed",
       "tool_call_count": 7,
       "trace_complete": true
@@ -53,7 +53,7 @@
       "observation_count": 1,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 106587,
+      "request_chars": 74437,
       "terminal_status": "completed",
       "tool_call_count": 1,
       "trace_complete": true

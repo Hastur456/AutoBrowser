@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -20,24 +21,24 @@ from src.harness.memory_tool import memory_tools
 
 PROMPT_CONSTRAINTS = {
     "core": (
-        "use the bound tools when an external browser action is needed",
+        "use the bound tools when an external action is needed",
         "do not invent tool names",
         "return a final answer only when the task is complete",
         "prefer the fewest actions that can satisfy the task",
     ),
-    "browser": (
-        "treat browser_snapshot as the source of truth for page state",
-        "snapshot refs are ephemeral",
-        "call browser_snapshot next to obtain fresh refs",
-        "do not invent css selectors, xpath, class names, or dom structure",
+    "tool_contract": (
+        "treat the latest output of a read-only tool as the source of truth",
+        "the server instructions and rule blocks of this prompt",
+        "references a tool hands out may be ephemeral",
+        "do not invent ids, paths, selectors or structure",
     ),
     "observation": (
         "follow observer correction hints",
-        "if the observation or policy says the last browser action did not change",
-        "latest browser_snapshot",
+        "if the observation or policy says the last action did not change anything",
+        "read the current state again before another action that needs one",
     ),
     "completion": (
-        "the task is not complete until you have extracted the list of results",
+        "the task is not complete until the final answer contains what the user asked",
         "once you have data that satisfies the user request",
         "immediately set decision: 'done'",
     ),
@@ -47,6 +48,19 @@ PROMPT_CONSTRAINTS = {
         "do not describe a tool call in text",
     ),
 }
+
+#: The prompts work with any MCP server: no server's tool names, sites or page structure.
+SERVER_SPECIFIC = re.compile(r"\bbrowser_\w+|playwright|ozon|\bref=e\d|\be123\b", re.IGNORECASE)
+NEUTRAL_PROMPTS = {
+    "agent": AGENT_SYSTEM_PROMPT,
+    "planner": PLANNER_SYSTEM_PROMPT,
+    "observer": OBSERVER_SYSTEM_PROMPT,
+    "approval_classifier": APPROVAL_CLASSIFIER_SYSTEM_PROMPT,
+}
+BROWSER_SKILL = (
+    Path(__file__).resolve().parents[1]
+    / "src/agent_loop/resources/skills/browser-agent-rules/SKILL.md"
+)
 
 
 @pytest.mark.parametrize(("category", "requirements"), PROMPT_CONSTRAINTS.items())
@@ -60,51 +74,58 @@ def test_agent_prompt_constraint_inventory(
     assert not missing, f"{category} constraints missing from agent prompt: {missing}"
 
 
-def test_agent_prompt_requires_search_input_inspection_before_submit() -> None:
-    prompt = AGENT_SYSTEM_PROMPT.lower()
+@pytest.mark.parametrize("name", NEUTRAL_PROMPTS)
+def test_the_prompts_are_server_neutral(name: str) -> None:
+    found = SERVER_SPECIFIC.findall(NEUTRAL_PROMPTS[name])
 
-    assert "prefer the fewest actions" in prompt
-    assert "do not take a fresh" in prompt
-    assert "after every successful action" in prompt
-    assert "follow the browser contract" in prompt
-    assert "playwright mcp" not in prompt
-    assert "use browser_type directly" in prompt
-    assert "move straight to results extraction" in prompt
-    assert "do this search-affordance click at most once" in prompt
-    assert "https://www.ozon.ru/search/?text=<url-encoded query>" in prompt
-    assert "repeated clicks/double-clicks" in prompt
-    assert "typing a value into a filter field is not" in prompt
-    assert "one price-filter ui attempt" in prompt
+    assert not found, f"{name} prompt names a server, tool or site: {found}"
 
 
-def test_planner_prompt_includes_search_contract_steps() -> None:
-    prompt = PLANNER_SYSTEM_PROMPT.lower()
+def test_agent_prompt_keeps_the_loop_tight() -> None:
+    prompt = " ".join(AGENT_SYSTEM_PROMPT.lower().split())
+
+    assert "do not re-read the environment after every successful action" in prompt
+    assert "do not reuse references from before that action" in prompt
+    assert "if a tool fails the same way twice in the same task phase" in prompt
+    assert "a representative sample is sufficient" in prompt
+
+
+def test_planner_prompt_plans_short_with_an_early_fallback() -> None:
+    prompt = " ".join(PLANNER_SYSTEM_PROMPT.lower().split())
 
     assert "prefer 1-3 steps" in prompt
-    assert "do not split a search task into separate locate, inspect, type, and submit" in prompt
-    assert "direct search url navigation as an early" in prompt
-    assert "never plan repeated clicks or double-clicks" in prompt
-    assert "playwright mcp" not in prompt
-    assert "browser_snapshot" in prompt
-    assert "locate the search input" in prompt
-    assert "verify and extract visible results" in prompt
-    assert "filter contract" in prompt
-    assert "typing into a filter field alone is not" in prompt
+    assert "name an early fallback" in prompt
+    assert "after one failed attempt instead of repeating the same attempt" in prompt
+    assert "avoid tool names unless the user explicitly asked for them" in prompt
+    assert "end every plan with verifying the result and extracting" in prompt
+    assert "never plan repeated attempts of the same action on the same target" in prompt
 
 
-def test_observer_prompt_reports_search_field_alignment() -> None:
-    prompt = OBSERVER_SYSTEM_PROMPT.lower()
+def test_observer_prompt_keeps_the_tool_contract() -> None:
+    prompt = " ".join(OBSERVER_SYSTEM_PROMPT.lower().split())
 
-    assert "playwright mcp" not in prompt
-    assert "browser_snapshot is the source of truth" in prompt
-    assert "browser_type fails" in prompt
-    assert "empty" in prompt
-    assert "already aligned with the requested search" in prompt
-    assert "unrelated query" in prompt
-    assert "inspect and correct the search input" in prompt
-    assert "avoid asking for another snapshot" in prompt
-    assert "never hint toward a" in prompt
-    assert "double-click" in prompt
+    assert "you compress one tool result" in prompt
+    assert "references may be valid only for the output that produced them" in prompt
+    assert "do not repeat the rejected reference in important_refs" in prompt
+    assert "avoid asking for another read" in prompt
+    assert "never hint toward a repeated call on the same target" in prompt
+
+
+def test_the_browser_rules_skill_carries_the_browser_contract() -> None:
+    """The browser rules left the agent prompt; the always-on skill of a browser session
+    keeps them (the skill names the browser server's tools, the prompts never do)."""
+
+    skill = " ".join(BROWSER_SKILL.read_text(encoding="utf-8").lower().split())
+
+    assert "use `browser_snapshot` as the source of truth" in skill
+    assert "a ref is valid only for the exact snapshot that produced it" in skill
+    assert "before `browser_type`, verify from the latest snapshot that the chosen ref is editable" in skill
+    assert "switch to that tab with `browser_tabs`" in skill
+    assert "treat iframe entries in a snapshot as frame boundaries" in skill
+    assert "inspect the current value of the search input first" in skill
+    assert "typing a value into a filter field (price, for example) is not enough" in skill
+    assert "do not repeat the click and do not double-click the same control" in skill
+    assert "never with regular expressions" in skill
 
 
 def test_agent_prompt_carries_out_user_requested_purchases_through_the_approval_gate() -> None:
