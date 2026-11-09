@@ -1393,6 +1393,78 @@ def test_replay_bounds_are_enforced(settings: Any, field: str, value: Any) -> No
 
 
 # --------------------------------------------------------------------------
+# The cascade section: model tiers above the session model
+# --------------------------------------------------------------------------
+
+
+def test_cascade_defaults_are_off_with_no_tiers(settings: Any) -> None:
+    cascade = settings().cascade
+
+    assert cascade.enabled is False
+    assert cascade.tiers == []
+    assert cascade.retarget_tier == 0
+    assert cascade.escalate_after_failures == 2
+    assert cascade.escalate_after_replans == 1
+    assert cascade.escalate_on_progress_block is True
+    assert cascade.escalate_on_no_action is True
+
+
+def test_cascade_tiers_resolve_from_a_json_env_var(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_CASCADE__ENABLED", "true")
+    monkeypatch.setenv(
+        "AUTOBROWSER_CASCADE__TIERS",
+        '[{"model": "big", "label": "strong"}, {"model": "bigger", "api_key": "sk-tier"}]',
+    )
+    monkeypatch.setenv("AUTOBROWSER_CASCADE__RETARGET_TIER", "2")
+
+    cascade = settings().cascade
+
+    assert cascade.enabled is True
+    assert [tier.tier_label for tier in cascade.tiers] == ["strong", "bigger"]
+    assert cascade.retarget_tier == 2
+    assert "sk-tier" not in repr(cascade)
+
+
+def test_a_tier_overrides_only_the_llm_fields_it_names(settings: Any) -> None:
+    tiers = settings(
+        cascade={
+            "tiers": [
+                {"model": "plain"},
+                {"model": "cold", "label": "cold", "temperature": None, "host": "http://h/v1"},
+            ]
+        }
+    ).cascade.tiers
+
+    assert tiers[0].llm_overrides() == {"model": "plain"}
+    # An explicit null is an override (no temperature), an omitted field is not.
+    assert tiers[1].llm_overrides() == {"model": "cold", "temperature": None, "host": "http://h/v1"}
+
+
+@pytest.mark.parametrize(
+    "cascade",
+    [
+        {"tiers": [{"model": "a"}, {"model": "b"}, {"model": "c"}, {"model": "d"}]},
+        {"tiers": [{"model": "a"}], "retarget_tier": 2},
+        {"tiers": [{"model": "a"}, {"model": "a"}]},
+        {"tiers": [{"model": "a", "label": "x"}, {"model": "b", "label": "x"}]},
+        {"tiers": [{"model": ""}]},
+        {"tiers": [{"model": "a", "temperature": 3}]},
+        {"tiers": [{"model": "a", "timeout_seconds": 0}]},
+        {"tiers": [{"model": "a", "unknown": 1}]},
+        {"escalate_after_failures": 0},
+        {"escalate_after_replans": 0},
+        {"retarget_tier": -1},
+        {"unknown": 1},
+    ],
+)
+def test_cascade_bounds_are_enforced(settings: Any, cascade: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        settings(cascade=cascade)
+
+
+# --------------------------------------------------------------------------
 # The pipeline section: tolerances of the regression tools
 # --------------------------------------------------------------------------
 

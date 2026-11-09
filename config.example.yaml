@@ -134,6 +134,27 @@ llm:
   #   model: <model-id>
 
 # ---------------------------------------------------------------------------
+# Model cascade: tiers above the session model (tier 0 = llm.model, --model,
+# /model). The agent climbs one tier when it is stuck, never down within a task.
+# Off by default (docs/development/serve-mode.md).
+cascade:
+  enabled: false                                # (default)
+  tiers: []                                     # (default) at most 3, cheapest first
+  # tiers:
+  #   - model: gpt-oss:120b-cloud               # inherits provider, host, key from llm
+  #     label: strong                           # name in events and usage by_model
+  #   - model: gpt-5
+  #     provider: openai_compat
+  #     host: https://api.openai.com/v1
+  #     temperature: null                       # send no temperature
+  # A money cap (loop.max_task_cost, serve budgets) needs llm.prices for every tier.
+  retarget_tier: 0                              # (default) tier of the replay retarget
+  escalate_after_failures: 2                    # (default) failed calls in a row
+  escalate_after_replans: 1                     # (default)
+  escalate_on_progress_block: true              # (default)
+  escalate_on_no_action: true                   # (default) empty answer: up, not the end
+
+# ---------------------------------------------------------------------------
 browser:
   # Chrome binary to launch. Forward slashes: python-dotenv decodes escapes in
   # double-quoted .env values, so "C:\temp" becomes a tab there.

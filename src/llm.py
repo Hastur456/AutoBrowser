@@ -180,7 +180,8 @@ class ModelTier:
 class ModelTiers:
     """The models of a session; ``tiers[0]`` is the default and escalation only moves up.
 
-    One tier is today's behaviour (the cascade of several tiers is a later phase).
+    ``tiers[0]`` is the session model; a cascade (``cascade.*``) adds the tiers above it,
+    built by the composition root. One tier is the behaviour without a cascade.
     """
 
     tiers: tuple[ModelTier, ...]

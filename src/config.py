@@ -441,6 +441,98 @@ class LLMSettings(_Section):
         return self
 
 
+class ModelTierSpec(_Section):
+    """One cascade tier above the session model (tier 0).
+
+    The fields a profile names override ``llm``; every other one is inherited from it.
+    An explicit ``temperature: null`` sends no temperature (``model_fields_set`` tells it
+    apart from an omitted field).
+    """
+
+    model: Annotated[
+        str, Field(min_length=1, description="Model id handed to the provider; its price is llm.prices[model].")
+    ]
+    label: Annotated[
+        str, Field(description="Label in events, usage by_model and reports; empty: the model id.")
+    ] = ""
+    provider: Annotated[
+        LLMProvider | None,
+        Field(description="Wire protocol; None: the session's (--provider or llm.provider)."),
+    ] = None
+    host: Annotated[str | None, Field(description="Provider base URL; None: llm.host.")] = None
+    api_key: Annotated[
+        SecretStr | None, Field(description="Provider API key; None: llm.api_key. Never logged.")
+    ] = None
+    temperature: Annotated[
+        float | None,
+        Field(ge=0.0, le=2.0, description="Sampling temperature; omitted: llm.temperature."),
+    ] = None
+    reasoning_effort: Annotated[
+        Literal["minimal", "low", "medium", "high"] | None,
+        Field(description="Reasoning effort; omitted: llm.reasoning_effort."),
+    ] = None
+    timeout_seconds: Annotated[
+        float | None, Field(gt=0.0, description="Timeout of one call; omitted: llm.timeout_seconds.")
+    ] = None
+
+    @property
+    def tier_label(self) -> str:
+        return self.label or self.model
+
+    def llm_overrides(self) -> dict[str, Any]:
+        """The ``llm`` fields this tier sets: the ones its profile names, ``label`` aside."""
+
+        return {
+            name: getattr(self, name) for name in self.model_fields_set if name != "label"
+        }
+
+
+class CascadeSettings(_Section):
+    """Model tiers above the session model and when the agent climbs them
+    (``docs/development/2026-11-08-serve-mode-phase4-design.md``).
+
+    Off by default: one tier, the session model, exactly as without a cascade. Tier 0 is
+    always the session model (``llm.model``, ``--model``, ``/model``); ``tiers`` are the
+    ones above it. The tier only goes up within a task.
+    """
+
+    enabled: Annotated[
+        bool, Field(description="Use the tiers above the session model and escalate to them.")
+    ] = False
+    tiers: Annotated[
+        list[ModelTierSpec],
+        Field(max_length=3, description="Tiers above tier 0 (the session model), cheapest first."),
+    ] = Field(default_factory=list)
+    retarget_tier: Annotated[
+        int, Field(ge=0, le=3, description="Tier of the replay retarget call (stage 2); <= len(tiers).")
+    ] = 0
+    escalate_after_failures: Annotated[
+        int, Field(ge=1, description="Consecutive failed calls on the current tier before it goes up.")
+    ] = 2
+    escalate_after_replans: Annotated[
+        int, Field(ge=1, description="Replans on the current tier before it goes up.")
+    ] = 1
+    escalate_on_progress_block: Annotated[
+        bool, Field(description="Go up when the progress guard blocks a repeated call.")
+    ] = True
+    escalate_on_no_action: Annotated[
+        bool,
+        Field(description="An empty model answer goes up a tier instead of ending the task."),
+    ] = True
+
+    @model_validator(mode="after")
+    def _consistent(self) -> CascadeSettings:
+        if self.retarget_tier > len(self.tiers):
+            raise ValueError(
+                f"cascade.retarget_tier {self.retarget_tier} is above the last tier ({len(self.tiers)})"
+            )
+        labels = [tier.tier_label for tier in self.tiers]
+        duplicates = sorted({label for label in labels if labels.count(label) > 1})
+        if duplicates:
+            raise ValueError(f"cascade.tiers: duplicate label(s) {duplicates}; give each a label")
+        return self
+
+
 class BrowserSettings(_Section):
     """Chrome/CDP launch parameters for the harness-managed browser."""
 
@@ -2664,6 +2756,7 @@ class Settings(BaseSettings):
     )
 
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    cascade: CascadeSettings = Field(default_factory=CascadeSettings)
     browser: BrowserSettings = Field(default_factory=BrowserSettings)
     loop: LoopSettings = Field(default_factory=LoopSettings)
     observation: ObservationSettings = Field(default_factory=ObservationSettings)
@@ -2746,6 +2839,7 @@ def reload_settings() -> Settings:
 
 __all__ = [
     "BrowserSettings",
+    "CascadeSettings",
     "CONFIG_FILE_ENV_VAR",
     "DEFAULT_CONFIG_FILE_YAML",
     "HOME_ENV_VAR",
@@ -2761,6 +2855,7 @@ __all__ = [
     "LoopSettings",
     "MemorySettings",
     "ModelPriceSpec",
+    "ModelTierSpec",
     "ObservationSettings",
     "PermissionRule",
     "PermissionsSettings",
