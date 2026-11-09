@@ -64,6 +64,7 @@ _HTTP_LOGGERS = (
     "httpcore.http11",
     "httpcore.http2",
     "httpcore.proxy",
+    "httpcore.socks",
 )
 #: ``/run@PriceBot job`` -> ``/run job``: Telegram's command suffix in group chats.
 _BOT_SUFFIX = re.compile(r"^(/\w+)@(\w+)")
@@ -71,8 +72,10 @@ _BOT_SUFFIX = re.compile(r"^(/\w+)@(\w+)")
 HINT = "Send /help for the commands."
 NO_BUTTONS = "\n(answer it via the API: the ticket id is too long for buttons)"
 ANSWERED = "answered"
-#: A press that answered nothing: the buttons stay, the ticket may still wait.
-NOT_ANSWERED = "not answered: the ticket expired, or try again in a minute"
+#: A press on a ticket that is gone (answered elsewhere, timed out): the buttons go too.
+EXPIRED = "expired: the ticket is already closed"
+#: A press that answered a waiting ticket nothing (a rate limit): the buttons stay.
+NOT_ANSWERED = "not answered: try again in a minute"
 
 
 class TelegramError(RuntimeError):
@@ -363,9 +366,12 @@ class TelegramChannel:
             return
         ticket_id, answer = parsed
         answered = commands.answer_approval(ticket_id, answer, channel=self.name, sender=self.sender(chat_id))
-        await self._api.answer_callback(str(query.get("id") or ""), ANSWERED if answered else NOT_ANSWERED)
+        waiting = not answered and commands.ticket_open(ticket_id)
+        await self._api.answer_callback(
+            str(query.get("id") or ""), ANSWERED if answered else NOT_ANSWERED if waiting else EXPIRED
+        )
         message_id = message.get("message_id") if isinstance(message, Mapping) else None
-        if answered and isinstance(message_id, int):
+        if not waiting and isinstance(message_id, int):
             await self._api.clear_keyboard(chat_id, message_id)
 
     async def _send_once_more_if_limited(

@@ -449,7 +449,7 @@ class Dispatcher:
 
         job = self._settings.jobs.get(run.job_id)
         if job is None:
-            return ""
+            return "cancelled" if run.cancelled else ""
         cooldown = job.cooldown_seconds if job.cooldown_seconds is not None else self._settings.cooldown_seconds
         last = self._states.load(run.job_id).last_finished_at
         if cooldown and last is not None:
@@ -527,7 +527,8 @@ class Dispatcher:
             tier_reached=result.tier,
         )
         self._ledger.append(report)
-        if run.job_id:
+        if run.job_id and (result.tasks or result.status != "cancelled"):
+            # A run cancelled before any task ran starts no cooldown.
             state = self._states.load(run.job_id)
             state.last_finished_at = finished
             state.last_run_id = run.run_id
@@ -562,7 +563,7 @@ class Dispatcher:
         fingerprint = ""
         if job.probe is not None:
             probe, fingerprint = await self._run_probe(worker, run, job, labels)
-            if probe.status != "completed" and run.cancelled:
+            if probe.status not in ("completed", "unchanged") and run.cancelled:
                 # Stopped by the user, not a failure: no failure notification.
                 probe.status, probe.stop_reason, probe.error = "cancelled", "cancelled", ""
                 return probe

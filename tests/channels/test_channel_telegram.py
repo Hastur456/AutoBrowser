@@ -71,9 +71,13 @@ class FakeBot:
 class Port:
     """A CommandPort that records what the channel asked."""
 
-    def __init__(self, *, answers: bool = True) -> None:
+    def __init__(self, *, answers: bool = True, open_tickets: tuple[str, ...] = ()) -> None:
         self.log: list[tuple[str, Any]] = []
         self.answers = answers
+        self.open_tickets = open_tickets
+
+    def ticket_open(self, ticket_id: str) -> bool:
+        return ticket_id in self.open_tickets
 
     async def handle(self, command: ChatCommand, *, channel: str, sender: str) -> ChatReply:
         self.log.append(("handle", (command, channel, sender)))
@@ -275,15 +279,25 @@ async def test_a_button_press_answers_the_ticket_and_clears_the_keyboard() -> No
     assert cleared["chat_id"] == ALLOWED and cleared["message_id"] == 5
 
 
-async def test_an_unanswered_press_says_so_and_keeps_the_keyboard() -> None:
+async def test_a_press_on_a_waiting_ticket_that_answered_nothing_keeps_the_keyboard() -> None:
+    bot = FakeBot([press(10, f"a:{TICKET}:d")])
+    chan, _ = channel(bot)
+
+    await poll(chan, Port(answers=False, open_tickets=(TICKET,)))
+
+    assert "try again" in bot.calls("answerCallbackQuery")[0]["text"]
+    # Rate-limited or refused: the ticket still waits, so it keeps its buttons.
+    assert bot.calls("editMessageReplyMarkup") == []
+
+
+async def test_a_press_on_a_closed_ticket_says_so_and_clears_the_keyboard() -> None:
     bot = FakeBot([press(10, f"a:{TICKET}:d")])
     chan, _ = channel(bot)
 
     await poll(chan, Port(answers=False))
 
     assert "expired" in bot.calls("answerCallbackQuery")[0]["text"]
-    # Expired, rate-limited or refused: a ticket that may still wait keeps its buttons.
-    assert bot.calls("editMessageReplyMarkup") == []
+    assert len(bot.calls("editMessageReplyMarkup")) == 1
 
 
 async def test_without_chat_approvals_a_card_has_no_buttons() -> None:
@@ -494,12 +508,13 @@ async def test_the_token_is_redacted_in_the_httpcore_child_loggers(caplog: pytes
     caplog.set_level(logging.DEBUG)
     chan, _ = channel(FakeBot())
 
-    for name in ("httpcore.connection", "httpcore.http11", "httpcore.http2", "httpcore.proxy", "httpx"):
+    names = ("httpcore.connection", "httpcore.http11", "httpcore.http2", "httpcore.proxy", "httpcore.socks", "httpx")
+    for name in names:
         logging.getLogger(name).debug("request to /bot%s/getUpdates", TOKEN)
     await chan.aclose()
 
     assert TOKEN not in caplog.text
-    assert caplog.text.count("[REDACTED]") == 5
+    assert caplog.text.count("[REDACTED]") == len(names)
 
 
 async def test_the_sender_is_a_keyed_hash_of_the_chat() -> None:

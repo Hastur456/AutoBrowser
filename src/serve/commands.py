@@ -93,6 +93,8 @@ class CommandPort(Protocol):
         self, ticket_id: str, answer: ApprovalAnswer, *, channel: str, sender: str
     ) -> bool: ...
 
+    def ticket_open(self, ticket_id: str) -> bool: ...
+
     def rejected(self, *, channel: str, reason: str, sender: str) -> None: ...
 
     def channel_error(self, *, channel: str, error: str, retry_in: float) -> None: ...
@@ -144,6 +146,13 @@ class ServeCommands:
         )
         self._emit_command(channel, "approve", ticket_id, sender, "ok" if answered else "unknown")
         return answered
+
+    def ticket_open(self, ticket_id: str) -> bool:
+        """The ticket still waits for an answer (a channel keeps its buttons while it does)."""
+
+        return self._approvals is not None and any(
+            item.get("ticket_id") == ticket_id for item in self._approvals.pending()
+        )
 
     def rejected(self, *, channel: str, reason: str, sender: str) -> None:
         if self._refusals.allow(f"{channel}:{sender}"):

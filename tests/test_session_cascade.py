@@ -141,6 +141,21 @@ async def test_switching_to_a_tier_label_is_refused_and_changes_nothing() -> Non
 
 
 @pytest.mark.asyncio
+async def test_a_session_not_started_refuses_a_tier_label_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_env(
+        monkeypatch,
+        AUTOBROWSER_CASCADE__ENABLED="true",
+        AUTOBROWSER_CASCADE__TIERS='[{"model": "big", "label": "strong"}]',
+    )
+    session = runtime(strong_tiers)
+
+    with pytest.raises(ValueError, match="cascade tier"):
+        await session.set_model("strong")
+
+    assert session.config.model == "cheap"
+
+
+@pytest.mark.asyncio
 async def test_a_tier_labelled_like_the_session_model_is_refused() -> None:
     session = runtime(lambda: [ModelTier(FakeLLM(), "cheap")])
 

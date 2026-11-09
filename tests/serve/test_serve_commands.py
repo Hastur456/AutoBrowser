@@ -236,6 +236,15 @@ async def test_an_approval_answer_goes_to_the_desk_as_a_channel_answer(tmp_path:
 
 
 @pytest.mark.asyncio
+async def test_a_ticket_is_open_while_the_desk_holds_it(tmp_path: Path) -> None:
+    port = commands(Rig(tmp_path), approvals=Desk({"approval-1"}))
+
+    assert port.ticket_open("approval-1") is True
+    assert port.ticket_open("approval-x") is False
+    assert commands(Rig(tmp_path / "b")).ticket_open("approval-1") is False
+
+
+@pytest.mark.asyncio
 async def test_without_an_approval_desk_no_answer_is_taken(tmp_path: Path) -> None:
     assert commands(Rig(tmp_path)).answer_approval("a", "once", channel=CHANNEL, sender=SENDER) is False
 

@@ -1321,6 +1321,13 @@ class SessionRuntime:
             return
         config = replace(self.config, model=name)
         if not self.context.initialized:
+            # The tiers are built at start; until then the configured labels tell.
+            cascade = get_settings().cascade
+            if cascade.enabled and name in {tier.tier_label for tier in cascade.tiers}:
+                raise ValueError(
+                    f"cascade tier {name!r} has the label of the session model: "
+                    f"give it a label (cascade.tiers[].label)"
+                )
             self.context.config = config
             self.config = config
             return

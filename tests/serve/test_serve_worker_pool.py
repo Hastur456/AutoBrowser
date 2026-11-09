@@ -435,6 +435,8 @@ async def test_a_run_cancelled_before_its_task_starts_runs_none(tmp_path: Path) 
     assert worker.calls == []
     report, = rig.payloads("serve.run.finished")
     assert (report["status"], report["stop_reason"]) == ("cancelled", "cancelled")
+    # No task ran: the job's cooldown does not start.
+    assert rig.states.load("price-watch").last_finished_at is None
     await finish(rig, loop)
 
 
@@ -454,6 +456,42 @@ async def test_a_probe_cancelled_by_the_user_is_a_cancelled_run(tmp_path: Path) 
     assert (report["status"], report["stop_reason"]) == ("cancelled", "cancelled")
     assert len(worker.calls) == 1  # the probe only
     assert rig.channel.sent == []  # a cancel is not a failure
+    await finish(rig, loop)
+
+
+
+async def test_a_free_task_cancelled_before_it_starts_is_skipped(tmp_path: Path) -> None:
+    rig = Rig(tmp_path, free_tasks=True)
+    run = await rig.dispatcher.submit_task("buy milk", TriggerRef("telegram", "task"))
+    await rig.dispatcher._start_eligible()  # noqa: SLF001 - taken off the queue, not started yet
+
+    result = await rig.dispatcher.cancel()
+    await settle()
+
+    assert result.cancelled == (run.run_id,)
+    assert [item["reason"] for item in rig.payloads("serve.run.skipped")] == ["cancelled"]
+    assert rig.worker.calls == [] and rig.payloads("serve.run.finished") == []
+
+
+async def test_a_cancel_after_an_unchanged_probe_keeps_it_unchanged(tmp_path: Path) -> None:
+    import hashlib
+
+    from src.serve.state import JobState
+
+    probe = {"steps": [{"tool": "snapshot"}]}
+    worker = gated(outcome(answer="Price 10", stage="playback", calls=0))
+    rig = Rig(tmp_path, worker, jobs={"p": job(probe=probe)})
+    rig.states.save("p", JobState(last_digest="sha256:" + hashlib.sha256(b"Price 10").hexdigest()))
+    loop = await running(rig)
+    await rig.dispatcher.fire("p", API)
+    await settle()
+
+    await rig.dispatcher.cancel("p")
+    worker.gate.set()  # type: ignore[union-attr]
+    await settle()
+
+    report, = rig.payloads("serve.run.finished")
+    assert report["status"] == "unchanged"
     await finish(rig, loop)
 
 
