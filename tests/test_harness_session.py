@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from src.agent_loop.execution.loop import AgentLoopResult
-from src.agent_loop.execution.state import BrowserState, LoopState
+from src.agent_loop.execution.state import EnvironmentState, LoopState
 from src.config import HooksSettings, PermissionRule, PermissionsSettings, Settings, get_settings
 from src.harness.session import (
     ArtifactRegistry,
@@ -569,7 +569,7 @@ async def test_session_runtime_carries_browser_state_between_tasks(
                 final_answer="Found Keyboard A.",
                 messages=["prior product list"],
                 observation="Visible results: first product is Keyboard A.",
-                browser=BrowserState(snapshots={"playwright": '- link "Keyboard A" ref=e10'}),
+                environment=EnvironmentState(snapshots={"playwright": '- link "Keyboard A" ref=e10'}),
             )
         return native_result(final_answer="done")
 

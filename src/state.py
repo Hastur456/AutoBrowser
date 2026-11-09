@@ -51,10 +51,6 @@ class AgentState(TypedDict, total=False):
     ineffective_action_count: int
     counters: RecoveryCounters
 
-    last_browser_action: ToolRequest
-    ineffective_browser_action: ToolRequest
-    ineffective_browser_actions: list[ToolRequest]
-
     final_answer: str
     error: str
     policy_event: NotRequired[PolicyEvent]

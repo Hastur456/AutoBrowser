@@ -118,9 +118,6 @@ SESSION_STATE_KEYS = (
     "last_tool",
     "last_args",
     "last_tool_request",
-    "last_browser_action",
-    "ineffective_browser_action",
-    "ineffective_browser_actions",
 )
 
 TASK_BOUNDARY_RESETS: dict[str, Any] = {

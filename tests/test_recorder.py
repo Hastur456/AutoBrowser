@@ -215,7 +215,7 @@ def test_an_invalid_name_is_refused_when_arming(store: RecordingStore) -> None:
 
 @pytest.mark.asyncio
 async def test_the_recorder_mirror_matches_the_engine_snapshots(store: RecordingStore) -> None:
-    """Contract: the recorder's page view equals ``LoopState.browser.snapshots``."""
+    """Contract: the recorder's page view equals ``LoopState.environment.snapshots``."""
 
     pages = iter([PAGE, AFTER_CLICK])
 
@@ -254,7 +254,7 @@ async def test_the_recorder_mirror_matches_the_engine_snapshots(store: Recording
     result = await AgentLoopEngine(resources).run("Look", task_id=TASK, session_id="s")
 
     capture = recorder._captures[TASK]  # noqa: SLF001 - the contract under test
-    assert capture.snapshots == result.state.browser.snapshots
+    assert capture.snapshots == result.state.environment.snapshots
     assert capture.latest == result.state.tool_result.get("content")
     assert finish(recorder).steps == 4
 

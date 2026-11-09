@@ -4,7 +4,7 @@
   (name, status, the server it came from and whether the tool is read-only) with no state
   mutation. Server and read-only come from the resolved call (``MCPTool.server`` and the
   MCP ``readOnlyHint`` annotation), never from the tool name.
-- :class:`BrowserStateReducer` — per server, keep the output of its latest successful
+- :class:`SnapshotReducer` — per server, keep the output of its latest successful
   read-only call in ``snapshots``; drop that server's entry after a successful call that
   is not read-only (its environment may have changed). Other servers are untouched.
 - :class:`ProgressDetector` — success/failure accounting: ``consecutive_failures`` and
@@ -141,8 +141,8 @@ class NormalizedToolResult:
 
 
 @dataclass(frozen=True)
-class BrowserReduction:
-    """Browser-state updates (routed into ``BrowserState`` by ``LoopState.apply``)."""
+class SnapshotReduction:
+    """Snapshot updates (routed into ``EnvironmentState`` by ``LoopState.apply``)."""
 
     updates: dict[str, Any] = field(default_factory=dict)
 
@@ -181,7 +181,7 @@ class ToolResultNormalizer:
         )
 
 
-class BrowserStateReducer:
+class SnapshotReducer:
     """Keep, per tool server, the output of its latest successful read-only call.
 
     A read-only tool cannot change its environment, so its output describes that
@@ -190,17 +190,17 @@ class BrowserStateReducer:
     state-changing, so a server that declares none never has a snapshot kept.
     """
 
-    def reduce(self, state: LoopState, norm: NormalizedToolResult) -> BrowserReduction:
+    def reduce(self, state: LoopState, norm: NormalizedToolResult) -> SnapshotReduction:
         if norm.status != "success":
-            return BrowserReduction()
-        snapshots = dict(state.browser.snapshots)
+            return SnapshotReduction()
+        snapshots = dict(state.environment.snapshots)
         if norm.read_only:
             snapshots[norm.server] = norm.content
         elif norm.server in snapshots:
             del snapshots[norm.server]
         else:
-            return BrowserReduction()
-        return BrowserReduction(updates={"snapshots": snapshots})
+            return SnapshotReduction()
+        return SnapshotReduction(updates={"snapshots": snapshots})
 
 
 class ProgressDetector:
@@ -227,11 +227,11 @@ class ObservationCompiler:
         self,
         *,
         normalizer: ToolResultNormalizer | None = None,
-        reducer: BrowserStateReducer | None = None,
+        reducer: SnapshotReducer | None = None,
         detector: ProgressDetector | None = None,
     ) -> None:
         self._normalizer = normalizer or ToolResultNormalizer()
-        self._reducer = reducer or BrowserStateReducer()
+        self._reducer = reducer or SnapshotReducer()
         self._detector = detector or ProgressDetector()
 
     def compile(
@@ -307,8 +307,8 @@ def compile_observation(
 
 
 __all__ = [
-    "BrowserReduction",
-    "BrowserStateReducer",
+    "SnapshotReduction",
+    "SnapshotReducer",
     "NormalizedToolResult",
     "ObservationCompiler",
     "ProgressDetector",

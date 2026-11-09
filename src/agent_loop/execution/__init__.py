@@ -41,7 +41,7 @@ from src.agent_loop.execution.observation import (
 )
 from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import (
-    BrowserState,
+    EnvironmentState,
     LoopState,
 )
 from src.agent_loop.execution.tools import ToolBroker
@@ -50,8 +50,8 @@ __all__ = [
     "Agent",
     "AgentLoopEngine",
     "AgentLoopResult",
-    "BrowserState",
     "EngineResources",
+    "EnvironmentState",
     "HumanInputCallback",
     "LoopState",
     "ObservationCompiler",

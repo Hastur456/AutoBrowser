@@ -569,7 +569,7 @@ class TurnController:
             final_answer=str(update.get("final_answer", "") or ""),
             evidence=tuple(
                 text
-                for text in (state.observation, *state.browser.snapshots.values())
+                for text in (state.observation, *state.environment.snapshots.values())
                 if str(text or "")
             ),
             stop_hook_active=state.stop_blocks > 0,
@@ -773,7 +773,7 @@ class TurnController:
             task=state.task,
             turn=self.turn,
             tool_result=dict(state.tool_result or {}),
-            snapshots=dict(state.browser.snapshots),
+            snapshots=dict(state.environment.snapshots),
             tool_schemas=self._catalog,
             usage=state.usage,
         )
@@ -976,7 +976,7 @@ class TurnController:
         state = state.apply(observation_update)
         self._emit(
             "observation.compiled",
-            {"observation": state.observation, "has_snapshot": bool(state.browser.snapshots)},
+            {"observation": state.observation, "has_snapshot": bool(state.environment.snapshots)},
         )
 
         if str(state.decision or "") == "done":

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from src.agent_loop.execution.observation import BrowserStateReducer, ToolResultNormalizer
-from src.agent_loop.execution.state import BrowserState, LoopState
+from src.agent_loop.execution.observation import SnapshotReducer, ToolResultNormalizer
+from src.agent_loop.execution.state import EnvironmentState, LoopState
 
 PAGE = '- link "Jacket" ref=e3'
 
@@ -15,7 +15,7 @@ def after(
     status: str = "success",
     snapshots: dict[str, str] | None = None,
 ) -> LoopState:
-    return LoopState(browser=BrowserState(snapshots=dict(snapshots or {}))).apply(
+    return LoopState(environment=EnvironmentState(snapshots=dict(snapshots or {}))).apply(
         {
             "tool_request": {"name": name, "args": {}},
             "tool_result": {"name": name, "status": status, "content": content, "error": ""},
@@ -25,7 +25,7 @@ def after(
 
 def reduce(state: LoopState, *, server: str, read_only: bool) -> dict:
     norm = ToolResultNormalizer().normalize(state, server=server, read_only=read_only)
-    return BrowserStateReducer().reduce(state, norm).updates
+    return SnapshotReducer().reduce(state, norm).updates
 
 
 def test_a_read_only_call_keeps_its_output_as_the_servers_snapshot() -> None:

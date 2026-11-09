@@ -70,7 +70,7 @@ def test_a_first_step_on_a_carried_snapshot_is_recorded_with_its_binding(tmp_pat
 async def test_the_session_arms_the_recorder_with_the_carried_snapshots(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from src.agent_loop.execution.state import BrowserState
+    from src.agent_loop.execution.state import EnvironmentState
 
     settings = Settings(replay=ReplaySettings(enabled=True), storage=StorageSettings(root_dir=tmp_path / "home"))
     monkeypatch.setattr("src.harness.session.get_settings", lambda: settings)
@@ -80,7 +80,7 @@ async def test_the_session_arms_the_recorder_with_the_carried_snapshots(
         nonlocal calls
         calls += 1
         if calls == 1:
-            return native_result(final_answer="seen", browser=BrowserState(snapshots={"": PAGE}))
+            return native_result(final_answer="seen", environment=EnvironmentState(snapshots={"": PAGE}))
         events = built[-1].resources.events
         ids = {"task_id": request.task_id, "goal_id": request.task_id}
         events.emit("tool.started", source="test", payload={"tool_request": {"name": "click", "args": {"target": "e12"}}, "server": "", "read_only": False}, **ids)
