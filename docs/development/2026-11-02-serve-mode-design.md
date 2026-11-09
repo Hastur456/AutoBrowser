@@ -5,7 +5,7 @@
 Фаза 1 (replay, бюджеты, учёт стоимости) реализована 2026-11-02; руководство —
 [replay.md](replay.md). Фаза 3 (стенд минимум) реализована 2026-11-09 —
 [план](2026-11-02-serve-mode-phase3-plan.md), руководство — [serve-mode.md](serve-mode.md).
-Фаза 4 не начата.
+Фаза 4 в работе: [системный дизайн](2026-11-08-serve-mode-phase4-design.md), [план](2026-11-08-serve-mode-phase4-plan.md).
 Дата: 2026-11-02
 Ветка: `feat/serve-mode`
 ADR (Accepted):
