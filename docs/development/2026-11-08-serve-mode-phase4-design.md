@@ -711,7 +711,7 @@ flowchart TB
 | `enabled` | bool | `false` | — | Уровни моделей выше модели сессии и эскалация. Выключено — один уровень, как сейчас. |
 | `tiers` | list[`ModelTierSpec`] | `[]` | `max_length=3`; метки уникальны | Уровни **над** уровнем 0 (модель сессии, U33). Пусто при `enabled` — без эффекта, `doctor` предупреждает. JSON в env: `AUTOBROWSER_CASCADE__TIERS`. |
 | `retarget_tier` | int | `0` | `0..len(tiers)` | Уровень перенацеливания (ступень 2). |
-| `escalate_after_failures` | int | `2` | `ge=1` | Неудач подряд на текущем уровне до подъёма. Если не меньше `loop.max_consecutive_failures` (3), подъём по неудачам невозможен: предупреждают `doctor` и `serve --check`. |
+| `escalate_after_failures` | int | `2` | `ge=1` | Неудач подряд на текущем уровне до подъёма. Если больше `loop.max_consecutive_failures` (3), подъём по неудачам невозможен: предупреждают `doctor` и `serve --check` (при равенстве подъём успевает, U65 плана). |
 | `escalate_after_replans` | int | `1` | `ge=1` | Повторных планирований на текущем уровне до подъёма. |
 | `escalate_on_progress_block` | bool | `true` | — | Подъём при блоке progress guard. |
 | `escalate_on_no_action` | bool | `true` | — | Пустой ответ модели (ни текста, ни вызова) поднимает уровень вместо терминала. |
@@ -777,7 +777,8 @@ flowchart TB
 Предупреждения (`serve --check` и строка при старте, не ошибки):
 - `workers > 1`, `browser.launch: external`, и в конфигурации браузерного сервера нет
   `{profile_dir}`. Тогда worker'ы делят один профиль, если сервер не изолирует их сам (P8, U52);
-- `cascade.escalate_after_failures >= loop.max_consecutive_failures`.
+- `cascade.escalate_after_failures > loop.max_consecutive_failures` (при реализации — `>`: при
+  равенстве подъём успевает, U65 плана).
 
 ### 5.3 `serve.telegram` (`TelegramSettings`, `extra="forbid"`)
 

@@ -10,7 +10,9 @@
 
 Runtime folders such as `.venv/`, `.pytest_cache/`, `.playwright-mcp/`,
 `.autobrowser/`, `profile/`, `baseline/`, `node_modules/`, and `__pycache__/`
-are local or generated state and should not be treated as source.
+are local or generated state and should not be treated as source. Runtime output (sessions,
+memory, recordings, logs, the stand's files) lives in the AutoBrowser home
+(`AUTOBROWSER_HOME`, else `~/.autobrowser`), outside the repository.
 
 ## Install
 
@@ -32,8 +34,9 @@ configuration path. `src/config.py` is a neutral leaf like `src/contracts.py`:
 it imports nothing from `src/agent_loop/`, `src/harness/`, or `src/browser/`.
 See [the settings ADR](../decisions/2026-09-16-typed-settings-module.md).
 
-Names follow `AUTOBROWSER_<SECTION>__<FIELD>`. The sections are `llm`,
-`browser`, `loop`, `observation`, `memory`, `events`, `storage`, and `flags`:
+Names follow `AUTOBROWSER_<SECTION>__<FIELD>` over eighteen sections: `llm`, `cascade`,
+`browser`, `loop`, `observation`, `memory`, `skills`, `replay`, `events`, `storage`, `flags`,
+`hooks`, `permissions`, `ui`, `pipeline`, `telemetry`, `eval_platform`, `serve`:
 
 ```env
 AUTOBROWSER_BROWSER__CHROME_PATH=C:/Program Files/Google/Chrome/Application/chrome.exe
@@ -50,15 +53,16 @@ documented there, or if a documented default drifts from the code.
 
 Rules that matter in practice:
 
-- **Precedence.** `Settings(...)` kwargs outrank the YAML file named by
-  `AUTOBROWSER_CONFIG_FILE`, which outranks a real environment variable, which
-  outranks `.env`, which outranks the defaults in `src/config.py`.
-- **The YAML file is opt-in and partial.** Nothing is auto-discovered: a
-  `config.yaml` in the working directory is ignored until `AUTOBROWSER_CONFIG_FILE`
-  names it, and a named-but-missing file refuses to start rather than falling back.
-  The file only has to name the fields it means to decide -- those beat the
-  environment, and everything it omits still resolves below it. Template:
-  `config.example.yaml`.
+- **Precedence.** `Settings(...)` kwargs outrank the YAML profile, which outranks a real
+  environment variable, which outranks `.env`, which outranks the defaults in
+  `src/config.py`. `.env` is read from the repository root (legacy) and then from
+  `<home>/.env`, never from the working directory.
+- **The YAML profile is partial and found at fixed paths.** `AUTOBROWSER_CONFIG_FILE` names it
+  explicitly (a named-but-missing file refuses to start). Unset, `<home>/config.yaml` loads if
+  it exists, else `config.yaml` at the repository root (the legacy checkout profile); the
+  working directory is never scanned. The file only has to name the fields it means to
+  decide -- those beat the environment, and everything it omits still resolves below it.
+  Template: `config.example.yaml`.
 - **Empty means unset.** `AUTOBROWSER_X=` leaves the default alone; it does not
   set an empty value.
 - **Windows paths use forward slashes.** `python-dotenv` decodes escape
@@ -118,9 +122,9 @@ or network), `bench` (timings), `conpty` (Windows console only) and `ui` (everyt
 `tests/ui`), runs with `--strict-markers` and deselects `live` and `bench`. Select them
 explicitly, e.g. `uv run pytest -m live` (a `-m` on the command line replaces the default).
 
-The merge gate `.github/workflows/gate.yml` runs these checks on `windows-latest` (uv pinned to the local 0.12.21, the evals report
-written as UTF-8) for every
-pull request and push to `main`:
+The merge gate `.github/workflows/gate.yml` runs these checks on `windows-latest` (uv pinned
+to 0.12.21 to match the `uv_build` range, the evals report written as UTF-8) for every pull
+request and push to `main`:
 
 ```powershell
 uv sync --locked
@@ -160,29 +164,40 @@ Run harness and CLI boundary tests after changing session/runtime/tool wiring:
 
 ```powershell
 uv run pytest tests\test_harness_session.py tests\test_harness_runtime.py tests\test_harness_tools.py tests\test_harness_telemetry.py
-uv run pytest tests\test_main_cli.py
+uv run pytest tests\test_main_cli.py tests\test_cli_entry.py
+```
+
+Run the front-end tests after changing `src/ui/`, and the stand's after changing
+`src/serve/`, `src/channels/` or `src/cli/serve.py`:
+
+```powershell
+uv run pytest tests\ui tests\test_ui_feed.py tests\test_ui_controller.py
+uv run pytest tests\serve tests\channels tests\test_serve_boundaries.py tests\test_cli_serve_channels_and_pool.py
+```
+
+Run the engine-side tests of replay, budgets and the model cascade after changing them:
+
+```powershell
+uv run pytest tests\test_agent_loop_playback.py tests\test_agent_loop_budget.py tests\test_model_tiers.py tests\test_tier_escalation.py tests\test_session_cascade.py
 ```
 
 ## CLI Usage
 
-Start the interactive `cmd2` REPL:
+Start the interactive session:
 
 ```powershell
-uv run main.py
+uv run main.py            # the inline terminal UI; plain mode without a capable terminal
+uv run main.py --classic  # the old cmd2 shell
 ```
 
-The REPL exposes the base commands documented by `help`. Free-form input is
-treated as a task, so both of these are valid:
-
-```text
-autobrowser> run open ozon.ru
-autobrowser> open ozon.ru
-```
-
-Type `quit` or `exit`, or press Ctrl+C/EOF, to end the session.
+Free-form input is a task; `/help` lists the slash commands (`/status`, `/model`, `/tasks`,
+`/cancel`, `/mcp`, `/record`, `/clear`, `/exit`, ...). The
+[terminal UI guide](terminal-ui.md) covers keys, print mode (`-p`), resuming sessions
+(`--continue`, `--resume`) and terminals.
 
 Session metadata and task history are written under
-`.autobrowser/sessions/<session_id>/` as `session.json` and `tasks.json`.
+`<home>/sessions/<session_id>/` as `session.json`, `tasks.json`, `events.jsonl` and
+`state.json`.
 Durable loop state is scoped to the active interactive session so follow-up
 tasks can use prior observations, snapshots, and browser progress.
 Task-local planning, terminal, policy, error, and retry fields are reset before
@@ -200,7 +215,7 @@ Dry check without MCP browser tools:
 uv run main.py --no-mcp
 ```
 
-`--no-mcp` keeps the REPL available but disables live browser access, including
+`--no-mcp` keeps the session available but disables live browser access, including
 navigation, snapshots, and current URL lookup.
 
 Debug state updates:
@@ -210,16 +225,16 @@ uv run main.py --show-state --task "inspect page"
 ```
 
 Useful flags include `--show-state`, `--show-tools`, `--json`,
-`--compress-tools`, `--model`, `--temperature`,
-`--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap` and
-`--permission-mode`. `--loop` remains accepted as a compatibility flag, but the
-CLI now uses the long-lived session loop by default.
+`--compress-tools`, `--model`, `--provider`, `--temperature`,
+`--chrome-path`, `--user-data-dir`, `--cdp-port`, `--cdp-timeout`, `--turn-cap`,
+`--permission-mode`, `--record <name>` and `--recording <name>`. `--loop` remains accepted as
+a compatibility flag; it changes nothing.
 
 `--permission-mode default|read_only|dont_ask|bypass` overrides `permissions.mode` for the
-session. In a terminal the CLI asks before a call the permission rules flag
-(`[y] once`, `[s] for the session` on that tool and domain, `[n] deny`; a refusal ends the
-task `blocked`); without a terminal (piped `--task`, `run_batch.py`) a configured `default`
-mode becomes `dont_ask`, so such calls are denied and the model continues.
+session. In a terminal the UI asks before a call the permission rules flag (once, for the
+session on that tool and domain, or deny; a refusal ends the task `blocked`); without a
+terminal (print mode, `run_batch.py`) a configured `default` mode becomes `dont_ask`, so
+such calls are denied and the model continues.
 
 Per-turn prompt construction runs through `ContextAssembler` in
 `src/agent_loop/context.py` — the single prompt-construction path. The former
@@ -255,24 +270,29 @@ so pair a count with a per-item check such as a repeated price `regex`) and
 `1,299.99` and `1 299,99` are one number, URLs and list ordinals are skipped). Any other key,
 such as `fields`, is reported as `ungraded` and never fails a grade.
 
-Export persisted session task rows:
+Export persisted session task rows (the sessions of `storage.sessions_dir` by default):
 
 ```powershell
-uv run scripts/export_sessions.py --out .autobrowser\exports\runs.jsonl
+uv run scripts/export_sessions.py --out runs.jsonl
 ```
 
-Inspect a durable event trace:
+Inspect a durable event trace (or `autobrowser replay <session id>`):
 
 ```powershell
-uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
-uv run scripts/export_agent_trace.py .autobrowser\sessions\<session_id>\events.jsonl
+uv run scripts/replay_trace.py <home>\sessions\<session_id>\events.jsonl
+uv run scripts/export_agent_trace.py <home>\sessions\<session_id>\events.jsonl
 ```
 
-Compare deterministic fake-browser eval scenarios with the baseline:
+Compare the deterministic fake-browser eval scenarios with their baselines:
 
 ```powershell
-uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v2.json
+uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v2.json --memory-seed tests\evals\memory_seed
+uv run scripts/run_evals.py --scenarios tests\evals\playback_scenarios --baseline tests\evals\baselines\playback_v1.json
+uv run scripts/run_evals.py --scenarios tests\evals\cascade_scenarios --baseline tests\evals\baselines\cascade_v1.json
 ```
+
+Compare the latest batch with the previous one of the same set:
+`uv run scripts/compare_batches.py`.
 
 ## Development Guidelines
 
@@ -284,9 +304,13 @@ uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v2.json
 - Keep the provider-neutral chat contract (`ChatModel`/`ModelResponse`) in
   `src/llm.py`, the chat `Message`/`ToolCall` types in `src/messages.py`, and
   backend wire-format adapters in `src/providers/`.
-- Keep browser backend contracts, canonical browser names, error codes, and
-  backend adapters in `src/browser/`.
+- Keep browser adaptation in `src/browser/`: it reads text formats (`- Page URL:`,
+  `[ref=…]`), never tool names; the engine imports nothing from it.
 - Keep session and runtime infrastructure changes in `src/harness/`.
+- Keep front ends in `src/ui/` as clients of `SessionController`; they never import
+  `src.agent_loop.execution`.
+- Keep the stand in `src/serve/` (no engine, browser, harness, CLI, provider or channel
+  imports) and vendor chat adapters in `src/channels/` (imported by `src/cli/` only).
 - Keep `SessionRuntime` focused on interaction lifecycle and resource
   ownership; it may carry loop context between tasks, but it should still
   delegate task solving to `AgentLoopEngine` instead of solving tasks in the
@@ -295,10 +319,11 @@ uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v2.json
   `src/mcp/` may special-case a server.
 - Keep tool name/argument adaptation in stateless `ToolCallNormalizer`s, not
   in executor or agent prompt code.
-- Use `tests/mcp_fixtures/fake_server.py` (or `FakeBrowserProvider`) for
-  deterministic tests that should not require Chrome, CDP, or network.
-- Preserve Playwright MCP snapshot/ref semantics in prompts, policies,
-  observer changes, and browser providers.
+- Use `tests/mcp_fixtures/fake_server.py` (a real MCP server) or the `_FakeBrowserTools`
+  helper of `src/agent_loop/evals.py` for deterministic tests that should not require Chrome,
+  CDP, or network.
+- Keep Playwright MCP snapshot/ref knowledge in `src/browser/` and the user's prompts, never
+  in the engine, guards or harness.
 - Prefer focused tests for loop decisions, state transitions, prompt
   constraints, policy decisions, tool registry behavior, and observer
   normalization.

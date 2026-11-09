@@ -197,7 +197,7 @@ ADR: [2026-11-02 serve mode and cost ladder](../decisions/2026-11-02-serve-mode-
 - `src/harness/otel_spans.py`: `payload["model"]` выигрывает (U36).
 - `src/cli/subcommands.py::_doctor`: строка `cascade` (метки, провайдер, публичный хост, цена;
   ключ — только «set»); с `--llm` — проба уровней с другим `(provider, host)`; предупреждения
-  «пустые `tiers` при `enabled`» и `escalate_after_failures >= loop.max_consecutive_failures` (U61).
+  «пустые `tiers` при `enabled`» и `escalate_after_failures > loop.max_consecutive_failures` (U65) (U61).
 
 **Тесты:** `tests/test_cli_models.py` (наследование, `--provider`, `openai_compat` без хоста —
 ошибка без ключа, monkeypatch `build_chat_model`, `api_key` не в `repr`/ошибках),

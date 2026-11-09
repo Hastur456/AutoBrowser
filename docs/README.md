@@ -5,13 +5,19 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 
 ## Start Here
 
-- [Architecture Overview](architecture/overview.md): project purpose, engine
-  loop shape, runtime boundaries, and browser semantics.
+- [Architecture Overview](architecture/overview.md): project purpose, source layout, engine
+  loop shape, runtime boundaries, front ends, replay and budgets, the stand, and browser
+  semantics.
 - [Development Setup](development/setup.md): environment setup, tests, CLI
   usage, and prompt-change workflow.
+- [Terminal UI Guide](development/terminal-ui.md) (Russian): running the session, the home
+  directory, resuming sessions, print mode, subcommands, keys, slash commands, terminals, tests.
 - [Testing Pipeline Guide](development/testing-pipeline.md): the offline gate (tests, scripted
-  evals, the v2 baseline) and the live Golden Set run — prerequisites, command, where the
-  answers and traces land, reading grades, writing `expected`.
+  evals against the `agent_loop_v2`, `playback_v1` and `cascade_v1` baselines, the Windows CI
+  workflow) and the live Golden Set run — prerequisites, command, where the answers and traces
+  land, reading grades, writing `expected`.
+- [Memory Guide](development/memory.md): the four memory layers — history budget, working
+  notes, task digest, persistent memory files — and how to enable, inspect and test them.
 - [Browser Agent Rules](development/browser-agent-rules.md): Playwright MCP
   interaction rules and search-flow debugging guidance.
 - [Eval Platform Guide](development/eval-platform.md): batch results as Langfuse datasets,
@@ -34,8 +40,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Permissions Guide](development/permissions.md): tool authorization — rules
   (`deny > ask > allow`), modes, browser domain/target resources, interactive approvals and
   session grants, debugging `permission.decided`, and the sandbox layer underneath.
-- [Diagrams](diagrams/index.md): Mermaid diagrams for the agent loop, session
-  runtime, and harness boundaries.
+- [Diagrams](diagrams/index.md): Mermaid diagrams for the agent loop, the session runtime,
+  harness boundaries, MCP, memory, the terminal UI, trace export, the eval platform sync and
+  the stand.
 - [Session Runtime Change](development/2026-07-23-session-runtime-change.md):
   historical note for the long-lived session and `SessionContext` refactor; its
   LangGraph checkpoint wording predates the engine-native runtime.
@@ -87,24 +94,30 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Explicit Agent Objects Plan](development/2026-10-17-explicit-agent-objects-plan.md):
   browser-neutral engine via injected tool roles, dead-code removal, typed
   layer objects (Russian).
-- [Terminal UI Redesign Design](development/2026-10-19-gui-redesign-design.md): proposed
+- [Terminal UI Redesign Design](development/2026-10-19-gui-redesign-design.md): the
   Claude-Code-style inline TUI (prompt_toolkit + rich) over a shared `SessionController`, the
   `autobrowser` command and home directory, visual design (palette, glyphs, mockups),
   visual-bug prevention rules, terminal support matrix, test strategy and rollout plan; the
-  web UI is deferred (Russian, Proposed).
+  web UI is deferred (Russian, Implemented except fullscreen, cmd2 removal, the package rename
+  and the web UI).
 - [Autonomous Test Pipeline Design](development/2026-10-19-autonomous-test-pipeline-design.md):
   proposed `scripts/ci.py` pipeline — test tiers, merge gate vs nightly, baseline v2 and
   comparison rules, recorded model/tool cassettes, A/B and history benchmarks, CI workflows,
-  and the decision not to add Langfuse (Russian, Proposed; ADRs
+  and the decision not to add Langfuse, later reversed (Russian, Proposed, partly implemented:
+  the Windows CI gate, baseline v2 and `run_evals.py`; ADRs
   [pipeline](decisions/2026-10-19-autonomous-test-pipeline.md) and
   [Langfuse](decisions/2026-10-19-langfuse-observability.md)).
-- [Batch Analytics and OTLP Trace Export Plan](development/2026-10-29-batch-analytics-and-otlp-export-plan.md):
-  self-contained implementation plan — `stop_reason` and `failure_kind`, the batch data
+- [Batch Analytics and OTLP Trace Export Plan](development/2026-10-29-batch-analytics-and-otlp-export-plan.md)
+  (Implemented): self-contained implementation plan — `stop_reason` and `failure_kind`, the batch data
   contract with provenance, traces in the batch folder, run history and
   `compare_batches.py` (Part A); the opt-in OTLP exporter for Phoenix/Langfuse (Part B); the
   identifiers that link both.
+- [Langfuse Integration Design](development/2026-10-31-langfuse-integration-design.md):
+  batch results as Langfuse datasets, experiments and scores over the local verdict (Russian,
+  Implemented; ADR [Langfuse platform](decisions/2026-10-31-langfuse-platform-integration.md);
+  guide [eval platform](development/eval-platform.md)).
 - [OpenAI-Compatible Provider Design](development/2026-10-22-openai-compat-provider-design.md):
-  proposed Chat Completions adapter next to Ollama — wire mapping of messages, tool calls and
+  the Chat Completions adapter next to Ollama — wire mapping of messages, tool calls and
   usage, `llm.*` settings and service profiles (OhMyLama, OpenAI, OpenRouter, local servers),
   neutral provider errors, tests and rollout plan (Russian, Accepted; ADR
   [OpenAI-compatible provider](decisions/2026-10-22-openai-compatible-chat-provider.md)).
@@ -118,11 +131,11 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   playback → retarget → agent → human), replay of recorded runs with name-free ref rebinding,
   divergence detection and handoff, run and day budgets with cost reports, a headless browser
   with its own profile, Docker, security defaults, model tiers, the Telegram channel, settings,
-  tests and a phased rollout (Russian, Accepted; ADR
+  tests and a phased rollout (Russian, Accepted, implemented in phases 1, 3 and 4; ADR
   [serve mode and cost ladder](decisions/2026-11-02-serve-mode-and-cost-ladder.md)).
 - [Serve Mode Phase 4 Design](development/2026-11-08-serve-mode-phase4-design.md) and
   [plan](development/2026-11-08-serve-mode-phase4-plan.md): the model cascade, the Telegram
-  channel and the worker pool, reconciled with the code (U28–U64) (Russian, Implemented; ADR
+  channel and the worker pool, reconciled with the code (U28–U67) (Russian, Implemented; ADR
   [cascade, chat channels and the worker pool](decisions/2026-11-09-cascade-channels-and-worker-pool.md)).
 - [Browser Provider Boundary ADR](decisions/2026-07-26-browser-provider-boundary.md):
   superseded record for the former Playwright adapter boundary.

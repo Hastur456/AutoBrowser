@@ -179,7 +179,16 @@ on an allowed domain. An empty list (the default) changes nothing.
 
 ## Approvals and Session Grants
 
-In a terminal the CLI asks:
+Every front end asks through one `ApprovalBroker` ticket (`src/harness/approvals.py`):
+
+- the terminal UI shows an approval card in the live zone: choose *once*, *for the session* or
+  *deny* with the arrows and Enter;
+- plain mode prints the ticket and `1) once  2) session  3) deny >`;
+- the classic shell (`--classic`) prints `[y] once   [s] session for <tool> on <domain>   [n] deny`;
+- the stand answers through `POST /v1/approvals/{id}` (`serve.api_approvals`) or Telegram
+  buttons ([serve mode guide](serve-mode.md#approvals)).
+
+The classic shell's prompt looks like this:
 
 ```text
 Approval needed (rule purchases): browser_click on shop.example
@@ -188,15 +197,16 @@ Approval needed (rule purchases): browser_click on shop.example
   [y] once   [s] session for browser_click on shop.example   [n] deny
 ```
 
-- `y` runs this call; `n` ends the task `blocked`; `s` runs it and stores a **grant** for
+- *once* runs this call; *deny* ends the task `blocked`; *session* runs it and stores a **grant** for
   `(server, tool, domain)` until the session ends — later asks for the same tool on the same
   domain are allowed (`approval.resolved` with `by: grant`). A grant never covers another
   tool or domain, an `always_ask` rule, a hook ask, or a deny, and never outlives the
-  session. `s` is not offered when it could not be stored.
-- Answer at the `autobrowser>` prompt (the next line is the answer) or, during the startup
-  `--task`, at `approve>`. Russian answers work too (`да`, `с`, `нет`).
-- The wait is bounded at 80 % of `loop.progress_timeout_seconds` (the goal watchdog sees no
-  events while you think); no answer is a deny.
+  session. *session* is not offered when it could not be stored.
+- In the classic shell answer at the `autobrowser>` prompt (the next line is the answer) or,
+  during the startup `--task`, at `approve>`. Russian answers work too (`да`, `с`, `нет`).
+- The wait is bounded at `permissions.approval_timeout_ratio` (0.8) of
+  `loop.progress_timeout_seconds` (the goal watchdog sees no events while you think); no answer
+  is a deny (`via: timeout`).
 - A `permission_request` hook (for example `src.harness.builtin_hooks:approve_tools`) can
   answer instead of the human — the way to pre-approve tools in a profile.
 
@@ -228,7 +238,7 @@ permissions:
     [y] once   [n] deny
   ```
 
-- Judge asks are `always_ask`: no `s` (a `(server, tool, domain)` grant would silence the next
+- Judge asks are `always_ask`: no *session* answer (a `(server, tool, domain)` grant would silence the next
   payment), not lifted by `bypass`; under `dont_ask` (no TTY, batch) they are denies the model
   reads. They never lift a deny rule, and an `allow` rule or a session grant skips the
   classifier.
@@ -247,7 +257,7 @@ Every evaluated call emits `permission.decided` — `tool`, `server`, `decision`
 `approval.resolved` (`decision`, `by: hook|human|grant`, `scope: once|session`).
 
 ```powershell
-uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
+uv run scripts/replay_trace.py <home>\sessions\<session_id>\events.jsonl
 ```
 
 prints non-`allow` decisions under the action they gate:

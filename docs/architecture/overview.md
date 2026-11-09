@@ -1,9 +1,10 @@
 # Architecture Overview
 
 AutoBrowser is a Python 3.12 browser automation agent with an engine-native
-execution loop. The command-line entry point is `main.py`; the core agent loop
-lives under `src/agent_loop/execution/`; session and runtime infrastructure are
-managed from `src/harness/`.
+execution loop. The command is `autobrowser` (`src/cli/entry.py`; `main.py` calls the same
+entry point); the core agent loop lives under `src/agent_loop/execution/`; session and
+runtime infrastructure are managed from `src/harness/`; front ends (`src/ui/`) and the stand
+(`src/serve/`) are clients of the session.
 
 ## Goals
 
@@ -20,21 +21,24 @@ AutoBrowser turns a natural-language browser task into a controlled loop:
 
 | Path | Responsibility |
 | --- | --- |
-| `main.py` | CLI parsing and wiring the process into `SessionRuntime`. |
-| `src/cli/` | `cmd2` interactive REPL, parser, output formatting, and session bootstrap. |
+| `main.py` | Calls `src.cli.entry.main`, like the `autobrowser` console script. |
+| `src/cli/` | The composition root: `entry.py` (subcommands `doctor`, `sessions`, `replay`, `recordings`, `serve`, `completion`, or the agent), parser, `bootstrap.py` (`build_session`, the front end), `models.py` (the model cascade's tiers over the provider registry), `serve.py` (the stand), print mode output, and the `cmd2` shell kept as `--classic`. The only importer of `src.providers` and `src.channels`. |
+| `src/ui/` | Front ends over the session: `SessionController` (the UI-neutral facade), `RuntimeLoop`, the event feed projection, the inline terminal UI (`src/ui/tui/`, the default), plain line mode and print mode. Guide: [terminal UI](../development/terminal-ui.md). |
+| `src/serve/` | The stand (`autobrowser serve`), a `SessionController` client: dispatcher over a worker pool, scheduler, HTTP API, probe, ledger, notification channels, the chat command port. Guide: [serve mode](../development/serve-mode.md). |
+| `src/channels/` | Chat channel adapters of the stand (`telegram.py`) over the neutral ports of `src/serve`; imported by `src/cli/` only. |
 | `src/agent_loop/execution/` | The engine-native control loop: `AgentLoopEngine`, `TurnController`, the frozen `LoopState`, observation/guards helpers, `EngineResources`, and the `Agent` that runs one `TaskRequest`. |
 | `src/agent_loop/` | Runtime-facing action contracts, model action parsing, lifecycle events, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary. |
 | `src/contracts.py` | Provider-neutral typed tool/plan/observation contracts (no imports from the loop, harness, or browser layers). |
 | `src/config.py` | Typed environment-driven settings — the single source of truth for every tunable. Neutral leaf like `src/contracts.py`; see [the settings ADR](../decisions/2026-09-16-typed-settings-module.md). |
-| `src/state.py` | Type-only `AgentState` TypedDict kept for browser-layer annotation. |
+| `src/state.py` | Type-only `AgentState`/`BrowserState` TypedDicts kept for annotation. |
 | `src/messages.py` | Dependency-free provider-neutral chat `Message`/`ToolCall` types shared by the engine and providers. |
-| `src/llm.py` | The provider-neutral `ChatModel`/`ModelResponse` chat contract the engine drives. |
+| `src/llm.py` | The provider-neutral `ChatModel`/`ModelResponse` chat contract the engine drives, plus `ModelPrice`, `ModelTier` and `ModelTiers` (the session model and the cascade tiers above it). |
 | `src/providers/` | Thin `ChatModel` adapters — `ollama.py` (`/api/chat`) and `openai_compat.py` (Chat Completions) — that serialize `Message`/`ToolDef` to a wire protocol and parse replies into `ModelResponse` (with `ModelUsage`); `registry.py` picks one by `llm.provider` and probes it for `doctor --llm`. Imported only by `src/cli/`. |
-| `src/browser/` | Provider-neutral browser contracts, canonical browser names, backend adapters, and fake browser tools for tests. |
-| `src/harness/` | Session runtime, harness composition root, context, memory, tools, policy, and telemetry boundaries. |
-| `src/mcp/` | Playwright MCP process/session lifecycle helpers and provider loading. |
+| `src/browser/` | Browser adapters that read text formats, never tool names: page URL (`pages.py`), permission resources, memory scope and policy, hooks, playback (`[ref=…]` rebinding), error codes. |
+| `src/harness/` | Session runtime, harness composition root, MCP setup, tools, permissions, hooks, memory, skills, recordings and playback, approvals, the event stream for front ends, and telemetry (OTLP). |
+| `src/mcp/` | The universal MCP manager: server registry (stdio, streamable HTTP), connections, reconnects, discovery and shutdown; no server is special-cased. |
 | `tests/` | Pytest coverage for engine behavior, harness boundaries, Agent Loop contracts, CLI, prompts, tools, batch/export, and deterministic eval scenarios. |
-| `scripts/` | Utility scripts for batch runs, session exports, trace replay/export, and eval baseline checks. |
+| `scripts/` | Utility scripts for batch runs and their comparison, session exports, trace replay/export, scripted evals with their baselines, and the Langfuse sync. |
 
 The legacy `src/agent/` compiled-graph runtime, its `planner`/`executor`/`observer`
 stages, the `src/agent_loop/adapters/` bridge, and
@@ -47,20 +51,22 @@ The loop is assembled and driven by `AgentLoopEngine.run` in
 `src/agent_loop/execution/loop.py`. Its verified flow is:
 
 ```text
-build initial plan (model call #0) -> while turn <= cap:
+build initial plan (model call #0, or a recorded plan for a replay) -> while turn <= cap:
+  tier escalation check (model cascade only)
   TurnController.run_turn(LoopState) ->
-    agent step -> decision
-      done    -> terminal status via CompletionController
+    step source (replay) or agent step on the current model tier -> decision
+      done    -> terminal status via CompletionController (stop hooks first)
       replan  -> rebuild plan
-      tool_call -> policy -> (human_input?) -> ToolBroker.execute -> observe
+      tool_call -> progress guard -> prepare -> pre_tool_use hooks
+                -> PermissionEngine (deny | ask -> permission_request/human | allow)
+                -> ToolBroker.invoke -> post_tool_use -> observe
 ```
 
-A turn with a `tool_call` decision runs policy before execution. `policy` can
-route to `human_input` when a tool needs human approval; a blocked or denied
-tool short-circuits back to the loop with a status-prefixed final answer.
-Otherwise the approved tool executes through `ToolBroker` and the observer
-compiles the result back into `LoopState`, which continues or terminates.
-`settings.loop.turn_cap` (default 50) bounds the loop.
+A progress block, a hook deny or a permission deny short-circuits back to the loop: the model
+reads the reason as the tool output. A refused approval ends the task `blocked`. Otherwise the
+tool runs through `ToolBroker` and the observer compiles the result back into `LoopState`.
+`settings.loop.turn_cap` (default 50) bounds the loop, and the run budget (`RunBudget`) is
+checked right before every model call. See the [runtime flow](../diagrams/agent-runtime-flow.md).
 
 ## Runtime Boundary
 
@@ -134,22 +140,18 @@ around the engine:
   per-turn user prompt, and the planner prompt from typed context blocks. Skills themselves
   live in `src/harness/skills.py` ([guide](../development/skills.md)).
 
-The interactive CLI in `src/cli/agent_cli.py` wraps a prepared
-`SessionRuntime`. It keeps all asynchronous session operations on one dedicated
-runtime event loop, including task execution, browser status helpers, reset,
-and close. This avoids closing MCP resources from a different loop than the one
-that created them.
+Front ends never own the session ([ADR](../decisions/2026-10-19-session-controller-and-local-web-ui.md)).
+`SessionController` (`src/ui/controller.py`) is the UI-neutral facade over `SessionRuntime`:
+submit, cancel, reset, reconnect, answer approvals, `SessionView`/`TaskView` read models. Its
+coroutines run on `RuntimeLoop`, one dedicated asyncio loop, so MCP resources are always
+closed on the loop that opened them. The terminal UI (default), plain mode, print mode
+(`-p`), the classic `cmd2` shell (`--classic`) and the stand all drive the session through it.
 
-Session workspace files live under
-`.autobrowser/sessions/<session_id>/workspace/`, with standard subdirectories
-for `downloads/`, `screenshots/`, `temp/`, and `artifacts/`. This directory is
-runtime-local and ignored by git.
-
-Session metadata is persisted next to the workspace under
-`.autobrowser/sessions/<session_id>/`. `session.json` records the current
-session view, including config, metadata, workspace paths, artifacts, and task
-history. `tasks.json` stores the task records directly for simpler inspection.
-These files are runtime artifacts and are ignored by git.
+Session files live in the AutoBrowser home (`AUTOBROWSER_HOME`, else `~/.autobrowser`):
+`<home>/sessions/<session_id>/` holds `session.json` (config, metadata, workspace paths,
+artifacts, task history), `tasks.json`, `events.jsonl`, `state.json` (the carried dialogue for
+`--continue`/`--resume`) and `workspace/` (`downloads/`, `screenshots/`, `temp/`,
+`artifacts/`). They are local runtime artifacts, not part of the repository.
 
 `BrowserHarness` in `src/harness/runtime.py` is the composition root for runtime
 infrastructure consumed by one task execution. It holds:
@@ -163,9 +165,11 @@ infrastructure consumed by one task execution. It holds:
 - `EventEmitter`: durable goal/model/action/policy/tool/observation events.
 
 `EngineResources.from_harness(harness, llm=...)` bundles these collaborators
-(plus `tool_normalizers` from the registry) for `AgentLoopEngine`. This keeps
-the engine focused on reasoning/control flow, keeps task lifecycle separate from
-session lifecycle, and keeps runtime concerns replaceable in tests.
+(plus `tool_normalizers` from the registry) for `AgentLoopEngine`, together with the
+session-scoped ones: hooks, permissions, the approval judge, the memory renderer, the step
+sources of replay (`steps`) and the model tiers (`models`). This keeps the engine focused on
+reasoning/control flow, keeps task lifecycle separate from session lifecycle, and keeps
+runtime concerns replaceable in tests ([diagram](../diagrams/harness-boundaries.md)).
 
 Conversation history is not stored on the harness. The functional `MemoryManager`
 in `src/harness/memory.py` shapes a `list[Message]` — seeding the user task,
@@ -185,8 +189,10 @@ shutdown, and the catalog holds discovered tools and `ServerStatus`.
 
 `src/harness/mcp_setup.py` builds the session's `MCPRuntime` from settings
 (falling back to Playwright MCP attached to the session Chrome over CDP when no
-servers are configured), fills `{cdp_port}`/`{cdp_endpoint}` placeholders, and
-fails startup if the browser server is not ready. `src/harness/mcp_tools.py`
+servers are configured), fills the `{cdp_port}`/`{cdp_endpoint}` placeholders and
+`{profile_dir}` (the session's browser profile), and fails startup if the browser server is
+not ready. With `browser.launch: external` the session starts no Chrome: the MCP server
+launches its own browser, and a server still pointing at CDP is a startup error. `src/harness/mcp_tools.py`
 exposes catalog tools through `MCPToolSource`: the browser server keeps its
 unprefixed `browser_*` names; other servers use `server__tool`.
 
@@ -269,8 +275,9 @@ The observer translates a single tool result into compact loop state and
 detects ineffective browser actions (an action that leaves the observed page
 unchanged).
 
-When compression is enabled, an observer LLM can summarize tool output, but it
-must use only the latest `ToolResult` JSON.
+`--compress-tools` (`SessionConfig.compress_tools`) compacts the text of tool outputs before
+they reach the history; no model is called for it. Kept snapshots are per server and follow
+the MCP `readOnlyHint`.
 
 ## Policy
 
@@ -287,6 +294,41 @@ Two separate checks run before a tool call executes:
   See [ADR](../decisions/2026-10-01-permission-engine.md) and
   [Name-Free Permission Defaults](../decisions/2026-10-01-name-free-permission-defaults.md).
 
+## Replay, Budgets and the Model Cascade
+
+- **Replay** ([guide](../development/replay.md)): a completed run can be recorded and replayed
+  without the model. The engine asks a neutral `StepSource` (`EngineResources.steps`) before
+  the model; every replayed step goes through the same guard, hooks and permissions; a
+  divergence goes to a one-step retarget, then to the agent. The cost ladder is
+  `probe -> playback -> retarget -> agent -> human`, never above `RunProfile.max_stage`.
+- **Budgets**: every model call is added to `LoopState.usage` (`TaskUsage`, by stage and by
+  model); `RunBudget` (calls, tokens, money from `llm.prices`) ends a task
+  `budget_exhausted` before the call that would exceed it.
+- **Model cascade** (`cascade.*`, off by default): tier 0 is the session model, the cascade
+  tiers sit above it. `guards.tier_escalation`, checked at the top of every turn, moves the
+  agent up one tier when it is stuck (an empty answer, a progress block, repeated failures or
+  replans); the tier never goes down within a task
+  ([ADR](../decisions/2026-11-09-cascade-channels-and-worker-pool.md)).
+
+## The Stand
+
+`autobrowser serve` ([guide](../development/serve-mode.md),
+[diagrams](../diagrams/serve-mode.md)) runs configured jobs on triggers (interval, cron,
+webhook, Telegram) without a terminal. `src/serve/` drives a pool of workers, each a whole
+session behind its own `SessionController`; it never imports the engine, the harness, the
+browser layer, the providers or the channels.
+
+## Hooks, Memory and Skills
+
+- **Lifecycle hooks** ([guide](../development/lifecycle-hooks.md)): deterministic checks at
+  `goal_start`, `pre_tool_use`, `permission_request`, `post_tool_use`, `stop` and `goal_end`;
+  off by default.
+- **Memory** ([guide](../development/memory.md), [diagram](../diagrams/memory-layers.md)):
+  the history budget, working notes, the task digest and persistent memory files; everything
+  past the compaction of superseded tool outputs is off by default.
+- **Skills** ([guide](../development/skills.md)): Agent Skills `SKILL.md` folders; the
+  built-in browser rules are an always-on skill sent whenever a browser server is configured.
+
 ## Browser Tools
 
 The agent works with whatever tools the configured MCP servers expose
@@ -298,8 +340,9 @@ and evals use the tool names the browser server exposes; there is no canonical
 ## Known Operational Risks
 
 - Dynamic commerce pages can expose a search button before the editable input.
-  Prompt rules now limit repeated search-button clicks and allow direct search
-  URL fallback, especially for Ozon.
+  The browser rules (the built-in `browser-agent-rules` skill and the agent prompt, both the
+  user's to revise) limit repeated search-button clicks and allow a direct search URL
+  fallback.
 - The turn cap (`settings.loop.turn_cap`, default 50) can be reached when the agent repeats
   tool calls without progress. Retry counters, observer hints, policy checks,
   and prompt rules are the current controls.

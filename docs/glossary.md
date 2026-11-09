@@ -10,37 +10,43 @@
 | AgentLoopEngine | The explicit control-flow owner in `src/agent_loop/execution/loop.py`: builds the initial plan, then drives a bounded `while` loop of `TurnController` turns and returns a terminal `AgentLoopResult`. |
 | AgentLoopResult | Frozen terminal result of one engine run: `status` (`done`/`blocked`/`cancelled`), `final_answer`, `session_state`, `state`, `turns`, and `stop_reason`. |
 | AgentTraceSink | Event sink that writes compact human-readable trace projections beside durable event records. |
+| Approval judge | Opt-in `permissions.approval_judge` (`off | model | classifier | both`, `src/agent_loop/execution/approval.py`): the acting model's `approval_request` argument or a classifier call can escalate a default `allow` to an `always_ask`; never lifts a rule. |
+| ApprovalBroker | `HumanInputCallback` on tickets (`src/harness/approvals.py`): every open approval is an `ApprovalTicket` any client may answer (the terminal UI, the API, a chat button); a ticket unanswered by its deadline is a `deny` (`via: timeout`). One per session (per worker on the stand). |
 | ArtifactRegistry | Session-owned registry for durable outputs such as screenshots, downloads, reports, or extracted files. |
 | Assembled context | Deterministic, ordered prompt blocks produced by `ContextAssembler` (`src/agent_loop/context.py`), the canonical prompt-construction path. |
 | AutoBrowser | The browser automation agent implemented in this repository. |
-| Batch run | Execution of JSONL Golden Set scenarios through fresh `SessionRuntime` instances, with metadata written under `.autobrowser/batches/<batch_id>/`. |
+| AutoBrowser home | `src.config.home_dir()`: `AUTOBROWSER_HOME`, else `~/.autobrowser`; holds sessions, memory, skills, recordings, batches, logs, the stand's files, `<home>/.env` and `<home>/config.yaml`. |
+| Batch run | Execution of JSONL Golden Set scenarios through fresh `SessionRuntime` instances (`scripts/run_batch.py`), with metadata written under `<storage.batches_dir>/<batch_id>/` (`<home>/batches/` by default). |
 | Batch history | `<storage.batches_dir>/history.jsonl` (`src/agent_loop/batch_history.py`): one small row per scenario per batch run (commit, model, Golden Set and settings fingerprints, grade, failure kind, metrics), rotated to `pipeline.history_max_rows`; read by `scripts/compare_batches.py` and DuckDB. |
 | Browser error code | Shared browser-layer error vocabulary such as `invalid_ref` and `action_failed`. |
 | `browser_evaluate` | Playwright MCP page-JavaScript tool; it asks only if a configured rule says so (see the opt-in `page-js` example in `config.example.yaml`). |
 | `browser_find` | Browser tool for plain-text search; not reliable for structured link or attribute extraction. |
-| BrowserAction | Provider-neutral typed browser request using canonical `browser.*` action names. |
+| BrowserAction | Removed with `src/browser/contracts.py`: there is no canonical `browser.*` vocabulary; code uses the tool names the browser server exposes. |
 | BrowserHarness | Runtime composition root that holds context, tools, policy, telemetry, events, and the reasoning `llm`; `EngineResources.from_harness` bundles them for the engine. |
-| BrowserProvider | Legacy protocol (`src/browser/provider.py`) kept only for test scaffolding; superseded in production by `MCPToolSource` and `ToolCallNormalizer`. |
-| BrowserResult | Provider-neutral browser action result shape with status, content, error, and optional error code. |
+| BrowserProvider | Removed. The former browser protocol; production and tests go through `MCPToolSource` and `ToolCallNormalizer`s (tests use `tests/mcp_fixtures/fake_server.py` or the `_FakeBrowserTools` helper of `src/agent_loop/evals.py`). |
+| BrowserResult | Removed with `src/browser/contracts.py`; tool results are the neutral `ToolResult` (status, content, error, optional `error_code`). |
 | ChatModel | Provider-neutral chat protocol in `src/llm.py`: `async complete(messages, *, tools, **params) -> ModelResponse`. Provider adapters implement it; the engine drives it and never sees provider objects. |
 | Checkpointer | Removed. There is no checkpoint saver; durable history is carried on `LoopState.messages` and `SessionContext.state`, shaped by the functional `MemoryManager`. |
 | Command hook | Hook with `type: command` (`src/harness/command_hooks.py`): an external process that gets the `HookEvent` as JSON on stdin and answers with its exit code (`2` blocks, stderr is the reason) and optional JSON on stdout, following the Claude Code/Codex protocol. |
 | Compact observation | Short observer output derived from a tool result and used by the next agent step. |
 | CompletionStatus | Loop completion status (`continue`/`done`/`blocked`/`cancelled`) carried on `AgentLoopResult`; `GoalRunner` maps it to a terminal `GoalStatus` via `goal_status_from_completion()` in `src/contracts.py`. |
-| Config section | One of the twelve frozen pydantic sub-models on `Settings` (`llm`, `browser`, `loop`, `observation`, `memory`, `skills`, `events`, `storage`, `flags`, `hooks`, `permissions`, `ui`). Each owns an `AUTOBROWSER_<SECTION>__<FIELD>` environment namespace and rejects unknown keys. |
+| Config section | One of the eighteen frozen pydantic sub-models on `Settings` (`llm`, `cascade`, `browser`, `loop`, `observation`, `memory`, `skills`, `replay`, `events`, `storage`, `flags`, `hooks`, `permissions`, `ui`, `pipeline`, `telemetry`, `eval_platform`, `serve`). Each owns an `AUTOBROWSER_<SECTION>__<FIELD>` environment namespace and rejects unknown keys. |
 | ContextAssembler | The sole prompt-construction boundary in `src/agent_loop/context.py`: builds the durable system prompt, the per-turn user prompt, and the planner prompt from ordered `ContextBlock`s. |
 | Dataset version | Canonical: the `tasks_sha256` of a scenario set, labeled by the git commit that gave the file that content; Langfuse's own version (the newest item timestamp) is a projection, mapped by `<home>/batches/platform_datasets.jsonl` (`docs/development/eval-platform.md`). |
 | Direct search URL fallback | Navigating directly to a site's search results URL when UI search controls do not make progress. |
-| EngineResources | Bundled runtime collaborators (`llm`, `tool_registry`, `tool_normalizers`, `context`, `events`, `hooks`, `permissions`, `approval`, `memory`) built from `BrowserHarness` (plus the session's `HookEngine`, `PermissionEngine`, `ApprovalJudge` and `MemoryContext`) and passed to `AgentLoopEngine`. |
-| Eval baseline | Committed metric record per scripted eval scenario (`tests/evals/baselines/agent_loop_v2.json`, schema v2, with a `scenarios_with_memory` block) that `scripts/run_evals.py` compares a hermetic run against; rewritten only by `--write-baseline`. |
+| Dispatcher | The stand's gate and runner (`src/serve/dispatcher.py`): decides at once whether a trigger is queued, coalesced or skipped (cooldown, day budget, full queue), runs queued runs on the worker pool, writes the `RunReport` and sends the notifications. |
+| `doctor` | `autobrowser doctor`: offline checks of the home, the configuration, the model provider, Node.js, Chrome, MCP servers, skills, telemetry, the cascade tiers and the Telegram channel; `--llm` adds the provider's model list over the network. |
+| EngineResources | Bundled runtime collaborators (`llm`, `tool_registry`, `tool_normalizers`, `context`, `events`, `hooks`, `permissions`, `approval`, `memory`, `steps`, `models`) built from `BrowserHarness` (plus the session's `HookEngine`, `PermissionEngine`, `ApprovalJudge` and `MemoryContext`) and passed to `AgentLoopEngine`. |
+| Eval baseline | Committed metric record per scripted eval scenario (`tests/evals/baselines/agent_loop_v2.json`, schema v2, with a `scenarios_with_memory` block; `playback_v1.json` and `cascade_v1.json` for the replay and cascade suites) that `scripts/run_evals.py` compares a hermetic run against; rewritten only by `--write-baseline`. |
 | Eval platform | The `eval_platform` settings section and the bridge in `scripts/langfuse_bridge/` that syncs batch folders to Langfuse as datasets, experiments and scores; a second view, never the source of the verdict. |
+| EventBroadcaster | Extra session event sink (`src/harness/event_stream.py`) that fans redacted records out to front-end subscribers (the terminal UI feed). |
 | EventRecord | Durable JSON-safe event envelope for session, goal, engine, model, action, policy, tool, observation, and terminal lifecycle events. |
 | Executor | Engine phase that resolves and invokes approved tool requests through `ToolBroker`/`ToolRegistry`. |
 | Experiment (item trace) | A synced batch on the platform: one OTLP item trace per scenario (root `scenario {id}` over the task span trees), built after the run from the batch folder with deterministic ids. |
 | Export row | JSONL task-level analytics row produced by `scripts/export_sessions.py` from persisted session, task, event, feedback, and batch metadata. |
 | Fail-closed | Hook failure mode where a timeout or exception counts as `deny`. The default for `goal_start` and `pre_tool_use`; other events fail open (no decision). `HookSpec.fail_closed` overrides it. |
 | Failure kind | One word per batch task and scenario (`src/agent_loop/failures.py`): `passed`, `provider_error`, `timeout` (the infra kinds, not the agent's fault), `permission_denied`, `guard_limit`, `agent_stopped`, `grade_failed`, `error`, `ungraded`. Derived from goal events, their stop reason, permission denies and the grade, never from site knowledge. |
-| FakeBrowserProvider | Legacy deterministic browser provider used by tests to replay browser responses without Chrome, CDP, or MCP. |
+| FakeBrowserProvider | Removed. Deterministic browser tests use `tests/mcp_fixtures/fake_server.py` (a real MCP server) or `_FakeBrowserTools` in `src/agent_loop/evals.py`. |
 | GoalRunner | One-task lifecycle boundary between `SessionRuntime` and the engine: `GoalRunner(task_runner, events, limits)` emits goal lifecycle events, runs the task runner (`Agent.run`) under the `GoalLimits` timeout and progress watchdog, and does not own the model/action loop. |
 | GoalLimits | Frozen time budgets of one goal run (`timeout_seconds`, `progress_timeout_seconds`), built from `LoopSettings` by `GoalLimits.from_settings()`. |
 | GoalRunResult | Frozen terminal object returned by `GoalRunner`: the `TaskRequest`, the `AgentLoopResult` and the explicit terminal `GoalStatus`. |
@@ -53,6 +59,7 @@
 | Hook handler | Async callable `HookEvent -> HookResult \| None`: for `type: python` named by `package.module:attr` (a factory when `options` are set), for `type: command` a `CommandHook` wrapping an external process; `None` means no opinion. |
 | HookEngine | Session-scoped runner of the hook registry: sequential handlers, `deny > ask > allow` aggregation, per-hook timeouts, one `hook.decided` event per handler via the loop. `NullHookEngine` is the disabled no-op. |
 | Ineffective browser action | A successful browser action after which the observed page is unchanged. |
+| Ledger (stand) | `<home>/serve/ledger.jsonl`: one `RunReport` per stand run; the source of the day totals the day budgets are checked against, restored on restart. |
 | LoopState | The frozen dataclass (in `src/agent_loop/execution/state.py`) that carries all loop state; `apply()` is strict and rejects unknown keys. |
 | MCP | Model Context Protocol; every tool server (Playwright included) is an entry in `Settings.mcp_servers` managed by `MCPManager`. |
 | MCPManager | Server-agnostic host-side pool of MCP clients in `src/mcp/manager.py`: connection owner tasks, reconnect, discovery, `list_changed`, liveness, shutdown. |
@@ -73,7 +80,8 @@
 | ModelUsage | Optional token accounting on `ModelResponse.usage` (`input_tokens`, `output_tokens`, `cached_input_tokens`, `reasoning_tokens`, Ollama durations); a field the provider did not report stays `None`, and the set fields travel in `model.responded`. |
 | Observer | Engine phase that translates tool results into compact loop state updates. |
 | Ollama provider | Thin `ChatModel` adapter in `src/providers/ollama.py` (`OllamaChatModel` / `ollama_llm_factory`) that maps neutral `Message`/`ToolDef` objects to Ollama's `/api/chat` shape and parses replies into `ModelResponse`; `llm.timeout_seconds` bounds a call, `llm.max_output_tokens` becomes `num_predict`, client failures become `ModelProviderError`. |
-| OpenAI-compatible provider | Proposed (ADR-2026-10-22): `OpenAICompatChatModel` in `src/providers/openai_compat.py` (`llm.provider: openai_compat`), one `ChatModel` adapter for any Chat Completions service (OpenAI, aggregators, local servers) chosen purely by `llm.host`/`api_key`/`model`; no vendor names in code. |
+| OpenAI-compatible provider | Implemented (ADR-2026-10-22): `OpenAICompatChatModel` in `src/providers/openai_compat.py` (`llm.provider: openai_compat`), one `ChatModel` adapter for any Chat Completions service (OpenAI, aggregators, local servers) chosen purely by `llm.host`/`api_key`/`model`; no vendor names in code. |
+| OTLP export | Off-by-default export of each task as one OpenTelemetry trace (`src/harness/otel_sink.py`, `otel_spans.py`) to Langfuse, Phoenix or Jaeger; `telemetry.*` settings. |
 | Planner | Engine phase that creates or revises compact task plans. |
 | Playwright MCP | Browser automation MCP server the agent uses by default. |
 | PlaywrightMCPBrowserProvider | Removed. Former Playwright adapter; replaced by `MCPManager` + `MCPToolSource` + `SchemaArgsNormalizer`. |
@@ -81,27 +89,33 @@
 | PermissionEngine | Session-scoped, deterministic tool authorization in `src/harness/permissions.py`: `PermissionCheck` → `allow`/`ask`/`deny` from rules (`deny > ask > allow`), the mode and session grants; fails closed; emits `permission.decided`. |
 | Permission mode | `permissions.mode`: `default` (no rule → allow), `read_only` (only `readOnlyHint` tools), `dont_ask` (every ask → deny), `bypass` (asks granted; deny rules and `always_ask` hold). |
 | Grant | A session-only approval of `(server, tool, domain)` stored by the `PermissionEngine` after a human answers "session"; never covers `always_ask` rules or hook asks. |
+| Print mode | `autobrowser -p "task"`: one task without the interactive UI, the result only on stdout (`--output-format text | json | stream-json`), exit codes 0 completed, 1 failed, 2 usage, 3 blocked, 130 cancelled (`src/ui/print_mode.py`). |
 | ProposedAction | Provider-neutral model action contract (`answer`/`tool_call`/`update_plan`/`ask_user`/`delegate`/`compact_memory`/`stop`) parsed from a model turn and mapped to `LoopState` updates by the engine. |
 | Provider adapter | Thin adapter that implements `ChatModel` by serializing neutral `Message`/`ToolDef` objects to a backend wire format and parsing the reply back into a `ModelResponse`. |
 | Provider registry | `build_chat_model()` in `src/providers/registry.py`, the default `llm_factory` that picks the adapter by `llm.provider` (or a `--provider` override bound in `src/cli/bootstrap.py`); only `src/cli/` imports `src.providers`. |
 | PromptSection | neutral fixed system block (`name`, `title`, `text`, `priority`) the composition root hands to `ContextAssembler(sections=...)`; replaces `PromptResource`, knows nothing about skills or files. |
+| RunReport | The report of one stand run (`src/serve/reports.py`): trigger, status, stop reason, stage, its tasks, the probe's verdict, playback, usage, budget, notified channels; `worker` with a pool and `tier_reached` after a tier change. |
+| RuntimeLoop | The dedicated asyncio loop (`src/ui/runtime_loop.py`) that `SessionController` coroutines run on, so MCP resources are always closed on the loop that opened them. |
+| SessionController | UI-neutral facade over `SessionRuntime` (`src/ui/controller.py`): submit, cancel, reset, reconnect, answer approvals, `SessionView`/`TaskView` read models; the terminal UI, plain and print mode, the classic shell and the stand are its clients. |
 | Staged trust | Memory entry lifecycle `unverified → verified → stale` driven by the outcomes of the tasks that loaded the entry (`MemoryStore.record_outcome`) and a `stale_after_days` TTL; the user's entries never change. |
+| StepSource | Neutral protocol (`src/contracts.py`) the engine asks before the model while a recording replays: it proposes recorded steps (`StepProposal`), finishes (`StepFinal`) or hands over to the agent (`StepHandoff`); implemented by `PlaybackSource` in `src/harness/playback.py`. |
 | Sync ledger | `<batch_dir>/platform_sync.json`: the experiment, dataset version, baseline and per-scenario trace states (`pending`/`sending`/`unknown`/`exported`) of a batch's sync; ids and states only, guarded by `platform_sync.lock`. |
 | Task digest | One `[harness] Previous task digest` message (request, final answer, tool counts) replacing a finished task older than `memory.keep_recent_tasks` at the task boundary (`MemoryManager.digest_tasks`). |
+| Terminal UI | The default front end (`src/ui/tui/`): a Claude-Code-style inline UI on prompt_toolkit and rich with frozen blocks in the scrollback, a live zone, in-stream approval cards and slash commands; `RenderPump` is its only terminal writer. |
 | Working notes | Task-local notes the model keeps through the optional `notes` tool argument (`memory.working_notes_max_chars`), stored on `LoopState.working_notes` and rendered as the `Working Notes` block. |
 | Qualified tool name | `server__tool` name produced by `src/mcp/naming.py` (sanitized, max 64 chars) for tools of non-browser servers. |
 | readOnlyHint | MCP tool annotation used by `tool_is_read_only` to decide whether a call can change the page. |
 | SchemaArgsNormalizer | `ToolCallNormalizer` in `src/harness/normalization.py` that drops arguments the tool schema forbids. |
 | ServerRegistry | Declarative MCP server list (`StdioServerConfig` / `StreamableHttpServerConfig`) in `src/mcp/config.py`; holds no connections. |
-| Session records | Runtime-local JSON files under `.autobrowser/sessions/<session_id>/`, currently `session.json` and `tasks.json`. |
-| Session workspace | Runtime-local directory under `.autobrowser/sessions/<session_id>/workspace/` for downloads, screenshots, temp files, and artifacts. |
+| Session records | Runtime-local files under `<home>/sessions/<session_id>/`: `session.json`, `tasks.json`, `events.jsonl` and `state.json` (the carried dialogue for `--continue`/`--resume`). |
+| Session workspace | Runtime-local directory `<home>/sessions/<session_id>/workspace/` for downloads, screenshots, temp files, and artifacts. |
 | SessionConfig | Args-derived configuration used to initialize a long-lived `SessionRuntime` and shared task config. |
 | SessionContext | Root object for one process-scoped session; owns session state, task history, workspace, artifacts, events, and runtime handles. |
 | SessionEventBus | Minimal synchronous event bus for session lifecycle events such as task start, task finish, and session close. |
 | SessionMetadata | Session-owned metadata such as started time, last activity, task count, and runtime version. |
 | SessionRuntime | Process-lifetime coordinator that runs the session loop, delegates lifecycle state to `SessionContext`, and sends each task to `GoalRunner`. |
 | SessionState | Mutable mapping wrapper for shared session-level state that should not require a dedicated typed field yet. |
-| Settings | The pydantic-settings root in `src/config.py`, composed of twelve config sections and read through `get_settings()`. A neutral leaf like `src/contracts.py`: it imports nothing from the loop, harness, or browser layers. |
+| Settings | The pydantic-settings root in `src/config.py`, composed of eighteen config sections and read through `get_settings()`. A neutral leaf like `src/contracts.py`: it imports nothing from the loop, harness, or browser layers. |
 | Skill | a folder with an Agent Skills `SKILL.md` (YAML frontmatter `name`/`description`, markdown body) plus optional reference files, written by a human; built-in (`src/agent_loop/resources/skills/`) or user (`<home>/skills/`). Distinct from agent-written memory procedures. |
 | Skill catalog | the `Skills` system block (`SkillCatalog.render()`): one `name: description` line per visible skill, shown when `skills.enabled`; the model loads bodies itself with `skill_view`. |
 | `skill_view` | `readOnlyHint` harness tool of server `skills` (`src/harness/skill_tool.py`) returning a skill body or one file inside the skill folder; the engine never names it. |
@@ -115,12 +129,12 @@
 | Task lifecycle | One user request delegated to the engine, ending when `AgentLoopEngine` reaches a terminal `AgentLoopResult`. |
 | Task thread ID | Deprecated term for the former per-task checkpoint thread ID; tasks are attributed by `session_id` plus per-task `task_id`. |
 | TaskRecord | Session history entry for one user task, including task ID, task text, result, start time, and finish time. |
-| TaskRequest | Frozen contract in `src/contracts.py` for one task: task text, `task_id` (= `goal_id`), `session_id`, `state_overrides`, `turn_cap`, `compress_tools`. Built by the session, passed through `GoalRunner` to `Agent.run`. |
+| TaskRequest | Frozen contract in `src/contracts.py` for one task: task text, `task_id` (= `goal_id`), `session_id`, `state_overrides`, `turn_cap`, `compress_tools`, `profile` (`RunProfile`: playback, ladder cap, budget, task scope, recording). Built by the session, passed through `GoalRunner` to `Agent.run`. |
 | Tool | Provider-neutral executable tool (`src/contracts.py`): `name`, async `func`, `description`, and JSON-Schema `input_schema`; `to_def()` yields the model-visible `ToolDef`, and `invoke()` dispatches with `**args`. |
 | ToolCall | A single tool invocation proposed by an assistant `Message` (`id`, `name`, `arguments`). |
 | ToolCallNormalizer | Stateless protocol folded by `ToolBroker` around every call (`normalize_request` before, `normalize_result` after). |
 | ToolDef | Provider-neutral, model-visible tool schema (`name`, `description`, `input_schema`) independent of any provider. |
-| ToolRegistry | Lazy registry that exposes tools from static lists, generic providers, browser providers, or MCP clients. |
+| ToolRegistry | Lazy registry that exposes tools from static lists (the session's memory and skill tools), generic providers and live sources such as `MCPToolSource`, plus the registered `ToolCallNormalizer`s. |
 | Kept snapshots | `BrowserState.snapshots`: per tool server, the output of its latest successful read-only (MCP `readOnlyHint`) call; a successful state-changing call of that server drops the entry. Decided by annotations, never by tool names; replaces the removed `ToolRoles`. |
 | Trace replay | Loading `events.jsonl` records to summarize terminal status and print compact action sequences for diagnostics or eval failures. |
 | Turn cap | `settings.loop.turn_cap` (default 50) upper bound on engine turns before the run is blocked; set via `AUTOBROWSER_LOOP__TURN_CAP`. |
