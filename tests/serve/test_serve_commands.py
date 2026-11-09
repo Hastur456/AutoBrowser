@@ -16,6 +16,13 @@ CHANNEL = "telegram"
 SENDER = "sender-hash"
 
 
+#: The settings a chat trigger needs: the channel and its token and allowlist.
+CHAT: dict[str, Any] = {
+    "channels": ["log", "telegram"],
+    "telegram": {"bot_token": "123:token", "allowed_chat_ids": [1]},
+}
+
+
 def chat_job(**fields: Any) -> dict[str, Any]:
     return job(triggers=[{"id": "chat", "type": "telegram"}], **fields)
 
@@ -87,7 +94,7 @@ async def test_help_lists_the_commands_and_task_only_with_free_tasks(tmp_path: P
 
 @pytest.mark.asyncio
 async def test_jobs_lists_names_and_whether_the_chat_may_run_them(tmp_path: Path) -> None:
-    rig = Rig(tmp_path, jobs={"price-watch": chat_job(), "secret-job": job(task="do a private thing")})
+    rig = Rig(tmp_path, jobs={"price-watch": chat_job(), "secret-job": job(task="do a private thing")}, **CHAT)
 
     text = await ask(commands(rig), "/jobs")
 
@@ -97,7 +104,7 @@ async def test_jobs_lists_names_and_whether_the_chat_may_run_them(tmp_path: Path
 
 @pytest.mark.asyncio
 async def test_run_fires_a_job_with_a_chat_trigger(tmp_path: Path) -> None:
-    rig = Rig(tmp_path, jobs={"price-watch": chat_job()})
+    rig = Rig(tmp_path, jobs={"price-watch": chat_job()}, **CHAT)
 
     text = await ask(commands(rig), "/run price-watch")
 
@@ -156,7 +163,7 @@ async def test_a_free_task_from_the_chat_is_queued_and_logged_without_its_text(t
 
 @pytest.mark.asyncio
 async def test_cancel_drops_a_queued_run_of_a_job(tmp_path: Path) -> None:
-    rig = Rig(tmp_path, jobs={"price-watch": chat_job()})
+    rig = Rig(tmp_path, jobs={"price-watch": chat_job()}, **CHAT)
     port = commands(rig)
     await ask(port, "/run price-watch")
 
@@ -171,7 +178,7 @@ async def test_cancel_drops_a_queued_run_of_a_job(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_cancel_stops_the_running_run(tmp_path: Path) -> None:
-    rig = Rig(tmp_path, jobs={"price-watch": chat_job()})
+    rig = Rig(tmp_path, jobs={"price-watch": chat_job()}, **CHAT)
     rig.worker.gate = asyncio.Event()
     port = commands(rig)
     await ask(port, "/run price-watch")

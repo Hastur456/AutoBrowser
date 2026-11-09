@@ -1886,8 +1886,9 @@ def test_an_unknown_time_zone_is_rejected_with_a_hint(settings: Any) -> None:
 
 
 def test_a_chat_trigger_takes_only_its_id(settings: Any) -> None:
+    chat = {"channels": ["telegram"], "telegram": {"bot_token": "1:t", "allowed_chat_ids": [7]}}
     ok = _job(triggers=[{"id": "chat", "type": "telegram"}])
-    assert settings(serve={"jobs": {"j": ok}}).serve.jobs["j"].triggers[0].type == "telegram"
+    assert settings(serve={**chat, "jobs": {"j": ok}}).serve.jobs["j"].triggers[0].type == "telegram"
 
     for extra, message in [
         ({"every_seconds": 60}, "takes no every_seconds"),
@@ -1896,7 +1897,100 @@ def test_a_chat_trigger_takes_only_its_id(settings: Any) -> None:
     ]:
         trigger = {"id": "chat", "type": "telegram", **extra}
         with pytest.raises(ValueError, match=message):
-            settings(serve={"jobs": {"j": _job(triggers=[trigger])}})
+            settings(serve={**chat, "jobs": {"j": _job(triggers=[trigger])}})
+
+
+def test_the_telegram_settings_defaults(settings: Any) -> None:
+    from src.config import TelegramSettings
+
+    telegram = TelegramSettings()
+
+    assert settings().serve.telegram is None
+    assert telegram.bot_token is None and telegram.allowed_chat_ids == []
+    assert telegram.api_base == "" and telegram.approvals is True
+    assert (telegram.poll_timeout_seconds, telegram.request_timeout_seconds) == (30, 10.0)
+    assert (telegram.poll_backoff_seconds, telegram.poll_backoff_max_seconds) == (1.0, 60.0)
+    assert (telegram.send_retry_max_seconds, telegram.max_update_age_seconds) == (30.0, 300.0)
+
+
+@pytest.mark.parametrize(
+    "api_base, ok",
+    [
+        ("", True),
+        ("https://bots.example/", True),
+        ("http://localhost:8081", True),
+        ("http://127.0.0.1:8081", True),
+        ("http://bots.example", False),
+        ("ftp://bots.example", False),
+        ("bots.example", False),
+    ],
+)
+def test_the_api_base_is_https_or_local(settings: Any, api_base: str, ok: bool) -> None:
+    telegram = {"api_base": api_base}
+    if ok:
+        assert settings(serve={"telegram": telegram}).serve.telegram.api_base == api_base.rstrip("/")
+    else:
+        with pytest.raises(ValueError, match="https") as caught:
+            settings(serve={"telegram": telegram})
+        assert "bots.example" not in str(caught.value).split("input_value")[0]
+
+
+@pytest.mark.parametrize(
+    "telegram, message",
+    [
+        (None, "bot_token"),
+        ({"allowed_chat_ids": [1]}, "bot_token"),
+        ({"bot_token": "  ", "allowed_chat_ids": [1]}, "bot_token"),
+        ({"bot_token": "1:secret-token"}, "allowed_chat_ids"),
+    ],
+)
+def test_the_telegram_channel_needs_a_token_and_chats(
+    settings: Any, telegram: dict[str, Any] | None, message: str
+) -> None:
+    from src.config import ServeSettings
+
+    with pytest.raises(ValueError, match=message) as caught:
+        ServeSettings(channels=["telegram"], telegram=telegram)
+    errors = caught.value.errors(include_input=False)  # type: ignore[attr-defined]
+    assert "secret-token" not in str(errors)
+
+
+@pytest.mark.parametrize(
+    "telegram",
+    [
+        {"poll_timeout_seconds": 0},
+        {"poll_timeout_seconds": 61},
+        {"request_timeout_seconds": 0},
+        {"poll_backoff_seconds": 5, "poll_backoff_max_seconds": 1},
+        {"send_retry_max_seconds": -1},
+        {"max_update_age_seconds": 0},
+        {"unknown": 1},
+    ],
+)
+def test_the_telegram_bounds_are_enforced(settings: Any, telegram: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        settings(serve={"telegram": telegram})
+
+
+def test_a_chat_trigger_needs_the_telegram_channel(settings: Any) -> None:
+    with pytest.raises(ValueError, match="telegram channel"):
+        settings(serve={"jobs": {"j": _job(triggers=[{"id": "chat", "type": "telegram"}])}})
+
+
+def test_the_bot_token_comes_from_the_env_under_a_profile_naming_the_chats(
+    settings: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    profile = _write_config(
+        tmp_path, "serve:\n  channels: [log, telegram]\n  telegram:\n    allowed_chat_ids: [42]\n"
+    )
+    _point_at(monkeypatch, profile)
+    monkeypatch.setenv("AUTOBROWSER_SERVE__TELEGRAM__BOT_TOKEN", "1:env-token")
+
+    telegram = settings().serve.telegram
+
+    assert telegram.allowed_chat_ids == [42]
+    assert telegram.bot_token.get_secret_value() == "1:env-token"
+    assert "env-token" not in repr(telegram)
 
 
 def test_a_cron_trigger_needs_a_valid_schedule(settings: Any) -> None:
