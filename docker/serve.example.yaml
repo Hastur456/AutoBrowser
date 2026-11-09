@@ -20,7 +20,7 @@ mcp_servers:
       - --browser
       - chromium
       - --user-data-dir
-      - /data/serve/profiles/w0
+      - "{profile_dir}"            # the worker's own profile: /data/serve/profiles/w<i>
       # - --no-sandbox            # only if Chromium refuses to start without it
       # - --allowed-origins       # a browser-level allowlist on top of serve.jobs.*.domains
       # - https://shop.example
@@ -38,6 +38,7 @@ loop:
 serve:
   host: 0.0.0.0                    # inside the container; compose publishes 127.0.0.1 only
   allow_remote: true
+  # workers: 2                     # parallel jobs, each its own Chromium (memory.persistent_enabled off)
   timezone: Europe/Berlin
   daily_max_runs: 200
   default_run_budget: {max_model_calls: 20}

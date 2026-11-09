@@ -1,5 +1,6 @@
-"""``autobrowser serve`` and ``doctor`` with the Telegram channel: composed by the CLI, checked
-before any browser starts, and its token printed nowhere."""
+"""``autobrowser serve`` and ``doctor`` with the Telegram channel and the worker pool: the
+channel composed by the CLI, checked before any browser starts, its token printed nowhere; one
+session per worker, each with its own profile, port, label and approval broker."""
 
 from __future__ import annotations
 
@@ -186,6 +187,54 @@ async def test_the_stand_polls_telegram_and_hands_the_worker_a_broker(monkeypatc
     assert code == 0
     (args, human_input), = built
     assert args.interactive is True and human_input is not None
+
+
+# -- the worker pool ------------------------------------------------------------------------
+
+
+def test_each_worker_has_its_own_profile_port_and_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.cli.serve import worker_args
+    from src.config import ServeSettings, StorageSettings
+    from src.serve.paths import serve_paths
+
+    serve = ServeSettings(workers=3, cdp_port_base=9400)
+    args = worker_args(serve, serve_paths(serve, StorageSettings(root_dir=Path("C:/stand"))), 2)
+
+    assert Path(args.user_data_dir) == Path("C:/stand/serve/profiles/w2")
+    assert args.cdp_port == 9402
+    assert args.labels == {"mode": "serve", "worker": "w2"}
+
+
+@pytest.mark.asyncio
+async def test_the_stand_starts_one_session_per_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.cli import serve as serve_cli
+
+    monkeypatch.setenv("AUTOBROWSER_SERVE__WORKERS", "2")
+    monkeypatch.setenv("AUTOBROWSER_SERVE__API_APPROVALS", "true")
+    get_settings.cache_clear()
+    settings = get_settings()
+    built: list[Any] = []
+    monkeypatch.setattr(serve_cli, "build_session", _fake_session(built))
+
+    code = await serve_cli._serve(settings, lambda _line: None, until=asyncio.sleep(0))
+
+    assert code == 0
+    assert [args.labels["worker"] for args, _ in built] == ["w0", "w1"]
+    assert len({args.cdp_port for args, _ in built}) == 2
+    assert len({args.user_data_dir for args, _ in built}) == 2
+    brokers = [broker for _, broker in built]
+    assert all(broker is not None for broker in brokers) and brokers[0] is not brokers[1]
+    events = (settings.storage.root_dir / "serve" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"workers": 2' in events
+
+
+def test_the_summary_counts_the_workers(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setenv("AUTOBROWSER_SERVE__WORKERS", "3")
+    get_settings.cache_clear()
+
+    assert entry.main(["serve", "--check"]) == 0
+
+    assert "3 workers" in capsys.readouterr().out
 
 
 # -- doctor ---------------------------------------------------------------------------------

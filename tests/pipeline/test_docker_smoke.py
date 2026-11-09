@@ -34,7 +34,7 @@ mcp_servers:
   playwright:
     transport: stdio
     command: playwright-mcp
-    args: [--headless, --browser, chromium, --user-data-dir, /data/serve/profiles/w0]
+    args: [--headless, --browser, chromium, --user-data-dir, "{profile_dir}"]
     stateful: true
 replay:
   enabled: true
