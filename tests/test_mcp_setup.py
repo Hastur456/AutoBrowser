@@ -55,3 +55,28 @@ def test_cdp_placeholders_are_fine_when_the_session_launches_chrome():
 def test_no_browser_server_when_playwright_absent():
     settings = _settings(mcp_servers={"web": SERVERS["web"]})
     assert build_mcp_runtime(cdp_port=9222, settings=settings).browser_server is None
+
+
+PROFILE = {"transport": "stdio", "command": "npx", "args": ["--user-data-dir", "{profile_dir}"], "env": {"P": "{profile_dir}/x"}}
+
+
+def test_the_profile_placeholder_is_the_sessions_profile():
+    settings = _settings(mcp_servers={"playwright": PROFILE})
+
+    runtime = build_mcp_runtime(cdp_port=9222, settings=settings, profile_dir="C:/stand/w1")
+
+    config = runtime.manager._registry.get("playwright")  # noqa: SLF001
+    assert config.args == ["--user-data-dir", "C:/stand/w1"]
+    assert config.env == {"P": "C:/stand/w1/x"}
+
+
+def test_the_profile_placeholder_is_not_a_cdp_one():
+    settings = _settings(mcp_servers={"playwright": PROFILE}, browser=SimpleNamespace(launch="external"))
+
+    assert build_mcp_runtime(cdp_port=9222, settings=settings, profile_dir="p").browser_server == "playwright"
+
+
+def test_without_a_profile_the_placeholder_stays():
+    runtime = build_mcp_runtime(cdp_port=9222, settings=_settings(mcp_servers={"playwright": PROFILE}))
+
+    assert runtime.manager._registry.get("playwright").args == ["--user-data-dir", "{profile_dir}"]  # noqa: SLF001

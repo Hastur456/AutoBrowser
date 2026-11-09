@@ -6,9 +6,11 @@ when the settings define no MCP servers at all; every server, the browser one in
 just an entry in ``mcp_servers``.
 
 Runtime placeholders. Server configs may reference values that are only known once the
-session has started Chrome: ``{cdp_port}`` and ``{cdp_endpoint}``. They are substituted in
-``command``/``args``/``env``/``cwd`` (stdio) and ``url``/``headers`` (HTTP). ``${VAR}``
-(environment) is expanded earlier, at config validation.
+session has started Chrome: ``{cdp_port}`` and ``{cdp_endpoint}``; and the session's browser
+profile, ``{profile_dir}`` (a stand worker's own ``<profiles_dir>/w<i>``), for a server that
+launches its own browser. They are substituted in ``command``/``args``/``env``/``cwd``
+(stdio) and ``url``/``headers`` (HTTP). ``${VAR}`` (environment) is expanded earlier, at
+config validation.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from typing import Any, TextIO
 
 from mcp.types import Implementation
 
-from src.config import get_settings
+from src.config import PROFILE_DIR_PLACEHOLDER, get_settings
 from src.harness.mcp_tools import MCPToolSource
 from src.harness.normalization import SchemaArgsNormalizer, ToolCallNormalizer
 from src.mcp import (
@@ -144,12 +146,14 @@ def build_mcp_runtime(
     settings: Any | None = None,
     client_version: str = "0",
     errlog: TextIO | None = None,
+    profile_dir: str = "",
 ) -> MCPRuntime:
     """Build (not start) the session's MCP runtime from settings.
 
     Reads ``settings.mcp_servers`` (falls back to :func:`default_mcp_servers`) and
     ``settings.browser_mcp_server`` (falls back to ``"playwright"`` when that server exists).
     ``errlog`` receives the stderr of stdio servers (``None``: this process's stderr).
+    ``profile_dir`` fills ``{profile_dir}`` (empty: the placeholder stays as written).
     """
 
     settings = settings if settings is not None else get_settings()
@@ -165,8 +169,10 @@ def build_mcp_runtime(
                 f"{', '.join(repr(name) for name in still_cdp)} still connect over CDP "
                 f"({{cdp_port}}/{{cdp_endpoint}}); configure them to launch their own browser"
             )
+    # Not a CDP placeholder: the external-launch check above never counts it.
+    rendered = {**values, PROFILE_DIR_PLACEHOLDER.strip("{}"): profile_dir} if profile_dir else values
     registry = ServerRegistry(
-        {name: render_runtime_placeholders(config, values) for name, config in servers.items()}
+        {name: render_runtime_placeholders(config, rendered) for name, config in servers.items()}
     )
 
     browser_server = getattr(settings, "browser_mcp_server", None)

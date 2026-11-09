@@ -343,10 +343,11 @@ class WorkspaceContext:
             path.mkdir(parents=True, exist_ok=True)
 
 
-def default_mcp_runtime_factory(cdp_port: int, errlog: TextIO) -> MCPRuntime:
-    """Build the session's MCP runtime from settings (``mcp_servers``)."""
+def default_mcp_runtime_factory(cdp_port: int, errlog: TextIO, *, profile_dir: str = "") -> MCPRuntime:
+    """Build the session's MCP runtime from settings (``mcp_servers``); ``profile_dir``
+    fills the ``{profile_dir}`` placeholder (``build_session`` binds the session's profile)."""
 
-    return build_mcp_runtime(cdp_port=cdp_port, errlog=errlog)
+    return build_mcp_runtime(cdp_port=cdp_port, errlog=errlog, profile_dir=profile_dir)
 
 
 def _json_safe(value: Any) -> Any:

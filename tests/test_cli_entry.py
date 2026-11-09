@@ -799,3 +799,42 @@ def test_an_invalid_stand_configuration_never_prints_a_secret(
     assert "invalid configuration" in output
     for secret in ("SUPERSECRETTOKEN123", "HOOKSECRET999", "URLSECRET42"):
         assert secret not in output
+
+
+def test_build_session_binds_the_profile_to_the_default_mcp_factory() -> None:
+    from src.cli.bootstrap import build_session
+    from src.harness.session import default_mcp_runtime_factory
+
+    args = build_parser().parse_args([])
+    args.user_data_dir = "C:/stand/serve/profiles/w1"
+    runtime = build_session(args, llm_factory=lambda **_kwargs: object())
+
+    factory = runtime._mcp_runtime_factory  # noqa: SLF001
+    assert factory.func is default_mcp_runtime_factory  # type: ignore[attr-defined]
+    assert factory.keywords == {"profile_dir": "C:/stand/serve/profiles/w1"}  # type: ignore[attr-defined]
+
+
+def test_build_session_keeps_an_injected_mcp_factory() -> None:
+    from src.cli.bootstrap import build_session
+
+    def fake(_port: int, _errlog: object) -> object:
+        return object()
+
+    runtime = build_session(build_parser().parse_args([]), llm_factory=lambda **_kwargs: object(), mcp_runtime_factory=fake)
+
+    assert runtime._mcp_runtime_factory is fake  # noqa: SLF001
+
+
+def test_serve_check_warns_a_pool_sharing_an_external_profile(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_SERVE__WORKERS", "2")
+    monkeypatch.setenv("AUTOBROWSER_BROWSER__LAUNCH", "external")
+    monkeypatch.setenv(
+        "AUTOBROWSER_MCP_SERVERS", '{"playwright": {"transport": "stdio", "command": "npx", "args": ["--headless"]}}'
+    )
+    get_settings.cache_clear()
+
+    assert entry.main(["serve", "--check"]) == 0
+
+    assert "{profile_dir}" in capsys.readouterr().err

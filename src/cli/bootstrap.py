@@ -110,6 +110,11 @@ def build_session(
     args = copy.copy(args)
     args.permission_mode = effective_permission_mode(args, interactive=is_interactive(args))
     session_config = SessionConfig.from_args(args)
+    if mcp_runtime_factory is default_mcp_runtime_factory:
+        # ``{profile_dir}``: the session's own browser profile (a stand worker's w<i>).
+        mcp_runtime_factory = functools.partial(
+            default_mcp_runtime_factory, profile_dir=session_config.user_data_dir
+        )
     return SessionRuntime(
         session_config,
         llm_factory=llm_factory,

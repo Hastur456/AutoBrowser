@@ -2394,6 +2394,9 @@ TriggerType = Literal["interval", "cron", "webhook", "telegram"]
 WebhookAuth = Literal["bearer", "hmac_sha256"]
 #: Hosts that only this machine can reach: ``serve.host`` needs no token on them.
 LOCAL_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+#: Runtime placeholder of an ``mcp_servers`` entry: the session's browser profile
+#: (``SessionConfig.user_data_dir``; on the stand, the worker's ``<profiles_dir>/w<i>``).
+PROFILE_DIR_PLACEHOLDER = "{profile_dir}"
 _DEFAULT_NOTIFY_ON: tuple[NotifyKind, ...] = ("change", "failure", "blocked", "budget")
 
 
@@ -2540,6 +2543,16 @@ class JobSpec(_Section):
     cooldown_seconds: Annotated[
         float | None, Field(ge=0.0, description="None: serve.cooldown_seconds.")
     ] = None
+    worker: Annotated[
+        int | None,
+        Field(
+            ge=0,
+            description=(
+                "Pin the job to worker w<i> (a profile with logins); that worker then runs "
+                "only its pinned jobs. None: any unreserved worker."
+            ),
+        ),
+    ] = None
 
     @field_validator("recording")
     @classmethod
@@ -2682,11 +2695,22 @@ class ServeSettings(_Section):
     dir: Annotated[
         str, Field(min_length=1, description="Stand files (ledger, events, job state) under storage.root_dir.")
     ] = "serve"
+    workers: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=8,
+            description=(
+                "Sessions (browser, MCP) running jobs in parallel; worker w<i> has its own "
+                "profile <profiles_dir>/w<i> and CDP port cdp_port_base + i."
+            ),
+        ),
+    ] = 1
     profiles_dir: Annotated[
         str, Field(min_length=1, description="Browser profiles of the workers under storage.root_dir.")
     ] = "serve/profiles"
     cdp_port_base: Annotated[
-        int, Field(ge=1, le=65535, description="CDP port of worker w0 (launch: cdp).")
+        int, Field(ge=1, le=65535, description="CDP port of worker w0 (launch: cdp); w<i> uses base + i.")
     ] = 9300
     queue_size: Annotated[int, Field(ge=1, description="Queued runs at most.")] = 20
     coalesce: Annotated[
@@ -2805,6 +2829,25 @@ class ServeSettings(_Section):
                 raise ValueError(f"serve.host {self.host!r} needs a non-empty serve.token")
         if self.default_run_budget.max_model_calls is None:
             raise ValueError("serve.default_run_budget needs max_model_calls")
+        last_port = self.cdp_port_base + self.workers - 1
+        if last_port > 65535:
+            raise ValueError(
+                f"serve.cdp_port_base + serve.workers - 1 is above 65535 ({self.workers} workers)"
+            )
+        if self.cdp_port_base <= self.port <= last_port:
+            raise ValueError("serve.port is one of the workers' CDP ports (cdp_port_base + i)")
+        pinned = {job.worker for job in self.jobs.values() if job.worker is not None}
+        for name, job in self.jobs.items():
+            if job.worker is not None and job.worker >= self.workers:
+                raise ValueError(
+                    f"job {name!r} is pinned to worker {job.worker}, but serve.workers is {self.workers}"
+                )
+        unpinned = self.free_tasks or any(job.worker is None for job in self.jobs.values())
+        if unpinned and len(pinned) >= self.workers:
+            raise ValueError(
+                "every worker is reserved by pinned jobs: unpinned jobs and free tasks need "
+                "one more worker (serve.workers)"
+            )
         if "webhook" in self.channels and self.webhook_out is None:
             raise ValueError("the webhook channel needs serve.webhook_out.url")
         if "telegram" in self.channels:
@@ -2949,6 +2992,7 @@ __all__ = [
     "HookSpec",
     "HooksSettings",
     "LLMSettings",
+    "PROFILE_DIR_PLACEHOLDER",
     "LoopSettings",
     "MemorySettings",
     "ModelPriceSpec",

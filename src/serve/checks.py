@@ -6,9 +6,10 @@ configuration (permissions, replay, prices) or the environment. Problems never q
 
 from __future__ import annotations
 
+import json
 import os
 
-from src.config import Settings, TriggerSpec
+from src.config import PROFILE_DIR_PLACEHOLDER, Settings, TriggerSpec
 
 
 def trigger_secret(trigger: TriggerSpec) -> str:
@@ -59,6 +60,11 @@ def startup_problems(settings: Settings) -> list[str]:
                 problems.append(
                     f"a money cap is set but llm.prices has no price for the model {model!r}"
                 )
+    if serve.workers > 1 and settings.memory.persistent_enabled:
+        problems.append(
+            "serve.workers > 1 needs memory.persistent_enabled=false: the workers would share "
+            "the memory files (file locking comes later)"
+        )
     for name, job in serve.jobs.items():
         for trigger in job.triggers:
             if trigger.type == "webhook" and trigger.secret_env and not trigger_secret(trigger):
@@ -69,4 +75,35 @@ def startup_problems(settings: Settings) -> list[str]:
     return problems
 
 
-__all__ = ["priced_models", "startup_problems", "trigger_secret"]
+def startup_warnings(settings: Settings) -> list[str]:
+    """What the stand starts with but probably should not; printed, never a refusal."""
+
+    serve = settings.serve
+    warnings: list[str] = []
+    if serve.workers > 1 and settings.browser.launch == "external":
+        # Name-free: no server is singled out; one that names the placeholder isolates them.
+        named = any(
+            PROFILE_DIR_PLACEHOLDER in json.dumps(config.model_dump(mode="json"))
+            for config in settings.mcp_servers.values()
+        )
+        if not named:
+            warnings.append(
+                f"{serve.workers} workers with browser.launch external, but no mcp_servers entry "
+                f"names {PROFILE_DIR_PLACEHOLDER}: the workers' browsers may share one profile "
+                f"(use --user-data-dir {PROFILE_DIR_PLACEHOLDER}, or let the server isolate them)"
+            )
+    cascade = settings.cascade
+    if (
+        cascade.enabled
+        and cascade.tiers
+        and cascade.escalate_after_failures >= settings.loop.max_consecutive_failures
+    ):
+        warnings.append(
+            f"cascade.escalate_after_failures {cascade.escalate_after_failures} is not below "
+            f"loop.max_consecutive_failures {settings.loop.max_consecutive_failures}: failures "
+            f"end a task before its tier goes up"
+        )
+    return warnings
+
+
+__all__ = ["priced_models", "startup_problems", "startup_warnings", "trigger_secret"]

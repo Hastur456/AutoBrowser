@@ -619,8 +619,11 @@ serve:
   port: 8765                                    # (default)
   allow_remote: false                           # (default)
   dir: serve                                    # (default) ledger, events, job state
-  profiles_dir: serve/profiles                  # (default) worker browser profiles
-  cdp_port_base: 9300                           # (default) CDP port of worker w0
+  workers: 1                                    # (default) 1..8; > 1 needs memory.persistent_enabled: false
+  profiles_dir: serve/profiles                  # (default) worker browser profiles, w<i> each
+  cdp_port_base: 9300                           # (default) CDP port of worker w0 (w<i>: + i)
+  # With browser.launch: external give each worker its own profile in the browser server:
+  #   mcp_servers.playwright.args: [..., --user-data-dir, "{profile_dir}"]
   queue_size: 20                                # (default)
   coalesce: drop                                # (default) drop | queue_one
   cooldown_seconds: 0.0                         # (default)
@@ -675,3 +678,4 @@ serve:
   #     budget: {max_model_calls: 20, max_cost: 0.02}
   #     domains: [shop.example]
   #     notify_on: [change, failure, blocked, budget]
+  #     worker: 0                               # pin to w0 (its profile has the logins)

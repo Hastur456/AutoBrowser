@@ -1993,6 +1993,41 @@ def test_the_bot_token_comes_from_the_env_under_a_profile_naming_the_chats(
     assert "env-token" not in repr(telegram)
 
 
+def test_one_worker_by_default_and_at_most_eight(settings: Any) -> None:
+    assert settings().serve.workers == 1
+    assert settings(serve={"workers": 8}).serve.workers == 8
+    for workers in (0, 9):
+        with pytest.raises(ValueError):
+            settings(serve={"workers": workers})
+
+
+def test_a_job_pins_an_existing_worker(settings: Any) -> None:
+    pinned = settings(serve={"workers": 2, "jobs": {"j": _job(worker=1), "k": _job()}})
+    assert pinned.serve.jobs["j"].worker == 1 and pinned.serve.jobs["k"].worker is None
+
+    with pytest.raises(ValueError, match="worker 2"):
+        settings(serve={"workers": 2, "jobs": {"j": _job(worker=2)}})
+    with pytest.raises(ValueError):
+        settings(serve={"jobs": {"j": _job(worker=-1)}})
+
+
+def test_unpinned_work_needs_a_worker_no_job_reserves(settings: Any) -> None:
+    with pytest.raises(ValueError, match="reserved"):
+        settings(serve={"workers": 2, "jobs": {"a": _job(worker=0), "b": _job(worker=1), "c": _job()}})
+    with pytest.raises(ValueError, match="reserved"):
+        settings(serve={"workers": 1, "free_tasks": True, "jobs": {"a": _job(worker=0)}})
+    # Every job pinned and no free tasks: nothing needs an unreserved worker.
+    assert settings(serve={"workers": 2, "jobs": {"a": _job(worker=0), "b": _job(worker=1)}}).serve.workers == 2
+
+
+def test_the_worker_ports_fit_and_miss_the_api(settings: Any) -> None:
+    with pytest.raises(ValueError, match="cdp_port_base"):
+        settings(serve={"workers": 4, "cdp_port_base": 65534})
+    with pytest.raises(ValueError, match="serve.port"):
+        settings(serve={"workers": 3, "cdp_port_base": 9300, "port": 9302})
+    assert settings(serve={"workers": 3, "cdp_port_base": 9300, "port": 9303}).serve.port == 9303
+
+
 def test_a_cron_trigger_needs_a_valid_schedule(settings: Any) -> None:
     ok = _job(triggers=[{"id": "c", "type": "cron", "schedule": "0 9 * * 1-5"}])
     assert settings(serve={"jobs": {"j": ok}}).serve.jobs["j"].triggers[0].schedule == "0 9 * * 1-5"

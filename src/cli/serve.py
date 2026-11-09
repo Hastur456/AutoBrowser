@@ -30,7 +30,7 @@ from src.config import ServeSettings, Settings, get_settings
 from src.harness.approvals import ApprovalBroker
 from src.serve.app import build_app
 from src.serve.approvals import ApprovalBridge, ApprovalDesk
-from src.serve.checks import startup_problems
+from src.serve.checks import startup_problems, startup_warnings
 from src.serve.clock import Clock, SystemClock, resolve_timezone
 from src.serve.commands import OffsetStore, ServeCommands
 from src.serve.dispatcher import Dispatcher
@@ -69,6 +69,8 @@ def run_serve_cli(args: argparse.Namespace, write: Callable[[str], None] = print
         _err(problem)
     if problems:
         return USAGE_EXIT_CODE
+    for warning in startup_warnings(settings):
+        _err(f"warning: {warning}")
     write(summary(settings))
     if getattr(args, "check", False):
         return 0
