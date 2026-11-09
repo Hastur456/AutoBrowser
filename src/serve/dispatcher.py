@@ -64,6 +64,14 @@ class FireResult:
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class CancelResult:
+    """What a cancel did: queued runs dropped, running runs asked to stop."""
+
+    cancelled: tuple[str, ...] = ()
+    stopping: tuple[str, ...] = ()
+
+
 @dataclass
 class _Run:
     run_id: str
@@ -72,6 +80,8 @@ class _Run:
     queued_at: datetime
     #: A free task (``POST /v1/tasks``) instead of the job's task.
     task: str | None = None
+    #: Cancelled while running: no further task of the run starts.
+    cancelled: bool = False
 
 
 @dataclass
@@ -176,6 +186,24 @@ class Dispatcher:
 
         run = _Run(run_id=_run_id(), job_id=job_id, trigger=trigger, queued_at=self._clock.now())
         await self._skip(run, reason)
+
+    async def cancel(self, target: str = "") -> CancelResult:
+        """Cancel by run id or job id: queued runs are dropped (``skipped{cancelled}``), a
+        running one is asked to stop. Without ``target``: the running run only."""
+
+        dropped = [
+            run for run in self._queue if target and target in (run.run_id, run.job_id)
+        ]
+        for run in dropped:
+            self._queue.remove(run)
+            await self._skip(run, "cancelled")
+        stopping: list[str] = []
+        running = self._running
+        if running is not None and (not target or target in (running.run_id, running.job_id)):
+            running.cancelled = True
+            await self._worker.cancel()
+            stopping.append(running.run_id)
+        return CancelResult(tuple(run.run_id for run in dropped), tuple(stopping))
 
     def _refusal(self, job: JobSpec, run: _Run) -> str:
         if self._stopping:
@@ -398,8 +426,9 @@ class Dispatcher:
                 return probe
             if probe.changed is False:
                 return probe
-            if self._stopping:
-                probe.status, probe.stop_reason, probe.changed = "cancelled", "shutdown", True
+            if self._stopping or run.cancelled:
+                reason = "shutdown" if self._stopping else "cancelled"
+                probe.status, probe.stop_reason, probe.changed = "cancelled", reason, True
                 return probe
         profile = main_profile(
             job, self._settings, day_left=self.day_left(), labels=labels, has_recording=has_recording
@@ -630,4 +659,4 @@ def _budget_dict(profile: RunProfile) -> dict[str, Any]:
     }
 
 
-__all__ = ["Dispatcher", "FireResult", "TriggerRef"]
+__all__ = ["CancelResult", "Dispatcher", "FireResult", "TriggerRef"]

@@ -2389,7 +2389,7 @@ CoalesceMode = Literal["drop", "queue_one"]
 #: Fire missed cron slots after downtime: never, or one catch-up run.
 CatchUpMode = Literal["none", "one"]
 #: Kinds of job triggers (``cron`` schedules are parsed by ``croniter``).
-TriggerType = Literal["interval", "cron", "webhook"]
+TriggerType = Literal["interval", "cron", "webhook", "telegram"]
 #: How a webhook trigger authenticates its caller.
 WebhookAuth = Literal["bearer", "hmac_sha256"]
 #: Hosts that only this machine can reach: ``serve.host`` needs no token on them.

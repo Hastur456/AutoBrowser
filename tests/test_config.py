@@ -1885,6 +1885,20 @@ def test_an_unknown_time_zone_is_rejected_with_a_hint(settings: Any) -> None:
         settings(serve={"timezone": "Mars/Olympus_Mons"})
 
 
+def test_a_chat_trigger_takes_only_its_id(settings: Any) -> None:
+    ok = _job(triggers=[{"id": "chat", "type": "telegram"}])
+    assert settings(serve={"jobs": {"j": ok}}).serve.jobs["j"].triggers[0].type == "telegram"
+
+    for extra, message in [
+        ({"every_seconds": 60}, "takes no every_seconds"),
+        ({"schedule": "* * * * *"}, "takes no schedule"),
+        ({"secret": "s"}, "takes no secret"),
+    ]:
+        trigger = {"id": "chat", "type": "telegram", **extra}
+        with pytest.raises(ValueError, match=message):
+            settings(serve={"jobs": {"j": _job(triggers=[trigger])}})
+
+
 def test_a_cron_trigger_needs_a_valid_schedule(settings: Any) -> None:
     ok = _job(triggers=[{"id": "c", "type": "cron", "schedule": "0 9 * * 1-5"}])
     assert settings(serve={"jobs": {"j": ok}}).serve.jobs["j"].triggers[0].schedule == "0 9 * * 1-5"
