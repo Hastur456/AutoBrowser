@@ -55,14 +55,24 @@ ANSWER_LABELS: Mapping[str, str] = {"once": "Allow once", "session": "Allow for 
 ALLOWED_UPDATES = ("message", "callback_query")
 #: What replaces the token in a log line.
 REDACTED = "[REDACTED]"
-#: Loggers that print request URLs (and so the token).
-_HTTP_LOGGERS = ("httpx", "httpcore")
+#: Loggers that may print request URLs (and so the token). A logger's filter does not see the
+#: records of its children, so each one is named.
+_HTTP_LOGGERS = (
+    "httpx",
+    "httpcore",
+    "httpcore.connection",
+    "httpcore.http11",
+    "httpcore.http2",
+    "httpcore.proxy",
+)
 #: ``/run@PriceBot job`` -> ``/run job``: Telegram's command suffix in group chats.
-_BOT_SUFFIX = re.compile(r"^(/\w+)@\w+")
+_BOT_SUFFIX = re.compile(r"^(/\w+)@(\w+)")
 #: Texts sent to the chats (the stand's lexicon, not page data).
 HINT = "Send /help for the commands."
 NO_BUTTONS = "\n(answer it via the API: the ticket id is too long for buttons)"
-ANSWERED, EXPIRED = "answered", "expired"
+ANSWERED = "answered"
+#: A press that answered nothing: the buttons stay, the ticket may still wait.
+NOT_ANSWERED = "not answered: the ticket expired, or try again in a minute"
 
 
 class TelegramError(RuntimeError):
@@ -171,6 +181,12 @@ class BotApi:
             {"chat_id": chat_id, "message_id": message_id, "reply_markup": {"inline_keyboard": []}},
         )
 
+    async def get_me(self) -> str:
+        """The bot's own username (``""`` when the API does not say)."""
+
+        result = await self._call("getMe", {})
+        return str(result.get("username") or "") if isinstance(result, Mapping) else ""
+
     async def get_webhook_info(self) -> WebhookInfo:
         result = await self._call("getWebhookInfo", {})
         data = result if isinstance(result, Mapping) else {}
@@ -227,6 +243,8 @@ class TelegramChannel:
         self._offsets = offsets
         self._clock = clock
         self._allowed = frozenset(settings.allowed_chat_ids)
+        #: The bot's username, learned by :meth:`check`; a command for another bot is ignored.
+        self._username = ""
 
     def sender(self, chat_id: Any) -> str:
         """The opaque sender key of a chat: an HMAC of its id under the bot token."""
@@ -236,6 +254,7 @@ class TelegramChannel:
     async def check(self) -> None:
         """Before the stand starts: the token works and no webhook blocks polling."""
 
+        self._username = await self._api.get_me()
         info = await self._api.get_webhook_info()
         if info.set:
             raise TelegramConflict(
@@ -248,7 +267,7 @@ class TelegramChannel:
 
         text = item.title if not item.body else f"{item.title}\n{item.body}"
         keyboard: list[list[dict[str, str]]] = []
-        if item.kind == "approval" and item.ticket_id and item.answers:
+        if self._settings.approvals and item.kind == "approval" and item.ticket_id and item.answers:
             buttons = [
                 {"text": ANSWER_LABELS.get(answer, answer), "callback_data": _callback_data(item.ticket_id, answer)}
                 for answer in item.answers
@@ -288,7 +307,11 @@ class TelegramChannel:
                 if isinstance(update_id, int):
                     # At most once: saved before handling, so a crash never repeats a command.
                     offset = max(offset, update_id + 1)
-                    self._offsets.save(self.name, offset)
+                    try:
+                        self._offsets.save(self.name, offset)
+                    except OSError as exc:
+                        # The channel goes on (the offset is in memory); a restart may repeat.
+                        commands.channel_error(channel=self.name, error=type(exc).__name__, retry_in=0.0)
                 try:
                     await self._handle(update, commands)
                 except TelegramUnauthorized:
@@ -315,8 +338,13 @@ class TelegramChannel:
         date = message.get("date")
         if isinstance(date, (int, float)) and self._clock.now().timestamp() - date > self._settings.max_update_age_seconds:
             return
-        text = str(message.get("text") or "")
-        command = parse_command(_BOT_SUFFIX.sub(r"\1", text.strip()))
+        text = str(message.get("text") or "").strip()
+        suffix = _BOT_SUFFIX.match(text)
+        if suffix is not None:
+            if self._username and suffix.group(2).lower() != self._username.lower():
+                return  # a command for another bot in the same group
+            text = _BOT_SUFFIX.sub(r"\1", text)
+        command = parse_command(text)
         if command is None:
             await self._api.send_message(chat_id, HINT)
             return
@@ -335,9 +363,9 @@ class TelegramChannel:
             return
         ticket_id, answer = parsed
         answered = commands.answer_approval(ticket_id, answer, channel=self.name, sender=self.sender(chat_id))
-        await self._api.answer_callback(str(query.get("id") or ""), ANSWERED if answered else EXPIRED)
+        await self._api.answer_callback(str(query.get("id") or ""), ANSWERED if answered else NOT_ANSWERED)
         message_id = message.get("message_id") if isinstance(message, Mapping) else None
-        if isinstance(message_id, int):
+        if answered and isinstance(message_id, int):
             await self._api.clear_keyboard(chat_id, message_id)
 
     async def _send_once_more_if_limited(

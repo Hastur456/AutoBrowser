@@ -52,7 +52,11 @@ def webhook(monkeypatch: pytest.MonkeyPatch, *, is_set: bool = False, error: Exc
             raise error
         return WebhookInfo(set=is_set, pending_updates=2)
 
+    async def me(self: Any) -> str:
+        return "PriceBot"
+
     monkeypatch.setattr(telegram_module.BotApi, "get_webhook_info", info)
+    monkeypatch.setattr(telegram_module.BotApi, "get_me", me)
     return calls
 
 

@@ -56,6 +56,8 @@ class FakeBot:
             if isinstance(item, Exception):
                 raise item
             return httpx.Response(200, json={"ok": True, "result": item})
+        if method == "getMe":
+            return httpx.Response(200, json={"ok": True, "result": {"username": "PriceBot"}})
         if method == "getWebhookInfo":
             return httpx.Response(200, json={"ok": True, "result": {"url": self.webhook, "pending_update_count": 3}})
         if method == "sendMessage":
@@ -273,13 +275,27 @@ async def test_a_button_press_answers_the_ticket_and_clears_the_keyboard() -> No
     assert cleared["chat_id"] == ALLOWED and cleared["message_id"] == 5
 
 
-async def test_an_expired_ticket_says_so() -> None:
+async def test_an_unanswered_press_says_so_and_keeps_the_keyboard() -> None:
     bot = FakeBot([press(10, f"a:{TICKET}:d")])
     chan, _ = channel(bot)
 
     await poll(chan, Port(answers=False))
 
-    assert bot.calls("answerCallbackQuery")[0]["text"] == "expired"
+    assert "expired" in bot.calls("answerCallbackQuery")[0]["text"]
+    # Expired, rate-limited or refused: a ticket that may still wait keeps its buttons.
+    assert bot.calls("editMessageReplyMarkup") == []
+
+
+async def test_without_chat_approvals_a_card_has_no_buttons() -> None:
+    bot = FakeBot()
+    chan, _ = channel(bot, approvals=False)
+
+    await chan.send(
+        Notification(kind="approval", job_id="j", run_id="r", title="Approval needed",
+                     ticket_id=TICKET, answers=("once", "deny"))
+    )
+
+    assert "reply_markup" not in bot.calls("sendMessage")[0]
 
 
 @pytest.mark.parametrize("data", ["x:y", f"a:{TICKET}:z", "a::o", ""])
@@ -426,6 +442,33 @@ async def test_the_api_base_replaces_the_public_host() -> None:
     assert seen == ["http://localhost:8081"]
 
 
+async def test_a_failed_offset_save_is_a_channel_error_and_polling_goes_on() -> None:
+    class Broken(Offsets):
+        def save(self, channel: str, offset: int) -> None:
+            raise OSError("disk full")
+
+    bot = FakeBot([message(10, "/status")])
+    chan, _ = channel(bot, offsets=Broken())
+    port = Port()
+
+    await poll(chan, port)
+
+    assert ("error", ("OSError", 0.0)) in port.log
+    assert "handle" in port.kinds()
+
+
+async def test_a_command_for_another_bot_is_ignored() -> None:
+    bot = FakeBot([message(10, "/run@OtherBot price-watch"), message(11, "/run@pricebot price-watch")])
+    chan, _ = channel(bot)
+    port = Port()
+    await chan.check()  # learns the bot's own name
+
+    await poll(chan, port)
+
+    commands = [args[0] for kind, args in port.log if kind == "handle"]
+    assert commands == [ChatCommand("run", "price-watch")]
+
+
 # -- the token never leaks ------------------------------------------------------------------
 
 
@@ -445,6 +488,18 @@ async def test_the_token_is_in_no_error_log_or_message(caplog: pytest.LogCapture
     assert TOKEN not in caplog.text
     assert "HTTP Request" in caplog.text  # httpx logged the calls, with the token redacted
     assert TOKEN not in str(port.log)
+
+
+async def test_the_token_is_redacted_in_the_httpcore_child_loggers(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.DEBUG)
+    chan, _ = channel(FakeBot())
+
+    for name in ("httpcore.connection", "httpcore.http11", "httpcore.http2", "httpcore.proxy", "httpx"):
+        logging.getLogger(name).debug("request to /bot%s/getUpdates", TOKEN)
+    await chan.aclose()
+
+    assert TOKEN not in caplog.text
+    assert caplog.text.count("[REDACTED]") == 5
 
 
 async def test_the_sender_is_a_keyed_hash_of_the_chat() -> None:
