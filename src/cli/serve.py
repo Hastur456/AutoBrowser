@@ -1,41 +1,45 @@
 """``autobrowser serve``: compose the stand (``docs/development/serve-mode.md``).
 
 The only place that wires the stand: settings and start checks, the worker session (its own
-browser profile and CDP port, approvals only with ``serve.api_approvals``), the stand's event
-stream, ledger, job state, channels, dispatcher and runtime. ``src/serve`` itself never
-imports the CLI, the harness or the providers.
+browser profile and CDP port, approvals only with an approval channel), the stand's event
+stream, ledger, job state, channels (the Telegram adapter of ``src/channels`` included),
+dispatcher, command port and runtime. ``src/serve`` itself never imports the CLI, the
+harness, the providers or the channels.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import sys
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
 import uvicorn
-from pydantic import ValidationError
 
 from src.agent_loop.events import EventEmitter, JsonlEventSink
 from src.agent_loop.goals import GoalLimits
+from src.channels.telegram import BotApi, TelegramChannel, TelegramError
 from src.cli import models
 from src.cli.bootstrap import USAGE_EXIT_CODE, build_session
+from src.cli.output import config_error_lines
 from src.cli.parser import build_parser
 from src.config import ServeSettings, Settings, get_settings
 from src.harness.approvals import ApprovalBroker
 from src.serve.app import build_app
-from src.serve.approvals import ApprovalBridge
+from src.serve.approvals import ApprovalBridge, ApprovalDesk
 from src.serve.checks import startup_problems
-from src.serve.clock import SystemClock, resolve_timezone
+from src.serve.clock import Clock, SystemClock, resolve_timezone
+from src.serve.commands import OffsetStore, ServeCommands
 from src.serve.dispatcher import Dispatcher
 from src.serve.ledger import Ledger
 from src.serve.notify import LogChannel, NotificationChannel, Notifier, WebhookOutChannel
 from src.serve.paths import ServePaths, serve_paths
 from src.serve.runtime import ServeRuntime, ServeServiceError, ServeStartError
 from src.serve.scheduler import Scheduler
-from src.serve.state import JobStateStore
+from src.serve.state import ChannelStateStore, JobStateStore
 from src.serve.tally import RunTally
 from src.ui.controller import SessionController
 
@@ -74,16 +78,13 @@ def run_serve_cli(args: argparse.Namespace, write: Callable[[str], None] = print
         return 0
 
 
-def config_error_lines(exc: ValueError) -> list[str]:
-    """Where and why the configuration is invalid, never the offending values: pydantic's
-    own message repeats the input, and with it the token and the webhook secrets."""
+def approval_channel(serve: ServeSettings) -> bool:
+    """Someone can answer an approval: the API (``api_approvals``) or the chat buttons."""
 
-    if isinstance(exc, ValidationError):
-        return [
-            f"{'.'.join(str(part) for part in error['loc']) or 'settings'}: {error['msg']}"
-            for error in exc.errors(include_input=False, include_url=False)
-        ]
-    return [str(exc)]
+    telegram = serve.telegram
+    return serve.api_approvals or (
+        "telegram" in serve.channels and telegram is not None and telegram.approvals
+    )
 
 
 def summary(settings: Settings) -> str:
@@ -91,13 +92,27 @@ def summary(settings: Settings) -> str:
 
     serve = settings.serve
     token = "token set" if serve.token is not None and serve.token.get_secret_value().strip() else "no token"
-    approvals = "approvals via the API" if serve.api_approvals else "approvals denied (dont_ask)"
+    via = [
+        name
+        for name, on in (
+            ("the API", serve.api_approvals),
+            ("telegram", approval_channel(serve) and "telegram" in serve.channels
+             and serve.telegram is not None and serve.telegram.approvals),
+        )
+        if on
+    ]
+    approvals = f"approvals via {' and '.join(via)}" if via else "approvals denied (dont_ask)"
+    chats = (
+        f", telegram ({len(serve.telegram.allowed_chat_ids)} chats)"
+        if "telegram" in serve.channels and serve.telegram is not None
+        else ""
+    )
     cascade = settings.cascade
     tiers = f", cascade {len(cascade.tiers)} tiers" if cascade.enabled and cascade.tiers else ""
     return (
         f"serve: {serve.host}:{serve.port}, {len(serve.jobs)} jobs, {token}, "
         f"channels {', '.join(serve.channels)}, {approvals}, browser launch {settings.browser.launch}"
-        f"{tiers}"
+        f"{tiers}{chats}"
     )
 
 
@@ -109,19 +124,34 @@ def worker_args(serve: ServeSettings, paths: ServePaths) -> argparse.Namespace:
     args.cdp_port = serve.cdp_port_base
     args.labels = dict(WORKER_LABELS)
     # Without an approval channel nobody answers: a configured default becomes dont_ask.
-    args.interactive = serve.api_approvals
+    args.interactive = approval_channel(serve)
     return args
 
 
 def build_channels(
-    serve: ServeSettings, events: EventEmitter, write: Callable[[str], None]
+    serve: ServeSettings,
+    events: EventEmitter,
+    write: Callable[[str], None],
+    *,
+    clock: Clock | None = None,
+    offsets: OffsetStore | None = None,
 ) -> list[NotificationChannel]:
     channels: list[NotificationChannel] = []
     if "log" in serve.channels:
         channels.append(LogChannel(events, write))
     if "webhook" in serve.channels and serve.webhook_out is not None:
         channels.append(WebhookOutChannel(serve.webhook_out))
+    if "telegram" in serve.channels and serve.telegram is not None:
+        if clock is None or offsets is None:
+            raise ValueError("the telegram channel needs the stand's clock and offset store")
+        channels.append(
+            TelegramChannel(serve.telegram, api=BotApi(serve.telegram), offsets=offsets, clock=clock)
+        )
     return channels
+
+
+def telegram_channel(channels: list[NotificationChannel]) -> TelegramChannel | None:
+    return next((channel for channel in channels if isinstance(channel, TelegramChannel)), None)
 
 
 async def close_channels(channels: list[NotificationChannel]) -> None:
@@ -150,14 +180,25 @@ async def _serve(
             settings.permissions,
             progress_timeout_seconds=GoalLimits.from_settings(settings.loop).progress_timeout_seconds,
         )
-        if serve.api_approvals
+        if approval_channel(serve)
         else None
     )
+    channels = build_channels(serve, events, write, clock=clock, offsets=ChannelStateStore(paths.root))
+    telegram = telegram_channel(channels)
+    if telegram is not None:
+        # Before any browser starts: a bad token or a webhook on the bot refuses the stand.
+        try:
+            await telegram.check()
+        except TelegramError as exc:
+            _err(f"the telegram channel cannot start: {exc}")
+            await close_channels(channels)
+            if inspect.iscoroutine(until):
+                until.close()  # never started: nothing waits for it
+            return USAGE_EXIT_CODE
     session = build_session(
         worker_args(serve, paths), human_input=broker, event_sinks=(tally,), output_fn=write
     )
     controller = SessionController(session, broker=broker)
-    channels = build_channels(serve, events, write)
     dispatcher = Dispatcher(
         serve,
         controller,
@@ -172,9 +213,19 @@ async def _serve(
         serve, dispatcher.fire, skip=dispatcher.skip, clock=clock, states=states, tz=tz
     )
     bridge = ApprovalBridge(controller, dispatcher.notifier, dispatcher) if broker is not None else None
-    app = build_app(serve, dispatcher, events=events, clock=clock, approvals=bridge)
+    desk = ApprovalDesk([bridge]) if bridge is not None else None
+    app = build_app(serve, dispatcher, events=events, clock=clock, approvals=desk)
+    services = [scheduler.run]
+    if telegram is not None:
+        chat_approvals = desk if serve.telegram is not None and serve.telegram.approvals else None
+        commands = ServeCommands(serve, dispatcher, approvals=chat_approvals, events=events, clock=clock)
+
+        async def telegram_polling() -> None:
+            await telegram.run(commands)
+
+        services.append(telegram_polling)
     runtime = ServeRuntime(
-        serve, controller, dispatcher=dispatcher, events=events, services=[scheduler.run]
+        serve, controller, dispatcher=dispatcher, events=events, services=services
     )
     if bridge is not None:
         bridge.start()
@@ -210,4 +261,13 @@ def http_server(app: Any, serve: ServeSettings) -> uvicorn.Server:
     )
 
 
-__all__ = ["build_channels", "http_server", "run_serve_cli", "summary", "worker_args"]
+__all__ = [
+    "approval_channel",
+    "build_channels",
+    "config_error_lines",
+    "http_server",
+    "run_serve_cli",
+    "summary",
+    "telegram_channel",
+    "worker_args",
+]
