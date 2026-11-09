@@ -110,6 +110,18 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   the Windows CI gate, baseline v2 and `run_evals.py`; ADRs
   [pipeline](decisions/2026-10-19-autonomous-test-pipeline.md) and
   [Langfuse](decisions/2026-10-19-langfuse-observability.md)).
+- [Regression Testing and Langfuse in CI/CD Design](development/2026-11-10-regression-ci-cd-design.md):
+  system design and specification (requirements with acceptance criteria, work packages):
+  - the PR gate on Windows and Linux with all three eval suites;
+  - live regression runs only around merges into `main`, each optional and chosen per PR by a
+    label: before merging (a `regression/before-merge` commit status that blocks only a
+    requested, failing run) and after merging (a measurement of `main` that updates the base);
+  - a manual run, no schedule;
+  - the base as the nearest measured ancestor from a `ci-state` artifact chain;
+  - Langfuse on `main` measurements only;
+  - the Docker image published on tags;
+  - what GitHub cannot do and why.
+  It extends the autonomous pipeline design (Russian, Proposed).
 - [Batch Analytics and OTLP Trace Export Plan](development/2026-10-29-batch-analytics-and-otlp-export-plan.md)
   (Implemented): self-contained implementation plan — `stop_reason` and `failure_kind`, the batch data
   contract with provenance, traces in the batch folder, run history and
