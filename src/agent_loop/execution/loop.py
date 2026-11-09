@@ -69,7 +69,7 @@ from src.agent_loop.execution.notes import offer_notes_argument, split_notes
 from src.agent_loop.execution.observation import ObservationCompiler
 from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
-from src.agent_loop.execution.state import LoopState
+from src.agent_loop.execution.state import LoopState, TierMarks
 from src.agent_loop.execution.tools import PreparedToolCall, ToolBroker, tool_catalog
 from src.agent_loop.execution.usage import add_call, budget_exhausted, effective_budget
 from src.agent_loop.model import ModelDriver, response_usage
@@ -719,11 +719,18 @@ class TurnController:
             "ladder.escalated",
             {"from": state.ladder_stage, "to": "agent", "reason": handoff.kind, "step": handoff.step},
         )
+        # What playback ran into is not the first tier's doing: the cascade counts from here.
+        marks = TierMarks(
+            replans=state.replan_count,
+            progress_blocks=state.progress_blocks,
+            failures=state.consecutive_failures,
+        )
         handed = state.apply(
             {
                 "ladder_stage": "agent",
                 "usage": _reached(state.usage, "agent"),
                 "messages": [*self._history(state), user_message(f"[harness] {handoff.reason}")],
+                "tier_marks": marks,
             }
         )
         update = await self._model_step(handed)
@@ -731,6 +738,7 @@ class TurnController:
             "ladder_stage": "agent",
             "usage": handed.usage,
             "messages": handed.messages,
+            "tier_marks": marks,
             **diverged,
             **update,
         }

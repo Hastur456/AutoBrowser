@@ -60,6 +60,9 @@ class TierMarks:
 
     replans: int = 0
     progress_blocks: int = 0
+    #: ``consecutive_failures`` when the agent took over from playback (0 after a tier change,
+    #: which resets them, and after a success, which does).
+    failures: int = 0
 
 
 @dataclass(frozen=True)

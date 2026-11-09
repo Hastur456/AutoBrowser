@@ -363,12 +363,16 @@ def tier_escalation(
     if not escalation_possible(state, tier_count=tier_count):
         return clear, None
     marks = state.tier_marks
+    if state.consecutive_failures < marks.failures:
+        # A success reset the series since the mark: count from zero again.
+        marks = TierMarks(replans=marks.replans, progress_blocks=marks.progress_blocks)
+        clear = {**clear, "tier_marks": marks}
     reason: TierReason | None = None
     if settings.escalate_on_no_action and state.tier_signal == NO_ACTION_SIGNAL:
         reason = "no_action"
     elif settings.escalate_on_progress_block and state.progress_blocks > marks.progress_blocks:
         reason = "progress_block"
-    elif state.consecutive_failures >= settings.escalate_after_failures:
+    elif state.consecutive_failures - marks.failures >= settings.escalate_after_failures:
         reason = "failures"
     elif state.replan_count - marks.replans >= settings.escalate_after_replans:
         reason = "replans"

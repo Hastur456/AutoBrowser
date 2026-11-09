@@ -232,3 +232,30 @@ async def test_one_tier_keeps_the_event_stream_unchanged() -> None:
         assert event_type != "ladder.escalated"
         if event_type.startswith("model."):
             assert "tier" not in payload and "model" not in payload
+
+
+async def test_the_failures_of_playback_do_not_count_for_the_first_tier() -> None:
+    from src.contracts import PlaybackRequest, StepHandoff, StepProposal
+    from tests.test_agent_loop_playback import Factory, ScriptedSource, Shop
+
+    missing = StepProposal(request={"name": "missing_tool", "args": {}}, stage="playback", step=1)
+    source = ScriptedSource([missing, StepHandoff(reason="The page changed.", kind="tool_error")])
+    fail = json.dumps({"decision": "tool_call", "tool_request": {"name": "missing_tool", "args": {"x": 1}, "id": "m"}})
+    cheap, strong = Scripted(fail, DONE), Scripted(DONE)
+    sink = InMemoryEventSink()
+    emitter = EventEmitter(sink, session_id="s")
+    harness = BrowserHarness(llm=cheap, tool_registry=ToolRegistry(tools=Shop().tools()), event_emitter=emitter)
+    resources = EngineResources.from_harness(
+        harness, llm=cheap, events=emitter, steps=Factory(source), models=two_tiers(cheap, strong)
+    )
+
+    result = await AgentLoopEngine(resources).run(
+        "Look.", task_id="t", session_id="s", turn_cap=20,
+        profile=RunProfile(playback=PlaybackRequest(recording="r")),
+    )
+
+    # One failed replayed step, the handoff, one failed model call on tier 0: not two failures
+    # of tier 0, so it keeps the task and finishes it.
+    assert result.status == "done"
+    assert strong.calls == 0
+    assert [event for event in of_type(list(sink.records), "ladder.escalated") if "tier" in event] == []
