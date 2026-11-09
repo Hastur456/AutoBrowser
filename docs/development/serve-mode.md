@@ -203,6 +203,9 @@ serve:
     price-watch: {task: "...", triggers: [{id: hourly, type: cron, schedule: "0 * * * *"}]}
 ```
 
+- **Cancel.** `/cancel` (Telegram) reaches a queued run, a run waiting out its cooldown
+  (skipped as `cancelled`) and a running one; a cancelled run starts no further task and is
+  reported `cancelled`, never as a failure.
 - **Order.** Queued runs start in queue order on the free worker with the lowest index. A run
   that cannot start yet stays queued, and a later one may start before it.
 - **Exclusion.** Two runs of one job never run at once, nor two runs that replay or record one
@@ -263,11 +266,13 @@ cascade:
   is named by that model. `RunReport.tier_reached` says how high a run went.
 - **Money.** A money cap (`loop.max_task_cost`, `serve.daily_max_cost`, a run budget's
   `max_cost`) needs a price for every tier: the stand refuses to start without one, the
-  interactive session warns.
+  interactive session warns. Note for stands of phase 3: `loop.max_task_cost` now counts as a
+  money cap too, so a stand profile with it and without `llm.prices` for the session model is
+  refused until the price is added.
 - `doctor` prints one line per tier (provider, host, model, key set, priced); `doctor --llm`
-  probes every tier on another provider or host. Keep `escalate_after_failures` below
-  `loop.max_consecutive_failures`, or failures end the task before the tier goes up (`doctor`
-  and `serve --check` warn).
+  probes every tier on another provider or host. Keep `escalate_after_failures` at most
+  `loop.max_consecutive_failures` (the tier check runs before the failure stop), or failures
+  end the task before the tier goes up (`doctor` and `serve --check` warn).
 
 ## Telegram Channel
 
