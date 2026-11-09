@@ -123,6 +123,24 @@ async def test_switching_the_model_changes_only_tier_0() -> None:
 
 
 @pytest.mark.asyncio
+async def test_switching_to_a_tier_label_is_refused_and_changes_nothing() -> None:
+    session = runtime(strong_tiers)
+    await session.start()
+    try:
+        agent, llm = session.agent, session.context.llm
+
+        with pytest.raises(ValueError, match="cascade tier"):
+            await session.set_model("strong")
+
+        assert session.config.model == "cheap" and session.context.config.model == "cheap"
+        assert session.agent is agent and session.context.llm is llm
+        assert session.context.harness.llm is llm
+        assert [tier.label for tier in session.agent.resources.models.tiers] == ["cheap", "strong"]
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
 async def test_a_tier_labelled_like_the_session_model_is_refused() -> None:
     session = runtime(lambda: [ModelTier(FakeLLM(), "cheap")])
 

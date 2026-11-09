@@ -1031,16 +1031,22 @@ class SessionContext:
         session_tier = ModelTier(
             self.llm, label=self.config.model, price=model_price(self.config.model)
         )
-        for tier in self.cascade_tiers:
-            if tier.label == session_tier.label:
-                raise ValueError(
-                    f"cascade tier {tier.label!r} has the label of the session model: "
-                    f"give it a label (cascade.tiers[].label)"
-                )
+        self.refuse_tier_label(session_tier.label)
         if not self.cascade_tiers:
             return ModelTiers((session_tier,))
         retarget = min(get_settings().cascade.retarget_tier, len(self.cascade_tiers))
         return ModelTiers((session_tier, *self.cascade_tiers), retarget_tier=retarget)
+
+    def refuse_tier_label(self, model: str) -> None:
+        """``ValueError`` when ``model`` (the session model to be) is the label of a cascade
+        tier: ``usage.by_model`` would merge them."""
+
+        for tier in self.cascade_tiers:
+            if tier.label == model:
+                raise ValueError(
+                    f"cascade tier {tier.label!r} has the label of the session model: "
+                    f"give it a label (cascade.tiers[].label)"
+                )
 
     def unpriced_tiers(self) -> list[str]:
         """Labels of the agent's tiers without an ``llm.prices`` entry (an unknown cost)."""
@@ -1318,6 +1324,8 @@ class SessionRuntime:
             self.context.config = config
             self.config = config
             return
+        # Before anything changes: a failed switch leaves the session as it was.
+        self.context.refuse_tier_label(name)
         self.context.use_model(config, self._llm_factory)
         self.agent = self.context.build_agent(human_input=self._human_input)
         self.config = config
