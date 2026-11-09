@@ -1,61 +1,85 @@
 # Agent Runtime Flow
 
-This diagram shows the engine-native control flow owned by `AgentLoopEngine`
-(`src/agent_loop/execution/loop.py`), driven through `TurnController` for one
-goal run. There is no compiled graph.
+The engine-native control flow owned by `AgentLoopEngine`
+(`src/agent_loop/execution/loop.py`), driven through `TurnController` for one goal run, in
+three views: the run, one turn, and the pipeline of one tool call. There is no compiled graph.
+
+## The Run
 
 ```mermaid
 flowchart TD
-  GoalRunner[GoalRunner] --> Engine[AgentLoopEngine.run]
-  Engine --> GoalStart{{"hook: goal_start"}}
-  GoalStart -->|deny| Result
-  GoalStart -->|no playback / no recorded plan| Budget0{run budget left?}
-  Budget0 -->|no: budget_exhausted| Result
-  Budget0 --> Plan[plan: model call #0]
-  GoalStart -->|profile.playback with a recorded plan| Seed[recorded plan, no model call]
-  Seed --> Tier
-  Plan --> Tier{{"tier_escalation (several tiers only)"}}
-  Tier -->|stuck: ladder.escalated, model_tier + 1| Turn
-  Tier --> Turn[TurnController turn]
-  Turn -->|ladder_stage playback / retarget| Source[[StepSource.next]]
-  Source -->|StepProposal: synthetic tool call| Progress
-  Source -->|StepFinal: playback_completed| Stop
-  Source -->|StepHandoff, max_stage below agent: ladder_cap| Result
-  Source -->|StepHandoff: harness note, ladder.escalated| Model[model turn on the current tier]
-  Turn -->|ladder_stage agent| Budget{run budget left?}
-  Budget -->|no: budget_exhausted| Result
-  Budget --> Model
-  Model --> Turn
-  Model -->|empty answer, higher tier: continue, tier_signal| Tier
-  Turn -->|decision: tool_call| Progress[progress guard]
-  Turn -->|decision: replan| Plan
-  Turn -->|model done| Stop{{"hook: stop"}}
-  Stop -->|deny: decision continue| Turn
-  Stop -->|no deny / budget spent| Result[AgentLoopResult]
-  Turn -->|guard terminal| Result
-  Progress -->|blocked| Turn
-  Progress --> Prepare[ToolBroker.prepare]
-  Prepare -->|unknown tool| Exec
-  Prepare --> Pre{{"hook: pre_tool_use"}}
-  Pre -->|deny| Turn
-  Pre -->|allow / ask / rewrite| Permissions[PermissionEngine.evaluate]
-  Permissions -->|deny| Turn
-  Permissions -->|allow by default, state-changing, classifier on| Classifier[[approval classifier]]
-  Classifier -->|safe| Exec
-  Classifier -->|needs approval / failed| Perm
-  Permissions -->|allow| Exec
-  Permissions -->|ask| Perm{{"hook: permission_request"}}
-  Perm -->|allow| Exec
-  Perm -->|deny| Result
-  Perm -->|no decision| Human[human_input]
-  Human -->|deny| Result
-  Human -->|once / session + grant| Exec[ToolBroker.invoke]
-  Exec --> Post{{"hook: post_tool_use / _failure"}}
-  Post --> Obs[observe]
-  Obs --> Turn
-  Obs -->|done| Result
-  Result --> GoalEnd{{"hook: goal_end"}}
-  GoalEnd -->|status / final_answer / session_state| Session[SessionRuntime]
+  GR[GoalRunner] --> RUN[AgentLoopEngine.run]
+  RUN --> GS{{"hook: goal_start"}}
+  GS -->|deny| RES
+  GS -->|"replay with a recorded plan"| SEED["recorded plan<br/>no model call"]
+  GS -->|otherwise| B0{"run budget left?"}
+  B0 -->|"no: budget_exhausted"| RES
+  B0 -->|yes| PLAN["plan: model call #0<br/>(tier 0)"]
+  SEED --> TOP
+  PLAN --> TOP(["loop top"])
+  TOP --> TIER{{"tier_escalation<br/>(several tiers only)"}}
+  TIER -->|"stuck: ladder.escalated,<br/>model_tier + 1"| CAP
+  TIER -->|"no change"| CAP{"agent turns<br/>within turn_cap?"}
+  CAP -->|"no: turn_cap"| RES
+  CAP -->|yes| TURN[["one turn<br/>(next diagram)"]]
+  TURN -->|"continue"| TOP
+  TURN -->|"replan: budget left"| REPLAN["rebuild the plan<br/>(current tier)"]
+  REPLAN --> TOP
+  TURN -->|"terminal: done / blocked / cancelled"| RES[AgentLoopResult]
+  RES --> GE{{"hook: goal_end"}}
+  GE -->|"status, final_answer, session_state"| SR[SessionRuntime]
+```
+
+## One Turn
+
+```mermaid
+flowchart TD
+  T([TurnController.run_turn]) --> G{"pre-turn guards<br/>(limits, replans, failures)"}
+  G -->|terminal| TERM([terminal])
+  G --> STAGE{"ladder_stage"}
+  STAGE -->|"playback / retarget"| SRC[["StepSource.next"]]
+  SRC -->|"StepProposal: synthetic<br/>assistant tool call"| TOOL[["tool pipeline<br/>(next diagram)"]]
+  SRC -->|"StepFinal"| STOP
+  SRC -->|"StepHandoff, max_stage<br/>below agent"| TERM
+  SRC -->|"StepHandoff: harness note,<br/>ladder.escalated"| BUD
+  STAGE -->|agent| BUD{"run budget left?"}
+  BUD -->|"no: budget_exhausted"| TERM
+  BUD -->|yes| MODEL["model turn on<br/>tiers[model_tier]"]
+  MODEL -->|"empty answer and a higher tier:<br/>tier_signal no_action"| CONT([continue])
+  MODEL -->|tool_call| TOOL
+  MODEL -->|replan| REP([replan])
+  MODEL -->|done| STOP{{"hook: stop"}}
+  STOP -->|deny| CONT
+  STOP -->|"no deny"| TERM
+  TOOL -->|"observed, or blocked<br/>(the model reads why)"| CONT
+  TOOL -->|"refused approval"| TERM
+```
+
+## One Tool Call
+
+```mermaid
+flowchart TD
+  REQ([tool request]) --> PG{"progress guard"}
+  PG -->|"blocked: repeated identical outcome"| BACK([back to the model])
+  PG --> PREP[ToolBroker.prepare]
+  PREP -->|"unknown tool"| INV
+  PREP --> PRE{{"hook: pre_tool_use"}}
+  PRE -->|deny| BACK
+  PRE -->|"allow / ask / rewrite"| PERM["PermissionEngine.evaluate<br/>(final arguments)"]
+  PERM -->|deny| BACK
+  PERM -->|allow| JUDGE{"approval judge on and<br/>a state-changing call?"}
+  JUDGE -->|no| INV
+  JUDGE -->|"classifier: safe"| INV
+  JUDGE -->|"needs approval"| PR
+  PERM -->|ask| PR{{"hook: permission_request"}}
+  PR -->|allow| INV
+  PR -->|deny| REFUSED([refused: blocked])
+  PR -->|"no decision"| HUMAN["human: once / session / deny"]
+  HUMAN -->|deny| REFUSED
+  HUMAN -->|"once / session (grant)"| INV[ToolBroker.invoke]
+  INV --> POST{{"hook: post_tool_use /<br/>post_tool_use_failure"}}
+  POST --> OBS["observe: snapshots per server,<br/>action journal, usage"]
+  OBS --> BACK
 ```
 
 `AgentLoopEngine` builds the initial plan, then runs a bounded `while` loop of

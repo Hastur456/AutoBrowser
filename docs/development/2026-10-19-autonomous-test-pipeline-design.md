@@ -531,17 +531,17 @@ sequenceDiagram
     participant Live as live_local / run_batch
     participant Sess as SessionContext.initialize
     participant RecM as RecordingChatModel
-    participant RecT as RecordingToolSource
+    participant RecTools as RecordingToolSource
     participant Eng as AgentLoopEngine
     participant Cas as cassette.json
     Live->>Sess: SessionConfig(cassette_path)
     Sess->>RecM: wrap(llm)
-    Sess->>RecT: wrap(mcp.tool_source)
+    Sess->>RecTools: wrap(mcp.tool_source)
     Eng->>RecM: complete(messages, tools)
     RecM->>RecM: inner.complete → response
     RecM->>Cas: model_call{structure_digest, content_digest, response, usage}
-    Eng->>RecT: tool.invoke(args)
-    RecT->>Cas: tool_call{name, server, args, status, content}
+    Eng->>RecTools: tool.invoke(args)
+    RecTools->>Cas: tool_call{name, server, args, status, content}
     Note over Cas: при закрытии: редактирование секретов, каталог инструментов<br/>(name, server, schema, annotations), исход и метрики
     participant Rep as run_cassette (gate)
     participant RM as ReplayChatModel

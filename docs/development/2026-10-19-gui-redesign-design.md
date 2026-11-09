@@ -1,6 +1,8 @@
 # Новый интерфейс AutoBrowser: терминальный UI в стиле Claude Code и команда `autobrowser`
 
-Статус: Proposed (проект, код не менялся)
+Статус: Implemented (шаги 1–5 и 8–17; ADR Accepted) — руководство
+[terminal-ui.md](terminal-ui.md). Не сделано: fullscreen-режим, удаление cmd2, переименование
+пакета, веб-UI (шаги 19–22)
 Дата: 2026-10-19 (редакция 2: терминальный UI вместо веб-UI как главного клиента)
 Ветка: `ref/new-gui-design`
 ADR (Proposed):
@@ -489,7 +491,7 @@ sequenceDiagram
   B->>S: approval.answered
   B-->>T: ApprovalResolution → карточка сворачивается в строку → frozen
   E->>S: goal.completed {status, final_answer, turns}
-  S-->>T: блок outcome (markdown) → frozen; spinner исчезает
+  S-->>T: блок outcome (markdown) → frozen, spinner исчезает
 ```
 
 Esc или Ctrl+C во время задачи вызывают `controller.cancel()`. `GoalRunner` эмитит

@@ -49,7 +49,7 @@ flowchart TB
   BA["src/browser/playback<br/>BrowserPlaybackAdapter"]
   MCP["MCP servers (Playwright: headless, own profile)"]
 
-  BOOT --> HTTP & SCH & DIS & POOL & NOTE
+  BOOT -- "composes" --> SERVE
   BOOT --> TG
   BOOT --> MOD
   MOD -. "CascadeFactory" .-> SR
