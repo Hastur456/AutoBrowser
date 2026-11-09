@@ -51,7 +51,8 @@ flowchart LR
   Resources --> Hooks
   Resources --> Permissions
   Resources -->|steps| PlaybackFactory
-  Resources -->|models: one priced tier| LLM
+  Resources -->|models: tier 0 + cascade tiers, priced| LLM
+  CascadeCLI[src/cli/models.py cascade_factory] -.->|CascadeFactory| Session
   Tools --> StaticTools[Static tools]
   Tools --> Providers[Generic providers]
   Tools --> ToolSource
@@ -105,3 +106,11 @@ untouched. The session hands `ContextAssembler` its prompt sections: the always-
 engine nor the assembler knows the skill modules or the tool name
 (`tests/test_skill_boundaries.py`). The engine imports nothing from `src/browser/`
 (`tests/test_engine_boundaries.py`).
+
+The model tiers come ready-made: `src/cli/models.py` turns each `cascade.tiers` entry into a
+`ChatModel` with the provider registry and hands the session a `CascadeFactory`, called once
+per session. `SessionContext.model_tiers()` puts the session model first (tier 0, the one
+`/model` switches) and the cascade tiers after it; `build_agent` passes them as
+`EngineResources.models` and gives the `Retargeter` the `cascade.retarget_tier`. Neither the
+session nor the engine imports `src.providers`. Chat channels (`src/channels/`) are wired by
+`src/cli/serve.py` only and reach the stand through its neutral ports.

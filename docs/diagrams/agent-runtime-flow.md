@@ -13,8 +13,10 @@ flowchart TD
   Budget0 -->|no: budget_exhausted| Result
   Budget0 --> Plan[plan: model call #0]
   GoalStart -->|profile.playback with a recorded plan| Seed[recorded plan, no model call]
-  Seed --> Turn
-  Plan --> Turn[TurnController turn]
+  Seed --> Tier
+  Plan --> Tier{{"tier_escalation (several tiers only)"}}
+  Tier -->|stuck: ladder.escalated, model_tier + 1| Turn
+  Tier --> Turn[TurnController turn]
   Turn -->|ladder_stage playback / retarget| Source[[StepSource.next]]
   Source -->|StepProposal: synthetic tool call| Progress
   Source -->|StepFinal: playback_completed| Stop
@@ -24,6 +26,7 @@ flowchart TD
   Budget -->|no: budget_exhausted| Result
   Budget --> Model
   Model --> Turn
+  Model -->|empty answer, higher tier: continue, tier_signal| Tier
   Turn -->|decision: tool_call| Progress[progress guard]
   Turn -->|decision: replan| Plan
   Turn -->|model done| Stop{{"hook: stop"}}
@@ -84,6 +87,14 @@ same turn with a `[harness]` note, unless `RunProfile.max_stage` is below `agent
 not count toward `loop.turn_cap` and are bounded by the recording. Every model call (plan,
 agent turn, approval classifier, retarget) is added to `LoopState.usage`, and the run budget is
 checked right before each one (`budget_exhausted`).
+
+The model cascade (`cascade.*`, [serve mode guide](../development/serve-mode.md)) adds one
+check at the top of every loop iteration: with more than one tier in `EngineResources.models`,
+the pure `guards.tier_escalation` moves the agent up one tier after an empty answer, a
+progress-guard block, `escalate_after_failures` failed calls in a row or
+`escalate_after_replans` replans since the last change, and gives the new tier a fresh failure
+window. Call #0 always runs on tier 0, a replan on the current tier. With one tier the check
+is skipped and every event is unchanged.
 
 Lifecycle hooks (`src/harness/hooks.py`, see the
 [ADR](../decisions/2026-09-30-lifecycle-hooks-engine.md)) sit at the hexagon points and

@@ -4,6 +4,14 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-11-09 Cascade Above the Session Model, Chat Channels and the Worker Pool](2026-11-09-cascade-channels-and-worker-pool.md)
+  (Accepted, Russian): phase 4 of the stand. Tier 0 is always the session model and
+  `cascade.tiers` are the tiers above it, built by `src/cli/models.py`; the pure
+  `guards.tier_escalation` moves the agent up only, from one point at the top of every engine
+  turn. Chat channels live in a new `src/channels/` package over the stand's neutral command
+  port, imported by the CLI only. A pool of `serve.workers` sessions with pinned (reserved)
+  workers, exclusion of a job and a recording, day-budget reservations, `{profile_dir}`, and
+  `workers > 1` only with persistent memory off. Extends the 2026-11-02 serve mode ADR.
 - [2026-11-08 Trajectory on the Root Observation](2026-11-08-trajectory-on-the-root-observation.md)
   (Accepted, Russian): Langfuse v4 evaluators read one observation and never its children, so
   the item root of an experiment carries the whole run as one `langfuse.observation.metadata`

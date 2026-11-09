@@ -1,6 +1,8 @@
 # План реализации Фазы 4: каскад моделей, Telegram, пул worker'ов
 
-Статус: Approved (2026-11-09) — план одобрен, вопросы P4–P11 приняты по дефолтам (§0.2).
+Статус: Implemented (2026-11-09), руководство — [serve-mode.md](serve-mode.md), ADR —
+[2026-11-09](../decisions/2026-11-09-cascade-channels-and-worker-pool.md). Approved (2026-11-09):
+вопросы P4–P11 приняты по дефолтам (§0.2).
 Дата: 2026-11-08
 Ветка: `feat/serve-phase4` (от `feat/serve-mode`)
 Системный дизайн: [Фаза 4](2026-11-08-serve-mode-phase4-design.md) — источник контрактов, потоков,

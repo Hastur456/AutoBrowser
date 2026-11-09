@@ -1,6 +1,8 @@
 # Фаза 4 режима стенда: каскад моделей, Telegram, пул worker'ов
 
-Статус: Approved (2026-11-09) — ответы P4–P11 (§11) приняты по дефолтам в скобках.
+Статус: Implemented (2026-11-09) — [план](2026-11-08-serve-mode-phase4-plan.md) (U64 добавлен при
+реализации), руководство — [serve-mode.md](serve-mode.md). Approved (2026-11-09): ответы P4–P11 (§11)
+приняты по дефолтам в скобках.
 Дата: 2026-11-08
 Ветка: `feat/serve-phase4` (от `feat/serve-mode`)
 Дизайн: [serve mode design](2026-11-02-serve-mode-design.md) — §2.1 F15, §3.4 V2, §4.2–§4.4,

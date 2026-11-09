@@ -23,6 +23,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
 - [Replay Guide](development/replay.md): record a completed run and replay it without the
   model (`--record`, `/record`, `-p --recording`) — the cost ladder, ref rebinding,
   divergences and handoff, retargeting, task usage and run budgets, debugging.
+- [Serve Mode Guide](development/serve-mode.md): the stand (`autobrowser serve`) — jobs and
+  triggers, the probe, budgets, the HTTP API, notifications, approvals, the worker pool, the
+  model cascade, the Telegram channel (set up, commands, approval buttons, security), Docker.
 - [Agent Skills Guide](development/skills.md): `SKILL.md` skills — format, built-in and
   your skills, the catalog and `skill_view`, enabling, debugging and tests.
 - [Lifecycle Hooks Guide](development/lifecycle-hooks.md): how hooks work, their
@@ -117,6 +120,10 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   with its own profile, Docker, security defaults, model tiers, the Telegram channel, settings,
   tests and a phased rollout (Russian, Accepted; ADR
   [serve mode and cost ladder](decisions/2026-11-02-serve-mode-and-cost-ladder.md)).
+- [Serve Mode Phase 4 Design](development/2026-11-08-serve-mode-phase4-design.md) and
+  [plan](development/2026-11-08-serve-mode-phase4-plan.md): the model cascade, the Telegram
+  channel and the worker pool, reconciled with the code (U28–U64) (Russian, Implemented; ADR
+  [cascade, chat channels and the worker pool](decisions/2026-11-09-cascade-channels-and-worker-pool.md)).
 - [Browser Provider Boundary ADR](decisions/2026-07-26-browser-provider-boundary.md):
   superseded record for the former Playwright adapter boundary.
 - [Task Memory Isolation ADR](decisions/2026-07-24-task-memory-isolation-and-session-persistence.md):

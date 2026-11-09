@@ -119,6 +119,11 @@ answer counts only as exactly one call of that tool whose reference arguments ar
 references of the current page. The prompt is `PLAYBACK_RETARGET_SYSTEM_PROMPT` in
 `src/agent_loop/prompts.py`.
 
+The retarget runs on the session model unless a model cascade is on: then on
+`cascade.retarget_tier` (0 = the session model, 1.. = a tier of `cascade.tiers`), with that
+tier's label and price in `usage` and `tier` in its `model.*` events
+([serve mode guide](serve-mode.md#model-cascade)).
+
 ## Budgets and Cost
 
 Every task reports `usage`: model calls, input and output tokens, cost, and buckets by ladder

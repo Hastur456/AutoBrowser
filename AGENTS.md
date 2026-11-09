@@ -43,7 +43,9 @@ engine-native execution loop. The CLI entry point is `main.py`. Core code lives 
 - `src/cli/`: the `autobrowser` entry point (`entry.py`), parser, bootstrap wiring that picks the front end, and the `cmd2` shell kept as `--classic`.
 - `src/ui/`: front ends over the session — `SessionController`, `RuntimeLoop`, the event feed projection, the inline terminal UI (`src/ui/tui/`), plain line mode and the launcher. Guide: `docs/development/terminal-ui.md`.
 - `src/harness/`: session runtime and runtime infrastructure bundled into `EngineResources` for the engine.
-- `src/serve/`: the stand (`autobrowser serve`), a `SessionController` client: dispatcher, scheduler, HTTP API, probe, ledger, channels. It imports no engine, browser, harness, CLI or provider module; `src/cli/serve.py` composes it. Guide: `docs/development/serve-mode.md`.
+- `src/serve/`: the stand (`autobrowser serve`), a `SessionController` client: dispatcher over a worker pool, scheduler, HTTP API, probe, ledger, channels, the chat command port. It imports no engine, browser, harness, CLI, provider or channel module; `src/cli/serve.py` composes it. Guide: `docs/development/serve-mode.md`.
+- `src/channels/`: chat channel adapters of the stand (`telegram.py`), over the neutral ports of `src/serve` (`commands`, `notify`, `clock`); only `src/cli/` imports this package, and vendor names and URLs live here only.
+- `src/cli/models.py`: builds the model cascade's tiers (`cascade.*`) with the provider registry; the session gets them as a `CascadeFactory`, the engine as `EngineResources.models`.
 - `src/mcp/`: Playwright MCP process/session lifecycle helpers and provider loading.
 - `docs/`: architecture, development setup, decisions, diagrams, research notes, and glossary.
 
