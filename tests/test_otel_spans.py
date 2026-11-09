@@ -159,6 +159,20 @@ def test_model_spans_pair_by_phase() -> None:
     assert approval.attributes["autobrowser.approval.needs_approval"] is True
 
 
+def test_a_cascade_tier_names_its_span_by_the_model_of_the_event() -> None:
+    events = [
+        ev("goal.started", 0, {"task": TASK}),
+        ev("model.requested", 10, {"phase": "agent", "tier": 1, "model": "strong-model"}),
+        ev("model.responded", 20, {"phase": "agent", "tier": 1, "model": "strong-model"}),
+        ev("goal.completed", 30, {"status": "completed"}),
+    ]
+
+    agent = specs(events, context=SpanContext(model="main-model"))[1]
+
+    assert agent.name == "chat strong-model"
+    assert agent.attributes["gen_ai.request.model"] == "strong-model"
+
+
 def test_tool_spans_pair_in_fifo_order_and_take_the_server_of_their_permission() -> None:
     spans = specs()
 

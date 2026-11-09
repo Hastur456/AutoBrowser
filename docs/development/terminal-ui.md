@@ -231,5 +231,7 @@ uv run pytest tests\ui\test_windows_conpty.py   # настоящая ConPTY + py
 - Markdown-таблицы в итоговом блоке.
 - Fullscreen-режим (шаг 19), удаление cmd2 (шаг 20), переименование пакета `src` →
   `autobrowser` (шаг 21), веб-UI (шаг 22).
-- CI-workflow для Windows и Linux — отложен до появления CI. Проект пайплайна —
-  [автономный пайплайн тестирования](2026-10-19-autonomous-test-pipeline-design.md).
+- Job для Linux в CI. Gate `.github/workflows/gate.yml` идёт только на `windows-latest`:
+  `uv run pytest` (в том числе `tests/ui`; тесты `conpty` идут только в консоли Windows) и
+  evals против baseline v2.
+  Проект пайплайна — [автономный пайплайн тестирования](2026-10-19-autonomous-test-pipeline-design.md).

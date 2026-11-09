@@ -61,6 +61,9 @@ EventType = Literal[
     "serve.notified",
     "serve.notify.failed",
     "serve.auth.rejected",
+    # A chat channel: a command and how it was handled, a failed poll (src/serve/commands.py).
+    "serve.command",
+    "serve.channel.error",
 ]
 
 SENSITIVE_KEY_MARKERS = (

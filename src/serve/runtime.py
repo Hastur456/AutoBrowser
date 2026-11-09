@@ -1,6 +1,7 @@
-"""``ServeRuntime``: the stand's lifetime around one worker and its dispatcher.
+"""``ServeRuntime``: the stand's lifetime around its workers and the dispatcher.
 
-Start the worker session (browser, MCP), check that every probe tool exists, emit
+Start the worker sessions (browser, MCP) one after another, check that every probe tool
+exists, emit
 ``serve.started``, run the dispatcher and the other services (the scheduler, the HTTP API)
 until ``until`` finishes, then stop in order (design section 7.2): no new triggers, the queue
 dropped, the running run given ``serve.shutdown_grace_seconds``, the worker shut down,
@@ -18,6 +19,7 @@ from typing import Any
 from src.agent_loop.events import EventEmitter
 from src.config import ServeSettings
 from src.serve.dispatcher import Dispatcher
+from src.serve.pool import WorkerPool
 from src.serve.worker import WorkerPort
 
 _SOURCE = "serve.runtime"
@@ -40,14 +42,14 @@ class ServeRuntime:
     def __init__(
         self,
         settings: ServeSettings,
-        worker: WorkerPort,
+        workers: WorkerPort | WorkerPool,
         *,
         dispatcher: Dispatcher,
         events: EventEmitter,
         services: Sequence[Service] = (),
     ) -> None:
         self._settings = settings
-        self._worker = worker
+        self._workers = workers if isinstance(workers, WorkerPool) else WorkerPool.of(workers)
         self._dispatcher = dispatcher
         self._events = events
         self._services = list(services)
@@ -58,15 +60,18 @@ class ServeRuntime:
         waiting = asyncio.ensure_future(until)
         tasks: list[asyncio.Task[Any]] = []
         try:
-            await self._worker.start()
+            await self._workers.start()
             await self._check_probe_tools()
-            self._emit("serve.started", {
+            started = {
                 "jobs": sorted(self._settings.jobs),
                 "host": self._settings.host,
                 "port": self._settings.port,
                 "channels": list(self._settings.channels),
                 "api_approvals": self._settings.api_approvals,
-            })
+            }
+            if self._workers.size > 1:
+                started["workers"] = self._workers.size
+            self._emit("serve.started", started)
             tasks = [asyncio.create_task(self._dispatcher.run(), name="dispatcher")]
             tasks += [
                 asyncio.create_task(service(), name=getattr(service, "__qualname__", "service"))
@@ -93,12 +98,12 @@ class ServeRuntime:
             for task in tasks:
                 with contextlib.suppress(BaseException):
                     await task
-            await self._worker.shutdown(self._settings.shutdown_grace_seconds)
+            await self._workers.shutdown(self._settings.shutdown_grace_seconds)
             if started:
                 self._emit("serve.stopped", {})
 
     async def _check_probe_tools(self) -> None:
-        available = set(await self._worker.tool_names())
+        available = set(await self._workers.tool_names())
         missing = sorted(
             {
                 f"{name}: {step.tool}"

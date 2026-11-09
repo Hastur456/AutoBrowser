@@ -10,7 +10,7 @@ webhook's body is only measured and signature-checked, never handed to the job.
 from __future__ import annotations
 
 import json
-from typing import Any, Protocol
+from typing import Any
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -27,6 +27,7 @@ from src.serve.auth import (
     secret_matches,
     signature_matches,
 )
+from src.serve.approvals import ApprovalsPort
 from src.serve.checks import trigger_secret
 from src.serve.clock import Clock
 from src.serve.dispatcher import Dispatcher, FireResult, TriggerRef
@@ -36,14 +37,6 @@ _SOURCE = "serve.app"
 _ANSWERS = frozenset({"once", "session", "deny"})
 #: Rate-limit keys: the API token, one webhook trigger, one failing client.
 _TOKEN_KEY = "token"
-
-
-class ApprovalsPort(Protocol):
-    """Pending approvals and how to answer one (``serve.api_approvals``)."""
-
-    def pending(self) -> list[dict[str, Any]]: ...
-
-    def answer(self, ticket_id: str, answer: str) -> bool: ...
 
 
 class _TooLarge(Exception):

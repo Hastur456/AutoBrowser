@@ -15,6 +15,7 @@ from src.providers.registry import build_chat_model, list_chat_models
 
 from src.agent_loop.execution.loop import HumanInputCallback
 from src.cli.agent_cli import run_cli
+from src.cli import models
 from src.cli.approval import ApprovalPrompt
 from src.cli.output import print_tools
 from src.cli.sessions import ResumeError, resolve_resume
@@ -30,6 +31,7 @@ from src.harness.approvals import ApprovalBroker
 from src.harness.chrome import start_chrome_cdp, wait_for_port
 from src.harness.event_stream import EventBroadcaster
 from src.harness.session import (
+    CascadeFactory,
     MCPRuntimeFactory,
     ModelCatalog,
     SessionConfig,
@@ -84,6 +86,7 @@ def build_session(
     human_input: HumanInputCallback | None = None,
     event_sinks: Sequence[EventSink] = (),
     resume_from: Path | None = None,
+    cascade_factory: CascadeFactory | None = None,
 ) -> SessionRuntime:
     """Build a process-long session runtime from parsed CLI arguments.
 
@@ -92,7 +95,9 @@ def build_session(
     ``human_input`` answers permission approvals; without it they are denied.
     ``llm_factory`` defaults to the provider registry, bound to ``--provider`` so the
     approval classifier gets the same provider as the session; with it, ``model_catalog``
-    (``/model``) defaults to the same provider's model list.
+    (``/model``) defaults to the same provider's model list, and ``cascade_factory`` to the
+    cascade tiers of ``settings.cascade`` (none when it is off). A test passing its own
+    ``llm_factory`` gets a cascade only by passing ``cascade_factory`` too.
     """
 
     if llm_factory is None:
@@ -100,9 +105,16 @@ def build_session(
         llm_factory = functools.partial(build_chat_model, provider=provider)
         if model_catalog is None:
             model_catalog = functools.partial(list_chat_models, provider=provider)
+        if cascade_factory is None:
+            cascade_factory = models.cascade_factory(get_settings(), provider=provider)
     args = copy.copy(args)
     args.permission_mode = effective_permission_mode(args, interactive=is_interactive(args))
     session_config = SessionConfig.from_args(args)
+    if mcp_runtime_factory is default_mcp_runtime_factory:
+        # ``{profile_dir}``: the session's own browser profile (a stand worker's w<i>).
+        mcp_runtime_factory = functools.partial(
+            default_mcp_runtime_factory, profile_dir=session_config.user_data_dir
+        )
     return SessionRuntime(
         session_config,
         llm_factory=llm_factory,
@@ -116,6 +128,7 @@ def build_session(
         event_sinks=event_sinks,
         resume_from=resume_from,
         model_catalog=model_catalog,
+        cascade_factory=cascade_factory,
     )
 
 

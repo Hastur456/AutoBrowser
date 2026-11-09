@@ -25,7 +25,7 @@ sequenceDiagram
     CLI->>Files: Pick the session (has tasks + state.json, its .lock not held)
     CLI->>Session: SessionRuntime(resume_from=dir)
     Session->>Context: SessionContext.restore(dir)
-    Context->>Files: Take the OS lock on .lock (held until close; refused if held)
+    Context->>Files: Take the OS lock on .lock (held until close, refused if held)
     Context->>Files: Read session.json, tasks.json, state.json (dialogue only), last event sequence
   else new session
     CLI->>Session: SessionRuntime(config)
@@ -34,9 +34,9 @@ sequenceDiagram
   User->>Session: Submit task
   Session->>Context: initialize()
   Context->>Files: New session: take the OS lock on .lock (a resumed one already holds it)
-  Context->>Context: Workspace, model, tools, telemetry; events continue the stored sequence
+  Context->>Context: Workspace, model, tools, telemetry, events continue the stored sequence
   opt Browser tools enabled
-    Context->>MCP: Start Chrome/CDP (browser.launch cdp; none with external: the MCP server launches its own) and load tools
+    Context->>MCP: Start Chrome/CDP (browser.launch cdp, none with external: the MCP server launches its own) and load tools
   end
   Context->>Harness: Build one harness for the session
   Session->>Context: build_agent() -> one Agent for the session
@@ -64,16 +64,16 @@ sequenceDiagram
   end
   opt /resume inside the UI (no task running)
     User->>Session: /resume -> pick a stored session
-    Session->>Context: SessionContext.restore(target) (lock taken first; a refusal keeps the current one)
+    Session->>Context: SessionContext.restore(target) (lock taken first, a refusal keeps the current one)
     Session->>Context: close() the current session (MCP, Chrome, its lock)
-    Session->>Session: swap in the restored context; the event stream is marked reset
+    Session->>Session: swap in the restored context, the event stream is marked reset
     Session-->>User: Replay the restored session's tasks and answers
   end
   User->>Session: Ctrl+C x2, Ctrl+D, /exit
   CLI->>Session: SessionController.shutdown(bounded) then close()
   Session->>Context: close()
   Context->>MCP: Close MCP, then Chrome
-  Context->>Files: Persist (only the lock holder writes; a never-started session holds none), release the lock
+  Context->>Files: Persist (only the lock holder writes, a never-started session holds none), release the lock
 ```
 
 A resumed session carries the dialogue only: page state (observation, kept snapshots, last

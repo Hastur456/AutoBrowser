@@ -7,7 +7,8 @@ and the [glossary](../glossary.md).
 ```mermaid
 flowchart LR
   Settings["Settings.mcp_servers<br/>(fallback: default_mcp_servers)"] --> Build[build_mcp_runtime]
-  Chrome[Chrome/CDP port] -->|"{cdp_port} / {cdp_endpoint}"| Build
+  Chrome["Chrome/CDP port<br/>(browser.launch: cdp)"] -->|"{cdp_port} / {cdp_endpoint}"| Build
+  Profile["session browser profile<br/>(a stand worker's w&lt;i&gt;)"] -->|"{profile_dir}"| Build
   Build --> Registry[ServerRegistry]
   Build --> Runtime[MCPRuntime]
   Runtime --> Manager[MCPManager]
@@ -32,7 +33,8 @@ sequenceDiagram
   participant Manager as MCPManager
   participant Server as MCP server
 
-  Session->>Runtime: build_mcp_runtime(cdp_port)
+  Session->>Runtime: build_mcp_runtime(cdp_port, profile_dir)
+  Note over Session,Runtime: launch external: no Chrome, a server still on CDP fails here
   Session->>Runtime: start()
   Runtime->>Manager: start()
   Manager->>Server: initialize + discovery

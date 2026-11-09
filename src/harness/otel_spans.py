@@ -146,7 +146,9 @@ def task_span_specs(
         payload = _payload(event)
         if event.type == "model.requested":
             phase = str(payload.get("phase") or "")
-            model = context.phase_models.get(phase) or context.model
+            # A cascade tier names its model in the event; otherwise the session's (or the
+            # phase's own, e.g. the approval classifier).
+            model = str(payload.get("model") or "") or context.phase_models.get(phase) or context.model
             attributes: dict[str, AttributeValue] = {
                 "gen_ai.operation.name": "chat",
                 "autobrowser.model.phase": phase,

@@ -413,9 +413,9 @@ A bad flag makes the script exit `1` (a hook failure: fail-closed on `pre_tool_u
 
 ### Things to Know
 
-- **`ask` asks the human in a terminal.** The CLI prompts `[y] once / [n] deny` (a hook
+- **`ask` asks the human in a terminal.** The front end offers *once* or *deny* (a hook
   `ask` cannot be granted for the session); a refusal ends the task `blocked`. Without a
-  terminal (piped `--task`, `run_batch.py`) the session runs in `dont_ask` mode and the call
+  terminal (print mode, `run_batch.py`) the session runs in `dont_ask` mode and the call
   is denied instead, the model continues. Let specific tools through with a
   `permission_request` hook (`approve_tools`), or use `--decision deny` to block only the one
   call.
@@ -445,8 +445,8 @@ registry block from `config.example.yaml`. If you change a script or that block,
 Two facts shape every operation below:
 
 - **The registry is read once per session**, in `SessionContext.initialize`. Any change to
-  `config.yaml` (or to a handler's code) takes effect after restarting `main.py`; a
-  running REPL keeps the hooks it started with.
+  `config.yaml` (or to a handler's code) takes effect after restarting `autobrowser`; a
+  running process keeps the hooks it started with (settings are read once per process).
 - **The YAML file outranks the environment** (init kwargs > YAML > env > `.env`). If
   `config.yaml` sets a hook field, `AUTOBROWSER_HOOKS__*` cannot override it — edit the
   file or switch profiles instead.
@@ -468,7 +468,7 @@ python -c "from src.config import get_settings; from src.harness.hooks import Ho
    repository root (create the file if it does not exist — it is git-ignored).
 2. Set `enabled: true` and add at least one `registry` entry.
 3. Run the registry check above, then restart `main.py`.
-4. Confirm in `.autobrowser/sessions/<session_id>/session.json` that `hooks.enabled` is
+4. Confirm in `<home>/sessions/<session_id>/session.json` that `hooks.enabled` is
    `true`.
 
 ### Create a Hook
@@ -538,11 +538,11 @@ To ship a new built-in handler with AutoBrowser rather than keep it in a persona
 
 ## Observing and Debugging
 
-- Every handler run emits `hook.decided` to `.autobrowser/sessions/<session_id>/events.jsonl`
+- Every handler run emits `hook.decided` to `<home>/sessions/<session_id>/events.jsonl`
   with `hook_id`, `event`, `tool`, `server`, `decision`, `reason`, `modified`,
   `duration_ms`, `error` (`"timeout"` or `"<ExcType>: message"`) and `skipped`. Arguments
   and results are never included.
-- `uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl` replays a
+- `uv run scripts/replay_trace.py <home>\sessions\<session_id>\events.jsonl` replays a
   run, hooks included.
 - `session.json` shows whether hooks were enabled and the registry SHA-256.
 - A registry error fails at startup with `HookConfigError` naming the hook `id`.

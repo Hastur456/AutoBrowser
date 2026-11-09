@@ -1,6 +1,7 @@
 # Batch Analytics and OTLP Trace Export: Implementation Plan
 
-Status: Ready to implement
+Status: Implemented — `scripts/compare_batches.py`, the batch data contract, OTLP export
+([telemetry guide](telemetry.md))
 Date: 2026-10-29
 Parent design: [Autonomous Test Pipeline Design](2026-10-19-autonomous-test-pipeline-design.md)
 (§4.5 benchmarks, §4.6.4 artifacts, §4.9 Langfuse, §7 steps 6, 10 and 15)

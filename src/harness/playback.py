@@ -332,6 +332,7 @@ class Retargeter:
         model_label: str = "",
         price: ModelPrice | None = None,
         tier: int = 0,
+        name_model: bool = False,
     ) -> None:
         self._llm = llm
         self._adapter = adapter
@@ -340,6 +341,11 @@ class Retargeter:
         self._label = model_label
         self._price = price
         self._tier = tier
+        # With a cascade the retarget events name their model, like the agent's (``tier``
+        # alone is in every retarget event already).
+        self._fields: dict[str, Any] = {"tier": tier}
+        if name_model:
+            self._fields["model"] = model_label
 
     async def retarget(
         self,
@@ -367,7 +373,7 @@ class Retargeter:
                 )
             ),
         ]
-        emit("model.requested", {"phase": "retarget", "tier": self._tier, "tool_count": 1})
+        emit("model.requested", {"phase": "retarget", **self._fields, "tool_count": 1})
         try:
             response = await asyncio.wait_for(
                 self._llm.complete(messages, tools=[tool]),
@@ -380,12 +386,12 @@ class Retargeter:
                 error = str(exc)
             else:
                 error = type(exc).__name__
-            emit("model.responded", {"phase": "retarget", "tier": self._tier, "error": error})
+            emit("model.responded", {"phase": "retarget", **self._fields, "error": error})
             return None, ModelCallRecord(phase="retarget", model=self._label, tier=self._tier)
         usage = response_usage(response) or {}
         emit(
             "model.responded",
-            {"phase": "retarget", "tier": self._tier, **({"usage": usage} if usage else {})},
+            {"phase": "retarget", **self._fields, **({"usage": usage} if usage else {})},
         )
         record = ModelCallRecord(
             phase="retarget",

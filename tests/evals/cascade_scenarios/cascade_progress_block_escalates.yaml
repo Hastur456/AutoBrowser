@@ -1,0 +1,43 @@
+name: cascade_progress_block_escalates
+task: Open the mug page and tell me its price.
+strict: true
+model:
+  responses:
+  - steps:
+    - {id: 1, description: Open the mug page, status: pending}
+  # Alternating calls (no consecutive repeat, so no replan); the fourth identical navigate
+  # is blocked by the progress guard and the next turn runs on the strong tier.
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://shop.example/item/42'}, reason: Open it.}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://shop.example/item/43'}, reason: Try another.}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://shop.example/item/42'}, reason: Open it.}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://shop.example/item/43'}, reason: Try another.}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://shop.example/item/42'}, reason: Open it.}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://shop.example/item/43'}, reason: Try another.}
+  - decision: tool_call
+    tool_request: {name: browser_navigate, args: {url: 'https://shop.example/item/42'}, reason: Open it.}
+cascade:
+  tiers:
+  - label: strong
+    responses:
+    - decision: tool_call
+      tool_request: {name: browser_snapshot, args: {}, reason: Read the page instead.}
+    - decision: done
+      final_answer: The mug costs $24.99.
+browser:
+  snapshots:
+  - |-
+    - Page URL: https://shop.example/item/42
+    - heading "Ceramic Mug" [ref=e1]
+    - text "$24.99" [ref=e2]
+assertions:
+  expected_terminal_status: completed
+  final_answer_contains: [$24.99]
+  expected_tier_reached: 1
+  max_policy_blocks: 1
+  max_tool_calls: 7

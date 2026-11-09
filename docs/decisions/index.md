@@ -4,6 +4,14 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-11-09 Cascade Above the Session Model, Chat Channels and the Worker Pool](2026-11-09-cascade-channels-and-worker-pool.md)
+  (Accepted, Russian): phase 4 of the stand. Tier 0 is always the session model and
+  `cascade.tiers` are the tiers above it, built by `src/cli/models.py`; the pure
+  `guards.tier_escalation` moves the agent up only, from one point at the top of every engine
+  turn. Chat channels live in a new `src/channels/` package over the stand's neutral command
+  port, imported by the CLI only. A pool of `serve.workers` sessions with pinned (reserved)
+  workers, exclusion of a job and a recording, day-budget reservations, `{profile_dir}`, and
+  `workers > 1` only with persistent memory off. Extends the 2026-11-02 serve mode ADR.
 - [2026-11-08 Trajectory on the Root Observation](2026-11-08-trajectory-on-the-root-observation.md)
   (Accepted, Russian): Langfuse v4 evaluators read one observation and never its children, so
   the item root of an experiment carries the whole run as one `langfuse.observation.metadata`
@@ -63,15 +71,15 @@ This directory contains Architecture Decision Records (ADRs).
   `reasoning_effort`, `parallel_tool_calls`, `extra_headers`/`extra_body`, a 60 s call timeout
   for both providers with no retries by default; `doctor --llm` network probe; neutral `ModelProviderError` and `ModelUsage` in `src/llm.py`. Extends the
   LangChain-removal ADR on provider adapters.
-- [2026-10-19 Autonomous Test Pipeline](2026-10-19-autonomous-test-pipeline.md) (Proposed,
-  Russian): one `scripts/ci.py` entry point with `gate` (hermetic, Windows + Linux: unit,
+- [2026-10-19 Autonomous Test Pipeline](2026-10-19-autonomous-test-pipeline.md) (Proposed, partly
+  implemented: the Windows CI gate with pytest and the v2 eval baseline; Russian): one `scripts/ci.py` entry point with `gate` (hermetic, Windows + Linux: unit,
   scripted evals against baseline v2, cassette replay of recorded model/tool responses, TUI
   tests, paired A/B offline bench) and `nightly` (real model + Playwright MCP on a local fixture
   site, golden set with generic graders, live latency/token benchmarks against a rolling
   history) profiles; exit codes and a one-line verdict; baselines change only by an explicit
   command; `ModelUsage` on `ModelResponse`; a `pipeline` settings section.
 - [2026-10-19 No Langfuse; Neutral OTLP Export Deferred](2026-10-19-langfuse-observability.md)
-  (Proposed, Russian): Langfuse is not added — the hermetic gate needs no service and events,
+  (Superseded in part by the 2026-10-29 OTLP export and 2026-10-31 Langfuse platform ADRs, Russian): Langfuse is not added — the hermetic gate needs no service and events,
   usage and local history cover the verdict; a Langfuse-specific SDK sink is rejected; an
   off-by-default `OtlpEventSink` (any OTLP backend, Langfuse included) is recorded as a
   deferred option with explicit revisit triggers.
@@ -120,7 +128,7 @@ This directory contains Architecture Decision Records (ADRs).
   normal permission pipeline, a content policy, staged trust, opt-in consolidation). The
   engine only calls `resources.memory.render(state)`. Extends the session-scoped context
   memory ADR.
-- [2026-10-02 Model-Based Approval Judge](2026-10-02-model-approval-judge.md) (Proposed):
+- [2026-10-02 Model-Based Approval Judge](2026-10-02-model-approval-judge.md) (Accepted, implemented):
   opt-in `permissions.approval_judge` (`off | model | classifier | both`) lets the acting
   model's `approval_request` argument or a separate classifier call escalate a
   state-changing call to human approval without rules; judge asks are `always_ask` and never

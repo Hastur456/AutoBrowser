@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from src.config import Settings
-from src.serve.checks import startup_problems, trigger_secret
+from src.serve.checks import startup_problems, startup_warnings, trigger_secret
 from tests.serve.serve_fakes import job
 
 
@@ -59,6 +59,36 @@ def test_a_money_cap_needs_a_price_for_the_model(serve: dict[str, Any]) -> None:
     assert priced == []
 
 
+PRICED = {"input_per_mtok": 1, "output_per_mtok": 2}
+CASCADE = {"enabled": True, "tiers": [{"model": "m2"}]}
+
+
+def test_a_money_cap_needs_a_price_for_every_cascade_tier() -> None:
+    money = {"daily_max_cost": 1.0}
+    unpriced = startup_problems(
+        settings(llm={"model": "m1", "prices": {"m1": PRICED}}, cascade=CASCADE, serve=money)
+    )
+    priced = startup_problems(
+        settings(llm={"model": "m1", "prices": {"m1": PRICED, "m2": PRICED}}, cascade=CASCADE, serve=money)
+    )
+    disabled = startup_problems(
+        settings(
+            llm={"model": "m1", "prices": {"m1": PRICED}},
+            cascade={**CASCADE, "enabled": False},
+            serve=money,
+        )
+    )
+
+    assert any("'m2'" in problem for problem in unpriced)
+    assert priced == [] and disabled == []
+
+
+def test_the_task_cost_cap_also_needs_the_prices() -> None:
+    problems = startup_problems(settings(llm={"model": "m1"}, loop={"max_task_cost": 0.2}))
+
+    assert any("llm.prices" in problem and "'m1'" in problem for problem in problems)
+
+
 def test_a_webhook_secret_from_an_unset_variable_is_a_problem(monkeypatch: pytest.MonkeyPatch) -> None:
     hook = {"id": "ci", "type": "webhook", "secret_env": "PRICE_HOOK_SECRET"}
     monkeypatch.delenv("PRICE_HOOK_SECRET", raising=False)
@@ -97,3 +127,37 @@ def test_the_docker_stand_profile_is_valid_and_startable(monkeypatch: pytest.Mon
     assert loaded.serve.host == "0.0.0.0" and loaded.serve.allow_remote
     assert "price-watch" in loaded.serve.jobs
     assert startup_problems(loaded) == []
+
+
+def test_a_pool_needs_persistent_memory_off() -> None:
+    pool = {"workers": 2}
+
+    problems = startup_problems(settings(memory={"persistent_enabled": True}, serve=pool))
+
+    assert any("memory.persistent_enabled" in problem for problem in problems)
+    assert startup_problems(settings(serve=pool)) == []
+    assert startup_problems(settings(memory={"persistent_enabled": True})) == []
+
+
+EXTERNAL_SHARED = {"playwright": {"transport": "stdio", "command": "npx", "args": ["--headless"]}}
+EXTERNAL_OWN = {
+    "playwright": {"transport": "stdio", "command": "npx", "args": ["--user-data-dir", "{profile_dir}"]}
+}
+
+
+def test_a_pool_on_external_browsers_without_a_profile_placeholder_is_warned() -> None:
+    shared = settings(browser={"launch": "external"}, mcp_servers=EXTERNAL_SHARED, serve={"workers": 2})
+    own = settings(browser={"launch": "external"}, mcp_servers=EXTERNAL_OWN, serve={"workers": 2})
+    single = settings(browser={"launch": "external"}, mcp_servers=EXTERNAL_SHARED)
+
+    assert any("{profile_dir}" in warning for warning in startup_warnings(shared))
+    assert startup_warnings(own) == [] and startup_warnings(single) == []
+    assert startup_problems(shared) == []  # a warning, not a refusal (P8)
+
+
+def test_an_unreachable_failure_escalation_is_warned() -> None:
+    cascade = {"enabled": True, "tiers": [{"model": "m2"}], "escalate_after_failures": 4}
+
+    assert any("escalate_after_failures" in warning for warning in startup_warnings(settings(cascade=cascade)))
+    # Equal thresholds still escalate: the tier check runs before the failure terminal.
+    assert startup_warnings(settings(cascade={**cascade, "escalate_after_failures": 3})) == []

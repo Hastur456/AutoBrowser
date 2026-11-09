@@ -27,7 +27,7 @@ memory:
   history_budget_chars: 60000     # clear old tool outputs past ~60k characters of history
   keep_recent_tool_results: 3
   keep_recent_tasks: 1            # older tasks of the session become one digest each
-  persistent_enabled: true        # load .autobrowser/memory/ into a "Memory" block
+  persistent_enabled: true        # load <home>/memory/ into a "Memory" block
   tool_enabled: true              # let the agent read/write memory (memory_view/memory_write)
   consolidate_on_goal_end: false  # extra model call after each successful task
   working_notes_max_chars: 1500   # the model may keep task-local notes
@@ -43,7 +43,7 @@ is denied.
 
 ## Persistent Memory Files
 
-Layout under `<storage.root_dir>/<memory.dir>/` (`.autobrowser/memory/`, git-ignored):
+Layout under `<storage.root_dir>/<memory.dir>/` (`<home>/memory/`, `~/.autobrowser/memory/` by default, outside the repository):
 
 ```text
 MEMORY.md                 generated index; rewritten after every write, never read back
@@ -71,7 +71,7 @@ description: Ozon — search URL and the price-filter fallback   # one line for 
 - Edits are picked up on the next turn (the store re-reads a file when its mtime or size
   changes).
 - A ready example is `tests/evals/memory_seed/sites/ozon.ru.md` (the eval seed): copy it to
-  `.autobrowser/memory/sites/`.
+  `<home>/memory/sites/`.
 
 What to write: URL templates, the visible names and roles of controls ("textbox Search",
 "button Show results"), the order of steps that worked, site behavior that costs turns. What

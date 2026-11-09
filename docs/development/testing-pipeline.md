@@ -13,7 +13,8 @@ Terms such as [Golden Set](../glossary.md), [Grader](../glossary.md) and
 | Level | What it checks | Browser and model | Command | Where it runs |
 |---|---|---|---|---|
 | Unit and contract tests | contracts, layer boundaries, state, policy, hooks, memory, UI | none | `uv run pytest` | CI gate on every PR and push to `main` |
-| Scripted evals | the real engine on 57 scripted scenarios, compared with the v2 baseline | fake browser, scripted model | `uv run scripts/run_evals.py` | CI gate |
+| Scripted evals | the real engine on 57 scripted scenarios against `agent_loop_v2`, 6 replay scenarios against `playback_v1` and 4 model cascade scenarios against `cascade_v1` | fake browser, scripted model | `uv run scripts/run_evals.py [--scenarios …]` | CI gate (`agent_loop_v2`); the others by hand |
+| Docker smoke | the stand's image: build, `/healthz`, one probe-only job | the image's headless Chromium, no model | `uv run pytest -m live tests/pipeline/test_docker_smoke.py` | by hand (needs a Docker daemon) |
 | Golden Set | the agent on real tasks on real sites, graded by its final answer | real Chrome, Playwright MCP, real model | `uv run scripts/run_batch.py … --grade` | by hand (nightly is planned) |
 
 The offline levels are deterministic and need no network. The Golden Set depends on live sites
@@ -32,6 +33,14 @@ uv run scripts/run_evals.py --baseline tests/evals/baselines/agent_loop_v2.json 
 
 - `uv run pytest` deselects tests marked `live` and `bench`; select them with `-m live` or
   `-m bench`.
+- The replay and cascade suites are not in the CI workflow yet; run them with the change:
+
+  ```powershell
+  uv run scripts/run_evals.py --scenarios tests/evals/playback_scenarios --baseline tests/evals/baselines/playback_v1.json
+  uv run scripts/run_evals.py --scenarios tests/evals/cascade_scenarios --baseline tests/evals/baselines/cascade_v1.json
+  ```
+
+  A `--scenarios` directory names its suite (`tests/evals/cascade_scenarios` -> `cascade`).
 - `run_evals.py` runs every scenario of `tests/evals/scenarios/` and prints one line per finding
   (a changed counter, a request size past the tolerance, a missing or orphan baseline row, a
   failed scenario assertion). Exit code `0` means no failing finding, `1` a regression, `2` a
@@ -48,6 +57,7 @@ baseline explicitly and commit it with the change, so the review sees the baseli
 
 ```powershell
 uv run scripts/run_evals.py --memory-seed tests/evals/memory_seed --write-baseline
+uv run scripts/run_evals.py --scenarios tests/evals/cascade_scenarios --baseline tests/evals/baselines/cascade_v1.json --write-baseline
 ```
 
 It prints the findings against the current file first and refuses while a scenario assertion
@@ -57,6 +67,9 @@ fails. CI never writes a baseline.
 
 - Hand-written scenarios are YAML files in `tests/evals/scenarios/`; every one sets
   `strict: true` (a model call past the script, or an unused scripted response, fails it).
+- A replay scenario (`tests/evals/playback_scenarios/`) adds a `playback:` block with the
+  recording; a cascade scenario (`tests/evals/cascade_scenarios/`) adds `cascade.tiers`, each a
+  `label` and its own scripted `responses`, and asserts `expected_tier_reached`.
 - The generated scenarios are defined in `scripts/generate_eval_scenarios.py`. Change them there,
   then run `uv run scripts/generate_eval_scenarios.py`;
   `tests/test_generate_eval_scenarios.py` fails when a YAML file drifts from the generator.

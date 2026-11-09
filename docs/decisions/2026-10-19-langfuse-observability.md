@@ -1,6 +1,7 @@
 # ADR-2026-10-19: Langfuse не вводим; нейтральный OTLP-экспорт как отложенная опция
 
-Status: Proposed
+Status: Superseded in part (the deferred OTLP export is implemented by ADR-2026-10-29; "no
+Langfuse" is replaced by ADR-2026-10-31)
 Date: 2026-10-19
 
 Deferred option implemented by [ADR-2026-10-29](2026-10-29-otlp-trace-export.md).

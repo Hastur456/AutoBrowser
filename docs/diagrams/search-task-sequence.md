@@ -1,8 +1,9 @@
 # Search Task Sequence
 
 This diagram shows the intended high-level tool sequence for browser search
-tasks. It documents the expected behavior after the prompt changes that limit
-repeated Search-button loops.
+tasks: the behaviour the browser rules ask for (the built-in `browser-agent-rules` skill and
+the agent prompt, both the user's to revise). The engine itself knows no tool names; the
+names below are Playwright MCP's.
 
 ```mermaid
 sequenceDiagram

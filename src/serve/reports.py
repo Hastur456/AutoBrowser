@@ -53,6 +53,10 @@ class RunReport:
     notified: tuple[str, ...] = ()
     #: ``Type: message`` of a failure the run could not report otherwise.
     error: str = ""
+    #: The worker that ran it; only with several workers (``serve.workers``).
+    worker: int | None = None
+    #: The highest model tier a task reached; only after a tier change (``cascade``).
+    tier_reached: int | None = None
 
     @property
     def tokens(self) -> int:
@@ -64,7 +68,10 @@ class RunReport:
         return None if value is None else float(value)
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        """The ledger line; ``worker`` and ``tier_reached`` only when set, so a stand
+        without a pool and a cascade writes the lines it always did."""
+
+        data: dict[str, Any] = {
             "run_id": self.run_id,
             "job_id": self.job_id,
             "trigger": dict(self.trigger),
@@ -92,6 +99,11 @@ class RunReport:
             "notified": list(self.notified),
             "error": self.error,
         }
+        if self.worker is not None:
+            data["worker"] = self.worker
+        if self.tier_reached is not None:
+            data["tier_reached"] = self.tier_reached
+        return data
 
     @classmethod
     def from_json(cls, data: Mapping[str, Any]) -> RunReport:
@@ -125,7 +137,13 @@ class RunReport:
             recording_updated=bool(data.get("recording_updated", False)),
             notified=tuple(str(item) for item in data.get("notified") or ()),
             error=str(data.get("error") or ""),
+            worker=_optional_int(data.get("worker")),
+            tier_reached=_optional_int(data.get("tier_reached")),
         )
+
+
+def _optional_int(value: Any) -> int | None:
+    return None if value is None else int(value)
 
 
 __all__ = ["RunReport", "RunState", "RunStatus", "TaskKind", "TaskSummary"]

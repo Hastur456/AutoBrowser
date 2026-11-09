@@ -62,7 +62,7 @@ sequenceDiagram
             S->>LF: POST /otel/v1/traces (item trace)
             S->>L: exported, or unknown on a timeout after sending
         end
-        S->>LF: POST /scores (fixed ids; 207 recorded, not retried)
+        S->>LF: POST /scores (fixed ids, 207 recorded, not retried)
         S->>LF: annotation queue items (new failures)
         S->>L: complete, experiment url
     end

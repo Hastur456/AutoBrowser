@@ -111,8 +111,8 @@ with the JSONPath `$.full_trajectory`.
 
 **Finding a run.**
 
-- *Sessions*: one session per AutoBrowser session (`session.id`); a multi-task scenario or a
-  REPL session is one session with one trace per task.
+- *Sessions*: one session per AutoBrowser session (`session.id`); a multi-task scenario or an
+  interactive session is one session with one trace per task.
 - *Traces*: filter by environment (`batch` for `scripts/run_batch.py`, your `environment` for
   interactive runs), by release (the commit), or by metadata `batch_id` / `scenario_id` with the
   aliases on. The batch and scenario ids are the ones in `batch.json` and `run_index.jsonl`.
@@ -165,8 +165,8 @@ The default endpoint `http://localhost:4318/v1/traces` already points at it; the
 `vcs.ref.head.revision`; the label beats `telemetry.environment`. Each scenario session flushes
 and shuts its exporter down when it closes, so a long batch does not pile up exporter threads.
 `SessionConfig.otlp_export=False` keeps a session out of the live export even when it is
-enabled — the hook for the planned Langfuse experiment bridge, which will send batch runs as
-experiment traces instead (Proposed
+enabled: with `eval_platform` on, batch runs reach Langfuse as experiment traces through
+`scripts/langfuse_sync.py` instead ([eval platform guide](eval-platform.md),
 [ADR-2026-10-31](../decisions/2026-10-31-langfuse-platform-integration.md)).
 
 ## Troubleshooting

@@ -256,3 +256,37 @@ async def test_the_playback_scenarios_meet_their_assertions() -> None:
     clean = next(run for run in runs if run.name == "playback_clean_replay")
     assert clean.result.summary.model_turn_count == 0
     assert clean.result.stage_reached == "playback"
+
+
+@pytest.mark.asyncio
+async def test_the_cascade_scenarios_meet_their_assertions() -> None:
+    from src.agent_loop.evals import collect_eval_metrics
+    from tests.evals.runner import CASCADE_SCENARIO_DIR, load_scenarios
+
+    runs = await collect_eval_metrics(load_scenarios(CASCADE_SCENARIO_DIR))
+
+    assert len(runs) >= 4
+    assert {run.name: run.problems for run in runs if run.problems} == {}
+    assert {run.name: run.result.tier_reached for run in runs} == {
+        "cascade_empty_answer_escalates": 1,
+        "cascade_no_escalation": 0,
+        "cascade_progress_block_escalates": 1,
+        "cascade_replan_escalates": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_tier_is_an_assertion_problem() -> None:
+    from dataclasses import replace
+
+    from src.agent_loop.evals import check_scenario_result
+    from tests.evals.runner import CASCADE_SCENARIO_DIR, load_scenarios
+
+    scenario = next(
+        item for item in load_scenarios(CASCADE_SCENARIO_DIR) if item.name == "cascade_no_escalation"
+    )
+    wrong = replace(scenario, assertions=replace(scenario.assertions, expected_tier_reached=1))
+
+    result = await run_scenario(wrong)
+
+    assert "tier_reached: expected 1, got 0" in check_scenario_result(wrong, result)

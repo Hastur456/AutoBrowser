@@ -1,13 +1,14 @@
 # Serve Mode
 
-Accepted design (2026-11-02). Implemented: replay and budgets (phase 1, 2026-11-02) and the
-minimal stand (phase 3, 2026-11-09): one worker, the dispatcher, the scheduler, the HTTP API, the
-probe, the `log` and `webhook` channels, approvals over the API and the Docker image. Not yet:
-the worker pool, model tiers (cascade) and Telegram (phase 4) — the diagrams show them dashed or
-marked. It covers the stand process (`autobrowser serve`), the cost ladder and replay (playback
-of a recording) inside the engine. Guide: [serve mode](../development/serve-mode.md).
-Design: [serve mode design](../development/2026-11-02-serve-mode-design.md);
-ADR: [2026-11-02 serve mode and cost ladder](../decisions/2026-11-02-serve-mode-and-cost-ladder.md).
+Accepted design (2026-11-02), implemented in full: replay and budgets (phase 1, 2026-11-02),
+the minimal stand (phase 3, 2026-11-09) and phase 4 (2026-11-09): the worker pool, model tiers
+(cascade) and the Telegram channel. It covers the stand process (`autobrowser serve`), the cost
+ladder and replay (playback of a recording) inside the engine. Guide:
+[serve mode](../development/serve-mode.md).
+Design: [serve mode design](../development/2026-11-02-serve-mode-design.md),
+[phase 4 design](../development/2026-11-08-serve-mode-phase4-design.md);
+ADRs: [2026-11-02 serve mode and cost ladder](../decisions/2026-11-02-serve-mode-and-cost-ladder.md),
+[2026-11-09 cascade, chat channels and the worker pool](../decisions/2026-11-09-cascade-channels-and-worker-pool.md).
 
 ## Components and Boundaries
 
@@ -19,20 +20,23 @@ knowledge lives in `src/browser/`, and vendor channels live in `src/channels/`. 
 ```mermaid
 flowchart TB
   subgraph CLI["src/cli (composition only)"]
-    BOOT["run_serve_cli: models, sessions, brokers, channels"]
+    BOOT["run_serve_cli: sessions, brokers, channels"]
+    MOD["models.py: cascade_factory<br/>(registry.build_chat_model)"]
   end
   subgraph SERVE["src/serve"]
     HTTP["ServeApp (starlette + uvicorn)<br/>/healthz, /v1/*, webhooks"]
     SCH["Scheduler: interval, cron"]
-    DIS["Dispatcher<br/>queue, coalesce, cooldown, day budget"]
-    POOL["WorkerPool (1 worker until phase 4)"]
+    DIS["Dispatcher<br/>queue, coalesce, cooldown, day budget,<br/>exclusion keys, day reservations"]
+    POOL["WorkerPool: serve.workers slots, pins"]
+    CMD["commands.py: CommandPort, ServeCommands"]
+    DESK["ApprovalDesk over one ApprovalBridge per worker"]
     LED[("serve/ledger.jsonl<br/>RunReport")]
-    NOTE["NotificationChannel: log, webhook-out"]
+    NOTE["NotificationChannel: log, webhook-out, telegram"]
   end
-  TG["src/channels/telegram<br/>(phase 4, long polling)"]
-  subgraph WORKER["worker w0"]
+  TG["src/channels/telegram<br/>BotApi, TelegramChannel (long polling)"]
+  subgraph WORKER["worker w&lt;i&gt; (one per serve.workers)"]
     CTL["SessionController"]
-    SR["SessionRuntime / SessionContext"]
+    SR["SessionRuntime / SessionContext<br/>profile w&lt;i&gt;, CDP port base + i"]
     AB["ApprovalBroker"]
     EB["EventBroadcaster"]
     REC["Recorder (EventSink)"]
@@ -45,11 +49,18 @@ flowchart TB
   BA["src/browser/playback<br/>BrowserPlaybackAdapter"]
   MCP["MCP servers (Playwright: headless, own profile)"]
 
-  BOOT --> HTTP & SCH & DIS & POOL & NOTE
-  BOOT -.-> TG
+  BOOT -- "composes" --> SERVE
+  BOOT --> TG
+  BOOT --> MOD
+  MOD -. "CascadeFactory" .-> SR
   HTTP --> DIS
+  HTTP --> DESK
   SCH --> DIS
-  TG -. "/run, approvals" .-> DIS
+  TG -- "commands, button answers" --> CMD
+  CMD --> DIS
+  CMD --> DESK
+  DESK --> AB
+  TG -- "implements" --> NOTE
   DIS --> POOL --> CTL --> SR --> ENG
   SR --> AB & EB & REC
   REC --> RS
@@ -62,14 +73,16 @@ flowchart TB
   CTL -- "TaskOutcome + TaskUsage" --> DIS
   DIS --> LED
   DIS --> NOTE
-  DIS -.-> TG
-  AB -. "tickets" .-> TG
+  AB -. "tickets (bridge)" .-> NOTE
 ```
 
 Import fences (tests):
 
 - `src/serve` does not import `src.agent_loop.execution`, `src.browser`, `src.cli`,
   `src.providers`, `src.harness` or `src.channels` (`tests/test_serve_boundaries.py`).
+- `src/channels` imports only `src.config`, `src.contracts` and the neutral ports
+  `src.serve.{commands,notify,clock}`; only `src/cli/` imports it; the vendor host appears in
+  `src/channels/telegram.py` only; neither package uses threads.
 - `src/agent_loop`, `src/harness`, `src/ui`, `src/browser`, `src/mcp` and `src/providers` do
   not import `src.serve`; only `src/cli/serve.py` composes the stand.
 - The engine imports no `src.browser` and holds no `browser_*` literals.
@@ -95,7 +108,7 @@ stateDiagram-v2
   Retarget --> Playback: step accepted
   Retarget --> Agent: rejected / limit
   Playback --> Agent: checkpoint / catalog / denied / answer=agent
-  Agent --> AgentStrong: tier_escalation (phase 4)
+  Agent --> AgentStrong: tier_escalation (cascade)
   Agent --> Human: ask via approval channel
   AgentStrong --> Human: ask via approval channel
   Human --> Agent: approved or non-terminal deny
@@ -144,3 +157,73 @@ sequenceDiagram
     E->>E: ladder.escalated playback->agent, [harness] note, model drives
   end
 ```
+
+## Model Tier Escalation
+
+With `cascade.enabled` the agent starts on tier 0 (the session model) and the engine checks,
+before every turn, whether it is stuck. The tier only goes up; call #0 is always tier 0, a
+replan runs on the current tier, a retarget on `cascade.retarget_tier`.
+
+```mermaid
+flowchart TB
+  TOP{{"loop top (AgentLoopEngine.run)"}} --> ONE{"one tier?"}
+  ONE -- yes --> TURN
+  ONE -- no --> TE["guards.tier_escalation(state, cascade, tier_count)"]
+  TE -- "no_action / progress_block /<br/>failures / replans" --> UP["model_tier + 1, marks moved,<br/>consecutive_failures = 0<br/>ladder.escalated{from_tier, tier, model}"]
+  TE -- none --> TURN
+  UP --> TURN["turn on tiers[model_tier]<br/>model.* {tier, model}"]
+  TURN -- "empty answer, higher tier" --> SIG["decision continue,<br/>tier_signal no_action"]
+  TURN -- "progress block" --> PB["progress_blocks + 1"]
+  SIG --> TOP
+  PB --> TOP
+  TURN -- "tool call / replan" --> TOP
+```
+
+## Telegram Channel
+
+Long polling, no inbound port. The offset is saved before the updates are handled, so a
+restart never repeats a command.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as Allowed chat
+  participant T as TelegramChannel.run
+  participant B as Bot API (httpx)
+  participant C as ServeCommands
+  participant D as Dispatcher
+  participant K as ApprovalDesk
+
+  T->>B: getUpdates(offset, timeout=poll_timeout_seconds)
+  B-->>T: updates
+  T->>T: save offset (channels/telegram.json)
+  alt chat not in allowed_chat_ids
+    T->>C: rejected(sender = HMAC of the chat id)
+  else /run price-watch (job has a telegram trigger)
+    T->>C: handle(ChatCommand run)
+    C->>D: fire(job, TriggerRef(telegram, trigger))
+    C-->>T: reply text
+    T->>B: sendMessage (plain text, no link preview)
+  else button a:<ticket>:o
+    T->>C: answer_approval(ticket, once)
+    C->>K: answer(ticket, once, via=channel)
+    T->>B: answerCallbackQuery, clear the keyboard
+  end
+```
+
+## Worker Pool
+
+```mermaid
+flowchart LR
+  Q[("FIFO queue")] --> S{"for each queued run, in order"}
+  S --> K{"job:id / recording:name<br/>held by a running run?"}
+  K -- yes --> W["stays queued"]
+  K -- no --> P{"a free worker it may use?<br/>(its pin, else unreserved)"}
+  P -- no --> W
+  P -- yes --> R{"day room after<br/>the running runs' reservations?"}
+  R -- no --> W
+  R -- yes --> RUN["reserve its budget, run on w&lt;i&gt;<br/>report with worker"]
+  RUN --> F["release slot and reservation,<br/>session_max_runs of w&lt;i&gt;"]
+  F --> S
+```
+

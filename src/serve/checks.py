@@ -6,9 +6,10 @@ configuration (permissions, replay, prices) or the environment. Problems never q
 
 from __future__ import annotations
 
+import json
 import os
 
-from src.config import Settings, TriggerSpec
+from src.config import PROFILE_DIR_PLACEHOLDER, Settings, TriggerSpec
 
 
 def trigger_secret(trigger: TriggerSpec) -> str:
@@ -19,6 +20,15 @@ def trigger_secret(trigger: TriggerSpec) -> str:
     if trigger.secret_env:
         return os.environ.get(trigger.secret_env, "")
     return ""
+
+
+def priced_models(settings: Settings) -> list[str]:
+    """The model of every tier a run may call: the session model, then the cascade's."""
+
+    models = [settings.llm.model]
+    if settings.cascade.enabled:
+        models += [tier.model for tier in settings.cascade.tiers if tier.model not in models]
+    return models
 
 
 def startup_problems(settings: Settings) -> list[str]:
@@ -38,12 +48,22 @@ def startup_problems(settings: Settings) -> list[str]:
                     f"job {name!r} uses a probe or a recording, which needs replay.enabled "
                     f"(AUTOBROWSER_REPLAY__ENABLED=true)"
                 )
-    money = serve.daily_max_cost is not None or serve.default_run_budget.max_cost is not None or any(
-        job.budget is not None and job.budget.max_cost is not None for job in serve.jobs.values()
+    money = (
+        serve.daily_max_cost is not None
+        or serve.default_run_budget.max_cost is not None
+        or settings.loop.max_task_cost is not None
+        or any(job.budget is not None and job.budget.max_cost is not None for job in serve.jobs.values())
     )
-    if money and settings.llm.model not in settings.llm.prices:
+    if money:
+        for model in priced_models(settings):
+            if model not in settings.llm.prices:
+                problems.append(
+                    f"a money cap is set but llm.prices has no price for the model {model!r}"
+                )
+    if serve.workers > 1 and settings.memory.persistent_enabled:
         problems.append(
-            f"a money cap is set but llm.prices has no price for the model {settings.llm.model!r}"
+            "serve.workers > 1 needs memory.persistent_enabled=false: the workers would share "
+            "the memory files (file locking comes later)"
         )
     for name, job in serve.jobs.items():
         for trigger in job.triggers:
@@ -55,4 +75,36 @@ def startup_problems(settings: Settings) -> list[str]:
     return problems
 
 
-__all__ = ["startup_problems", "trigger_secret"]
+def startup_warnings(settings: Settings) -> list[str]:
+    """What the stand starts with but probably should not; printed, never a refusal."""
+
+    serve = settings.serve
+    warnings: list[str] = []
+    if serve.workers > 1 and settings.browser.launch == "external":
+        # Name-free: no server is singled out; one that names the placeholder isolates them.
+        named = any(
+            PROFILE_DIR_PLACEHOLDER in json.dumps(config.model_dump(mode="json"))
+            for config in settings.mcp_servers.values()
+        )
+        if not named:
+            warnings.append(
+                f"{serve.workers} workers with browser.launch external, but no mcp_servers entry "
+                f"names {PROFILE_DIR_PLACEHOLDER}: the workers' browsers may share one profile "
+                f"(use --user-data-dir {PROFILE_DIR_PLACEHOLDER}, or let the server isolate them)"
+            )
+    cascade = settings.cascade
+    if (
+        cascade.enabled
+        and cascade.tiers
+        # Equal still escalates: the tier check runs before the failure terminal.
+        and cascade.escalate_after_failures > settings.loop.max_consecutive_failures
+    ):
+        warnings.append(
+            f"cascade.escalate_after_failures {cascade.escalate_after_failures} is above "
+            f"loop.max_consecutive_failures {settings.loop.max_consecutive_failures}: failures "
+            f"end a task before its tier goes up"
+        )
+    return warnings
+
+
+__all__ = ["priced_models", "startup_problems", "startup_warnings", "trigger_secret"]

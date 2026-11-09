@@ -441,6 +441,98 @@ class LLMSettings(_Section):
         return self
 
 
+class ModelTierSpec(_Section):
+    """One cascade tier above the session model (tier 0).
+
+    The fields a profile names override ``llm``; every other one is inherited from it.
+    An explicit ``temperature: null`` sends no temperature (``model_fields_set`` tells it
+    apart from an omitted field).
+    """
+
+    model: Annotated[
+        str, Field(min_length=1, description="Model id handed to the provider; its price is llm.prices[model].")
+    ]
+    label: Annotated[
+        str, Field(description="Label in events, usage by_model and reports; empty: the model id.")
+    ] = ""
+    provider: Annotated[
+        LLMProvider | None,
+        Field(description="Wire protocol; None: the session's (--provider or llm.provider)."),
+    ] = None
+    host: Annotated[str | None, Field(description="Provider base URL; None: llm.host.")] = None
+    api_key: Annotated[
+        SecretStr | None, Field(description="Provider API key; None: llm.api_key. Never logged.")
+    ] = None
+    temperature: Annotated[
+        float | None,
+        Field(ge=0.0, le=2.0, description="Sampling temperature; omitted: llm.temperature."),
+    ] = None
+    reasoning_effort: Annotated[
+        Literal["minimal", "low", "medium", "high"] | None,
+        Field(description="Reasoning effort; omitted: llm.reasoning_effort."),
+    ] = None
+    timeout_seconds: Annotated[
+        float | None, Field(gt=0.0, description="Timeout of one call; omitted: llm.timeout_seconds.")
+    ] = None
+
+    @property
+    def tier_label(self) -> str:
+        return self.label or self.model
+
+    def llm_overrides(self) -> dict[str, Any]:
+        """The ``llm`` fields this tier sets: the ones its profile names, ``label`` aside."""
+
+        return {
+            name: getattr(self, name) for name in self.model_fields_set if name != "label"
+        }
+
+
+class CascadeSettings(_Section):
+    """Model tiers above the session model and when the agent climbs them
+    (``docs/development/2026-11-08-serve-mode-phase4-design.md``).
+
+    Off by default: one tier, the session model, exactly as without a cascade. Tier 0 is
+    always the session model (``llm.model``, ``--model``, ``/model``); ``tiers`` are the
+    ones above it. The tier only goes up within a task.
+    """
+
+    enabled: Annotated[
+        bool, Field(description="Use the tiers above the session model and escalate to them.")
+    ] = False
+    tiers: Annotated[
+        list[ModelTierSpec],
+        Field(max_length=3, description="Tiers above tier 0 (the session model), cheapest first."),
+    ] = Field(default_factory=list)
+    retarget_tier: Annotated[
+        int, Field(ge=0, le=3, description="Tier of the replay retarget call (stage 2); <= len(tiers).")
+    ] = 0
+    escalate_after_failures: Annotated[
+        int, Field(ge=1, description="Consecutive failed calls on the current tier before it goes up.")
+    ] = 2
+    escalate_after_replans: Annotated[
+        int, Field(ge=1, description="Replans on the current tier before it goes up.")
+    ] = 1
+    escalate_on_progress_block: Annotated[
+        bool, Field(description="Go up when the progress guard blocks a repeated call.")
+    ] = True
+    escalate_on_no_action: Annotated[
+        bool,
+        Field(description="An empty model answer goes up a tier instead of ending the task."),
+    ] = True
+
+    @model_validator(mode="after")
+    def _consistent(self) -> CascadeSettings:
+        if self.retarget_tier > len(self.tiers):
+            raise ValueError(
+                f"cascade.retarget_tier {self.retarget_tier} is above the last tier ({len(self.tiers)})"
+            )
+        labels = [tier.tier_label for tier in self.tiers]
+        duplicates = sorted({label for label in labels if labels.count(label) > 1})
+        if duplicates:
+            raise ValueError(f"cascade.tiers: duplicate label(s) {duplicates}; give each a label")
+        return self
+
+
 class BrowserSettings(_Section):
     """Chrome/CDP launch parameters for the harness-managed browser."""
 
@@ -2291,17 +2383,20 @@ class EvalPlatformSettings(_Section):
 #: What a stand job reports on (``serve.jobs.<id>.notify_on``) and what a channel sends.
 NotifyKind = Literal["change", "success", "failure", "blocked", "budget", "approval"]
 #: Notification channels of ``autobrowser serve`` (Telegram arrives in phase 4).
-ServeChannel = Literal["log", "webhook"]
+ServeChannel = Literal["log", "webhook", "telegram"]
 #: What a job does when a trigger fires while its run is busy (design section 6.3).
 CoalesceMode = Literal["drop", "queue_one"]
 #: Fire missed cron slots after downtime: never, or one catch-up run.
 CatchUpMode = Literal["none", "one"]
 #: Kinds of job triggers (``cron`` schedules are parsed by ``croniter``).
-TriggerType = Literal["interval", "cron", "webhook"]
+TriggerType = Literal["interval", "cron", "webhook", "telegram"]
 #: How a webhook trigger authenticates its caller.
 WebhookAuth = Literal["bearer", "hmac_sha256"]
 #: Hosts that only this machine can reach: ``serve.host`` needs no token on them.
 LOCAL_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+#: Runtime placeholder of an ``mcp_servers`` entry: the session's browser profile
+#: (``SessionConfig.user_data_dir``; on the stand, the worker's ``<profiles_dir>/w<i>``).
+PROFILE_DIR_PLACEHOLDER = "{profile_dir}"
 _DEFAULT_NOTIFY_ON: tuple[NotifyKind, ...] = ("change", "failure", "blocked", "budget")
 
 
@@ -2448,6 +2543,16 @@ class JobSpec(_Section):
     cooldown_seconds: Annotated[
         float | None, Field(ge=0.0, description="None: serve.cooldown_seconds.")
     ] = None
+    worker: Annotated[
+        int | None,
+        Field(
+            ge=0,
+            description=(
+                "Pin the job to worker w<i> (a profile with logins); that worker then runs "
+                "only its pinned jobs. None: any unreserved worker."
+            ),
+        ),
+    ] = None
 
     @field_validator("recording")
     @classmethod
@@ -2491,6 +2596,85 @@ class WebhookOutSettings(_Section):
         return value
 
 
+class TelegramSettings(_Section):
+    """The Telegram channel of the stand: notifications, commands and approval buttons over
+    long polling (no inbound port). The adapter is ``src/channels/telegram.py``.
+
+    ``bot_token`` is a secret: set it in ``AUTOBROWSER_SERVE__TELEGRAM__BOT_TOKEN``, never in a
+    profile file. Only the chats in ``allowed_chat_ids`` are answered and notified.
+    """
+
+    bot_token: Annotated[
+        SecretStr | None,
+        Field(description="The bot's token; set it in the env. Never logged or printed."),
+    ] = None
+    allowed_chat_ids: Annotated[
+        list[int],
+        Field(description="Chats the bot answers and notifies; any other chat is ignored."),
+    ] = Field(default_factory=list)
+    api_base: Annotated[
+        str,
+        Field(
+            description=(
+                "Base URL of a self-hosted Bot API server (https, or http on localhost); "
+                "empty: the public Bot API."
+            )
+        ),
+    ] = ""
+    approvals: Annotated[
+        bool, Field(description="Answer approvals with buttons in the allowed chats.")
+    ] = True
+    poll_timeout_seconds: Annotated[
+        int, Field(ge=1, le=60, description="Long-polling timeout of one getUpdates call.")
+    ] = 30
+    request_timeout_seconds: Annotated[
+        float,
+        Field(gt=0.0, description="Timeout of the other calls, and the slack above a poll's timeout."),
+    ] = 10.0
+    poll_backoff_seconds: Annotated[
+        float, Field(gt=0.0, description="First pause after a failed poll; doubles up to the max.")
+    ] = 1.0
+    poll_backoff_max_seconds: Annotated[
+        float, Field(gt=0.0, description="Longest pause between failed polls.")
+    ] = 60.0
+    send_retry_max_seconds: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            description="Longest rate-limit wait a send sits out for one retry; 0: never retry.",
+        ),
+    ] = 30.0
+    max_update_age_seconds: Annotated[
+        float,
+        Field(gt=0.0, description="Older messages are ignored (sent while the stand was down)."),
+    ] = 300.0
+
+    @field_validator("api_base")
+    @classmethod
+    def _safe_api_base(cls, value: str) -> str:
+        if not value:
+            return value
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(value)
+        local_http = parts.scheme == "http" and (parts.hostname or "") in LOCAL_HOSTS
+        if not (parts.scheme == "https" or local_http) or not parts.hostname:
+            # The URL is not quoted: the token travels in its path.
+            raise ValueError("serve.telegram.api_base must be https (or http on localhost)")
+        return value.rstrip("/")
+
+    @field_validator("allowed_chat_ids")
+    @classmethod
+    def _unique_chats(cls, values: list[int]) -> list[int]:
+        return list(dict.fromkeys(values))
+
+    @model_validator(mode="after")
+    def _backoff_in_order(self) -> TelegramSettings:
+        if self.poll_backoff_max_seconds < self.poll_backoff_seconds:
+            raise ValueError("serve.telegram.poll_backoff_max_seconds is below poll_backoff_seconds")
+        return self
+
+
 class ServeSettings(_Section):
     """The stand, ``autobrowser serve`` (``docs/development/serve-mode.md``,
     ``docs/development/2026-11-02-serve-mode-design.md`` section 9.4).
@@ -2511,11 +2695,22 @@ class ServeSettings(_Section):
     dir: Annotated[
         str, Field(min_length=1, description="Stand files (ledger, events, job state) under storage.root_dir.")
     ] = "serve"
+    workers: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=8,
+            description=(
+                "Sessions (browser, MCP) running jobs in parallel; worker w<i> has its own "
+                "profile <profiles_dir>/w<i> and CDP port cdp_port_base + i."
+            ),
+        ),
+    ] = 1
     profiles_dir: Annotated[
         str, Field(min_length=1, description="Browser profiles of the workers under storage.root_dir.")
     ] = "serve/profiles"
     cdp_port_base: Annotated[
-        int, Field(ge=1, le=65535, description="CDP port of worker w0 (launch: cdp).")
+        int, Field(ge=1, le=65535, description="CDP port of worker w0 (launch: cdp); w<i> uses base + i.")
     ] = 9300
     queue_size: Annotated[int, Field(ge=1, description="Queued runs at most.")] = 20
     coalesce: Annotated[
@@ -2581,13 +2776,16 @@ class ServeSettings(_Section):
         bool, Field(description="Write client addresses into the stand events.")
     ] = False
     channels: Annotated[
-        list[ServeChannel], Field(description="Notification channels: log, webhook.")
+        list[ServeChannel], Field(description="Notification channels: log, webhook, telegram.")
     ] = Field(default_factory=lambda: ["log"])
     notify_max_chars: Annotated[
         int, Field(ge=100, description="Longest notification body.")
     ] = 1500
     webhook_out: Annotated[
         WebhookOutSettings | None, Field(description="The outgoing webhook channel.")
+    ] = None
+    telegram: Annotated[
+        TelegramSettings | None, Field(description="The Telegram channel (serve.channels: telegram).")
     ] = None
     jobs: Annotated[
         dict[str, JobSpec], Field(description="The stand's jobs, by name.")
@@ -2631,11 +2829,45 @@ class ServeSettings(_Section):
                 raise ValueError(f"serve.host {self.host!r} needs a non-empty serve.token")
         if self.default_run_budget.max_model_calls is None:
             raise ValueError("serve.default_run_budget needs max_model_calls")
+        last_port = self.cdp_port_base + self.workers - 1
+        if last_port > 65535:
+            raise ValueError(
+                f"serve.cdp_port_base + serve.workers - 1 is above 65535 ({self.workers} workers)"
+            )
+        if self.cdp_port_base <= self.port <= last_port:
+            raise ValueError("serve.port is one of the workers' CDP ports (cdp_port_base + i)")
+        pinned = {job.worker for job in self.jobs.values() if job.worker is not None}
+        for name, job in self.jobs.items():
+            if job.worker is not None and job.worker >= self.workers:
+                raise ValueError(
+                    f"job {name!r} is pinned to worker {job.worker}, but serve.workers is {self.workers}"
+                )
+        unpinned = self.free_tasks or any(job.worker is None for job in self.jobs.values())
+        if unpinned and len(pinned) >= self.workers:
+            raise ValueError(
+                "every worker is reserved by pinned jobs: unpinned jobs and free tasks need "
+                "one more worker (serve.workers)"
+            )
         if "webhook" in self.channels and self.webhook_out is None:
             raise ValueError("the webhook channel needs serve.webhook_out.url")
+        if "telegram" in self.channels:
+            telegram = self.telegram
+            token = telegram.bot_token.get_secret_value().strip() if telegram and telegram.bot_token else ""
+            if not token:
+                raise ValueError(
+                    "the telegram channel needs serve.telegram.bot_token "
+                    "(AUTOBROWSER_SERVE__TELEGRAM__BOT_TOKEN)"
+                )
+            if telegram is not None and not telegram.allowed_chat_ids:
+                raise ValueError("the telegram channel needs serve.telegram.allowed_chat_ids")
         for name, job in self.jobs.items():
             _check_name(name, "job name")
             for trigger in job.triggers:
+                if trigger.type == "telegram" and "telegram" not in self.channels:
+                    raise ValueError(
+                        f"job {name!r}, trigger {trigger.id!r}: a telegram trigger needs the "
+                        f"telegram channel (serve.channels)"
+                    )
                 if trigger.type == "interval" and (trigger.every_seconds or 0) < self.min_interval_seconds:
                     raise ValueError(
                         f"job {name!r}, trigger {trigger.id!r}: every_seconds is below "
@@ -2664,6 +2896,7 @@ class Settings(BaseSettings):
     )
 
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    cascade: CascadeSettings = Field(default_factory=CascadeSettings)
     browser: BrowserSettings = Field(default_factory=BrowserSettings)
     loop: LoopSettings = Field(default_factory=LoopSettings)
     observation: ObservationSettings = Field(default_factory=ObservationSettings)
@@ -2746,6 +2979,7 @@ def reload_settings() -> Settings:
 
 __all__ = [
     "BrowserSettings",
+    "CascadeSettings",
     "CONFIG_FILE_ENV_VAR",
     "DEFAULT_CONFIG_FILE_YAML",
     "HOME_ENV_VAR",
@@ -2758,9 +2992,11 @@ __all__ = [
     "HookSpec",
     "HooksSettings",
     "LLMSettings",
+    "PROFILE_DIR_PLACEHOLDER",
     "LoopSettings",
     "MemorySettings",
     "ModelPriceSpec",
+    "ModelTierSpec",
     "ObservationSettings",
     "PermissionRule",
     "PermissionsSettings",
@@ -2768,6 +3004,7 @@ __all__ = [
     "ReplaySettings",
     "Settings",
     "StorageSettings",
+    "TelegramSettings",
     "TOOL_HOOK_EVENTS",
     "UiSettings",
     "active_config_file",

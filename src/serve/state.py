@@ -23,6 +23,8 @@ _LOG = logging.getLogger(__name__)
 
 JOBS_DIR = "jobs"
 STATE_FILE = "state.json"
+#: ``<serve.dir>/channels/<name>.json``: where a chat channel stopped reading (its offset).
+CHANNELS_DIR = "channels"
 
 
 @dataclass
@@ -113,6 +115,31 @@ class JobStateStore:
         return data if isinstance(data, dict) else {}
 
 
+class ChannelStateStore:
+    """Where each chat channel stopped reading, one file per channel under ``root``.
+
+    Its own file, not the stand's ``state.json``: the dispatcher keeps that one in memory, and
+    a second writer would lose its updates. A damaged file starts from 0 with a warning.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self._root = Path(root)
+
+    def load(self, channel: str) -> int:
+        data = JobStateStore._read(self._path(channel))
+        try:
+            return max(0, int(data.get("offset") or 0))
+        except (TypeError, ValueError):
+            _LOG.warning("the offset of channel %s is damaged; starting from 0", channel)
+            return 0
+
+    def save(self, channel: str, offset: int) -> None:
+        _atomic_write_json(self._path(channel), {"offset": int(offset)})
+
+    def _path(self, channel: str) -> Path:
+        return self._root / CHANNELS_DIR / f"{validate_recording_name(channel)}.json"
+
+
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
@@ -138,4 +165,4 @@ def _parse(value: Any) -> datetime | None:
         return None
 
 
-__all__ = ["JOBS_DIR", "STATE_FILE", "JobState", "JobStateStore", "ServeState"]
+__all__ = ["CHANNELS_DIR", "JOBS_DIR", "STATE_FILE", "ChannelStateStore", "JobState", "JobStateStore", "ServeState"]

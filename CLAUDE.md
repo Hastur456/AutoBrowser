@@ -182,7 +182,7 @@ Every tunable lives in `src/config.py` — a pydantic-settings root read at call
 never imports it back). See
 `docs/decisions/2026-09-16-typed-settings-module.md` and the `.env.example` template.
 
-Names are `AUTOBROWSER_<SECTION>__<FIELD>` over seventeen sections (`llm`, `browser`, `loop`,
+Names are `AUTOBROWSER_<SECTION>__<FIELD>` over eighteen sections (`llm`, `cascade`, `browser`, `loop`,
 `observation`, `memory`, `skills`, `replay`, `events`, `storage`, `flags`, `hooks`, `permissions`, `ui`, `pipeline`,
 `telemetry`, `eval_platform`, `serve`). Env outranks `.env` outranks the code
 defaults; an empty value means "not set"; sections are `frozen` with `extra="forbid"`.
@@ -372,6 +372,12 @@ page diverged (`docs/decisions/2026-11-02-serve-mode-and-cost-ladder.md`; guide:
 - Every model call is added to `LoopState.usage` (`TaskUsage`, `execution/usage.py`); the run
   budget (`RunBudget`, defaults `loop.max_task_*`, prices `llm.prices`) is checked right before
   each call -> `blocked`/`budget_exhausted`. Usage reaches `goal.*`, `TaskOutcome`, batch rows.
+- Model cascade (`cascade.*`, off by default; `docs/decisions/2026-11-09-cascade-channels-and-worker-pool.md`):
+  tier 0 is the session model, `cascade.tiers` the tiers above it, built by `src/cli/models.py`
+  (`CascadeFactory`) and passed as `EngineResources.models`. The pure `guards.tier_escalation`,
+  checked at the top of every engine turn, only moves up (empty answer, progress block, failures,
+  replans) and emits `ladder.escalated{tier}`; `model.*` carry `tier`/`model` only with several
+  tiers. A money cap needs `llm.prices` for every tier.
 
 ## Serve Mode (the Stand)
 
@@ -379,15 +385,24 @@ page diverged (`docs/decisions/2026-11-02-serve-mode-and-cost-ladder.md`; guide:
 (`docs/decisions/2026-11-02-serve-mode-and-cost-ladder.md`; guide:
 `docs/development/serve-mode.md`). Nothing runs unless the command is started.
 
-- `src/serve/` is a client of `SessionController` (one worker = one session, one run at a time):
-  `Dispatcher` (gate: coalesce, cooldown, day budgets, queue; runs; `RunReport` into
+- `src/serve/` is a client of `SessionController` (one worker = one session, one run at a time
+  per worker): `Dispatcher` over a `WorkerPool` (`serve.workers`, default 1; gate: coalesce,
+  cooldown, day budgets, queue; exclusion keys `job:`/`recording:`, pinned workers
+  `JobSpec.worker`, day-budget reservations of running runs; `RunReport` into
   `<home>/serve/ledger.jsonl`), `Scheduler` (interval, cron via `croniter`, UTC arithmetic),
   `app.py` (Starlette API: `/healthz`, `/v1/*` with `serve.token`, webhooks with their own
-  secret), the probe (stage 0: inline `PlaybackRequest.steps`, no model), channels `log` and
-  `webhook`, `ApprovalBridge` (`serve.api_approvals`). Only `src/cli/serve.py` composes it.
+  secret), the probe (stage 0: inline `PlaybackRequest.steps`, no model), channels `log`,
+  `webhook` and `telegram`, the chat command port `commands.py`, one `ApprovalBridge` per
+  worker behind an `ApprovalDesk`. Only `src/cli/serve.py` composes it. `workers > 1` requires
+  `memory.persistent_enabled=false`; `{profile_dir}` in `mcp_servers` is the worker's profile.
 - `src/serve/**` never imports `src.agent_loop.execution`, `src.browser`, `src.harness`,
-  `src.cli` or `src.providers`; no lower layer imports `src.serve`
+  `src.cli`, `src.providers` or `src.channels`; no lower layer imports `src.serve`
   (`tests/test_serve_boundaries.py`).
+- `src/channels/` holds the chat channel adapters (`telegram.py`: long polling over `httpx`,
+  allowlist `serve.telegram.allowed_chat_ids`, approval buttons). It imports only `src.config`,
+  `src.contracts` and `src.serve.{commands,notify,clock}`; only `src/cli/` imports it; the vendor
+  host lives in the adapter only. The bot token never reaches logs, events, `doctor` or
+  `--check`; message text never reaches a task except `/task` with `serve.free_tasks`.
 - Every task of a run: `carry_context=False`, the job's `domains` as task scope
   (`PermissionCheck.allowed_domains`, `source: task_scope` in `src/harness/permissions.py`),
   the job's ladder cap and budget.
@@ -423,7 +438,7 @@ uv run main.py -p --record NAME "task"        # record the run (replay.enabled)
 uv run main.py -p --recording NAME            # replay it without the model (--answer agent|output|summary)
 uv run main.py recordings list                # list | show NAME | rm NAME
 uv run main.py serve --check                  # validate the stand config (no browser); serve = run it
-uv run pytest tests/serve tests/test_serve_boundaries.py   # the stand
+uv run pytest tests/serve tests/channels tests/test_serve_boundaries.py   # the stand, Telegram
 uv run main.py doctor                         # paths, config source, llm provider, node/npx, Chrome, terminal
 uv run main.py doctor --llm                   # + list the provider's models over the network
 uv run main.py --show-state --task "..."      # debug state per step
@@ -433,6 +448,7 @@ uv run scripts/compare_batches.py             # latest batch vs the previous one
 uv run scripts/langfuse_sync.py experiment push --pending  # Langfuse sync (eval_platform; docs/development/eval-platform.md)
 uv run scripts/run_evals.py --baseline tests\evals\baselines\agent_loop_v2.json
 uv run scripts/run_evals.py --scenarios tests\evals\playback_scenarios --baseline tests\evals\baselines\playback_v1.json
+uv run scripts/run_evals.py --scenarios tests\evals\cascade_scenarios --baseline tests\evals\baselines\cascade_v1.json
 uv run scripts/replay_trace.py .autobrowser\sessions\<session_id>\events.jsonl
 ```
 

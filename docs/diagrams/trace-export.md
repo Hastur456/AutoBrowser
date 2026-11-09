@@ -35,7 +35,8 @@ flowchart TD
   Root --> Agent1["chat {model}<br/>phase agent, usage"]
   Root --> Tool1["execute_tool {tool}<br/>server, call id, status"]
   Root --> Judge["chat {judge model}<br/>phase approval (classifier on)"]
-  Root --> Agent2["chat {model}<br/>phase agent"]
+  Root --> Agent2["chat {model}<br/>phase agent (a cascade tier<br/>names its own model)"]
+  Root --> Retarget["chat {model}<br/>phase retarget (replay)"]
   Common["on every span: session.id, labels<br/>(batch id, scenario id, commit),<br/>deployment.environment.name, aliases"]
   Common -.-> Root
 ```

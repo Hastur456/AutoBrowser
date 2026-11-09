@@ -1,6 +1,9 @@
 # ADR-2026-10-19: Автономный пайплайн тестирования — регрессии, кассеты, бенчмарки
 
-Status: Proposed
+Status: Proposed, partly implemented (2026-11-09): the CI gate `.github/workflows/gate.yml`
+(Windows: `uv run pytest` and scripted evals against baseline v2), `ModelUsage`, the `pipeline`
+settings section, `scripts/run_evals.py` with baselines and `scripts/compare_batches.py`. Not
+done: `scripts/ci.py`, cassettes, the Linux job, nightly.
 Date: 2026-10-19
 
 ## Context

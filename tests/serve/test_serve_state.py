@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from src.serve.state import JobState, JobStateStore, ServeState
+from src.serve.state import ChannelStateStore, JobState, JobStateStore, ServeState
 
 
 def test_a_new_job_has_a_fresh_state(tmp_path: Path) -> None:
@@ -61,3 +61,20 @@ def test_the_serve_state_round_trips(tmp_path: Path) -> None:
     store.save_serve(ServeState(budget_notified_day="2026-11-04"))
 
     assert JobStateStore(tmp_path).load_serve().budget_notified_day == "2026-11-04"
+
+
+def test_a_channel_offset_round_trips_in_its_own_file(tmp_path: Path) -> None:
+    store = ChannelStateStore(tmp_path)
+
+    assert store.load("telegram") == 0
+    store.save("telegram", 42)
+
+    assert ChannelStateStore(tmp_path).load("telegram") == 42
+    assert (tmp_path / "channels" / "telegram.json").is_file()
+
+
+def test_a_damaged_channel_offset_starts_from_zero(tmp_path: Path) -> None:
+    (tmp_path / "channels").mkdir()
+    (tmp_path / "channels" / "telegram.json").write_text("{nope", encoding="utf-8")
+
+    assert ChannelStateStore(tmp_path).load("telegram") == 0

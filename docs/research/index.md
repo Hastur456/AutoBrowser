@@ -77,9 +77,11 @@ Current mitigation is split between prompts and runtime guards:
 - block accumulated ineffective browser actions when repeated UI attempts do
   not change the visible snapshot.
 
-Open question: should search-affordance-specific loop detection become an
-explicit policy or router rule instead of relying on generic ineffective-action
-tracking?
+Decided by the project direction (a universal agent without tool-, site- or
+page-structure-specific rules in the engine, guards or harness): search-affordance loops are
+handled by the server-neutral progress journal and guard
+([ADR](../decisions/2026-09-28-server-neutral-progress-journal.md)) plus the browser rules the
+user maintains, not by a dedicated policy rule.
 
 ### Snapshot Depth Strategy
 
@@ -95,8 +97,8 @@ Open questions:
 
 ### Tool Output Compression
 
-When `--compress-tools` is enabled, the observer LLM sees only one tool result
-and emits compact observation JSON.
+When `--compress-tools` is enabled, tool outputs are compacted as text before they reach
+the history (`observation.py`); no model is called for it.
 
 Open questions:
 
@@ -104,6 +106,19 @@ Open questions:
 - How much product/result detail should be preserved before extraction becomes
   lossy?
 - Should compression be disabled automatically for result-list extraction?
+
+### Stand, Replay and the Model Cascade
+
+The stand (`autobrowser serve`), replay and the model cascade are implemented
+([design](../development/2026-11-02-serve-mode-design.md),
+[phase 4 design](../development/2026-11-08-serve-mode-phase4-design.md)). Open questions,
+mostly for a benchmark on open models:
+
+- Which `replay.checkpoint_min_similarity` and `cascade.escalate_*` thresholds keep cost low
+  without handing over too early or too late?
+- How often does ref rebinding (R2) diverge on real sites, and is the codegen locator (R1)
+  worth adding as a second deterministic step (Q8 of the design)?
+- File locking for persistent memory, so a worker pool can keep it on (Q13).
 
 ### Turn-Cap Exhaustion
 
@@ -120,9 +135,9 @@ Open questions:
 
 ## Suggested Spikes
 
-- Add a policy test that blocks repeated identical search-affordance clicks
-  after an unchanged snapshot.
-- Add an integration trace fixture for Ozon-like search pages using mocked MCP
-  tools.
-- Compare direct search URL fallback versus UI-only search for marketplace
-  sites.
+- Add an integration trace fixture for a marketplace-like search page served by
+  `tests/mcp_fixtures/fake_server.py`, to measure the browser rules without a live site.
+- Compare direct search URL fallback versus UI-only search for marketplace sites on the
+  Golden Set.
+- Benchmark the cost ladder (probe, playback, retarget, agent) and the cascade on open models
+  with `run_batch.py` (`stage_reached`, `usage` by stage and model in `run_index.jsonl`).

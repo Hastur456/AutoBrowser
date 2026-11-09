@@ -1393,6 +1393,78 @@ def test_replay_bounds_are_enforced(settings: Any, field: str, value: Any) -> No
 
 
 # --------------------------------------------------------------------------
+# The cascade section: model tiers above the session model
+# --------------------------------------------------------------------------
+
+
+def test_cascade_defaults_are_off_with_no_tiers(settings: Any) -> None:
+    cascade = settings().cascade
+
+    assert cascade.enabled is False
+    assert cascade.tiers == []
+    assert cascade.retarget_tier == 0
+    assert cascade.escalate_after_failures == 2
+    assert cascade.escalate_after_replans == 1
+    assert cascade.escalate_on_progress_block is True
+    assert cascade.escalate_on_no_action is True
+
+
+def test_cascade_tiers_resolve_from_a_json_env_var(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_CASCADE__ENABLED", "true")
+    monkeypatch.setenv(
+        "AUTOBROWSER_CASCADE__TIERS",
+        '[{"model": "big", "label": "strong"}, {"model": "bigger", "api_key": "sk-tier"}]',
+    )
+    monkeypatch.setenv("AUTOBROWSER_CASCADE__RETARGET_TIER", "2")
+
+    cascade = settings().cascade
+
+    assert cascade.enabled is True
+    assert [tier.tier_label for tier in cascade.tiers] == ["strong", "bigger"]
+    assert cascade.retarget_tier == 2
+    assert "sk-tier" not in repr(cascade)
+
+
+def test_a_tier_overrides_only_the_llm_fields_it_names(settings: Any) -> None:
+    tiers = settings(
+        cascade={
+            "tiers": [
+                {"model": "plain"},
+                {"model": "cold", "label": "cold", "temperature": None, "host": "http://h/v1"},
+            ]
+        }
+    ).cascade.tiers
+
+    assert tiers[0].llm_overrides() == {"model": "plain"}
+    # An explicit null is an override (no temperature), an omitted field is not.
+    assert tiers[1].llm_overrides() == {"model": "cold", "temperature": None, "host": "http://h/v1"}
+
+
+@pytest.mark.parametrize(
+    "cascade",
+    [
+        {"tiers": [{"model": "a"}, {"model": "b"}, {"model": "c"}, {"model": "d"}]},
+        {"tiers": [{"model": "a"}], "retarget_tier": 2},
+        {"tiers": [{"model": "a"}, {"model": "a"}]},
+        {"tiers": [{"model": "a", "label": "x"}, {"model": "b", "label": "x"}]},
+        {"tiers": [{"model": ""}]},
+        {"tiers": [{"model": "a", "temperature": 3}]},
+        {"tiers": [{"model": "a", "timeout_seconds": 0}]},
+        {"tiers": [{"model": "a", "unknown": 1}]},
+        {"escalate_after_failures": 0},
+        {"escalate_after_replans": 0},
+        {"retarget_tier": -1},
+        {"unknown": 1},
+    ],
+)
+def test_cascade_bounds_are_enforced(settings: Any, cascade: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        settings(cascade=cascade)
+
+
+# --------------------------------------------------------------------------
 # The pipeline section: tolerances of the regression tools
 # --------------------------------------------------------------------------
 
@@ -1811,6 +1883,149 @@ def test_free_task_domains_are_normalized(settings: Any) -> None:
 def test_an_unknown_time_zone_is_rejected_with_a_hint(settings: Any) -> None:
     with pytest.raises(ValueError, match="tzdata"):
         settings(serve={"timezone": "Mars/Olympus_Mons"})
+
+
+def test_a_chat_trigger_takes_only_its_id(settings: Any) -> None:
+    chat = {"channels": ["telegram"], "telegram": {"bot_token": "1:t", "allowed_chat_ids": [7]}}
+    ok = _job(triggers=[{"id": "chat", "type": "telegram"}])
+    assert settings(serve={**chat, "jobs": {"j": ok}}).serve.jobs["j"].triggers[0].type == "telegram"
+
+    for extra, message in [
+        ({"every_seconds": 60}, "takes no every_seconds"),
+        ({"schedule": "* * * * *"}, "takes no schedule"),
+        ({"secret": "s"}, "takes no secret"),
+    ]:
+        trigger = {"id": "chat", "type": "telegram", **extra}
+        with pytest.raises(ValueError, match=message):
+            settings(serve={**chat, "jobs": {"j": _job(triggers=[trigger])}})
+
+
+def test_the_telegram_settings_defaults(settings: Any) -> None:
+    from src.config import TelegramSettings
+
+    telegram = TelegramSettings()
+
+    assert settings().serve.telegram is None
+    assert telegram.bot_token is None and telegram.allowed_chat_ids == []
+    assert telegram.api_base == "" and telegram.approvals is True
+    assert (telegram.poll_timeout_seconds, telegram.request_timeout_seconds) == (30, 10.0)
+    assert (telegram.poll_backoff_seconds, telegram.poll_backoff_max_seconds) == (1.0, 60.0)
+    assert (telegram.send_retry_max_seconds, telegram.max_update_age_seconds) == (30.0, 300.0)
+
+
+@pytest.mark.parametrize(
+    "api_base, ok",
+    [
+        ("", True),
+        ("https://bots.example/", True),
+        ("http://localhost:8081", True),
+        ("http://127.0.0.1:8081", True),
+        ("http://bots.example", False),
+        ("ftp://bots.example", False),
+        ("bots.example", False),
+    ],
+)
+def test_the_api_base_is_https_or_local(settings: Any, api_base: str, ok: bool) -> None:
+    telegram = {"api_base": api_base}
+    if ok:
+        assert settings(serve={"telegram": telegram}).serve.telegram.api_base == api_base.rstrip("/")
+    else:
+        with pytest.raises(ValueError, match="https") as caught:
+            settings(serve={"telegram": telegram})
+        assert "bots.example" not in str(caught.value).split("input_value")[0]
+
+
+@pytest.mark.parametrize(
+    "telegram, message",
+    [
+        (None, "bot_token"),
+        ({"allowed_chat_ids": [1]}, "bot_token"),
+        ({"bot_token": "  ", "allowed_chat_ids": [1]}, "bot_token"),
+        ({"bot_token": "1:secret-token"}, "allowed_chat_ids"),
+    ],
+)
+def test_the_telegram_channel_needs_a_token_and_chats(
+    settings: Any, telegram: dict[str, Any] | None, message: str
+) -> None:
+    from src.config import ServeSettings
+
+    with pytest.raises(ValueError, match=message) as caught:
+        ServeSettings(channels=["telegram"], telegram=telegram)
+    errors = caught.value.errors(include_input=False)  # type: ignore[attr-defined]
+    assert "secret-token" not in str(errors)
+
+
+@pytest.mark.parametrize(
+    "telegram",
+    [
+        {"poll_timeout_seconds": 0},
+        {"poll_timeout_seconds": 61},
+        {"request_timeout_seconds": 0},
+        {"poll_backoff_seconds": 5, "poll_backoff_max_seconds": 1},
+        {"send_retry_max_seconds": -1},
+        {"max_update_age_seconds": 0},
+        {"unknown": 1},
+    ],
+)
+def test_the_telegram_bounds_are_enforced(settings: Any, telegram: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        settings(serve={"telegram": telegram})
+
+
+def test_a_chat_trigger_needs_the_telegram_channel(settings: Any) -> None:
+    with pytest.raises(ValueError, match="telegram channel"):
+        settings(serve={"jobs": {"j": _job(triggers=[{"id": "chat", "type": "telegram"}])}})
+
+
+def test_the_bot_token_comes_from_the_env_under_a_profile_naming_the_chats(
+    settings: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    profile = _write_config(
+        tmp_path, "serve:\n  channels: [log, telegram]\n  telegram:\n    allowed_chat_ids: [42]\n"
+    )
+    _point_at(monkeypatch, profile)
+    monkeypatch.setenv("AUTOBROWSER_SERVE__TELEGRAM__BOT_TOKEN", "1:env-token")
+
+    telegram = settings().serve.telegram
+
+    assert telegram.allowed_chat_ids == [42]
+    assert telegram.bot_token.get_secret_value() == "1:env-token"
+    assert "env-token" not in repr(telegram)
+
+
+def test_one_worker_by_default_and_at_most_eight(settings: Any) -> None:
+    assert settings().serve.workers == 1
+    assert settings(serve={"workers": 8}).serve.workers == 8
+    for workers in (0, 9):
+        with pytest.raises(ValueError):
+            settings(serve={"workers": workers})
+
+
+def test_a_job_pins_an_existing_worker(settings: Any) -> None:
+    pinned = settings(serve={"workers": 2, "jobs": {"j": _job(worker=1), "k": _job()}})
+    assert pinned.serve.jobs["j"].worker == 1 and pinned.serve.jobs["k"].worker is None
+
+    with pytest.raises(ValueError, match="worker 2"):
+        settings(serve={"workers": 2, "jobs": {"j": _job(worker=2)}})
+    with pytest.raises(ValueError):
+        settings(serve={"jobs": {"j": _job(worker=-1)}})
+
+
+def test_unpinned_work_needs_a_worker_no_job_reserves(settings: Any) -> None:
+    with pytest.raises(ValueError, match="reserved"):
+        settings(serve={"workers": 2, "jobs": {"a": _job(worker=0), "b": _job(worker=1), "c": _job()}})
+    with pytest.raises(ValueError, match="reserved"):
+        settings(serve={"workers": 1, "free_tasks": True, "jobs": {"a": _job(worker=0)}})
+    # Every job pinned and no free tasks: nothing needs an unreserved worker.
+    assert settings(serve={"workers": 2, "jobs": {"a": _job(worker=0), "b": _job(worker=1)}}).serve.workers == 2
+
+
+def test_the_worker_ports_fit_and_miss_the_api(settings: Any) -> None:
+    with pytest.raises(ValueError, match="cdp_port_base"):
+        settings(serve={"workers": 4, "cdp_port_base": 65534})
+    with pytest.raises(ValueError, match="serve.port"):
+        settings(serve={"workers": 3, "cdp_port_base": 9300, "port": 9302})
+    assert settings(serve={"workers": 3, "cdp_port_base": 9300, "port": 9303}).serve.port == 9303
 
 
 def test_a_cron_trigger_needs_a_valid_schedule(settings: Any) -> None:

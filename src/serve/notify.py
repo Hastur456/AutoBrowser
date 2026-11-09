@@ -18,6 +18,7 @@ import httpx
 
 from src.agent_loop.events import EventEmitter
 from src.config import NotifyKind, WebhookOutSettings
+from src.contracts import ApprovalAnswer
 from src.serve.auth import SIGNATURE_HEADER, sign
 from src.ui.feed import sanitize_text
 
@@ -37,6 +38,9 @@ class Notification:
     cost: float | None = None
     #: The approval ticket an ``approval`` notification asks about (``api_approvals``).
     ticket_id: str = ""
+    #: The answers a channel may offer for ``ticket_id`` (no ``session`` when the ticket
+    #: forbids it); not part of the webhook body.
+    answers: tuple[ApprovalAnswer, ...] = ()
 
 
 class NotificationChannel(Protocol):
@@ -45,7 +49,9 @@ class NotificationChannel(Protocol):
     async def send(self, item: Notification) -> None: ...
 
 
-def _cut(text: str, limit: int) -> str:
+def cut(text: str, limit: int) -> str:
+    """``text`` cut to ``limit`` characters, marked with :data:`TRUNCATED`."""
+
     return text if len(text) <= limit else text[: max(0, limit - len(TRUNCATED))] + TRUNCATED
 
 
@@ -68,8 +74,8 @@ class Notifier:
 
         item = dataclasses.replace(
             item,
-            title=_cut(sanitize_text(item.title), self._max_chars),
-            body=_cut(sanitize_text(item.body), self._max_chars),
+            title=cut(sanitize_text(item.title), self._max_chars),
+            body=cut(sanitize_text(item.body), self._max_chars),
         )
         delivered: list[str] = []
         for channel in self._channels:
@@ -158,4 +164,4 @@ class WebhookOutChannel:
         await self._client.aclose()
 
 
-__all__ = ["TRUNCATED", "LogChannel", "Notification", "NotificationChannel", "Notifier", "WebhookOutChannel"]
+__all__ = ["TRUNCATED", "cut", "LogChannel", "Notification", "NotificationChannel", "Notifier", "WebhookOutChannel"]

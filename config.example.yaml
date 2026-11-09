@@ -134,6 +134,27 @@ llm:
   #   model: <model-id>
 
 # ---------------------------------------------------------------------------
+# Model cascade: tiers above the session model (tier 0 = llm.model, --model,
+# /model). The agent climbs one tier when it is stuck, never down within a task.
+# Off by default (docs/development/serve-mode.md).
+cascade:
+  enabled: false                                # (default)
+  tiers: []                                     # (default) at most 3, cheapest first
+  # tiers:
+  #   - model: gpt-oss:120b-cloud               # inherits provider, host, key from llm
+  #     label: strong                           # name in events and usage by_model
+  #   - model: gpt-5
+  #     provider: openai_compat
+  #     host: https://api.openai.com/v1
+  #     temperature: null                       # send no temperature
+  # A money cap (loop.max_task_cost, serve budgets) needs llm.prices for every tier.
+  retarget_tier: 0                              # (default) tier of the replay retarget
+  escalate_after_failures: 2                    # (default) failed calls in a row
+  escalate_after_replans: 1                     # (default)
+  escalate_on_progress_block: true              # (default)
+  escalate_on_no_action: true                   # (default) empty answer: up, not the end
+
+# ---------------------------------------------------------------------------
 browser:
   # Chrome binary to launch. Forward slashes: python-dotenv decodes escapes in
   # double-quoted .env values, so "C:\temp" becomes a tab there.
@@ -598,8 +619,11 @@ serve:
   port: 8765                                    # (default)
   allow_remote: false                           # (default)
   dir: serve                                    # (default) ledger, events, job state
-  profiles_dir: serve/profiles                  # (default) worker browser profiles
-  cdp_port_base: 9300                           # (default) CDP port of worker w0
+  workers: 1                                    # (default) 1..8; > 1 needs memory.persistent_enabled: false
+  profiles_dir: serve/profiles                  # (default) worker browser profiles, w<i> each
+  cdp_port_base: 9300                           # (default) CDP port of worker w0 (w<i>: + i)
+  # With browser.launch: external give each worker its own profile in the browser server:
+  #   mcp_servers.playwright.args: [..., --user-data-dir, "{profile_dir}"]
   queue_size: 20                                # (default)
   coalesce: drop                                # (default) drop | queue_one
   cooldown_seconds: 0.0                         # (default)
@@ -620,10 +644,22 @@ serve:
   free_task_domains: []                         # (default) task scope of free tasks
   api_approvals: false                          # (default) off: approvals are denied
   log_client_addresses: false                   # (default)
-  channels: [log]                               # (default) log | webhook
+  channels: [log]                               # (default) log | webhook | telegram
   notify_max_chars: 1500                        # (default)
   # webhook_out: {url: https://hooks.example/autobrowser, timeout_seconds: 10.0}
   #   # secret: AUTOBROWSER_SERVE__WEBHOOK_OUT__SECRET in the environment
+  # telegram:                                   # channels: [log, telegram]
+  #   # bot_token: AUTOBROWSER_SERVE__TELEGRAM__BOT_TOKEN in the environment
+  #   allowed_chat_ids: [123456789]             # only these chats are answered
+  #   api_base: ""                              # (default) a self-hosted Bot API server
+  #   approvals: true                           # (default) approval buttons
+  #   poll_timeout_seconds: 30                  # (default) 1..60
+  #   request_timeout_seconds: 10.0             # (default)
+  #   poll_backoff_seconds: 1.0                 # (default) doubles after each failed poll
+  #   poll_backoff_max_seconds: 60.0            # (default)
+  #   send_retry_max_seconds: 30.0              # (default) one retry on a rate limit
+  #   max_update_age_seconds: 300.0             # (default) older messages are ignored
+  # A job runs from the chat (/run <job>) only with a trigger {id: chat, type: telegram}.
   jobs: {}                                      # (default) e.g.
   #   price-watch:
   #     task: "Open https://shop.example/item/1 and report the current price."
@@ -642,3 +678,4 @@ serve:
   #     budget: {max_model_calls: 20, max_cost: 0.02}
   #     domains: [shop.example]
   #     notify_on: [change, failure, blocked, budget]
+  #     worker: 0                               # pin to w0 (its profile has the logins)

@@ -5,11 +5,14 @@
 Фаза 1 (replay, бюджеты, учёт стоимости) реализована 2026-11-02; руководство —
 [replay.md](replay.md). Фаза 3 (стенд минимум) реализована 2026-11-09 —
 [план](2026-11-02-serve-mode-phase3-plan.md), руководство — [serve-mode.md](serve-mode.md).
-Фаза 4 не начата.
+Фаза 4 (каскад моделей, Telegram, пул worker'ов) реализована 2026-11-09 —
+[системный дизайн](2026-11-08-serve-mode-phase4-design.md), [план](2026-11-08-serve-mode-phase4-plan.md),
+руководство — [serve-mode.md](serve-mode.md).
 Дата: 2026-11-02
 Ветка: `feat/serve-mode`
 ADR (Accepted):
 - [2026-11-02 Режим стенда и лестница стоимости](../decisions/2026-11-02-serve-mode-and-cost-ladder.md)
+- [2026-11-09 Каскад над моделью сессии, каналы чата и пул worker'ов](../decisions/2026-11-09-cascade-channels-and-worker-pool.md)
 
 Диаграммы: [Serve Mode](../diagrams/serve-mode.md).
 

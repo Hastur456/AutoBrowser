@@ -1,6 +1,7 @@
 # ADR: Model-Based Approval Judge
 
-Status: Proposed
+Status: Accepted (implemented: `permissions.approval_judge`, `src/agent_loop/execution/approval.py`;
+guide: [permissions](../development/permissions.md))
 Date: 2026-10-02
 
 ## Context

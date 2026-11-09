@@ -5,14 +5,15 @@ development workflows.
 
 ## Index
 
-- [Agent Runtime Flow](agent-runtime-flow.md): engine-native `AgentLoopEngine`
-  flow from task input through planning, policy, execution, observation, and
-  completion, including the lifecycle hook points (`goal_start`, `pre_tool_use`,
-  `permission_request`, `post_tool_use`, `stop`, `goal_end`) and the `continue`
-  branch of a rejected completion.
+- [Agent Runtime Flow](agent-runtime-flow.md): the engine-native `AgentLoopEngine` in three
+  views — the run (goal hooks, plan or recorded plan, the tier escalation check, turn cap,
+  replan), one turn (step source or model on the current tier, stop hook, budget) and one tool
+  call (progress guard, `pre_tool_use`, `PermissionEngine`, approval judge,
+  `permission_request`, the human, invoke, `post_tool_use`, observe).
 - [Harness Boundaries](harness-boundaries.md): session ownership through
-  `SessionContext` and runtime infrastructure bundled by `BrowserHarness` into
-  `EngineResources` for the engine, plus the session-scoped `HookEngine` path.
+  `SessionContext`, front ends and the stand as `SessionController` clients, runtime
+  infrastructure bundled by `BrowserHarness` into `EngineResources`, and the session-scoped
+  collaborators (hooks, permissions, memory, skills, replay, model tiers).
 - [MCP Runtime](mcp-runtime.md): settings-driven `MCPManager` construction,
   start/shutdown inside the session, and the catalog-to-`ToolRegistry` bridge.
 - [Tool Call Normalization](browser-provider-boundary.md): request/result
@@ -34,10 +35,11 @@ development workflows.
 - [Trace Export](trace-export.md): session events through the sinks (`events.jsonl`,
   `agent_trace.jsonl`, the OTLP sink) to Langfuse or another OTLP backend, and the span tree
   of one task.
-- [Serve Mode](serve-mode.md) (phases 1 and 3 implemented; pool, cascade and Telegram in phase 4): the stand process (`autobrowser serve`) as a
-  `SessionController` client and its import fences, the cost ladder state machine
-  (probe → playback → retarget → agent → human), and one replayed step with ref rebinding,
-  retargeting and handoff.
+- [Serve Mode](serve-mode.md) (phases 1, 3 and 4 implemented): the stand process
+  (`autobrowser serve`) as a `SessionController` client and its import fences, the cost ladder
+  state machine (probe → playback → retarget → agent → human), one replayed step with ref
+  rebinding, retargeting and handoff, the model tier escalation, the Telegram channel and the
+  worker pool.
 
 ## Update Guidance
 

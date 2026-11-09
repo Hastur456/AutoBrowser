@@ -1,0 +1,62 @@
+{
+  "schema_version": 2,
+  "suite": "cascade",
+  "scenarios": {
+    "cascade_empty_answer_escalates": {
+      "action_signature": "sha256:1f5e3db7f8e2c7a2bb44843b822636868fbba6b8b798211bc49800164273ffa0",
+      "approval_request_count": 0,
+      "error_count": 0,
+      "final_answer": "The item costs $24.99.",
+      "model_turn_count": 4,
+      "observation_count": 1,
+      "policy_block_count": 0,
+      "repeated_action_count": 0,
+      "request_chars": 84628,
+      "terminal_status": "completed",
+      "tool_call_count": 1,
+      "trace_complete": true
+    },
+    "cascade_no_escalation": {
+      "action_signature": "sha256:1f5e3db7f8e2c7a2bb44843b822636868fbba6b8b798211bc49800164273ffa0",
+      "approval_request_count": 0,
+      "error_count": 0,
+      "final_answer": "The item costs $24.99.",
+      "model_turn_count": 3,
+      "observation_count": 1,
+      "policy_block_count": 0,
+      "repeated_action_count": 0,
+      "request_chars": 63847,
+      "terminal_status": "completed",
+      "tool_call_count": 1,
+      "trace_complete": true
+    },
+    "cascade_progress_block_escalates": {
+      "action_signature": "sha256:61384e91ca6907dc2377b8c07c21a2bc4456ae42737949d3a70d593f4750de54",
+      "approval_request_count": 0,
+      "error_count": 0,
+      "final_answer": "The mug costs $24.99.",
+      "model_turn_count": 10,
+      "observation_count": 7,
+      "policy_block_count": 1,
+      "repeated_action_count": 0,
+      "request_chars": 219663,
+      "terminal_status": "completed",
+      "tool_call_count": 7,
+      "trace_complete": true
+    },
+    "cascade_replan_escalates": {
+      "action_signature": "sha256:1f5e3db7f8e2c7a2bb44843b822636868fbba6b8b798211bc49800164273ffa0",
+      "approval_request_count": 0,
+      "error_count": 0,
+      "final_answer": "The item costs $24.99.",
+      "model_turn_count": 5,
+      "observation_count": 1,
+      "policy_block_count": 0,
+      "repeated_action_count": 0,
+      "request_chars": 106587,
+      "terminal_status": "completed",
+      "tool_call_count": 1,
+      "trace_complete": true
+    }
+  }
+}

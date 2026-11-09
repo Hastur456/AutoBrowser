@@ -164,7 +164,12 @@ def _doctor(args: argparse.Namespace, write: Callable[[str], None]) -> int:
     try:
         settings = get_settings()
     except Exception as exc:  # noqa: BLE001 - doctor reports a broken configuration
-        check(_FAIL, "settings", f"{type(exc).__name__}: {exc}")
+        from src.cli.output import config_error_lines
+
+        # Where and why, never the values: a broken section may hold a token.
+        lines = config_error_lines(exc) if isinstance(exc, ValueError) else [type(exc).__name__]
+        for line in lines:
+            check(_FAIL, "settings", line)
         return 1
     storage = settings.storage
     check(_OK, "storage", storage.root_dir)
@@ -183,6 +188,7 @@ def _doctor(args: argparse.Namespace, write: Callable[[str], None]) -> int:
     check(llm_mark, "llm", llm_line)
     if getattr(args, "llm", False):
         check(*_llm_probe(settings.llm, timeout))
+    _doctor_cascade(settings, check, probe=bool(getattr(args, "llm", False)), timeout=timeout)
     for tool in ("node", "npx"):
         path = shutil.which(tool)
         if path is None:
@@ -202,6 +208,7 @@ def _doctor(args: argparse.Namespace, write: Callable[[str], None]) -> int:
     servers = ", ".join(f"{name} ({config.transport})" for name, config in settings.mcp_servers.items())
     check(_OK if servers else _WARN, "mcp servers", servers or "none configured")
     _doctor_skills(settings, check)
+    _doctor_telegram(settings, check, timeout=timeout)
     check(*_telemetry_summary(settings.telemetry))
     check(*_eval_platform_summary(settings.eval_platform))
 
@@ -212,6 +219,101 @@ def _doctor(args: argparse.Namespace, write: Callable[[str], None]) -> int:
         f"{caps.level} · {caps.host} · colors {caps.color} · unicode {caps.unicode} · {caps.reason}",
     )
     return 1 if failures else 0
+
+
+def _doctor_cascade(
+    settings: Settings,
+    check: Callable[[str, str, object], None],
+    *,
+    probe: bool,
+    timeout: float,
+) -> None:
+    """One line per cascade tier (only while ``cascade.enabled``), offline: label, protocol,
+    public host, model, whether a key and a price are set. ``--llm`` probes each tier whose
+    provider or host differs from the session's."""
+
+    from src.cli.models import tier_llm_settings
+
+    cascade = settings.cascade
+    if not cascade.enabled:
+        return
+    if not cascade.tiers:
+        check(_WARN, "cascade", "on, but no tiers above the session model: one tier")
+        return
+    if cascade.escalate_after_failures > settings.loop.max_consecutive_failures:
+        check(
+            _WARN,
+            "cascade",
+            f"escalate_after_failures {cascade.escalate_after_failures} is above "
+            f"loop.max_consecutive_failures {settings.loop.max_consecutive_failures}: "
+            f"failures end the task before the tier goes up",
+        )
+    session = (settings.llm.provider, settings.llm.host)
+    for index, spec in enumerate(cascade.tiers, start=1):
+        try:
+            llm = tier_llm_settings(spec, settings.llm)
+        except ValueError as exc:
+            check(_FAIL, "cascade", f"tier {index}: {exc}")
+            continue
+        key = "key set" if llm.api_key and llm.api_key.get_secret_value().strip() else "no key"
+        priced = spec.model in settings.llm.prices
+        parts = [
+            f"tier {index} {spec.tier_label}",
+            llm.provider,
+            _public_url(llm.host) or "client default",
+            llm.model,
+            key,
+            "priced" if priced else "no price",
+        ]
+        check(_OK if priced else _WARN, "cascade", " · ".join(parts))
+        if probe and (llm.provider, llm.host) != session:
+            mark, _label, line = _llm_probe(llm, timeout)
+            check(mark, "cascade probe", f"tier {index}: {line}")
+
+
+def _doctor_telegram(
+    settings: Settings, check: Callable[[str, str, object], None], *, timeout: float
+) -> None:
+    """The Telegram channel (only while it is in ``serve.channels``): whether a token is set
+    (never its value), the allowed chats, the API host; then one ``getWebhookInfo`` call,
+    because a webhook on the bot blocks long polling (the URL is never printed)."""
+
+    serve = settings.serve
+    telegram = serve.telegram
+    if "telegram" not in serve.channels or telegram is None:
+        return
+    import asyncio
+
+    from src.channels.telegram import BotApi, TelegramError
+
+    token = bool(telegram.bot_token and telegram.bot_token.get_secret_value().strip())
+    api = _public_url(telegram.api_base) if telegram.api_base else "public Bot API"
+    approvals = "approval buttons" if telegram.approvals else "no approval buttons"
+    check(
+        _OK if token and telegram.allowed_chat_ids else _FAIL,
+        "telegram",
+        f"{'token set' if token else 'no token'} · {len(telegram.allowed_chat_ids)} chats · {api} · {approvals}",
+    )
+    if not token:
+        return
+
+    async def webhook() -> tuple[bool, int]:
+        bot = BotApi(telegram.model_copy(update={"request_timeout_seconds": timeout}))
+        try:
+            info = await bot.get_webhook_info()
+        finally:
+            await bot.aclose()
+        return info.set, info.pending_updates
+
+    try:
+        is_set, pending = asyncio.run(webhook())
+    except TelegramError as exc:
+        check(_FAIL, "telegram api", type(exc).__name__)
+        return
+    if is_set:
+        check(_FAIL, "telegram api", "a webhook is set: long polling is blocked (deleteWebhook)")
+    else:
+        check(_OK, "telegram api", f"reachable · no webhook · {pending} pending updates")
 
 
 def _doctor_skills(settings: Settings, check: Callable[[str, str, object], None]) -> None:

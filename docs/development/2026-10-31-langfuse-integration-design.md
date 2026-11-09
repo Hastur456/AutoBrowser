@@ -1,6 +1,7 @@
 # Интеграция с Langfuse: версии датасетов, эксперименты, оценки и разметка поверх локальных результатов
 
-Статус: Proposed (проект)
+Статус: Implemented (ADR [2026-10-31](../decisions/2026-10-31-langfuse-platform-integration.md)
+Accepted) — руководство [eval-platform.md](eval-platform.md), `scripts/langfuse_sync.py`
 Дата: 2026-10-31
 Рекомендуемая ветка: `feat/langfuse-sync` (рабочее имя `feat/langfuse-evals`, обоснование — §8.1)
 Родительские документы:

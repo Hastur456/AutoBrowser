@@ -6,6 +6,22 @@ import json
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from pydantic import ValidationError
+
+
+def config_error_lines(exc: ValueError) -> list[str]:
+    """Where and why the configuration is invalid, never the offending values: pydantic's
+    own message repeats the input, and with it tokens and secrets (``serve --check``,
+    ``doctor``)."""
+
+    if isinstance(exc, ValidationError):
+        return [
+            f"{'.'.join(str(part) for part in error['loc']) or 'settings'}: {error['msg']}"
+            for error in exc.errors(include_input=False, include_url=False)
+        ]
+    return [str(exc)]
+
+
 def format_state(value: Any, as_json: bool = False) -> str:
     """Format a graph state value for terminal output."""
 
@@ -64,6 +80,7 @@ def print_final_state(result: Any, as_json: bool) -> None:
 
 
 __all__ = [
+    "config_error_lines",
     "format_mcp_status",
     "format_state",
     "print_final_state",

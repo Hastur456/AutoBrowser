@@ -493,7 +493,7 @@ async def test_a_stop_after_the_probe_never_starts_the_main_task(tmp_path: Path)
         rig.dispatcher._stopping = True  # the shutdown arrives while the probe ends
 
     worker.on_run = stop_now
-    await rig.dispatcher._run_next()
+    await rig.dispatcher.run_pending()
 
     assert len(worker.calls) == 1
     report = rig.ledger.find(fired.run_id)

@@ -25,6 +25,7 @@ from src.agent_loop.execution.approval import ApprovalJudge
 from src.agent_loop.execution.loop import Agent, AgentLoopResult, HumanInputCallback
 from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
+from src.agent_loop.execution.state import TierMarks
 from src.agent_loop.execution.tools import tool_catalog
 from src.agent_loop.goals import GoalLimits, GoalRunner
 from src.agent_loop.recordings import validate_recording_name
@@ -72,7 +73,7 @@ from src.harness.session_store import (
 )
 from src.harness.telemetry import TelemetryObserver
 from src.harness.tools import ToolRegistry, to_tool_def, tool_name
-from src.llm import ChatModel, ModelPrice, ModelTiers
+from src.llm import ChatModel, ModelPrice, ModelTier, ModelTiers
 
 
 _LOG = logging.getLogger(__name__)
@@ -83,6 +84,10 @@ LLMFactory = Callable[..., ChatModel]
 #: ``model_catalog()``: the model ids the configured provider offers (``/model``); the CLI
 #: passes ``src.providers.registry.list_chat_models``. Raises when the provider cannot answer.
 ModelCatalog = Callable[[], Awaitable[Sequence[str]]]
+#: ``cascade_factory()``: the model tiers above the session model, labelled and priced
+#: (``cascade.*``); the CLI builds them with the provider registry (``src/cli/models.py``).
+#: Called once per session, like the session model: provider clients bind to its loop.
+CascadeFactory = Callable[[], Sequence[ModelTier]]
 HarnessFactory = Callable[..., BrowserHarness]
 #: ``factory(cdp_port, errlog)``: ``errlog`` is the session's child-process stderr log.
 MCPRuntimeFactory = Callable[[int, TextIO], MCPRuntime]
@@ -136,6 +141,9 @@ TASK_BOUNDARY_RESETS: dict[str, Any] = {
     "working_notes": "",
     "ladder_stage": "agent",
     "model_tier": 0,
+    "progress_blocks": 0,
+    "tier_marks": TierMarks(),
+    "tier_signal": "",
     "usage": TaskUsage(),
     "playback_diverged": "",
 }
@@ -335,10 +343,11 @@ class WorkspaceContext:
             path.mkdir(parents=True, exist_ok=True)
 
 
-def default_mcp_runtime_factory(cdp_port: int, errlog: TextIO) -> MCPRuntime:
-    """Build the session's MCP runtime from settings (``mcp_servers``)."""
+def default_mcp_runtime_factory(cdp_port: int, errlog: TextIO, *, profile_dir: str = "") -> MCPRuntime:
+    """Build the session's MCP runtime from settings (``mcp_servers``); ``profile_dir``
+    fills the ``{profile_dir}`` placeholder (``build_session`` binds the session's profile)."""
 
-    return build_mcp_runtime(cdp_port=cdp_port, errlog=errlog)
+    return build_mcp_runtime(cdp_port=cdp_port, errlog=errlog, profile_dir=profile_dir)
 
 
 def _json_safe(value: Any) -> Any:
@@ -519,6 +528,9 @@ class SessionContext:
     events: SessionEventBus = field(default_factory=SessionEventBus)
     harness: BrowserHarness | None = None
     llm: Any | None = None
+    #: The cascade tiers above the session model, built in :meth:`initialize`; ``()``
+    #: without a cascade (one tier).
+    cascade_tiers: tuple[ModelTier, ...] = ()
     tool_registry: ToolRegistry | None = None
     mcp: MCPRuntime | None = None
     telemetry: TelemetryObserver = field(default_factory=TelemetryObserver)
@@ -611,6 +623,7 @@ class SessionContext:
         output_fn: Callable[..., None],
         print_tools: ToolPrinter | None,
         harness_factory: HarnessFactory,
+        cascade_factory: CascadeFactory | None = None,
     ) -> None:
         """Initialize session-owned runtime resources once."""
 
@@ -673,6 +686,7 @@ class SessionContext:
         self.workspace.initialize()
 
         self.llm, self.approval = self._build_model(self.config, llm_factory)
+        self.cascade_tiers = tuple(cascade_factory()) if cascade_factory is not None else ()
         if self.config.no_mcp:
             session_tools += self._load_skills(settings)
             self.tool_registry = ToolRegistry(session_tools)
@@ -993,6 +1007,7 @@ class SessionContext:
 
         if self.harness is None or self.llm is None:
             raise RuntimeError("SessionContext.build_agent() needs an initialized session.")
+        tiers = self.model_tiers()
         resources = EngineResources.from_harness(
             self.harness,
             llm=self.llm,
@@ -1001,41 +1016,62 @@ class SessionContext:
             permissions=self.permissions,
             approval=self.approval,
             memory=self.memory,
-            steps=self._step_sources(),
-            models=ModelTiers.single(
-                self.llm, label=self.config.model, price=self._model_price(self.config.model)
-            ),
+            steps=self._step_sources(tiers),
+            models=tiers,
         )
         return Agent(resources, human_input=human_input)
 
-    @staticmethod
-    def _model_price(model: str) -> ModelPrice | None:
-        """The ``llm.prices`` entry of ``model``; ``None`` (an unknown cost) without one."""
+    def model_tiers(self) -> ModelTiers:
+        """The models the agent may drive: tier 0 is the session model (``config.model``,
+        ``/model``), the cascade tiers follow it. A cascade label equal to tier 0's would merge
+        both in ``usage.by_model``, so it is refused."""
 
-        spec = get_settings().llm.prices.get(model)
-        if spec is None:
-            return None
-        return ModelPrice(
-            input_per_mtok=spec.input_per_mtok,
-            output_per_mtok=spec.output_per_mtok,
-            cached_input_per_mtok=spec.cached_input_per_mtok,
+        if self.llm is None:
+            raise RuntimeError("SessionContext.model_tiers() needs an initialized session.")
+        session_tier = ModelTier(
+            self.llm, label=self.config.model, price=model_price(self.config.model)
         )
+        self.refuse_tier_label(session_tier.label)
+        if not self.cascade_tiers:
+            return ModelTiers((session_tier,))
+        retarget = min(get_settings().cascade.retarget_tier, len(self.cascade_tiers))
+        return ModelTiers((session_tier, *self.cascade_tiers), retarget_tier=retarget)
 
-    def _step_sources(self) -> PlaybackFactory | None:
-        """The playback step sources when replay is enabled (``replay.enabled``)."""
+    def refuse_tier_label(self, model: str) -> None:
+        """``ValueError`` when ``model`` (the session model to be) is the label of a cascade
+        tier: ``usage.by_model`` would merge them."""
+
+        for tier in self.cascade_tiers:
+            if tier.label == model:
+                raise ValueError(
+                    f"cascade tier {tier.label!r} has the label of the session model: "
+                    f"give it a label (cascade.tiers[].label)"
+                )
+
+    def unpriced_tiers(self) -> list[str]:
+        """Labels of the agent's tiers without an ``llm.prices`` entry (an unknown cost)."""
+
+        return [tier.label for tier in self.model_tiers().tiers if tier.price is None]
+
+    def _step_sources(self, tiers: ModelTiers) -> PlaybackFactory | None:
+        """The playback step sources when replay is enabled (``replay.enabled``); a retarget
+        runs on ``tiers``' retarget tier (``cascade.retarget_tier``)."""
 
         if self.recording_store is None or self.playback_adapter is None:
             return None
         settings = self.recording_store.settings
         retargeter = None
         if settings.retarget_enabled and self.llm is not None:
+            tier = tiers.tier(tiers.retarget_tier)
             retargeter = Retargeter(
-                self.llm,
+                tier.model,
                 self.playback_adapter,
                 settings,
                 tool_def=self._tool_def,
-                model_label=self.config.model,
-                price=self._model_price(self.config.model),
+                model_label=tier.label,
+                price=tier.price,
+                tier=tiers.retarget_tier,
+                name_model=len(tiers.tiers) > 1,
             )
         self.playback_factory = PlaybackFactory(
             self.recording_store, self.playback_adapter, settings, retargeter=retargeter
@@ -1155,6 +1191,19 @@ class SessionContext:
                     kill()
 
 
+def model_price(model: str) -> ModelPrice | None:
+    """The ``llm.prices`` entry of ``model``; ``None`` (an unknown cost) without one."""
+
+    spec = get_settings().llm.prices.get(model)
+    if spec is None:
+        return None
+    return ModelPrice(
+        input_per_mtok=spec.input_per_mtok,
+        output_per_mtok=spec.output_per_mtok,
+        cached_input_per_mtok=spec.cached_input_per_mtok,
+    )
+
+
 class SessionRuntime:
     """Own process-lifetime resources and delegate user tasks to the agent."""
 
@@ -1174,6 +1223,7 @@ class SessionRuntime:
         event_sinks: Sequence[EventSink] = (),
         resume_from: Path | None = None,
         model_catalog: ModelCatalog | None = None,
+        cascade_factory: CascadeFactory | None = None,
     ) -> None:
         self.config = config
         self._event_sinks = tuple(event_sinks)
@@ -1184,6 +1234,7 @@ class SessionRuntime:
             else SessionContext(config, event_sinks=self._event_sinks)
         )
         self._llm_factory = llm_factory
+        self._cascade_factory = cascade_factory
         self._model_catalog = model_catalog
         self._start_chrome_cdp = start_chrome_cdp
         self._wait_for_port = wait_for_port
@@ -1227,12 +1278,20 @@ class SessionRuntime:
             output_fn=self._output,
             print_tools=self._print_tools,
             harness_factory=self._harness_factory,
+            cascade_factory=self._cascade_factory,
         )
         self.agent = self.context.build_agent(human_input=self._human_input)
         if self.context.permissions.mode == "bypass":
             self._output(
                 "WARNING: permission mode 'bypass' grants every approval; only deny rules "
                 "and always-ask rules still hold."
+            )
+        unpriced = self.context.unpriced_tiers()
+        if get_settings().loop.max_task_cost is not None and unpriced:
+            self._output(
+                f"WARNING: loop.max_task_cost is set but llm.prices has no price for "
+                f"{', '.join(repr(label) for label in unpriced)}: their cost is unknown and "
+                f"the money cap cannot stop them."
             )
 
     async def list_models(self) -> list[str]:
@@ -1262,9 +1321,18 @@ class SessionRuntime:
             return
         config = replace(self.config, model=name)
         if not self.context.initialized:
+            # The tiers are built at start; until then the configured labels tell.
+            cascade = get_settings().cascade
+            if cascade.enabled and name in {tier.tier_label for tier in cascade.tiers}:
+                raise ValueError(
+                    f"cascade tier {name!r} has the label of the session model: "
+                    f"give it a label (cascade.tiers[].label)"
+                )
             self.context.config = config
             self.config = config
             return
+        # Before anything changes: a failed switch leaves the session as it was.
+        self.context.refuse_tier_label(name)
         self.context.use_model(config, self._llm_factory)
         self.agent = self.context.build_agent(human_input=self._human_input)
         self.config = config
@@ -1561,6 +1629,7 @@ __all__ = [
     "Artifact",
     "ArtifactRegistry",
     "CHILD_STDERR_LOG_NAME",
+    "CascadeFactory",
     "EXIT_COMMANDS",
     "MCPRuntimeFactory",
     "SessionConfig",
@@ -1573,4 +1642,5 @@ __all__ = [
     "ToolPrinter",
     "WorkspaceContext",
     "default_mcp_runtime_factory",
+    "model_price",
 ]
