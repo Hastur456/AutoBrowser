@@ -719,18 +719,20 @@ class TurnController:
             "ladder.escalated",
             {"from": state.ladder_stage, "to": "agent", "reason": handoff.kind, "step": handoff.step},
         )
-        # What playback ran into is not the first tier's doing: the cascade counts from here.
-        marks = TierMarks(
-            replans=state.replan_count,
-            progress_blocks=state.progress_blocks,
-            failures=state.consecutive_failures,
-        )
+        # With a cascade, what playback ran into is not the first tier's doing: the agent starts
+        # with a fresh failure window and the cascade counts from here (as after a tier change).
+        cascade: dict[str, Any] = {}
+        if len(self._tiers.tiers) > 1:
+            cascade = {
+                "consecutive_failures": 0,
+                "tier_marks": TierMarks(replans=state.replan_count, progress_blocks=state.progress_blocks),
+            }
         handed = state.apply(
             {
                 "ladder_stage": "agent",
                 "usage": _reached(state.usage, "agent"),
                 "messages": [*self._history(state), user_message(f"[harness] {handoff.reason}")],
-                "tier_marks": marks,
+                **cascade,
             }
         )
         update = await self._model_step(handed)
@@ -738,7 +740,7 @@ class TurnController:
             "ladder_stage": "agent",
             "usage": handed.usage,
             "messages": handed.messages,
-            "tier_marks": marks,
+            **cascade,
             **diverged,
             **update,
         }

@@ -106,19 +106,3 @@ def test_escalation_possible_needs_a_higher_tier_and_the_agent() -> None:
     assert not escalation_possible(state(), tier_count=1)
     assert not escalation_possible(state(model_tier=1), tier_count=2)
     assert not escalation_possible(state(ladder_stage="playback"), tier_count=2)
-
-
-def test_failures_before_the_mark_do_not_count() -> None:
-    marked = state(tier_marks=TierMarks(failures=1))
-
-    assert escalate(marked.apply({"consecutive_failures": 2})) == ({}, None)
-    assert escalate(marked.apply({"consecutive_failures": 3}))[1] == "failures"
-
-
-def test_a_success_after_the_mark_clears_it() -> None:
-    marked = state(tier_marks=TierMarks(replans=1, failures=2), replan_count=1)
-
-    update, why = escalate(marked.apply({"consecutive_failures": 0}))
-
-    assert why is None
-    assert update == {"tier_marks": TierMarks(replans=1, failures=0)}

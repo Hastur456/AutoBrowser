@@ -259,3 +259,57 @@ async def test_the_failures_of_playback_do_not_count_for_the_first_tier() -> Non
     assert result.status == "done"
     assert strong.calls == 0
     assert [event for event in of_type(list(sink.records), "ladder.escalated") if "tier" in event] == []
+
+
+async def test_after_a_handoff_with_failures_the_cascade_still_escalates() -> None:
+    """Two failed replayed steps, then the agent: tier 0 gets a fresh failure window, so two
+    failures of its own lift the tier before loop.max_consecutive_failures ends the task."""
+
+    from src.contracts import PlaybackRequest, StepHandoff, StepProposal
+    from tests.test_agent_loop_playback import Factory, ScriptedSource, Shop
+
+    def missing(step: int) -> StepProposal:
+        return StepProposal(request={"name": "missing_tool", "args": {"n": step}}, stage="playback", step=step)
+
+    source = ScriptedSource([missing(1), missing(2), StepHandoff(reason="The page changed.", kind="tool_error")])
+    fail = [json.dumps({"decision": "tool_call", "tool_request": {"name": "missing_tool", "args": {"m": i}, "id": f"m{i}"}}) for i in (1, 2)]
+    cheap, strong = Scripted(*fail), Scripted(DONE)
+    sink = InMemoryEventSink()
+    emitter = EventEmitter(sink, session_id="s")
+    harness = BrowserHarness(llm=cheap, tool_registry=ToolRegistry(tools=Shop().tools()), event_emitter=emitter)
+    resources = EngineResources.from_harness(
+        harness, llm=cheap, events=emitter, steps=Factory(source), models=two_tiers(cheap, strong)
+    )
+
+    result = await AgentLoopEngine(resources).run(
+        "Look.", task_id="t", session_id="s", turn_cap=20,
+        profile=RunProfile(playback=PlaybackRequest(recording="r")),
+    )
+
+    assert result.status == "done"
+    assert strong.calls == 1
+    assert [event["reason"] for event in of_type(list(sink.records), "ladder.escalated") if "tier" in event] == ["failures"]
+
+
+async def test_without_a_cascade_a_handoff_keeps_the_failure_count() -> None:
+    from src.contracts import PlaybackRequest, StepHandoff, StepProposal
+    from tests.test_agent_loop_playback import Factory, ScriptedSource, Shop
+
+    def missing(step: int) -> StepProposal:
+        return StepProposal(request={"name": "missing_tool", "args": {"n": step}}, stage="playback", step=step)
+
+    source = ScriptedSource([missing(1), missing(2), StepHandoff(reason="The page changed.", kind="tool_error")])
+    fail = json.dumps({"decision": "tool_call", "tool_request": {"name": "missing_tool", "args": {"m": 1}, "id": "m"}})
+    cheap = Scripted(fail, DONE)
+    sink = InMemoryEventSink()
+    emitter = EventEmitter(sink, session_id="s")
+    harness = BrowserHarness(llm=cheap, tool_registry=ToolRegistry(tools=Shop().tools()), event_emitter=emitter)
+    resources = EngineResources.from_harness(harness, llm=cheap, events=emitter, steps=Factory(source))
+
+    result = await AgentLoopEngine(resources).run(
+        "Look.", task_id="t", session_id="s", turn_cap=20,
+        profile=RunProfile(playback=PlaybackRequest(recording="r")),
+    )
+
+    # As before the cascade: two replayed failures plus one of the model end the task.
+    assert (result.status, result.stop_reason) == ("blocked", "consecutive_failures")
