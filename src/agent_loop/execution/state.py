@@ -55,6 +55,14 @@ class BrowserState:
 
 
 @dataclass(frozen=True)
+class TierMarks:
+    """Counters at the last change of the model tier: escalation counts what happened since."""
+
+    replans: int = 0
+    progress_blocks: int = 0
+
+
+@dataclass(frozen=True)
 class LoopState:
     """Typed engine-native state for the Plan -> Execute -> Observe loop.
 
@@ -103,11 +111,17 @@ class LoopState:
     working_notes: str = ""
 
     # Cost ladder (task-local): who proposes the next step (``playback``/``retarget`` while a
-    # step source drives, ``agent`` otherwise), the model tier the agent runs on (always 0
-    # until the model cascade of phase 4) and the task's model accounting. Not part of
-    # ``to_session_state``.
+    # step source drives, ``agent`` otherwise), the model tier the agent runs on (0 = the
+    # session model; a cascade adds tiers above it) and the task's model accounting. Not part
+    # of ``to_session_state``.
     ladder_stage: str = "agent"
     model_tier: int = 0
+    # Model cascade (task-local): progress-guard blocks of this task, the counters at the last
+    # tier change, and ``"no_action"`` after an empty model answer that a higher tier should
+    # retry (``guards.tier_escalation``).
+    progress_blocks: int = 0
+    tier_marks: TierMarks = field(default_factory=TierMarks)
+    tier_signal: str = ""
     usage: TaskUsage = field(default_factory=TaskUsage)
     # The divergence that ended playback (``StepHandoffKind``), ``""`` when none did.
     playback_diverged: str = ""
@@ -220,4 +234,5 @@ __all__ = [
     "BROWSER_STATE_FIELDS",
     "BrowserState",
     "LoopState",
+    "TierMarks",
 ]

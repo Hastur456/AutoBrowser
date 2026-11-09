@@ -67,6 +67,12 @@ ADR: [2026-11-02 serve mode and cost ladder](../decisions/2026-11-02-serve-mode-
 | U62 | `test_serve_boundaries.py`: `src.serve` не импортирует `src.channels`; `src/channels` — только разрешённые импорты; `src.channels` импортирует только `src/cli/`. | 19b |
 | U63 | Подъём уровня — `ladder.escalated{from: agent, to: agent, reason, from_tier, tier, model}`. | 18b |
 
+Решения, принятые при реализации (продолжение нумерации):
+
+| # | Наблюдение | Решение | Шаг |
+| --- | --- | --- | --- |
+| U64 | Подъём по неудачам при дефолтах (`escalate_after_failures=2`, `loop.max_consecutive_failures=3`) оставлял новому уровню одну попытку до терминала `max_consecutive_failures`. | Подъём уровня сбрасывает `consecutive_failures` в 0: новый уровень получает полное окно неудач. Сброс ограничен числом уровней (≤ 3 подъёма за задачу), поэтому бесконечного цикла нет. `TierMarks` хранит только `replans` и `progress_blocks`. | 18b |
+
 Уточнения плана к дизайну (не меняют решений):
 - Scope коммитов — из `.claude/conventions/commit.md`: `agent-loop` (не `engine`), `config`, `cli`,
   `serve`, `evals`, `docs`; новый scope — `channels`.

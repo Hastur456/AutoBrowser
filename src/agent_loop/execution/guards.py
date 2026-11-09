@@ -13,7 +13,7 @@ compares tool names and arguments as given; the progress guard reads the action 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from src.config import get_settings
 from src.contracts import PolicyDecision, ToolRequest
@@ -25,9 +25,10 @@ from src.harness.memory import (
 )
 
 from src.agent_loop.execution.progress import ineffective_repeat_reason
-from src.agent_loop.execution.state import LoopState
+from src.agent_loop.execution.state import LoopState, TierMarks
 
 if TYPE_CHECKING:
+    from src.config import CascadeSettings
     from src.contracts import CompletionStatus, StopReason
 
 
@@ -332,6 +333,58 @@ def _tool_request_update(
     }
 
 
+#: Why the model tier went up (``ladder.escalated{reason}``).
+TierReason = Literal["no_action", "progress_block", "failures", "replans"]
+#: ``LoopState.tier_signal`` after an empty model answer a higher tier should retry.
+NO_ACTION_SIGNAL = "no_action"
+
+
+def escalation_possible(state: LoopState, *, tier_count: int) -> bool:
+    """A higher model tier exists and the agent, not a step source, drives the task."""
+
+    return tier_count > 1 and state.model_tier < tier_count - 1 and state.ladder_stage == "agent"
+
+
+def tier_escalation(
+    state: LoopState, settings: CascadeSettings, *, tier_count: int
+) -> tuple[dict[str, Any], TierReason | None]:
+    """Pure: the ``LoopState`` update of one check and why the tier went up (``None``: it stayed).
+
+    Up only, one tier per check, in this order: an empty answer (``no_action``), a
+    progress-guard block, ``escalate_after_failures`` failed calls in a row, and
+    ``escalate_after_replans`` replans -- blocks and replans counted since the last tier
+    change (``tier_marks``). Going up clears the signal, moves the marks and gives the new
+    tier a fresh failure window (``consecutive_failures`` back to 0), so it gets the whole
+    ``loop.max_consecutive_failures`` before the task stops. ``settings.enabled`` is not read:
+    a session builds several tiers only when the cascade is on.
+    """
+
+    clear = {"tier_signal": ""} if state.tier_signal else {}
+    if not escalation_possible(state, tier_count=tier_count):
+        return clear, None
+    marks = state.tier_marks
+    reason: TierReason | None = None
+    if settings.escalate_on_no_action and state.tier_signal == NO_ACTION_SIGNAL:
+        reason = "no_action"
+    elif settings.escalate_on_progress_block and state.progress_blocks > marks.progress_blocks:
+        reason = "progress_block"
+    elif state.consecutive_failures >= settings.escalate_after_failures:
+        reason = "failures"
+    elif state.replan_count - marks.replans >= settings.escalate_after_replans:
+        reason = "replans"
+    if reason is None:
+        return clear, None
+    return (
+        {
+            "model_tier": state.model_tier + 1,
+            "tier_marks": TierMarks(replans=state.replan_count, progress_blocks=state.progress_blocks),
+            "tier_signal": "",
+            "consecutive_failures": 0,
+        },
+        reason,
+    )
+
+
 # Public aliases for loop/tests; internal bodies keep the ported names.
 blocked_response = _blocked_response
 done_response = _done_response
@@ -348,7 +401,11 @@ tool_request_update = _tool_request_update
 
 
 __all__ = [
+    "NO_ACTION_SIGNAL",
     "CompletionController",
+    "TierReason",
+    "escalation_possible",
+    "tier_escalation",
     "blocked_response",
     "complete_plan_update",
     "done_response",

@@ -53,14 +53,17 @@ from src.agent_loop.execution.approval import (
     split_approval_request,
 )
 from src.agent_loop.execution.guards import (
+    NO_ACTION_SIGNAL,
     CompletionController,
     blocked_response,
     done_response,
+    escalation_possible,
     progress_block_reason,
     replan_response,
     tool_block_updates,
     tool_gate_updates,
     tool_request_update,
+    tier_escalation,
 )
 from src.agent_loop.execution.notes import offer_notes_argument, split_notes
 from src.agent_loop.execution.observation import ObservationCompiler
@@ -96,6 +99,7 @@ from src.contracts import (
 from src.harness.hooks import HookDecisionRecord, HookOutcome
 from src.harness.memory import ensure_message_history
 from src.harness.tools import tool_is_read_only
+from src.llm import ModelTiers
 from src.messages import Message, user_message
 
 #: Asked when a call needs approval: ``(request, reason, verdict) -> once | session | deny``.
@@ -183,6 +187,21 @@ def _json_object(text: str) -> dict[str, Any]:
     except (ValueError, TypeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def tier_fields(tiers: ModelTiers, index: int) -> dict[str, Any]:
+    """``{"tier", "model"}`` for ``model.*`` payloads; empty with one tier, so a run without a
+    cascade emits exactly the payloads it did before."""
+
+    if len(tiers.tiers) < 2:
+        return {}
+    return {"tier": index, "model": tiers.tier(index).label}
+
+
+def _empty_response(response: Any) -> bool:
+    """No text and no tool call: the model gave no action at all (name-free)."""
+
+    return not getattr(response, "tool_calls", None) and not _message_content(response).strip()
 
 
 def _message_content(response: Any) -> str:
@@ -371,15 +390,12 @@ class TurnController:
             self._model_tools, self._notes_colliding = offer_notes_argument(self._model_tools)
         # normalizers are registered with the tool registry (ToolRegistry.get_normalizers)
         self._broker = ToolBroker(resources.tool_registry)
-        # One tier in this phase (the cascade adds more): today's ``resources.llm`` unless the
-        # session passed its labelled, priced tier.
-        self._tier = resources.tiers().tier(0)
+        # The session's model tiers (one without a cascade: ``resources.llm`` unless the session
+        # passed its labelled, priced tier); the agent runs on ``state.model_tier``.
+        self._tiers = resources.tiers()
+        self._drivers: dict[int, ModelDriver] = {}
         self._budget = budget or RunBudget()
         self._source_calls_seen = 0
-        self._model_driver = ModelDriver(
-            self._tier.model,
-            tool_registry=resources.tool_registry,
-        )
         self._observation = ObservationCompiler()
 
     async def run_turn(self, state: LoopState) -> TurnResult:
@@ -458,8 +474,11 @@ class TurnController:
             tools=self._tools,
             memory=self._resources.memory.render(mapping),
         )
-        self._emit("model.requested", {"phase": "agent", "tool_count": len(self._tools)})
-        model_turn = await self._model_driver.invoke(
+        tier = tier_fields(self._tiers, state.model_tier)
+        self._emit(
+            "model.requested", {"phase": "agent", "tool_count": len(self._tools), **tier}
+        )
+        model_turn = await self._driver(state.model_tier).invoke(
             [*messages, user_message(turn_prompt)],
             tools=self._model_tools,
         )
@@ -470,9 +489,21 @@ class TurnController:
                 "phase": "agent",
                 "metadata": dict(model_turn.metadata or {}),
                 **({"usage": usage} if usage else {}),
+                **tier,
             },
         )
-        accounted = self._account(state.usage, "agent", model_turn.response, usage)
+        accounted = self._account(
+            state.usage, "agent", model_turn.response, usage, tier=state.model_tier
+        )
+
+        if (
+            _empty_response(model_turn.response)
+            and get_settings().cascade.escalate_on_no_action
+            and escalation_possible(state, tier_count=len(self._tiers.tiers))
+        ):
+            # A higher tier answers instead of the empty-response terminal; the engine
+            # escalates before the next turn (``tier_escalation``).
+            return {"decision": "continue", "tier_signal": NO_ACTION_SIGNAL, "usage": accounted}
 
         actions = list(model_turn.actions or [])
         if not actions:
@@ -490,14 +521,34 @@ class TurnController:
             update = await self._stop_check(state, update)
         return {**update, "usage": accounted}
 
-    def _account(
-        self, usage: TaskUsage, stage: str, response: Any, tokens: Mapping[str, int] | None
-    ) -> TaskUsage:
-        """``usage`` plus one call of the current tier's model."""
+    def _driver(self, index: int) -> ModelDriver:
+        """The model driver of tier ``index``, built on first use."""
 
-        tier = self._tier
-        price = tier.price.cost(getattr(response, "usage", None)) if tier.price else None
-        return add_call(usage, stage=stage, model=tier.label, tokens=tokens, cost=price)
+        driver = self._drivers.get(index)
+        if driver is None:
+            driver = ModelDriver(
+                self._tiers.tier(index).model,
+                tool_registry=self._resources.tool_registry,
+            )
+            self._drivers[index] = driver
+        return driver
+
+    def _account(
+        self,
+        usage: TaskUsage,
+        stage: str,
+        response: Any,
+        tokens: Mapping[str, int] | None,
+        *,
+        tier: int = 0,
+    ) -> TaskUsage:
+        """``usage`` plus one call of tier ``tier``'s model."""
+
+        model_tier = self._tiers.tier(tier)
+        price = (
+            model_tier.price.cost(getattr(response, "usage", None)) if model_tier.price else None
+        )
+        return add_call(usage, stage=stage, model=model_tier.label, tokens=tokens, cost=price)
 
     async def _stop_check(self, state: LoopState, update: dict[str, Any]) -> dict[str, Any]:
         """Run ``stop`` hooks on a model ``done`` before it is applied to state.
@@ -851,7 +902,12 @@ class TurnController:
 
         progress_reason = progress_block_reason(state, request)
         if progress_reason is not None:
-            state = state.apply(tool_block_updates(state, progress_reason))
+            state = state.apply(
+                {
+                    **tool_block_updates(state, progress_reason),
+                    "progress_blocks": state.progress_blocks + 1,
+                }
+            )
             self._emit("policy.decided", dict(state.policy_event or {}))
             return state, None
 
@@ -1317,6 +1373,7 @@ class AgentLoopEngine:
         turn = 0
         agent_turns = 0
         while True:
+            state = self._escalate_tier(state)
             turn += 1
             # Replayed steps are bounded by the recording; the cap counts the agent's turns.
             source_turn = step_source is not None and state.ladder_stage in SOURCE_STAGES
@@ -1359,6 +1416,32 @@ class AgentLoopEngine:
                 continue
 
         return await self._finish(state, final_status or "blocked", turns=turn)
+
+    def _escalate_tier(self, state: LoopState) -> LoopState:
+        """Before every turn: move the agent up a model tier when it is stuck
+        (``guards.tier_escalation``), with one ``ladder.escalated``; a no-op with one tier."""
+
+        tiers = self._resources.tiers()
+        if len(tiers.tiers) < 2:
+            return state
+        update, reason = tier_escalation(
+            state, get_settings().cascade, tier_count=len(tiers.tiers)
+        )
+        if not update:
+            return state
+        if reason is not None:
+            self._emit(
+                "ladder.escalated",
+                {
+                    "from": "agent",
+                    "to": "agent",
+                    "reason": reason,
+                    "from_tier": state.model_tier,
+                    "tier": update["model_tier"],
+                    "model": tiers.tier(update["model_tier"]).label,
+                },
+            )
+        return state.apply(update)
 
     def _build_step_source(self, task: str, profile: RunProfile) -> StepSource | None:
         """The task's step source when it replays a recording; ``None`` otherwise.
@@ -1469,11 +1552,16 @@ class AgentLoopEngine:
         plan_prompt = self._resources.context.plan_prompt(
             mapping, memory=self._resources.memory.render(mapping)
         )
-        self._emit("model.requested", {"phase": "plan"})
-        tier = self._resources.tiers().tier(0)
+        # Call #0 runs on tier 0; a replan on the tier the agent is on.
+        tiers = self._resources.tiers()
+        fields = tier_fields(tiers, state.model_tier)
+        self._emit("model.requested", {"phase": "plan", **fields})
+        tier = tiers.tier(state.model_tier)
         response = await tier.model.complete([*messages, user_message(plan_prompt)])
         usage = response_usage(response)
-        self._emit("model.responded", {"phase": "plan", **({"usage": usage} if usage else {})})
+        self._emit(
+            "model.responded", {"phase": "plan", **({"usage": usage} if usage else {}), **fields}
+        )
         cost = tier.price.cost(getattr(response, "usage", None)) if tier.price else None
         accounted = add_call(state.usage, stage="agent", model=tier.label, tokens=usage, cost=cost)
 

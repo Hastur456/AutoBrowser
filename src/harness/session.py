@@ -25,6 +25,7 @@ from src.agent_loop.execution.approval import ApprovalJudge
 from src.agent_loop.execution.loop import Agent, AgentLoopResult, HumanInputCallback
 from src.agent_loop.execution.progress import render_action_history
 from src.agent_loop.execution.resources import EngineResources
+from src.agent_loop.execution.state import TierMarks
 from src.agent_loop.execution.tools import tool_catalog
 from src.agent_loop.goals import GoalLimits, GoalRunner
 from src.agent_loop.recordings import validate_recording_name
@@ -136,6 +137,9 @@ TASK_BOUNDARY_RESETS: dict[str, Any] = {
     "working_notes": "",
     "ladder_stage": "agent",
     "model_tier": 0,
+    "progress_blocks": 0,
+    "tier_marks": TierMarks(),
+    "tier_signal": "",
     "usage": TaskUsage(),
     "playback_diverged": "",
 }

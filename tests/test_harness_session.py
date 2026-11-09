@@ -1285,6 +1285,23 @@ def test_the_cost_ladder_fields_are_reset_at_every_task_boundary() -> None:
     )
 
 
+def test_the_cascade_counters_are_reset_at_every_task_boundary() -> None:
+    from src.agent_loop.execution.state import LoopState, TierMarks
+    from src.harness.session import _task_state_overrides
+
+    carried = SessionState()
+    carried.replace({"messages": [], "observation": "page"})
+    overrides = _task_state_overrides(carried, task_id="task-2")
+    state = LoopState.from_state_overrides(overrides)
+
+    assert (overrides["progress_blocks"], overrides["tier_marks"], overrides["tier_signal"]) == (
+        0,
+        TierMarks(),
+        "",
+    )
+    assert not {"progress_blocks", "tier_marks", "tier_signal"} & set(state.to_session_state())
+
+
 # -- recordings (replay) ---------------------------------------------------------------------
 
 from src.config import ReplaySettings  # noqa: E402
