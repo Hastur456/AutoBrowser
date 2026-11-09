@@ -232,6 +232,29 @@ async def test_the_stand_starts_one_session_per_worker(monkeypatch: pytest.Monke
     assert '"workers": 2' in events
 
 
+@pytest.mark.asyncio
+async def test_a_worker_that_does_not_start_refuses_the_stand_without_a_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from src.cli import serve as serve_cli
+    from src.serve.pool import WorkerPool, WorkerStartError
+
+    monkeypatch.setenv("AUTOBROWSER_SERVE__WORKERS", "2")
+    get_settings.cache_clear()
+    built: list[Any] = []
+    monkeypatch.setattr(serve_cli, "build_session", _fake_session(built))
+
+    async def broken(self: Any) -> None:
+        raise WorkerStartError("worker w1 did not start: RuntimeError")
+
+    monkeypatch.setattr(WorkerPool, "start", broken)
+
+    code = await serve_cli._serve(get_settings(), lambda _line: None, until=asyncio.sleep(0))
+
+    assert code == 2
+    assert "worker w1 did not start" in capsys.readouterr().err
+
+
 def test_the_summary_counts_the_workers(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setenv("AUTOBROWSER_SERVE__WORKERS", "3")
     get_settings.cache_clear()

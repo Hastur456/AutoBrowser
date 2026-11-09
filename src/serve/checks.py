@@ -96,10 +96,11 @@ def startup_warnings(settings: Settings) -> list[str]:
     if (
         cascade.enabled
         and cascade.tiers
-        and cascade.escalate_after_failures >= settings.loop.max_consecutive_failures
+        # Equal still escalates: the tier check runs before the failure terminal.
+        and cascade.escalate_after_failures > settings.loop.max_consecutive_failures
     ):
         warnings.append(
-            f"cascade.escalate_after_failures {cascade.escalate_after_failures} is not below "
+            f"cascade.escalate_after_failures {cascade.escalate_after_failures} is above "
             f"loop.max_consecutive_failures {settings.loop.max_consecutive_failures}: failures "
             f"end a task before its tier goes up"
         )

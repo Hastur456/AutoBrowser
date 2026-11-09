@@ -240,11 +240,11 @@ def _doctor_cascade(
     if not cascade.tiers:
         check(_WARN, "cascade", "on, but no tiers above the session model: one tier")
         return
-    if cascade.escalate_after_failures >= settings.loop.max_consecutive_failures:
+    if cascade.escalate_after_failures > settings.loop.max_consecutive_failures:
         check(
             _WARN,
             "cascade",
-            f"escalate_after_failures {cascade.escalate_after_failures} is not below "
+            f"escalate_after_failures {cascade.escalate_after_failures} is above "
             f"loop.max_consecutive_failures {settings.loop.max_consecutive_failures}: "
             f"failures end the task before the tier goes up",
         )

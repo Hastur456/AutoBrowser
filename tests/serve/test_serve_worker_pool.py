@@ -16,7 +16,7 @@ from src.contracts import RunProfile
 from src.serve.approvals import ApprovalBridge
 from src.serve.dispatcher import TriggerRef
 from src.serve.pool import WorkerPool
-from tests.serve.serve_fakes import FakeWorker, Rig, job, outcome, task_event
+from tests.serve.serve_fakes import FakeClock, FakeWorker, Rig, job, outcome, task_event
 
 API = TriggerRef("api", "manual")
 SNAPSHOT = Path(__file__).parent / "fixtures" / "dispatcher_v1_snapshot.json"
@@ -374,6 +374,86 @@ async def test_cancel_without_a_target_names_the_runs_when_several_run(tmp_path:
 
     assert "Several runs are running" in reply.text
     assert (first.cancelled, second.cancelled) == (0, 0)
+    await finish(rig, loop)
+
+
+
+class StuckClock(FakeClock):
+    """A clock whose sleeps never end on their own (a cooldown that has to be cancelled)."""
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        await asyncio.Event().wait()
+
+
+async def test_cancel_reaches_a_run_waiting_out_its_cooldown(tmp_path: Path) -> None:
+    worker = gated()
+    rig = Rig(tmp_path, worker, clock=StuckClock(), jobs={"a": job(cooldown_seconds=600, coalesce="queue_one")})
+    loop = await running(rig)
+    await rig.dispatcher.fire("a", API)
+    await settle()
+    second = await rig.dispatcher.fire("a", API)  # queued behind the running one
+    worker.gate.set()  # type: ignore[union-attr]
+    await settle()  # the first ends; the second now waits out the cooldown
+
+    result = await rig.dispatcher.cancel("a")
+    await settle()
+
+    assert result.cancelled == (second.run_id,) and result.stopping == ()
+    assert [item["reason"] for item in rig.payloads("serve.run.skipped")] == ["cancelled"]
+    assert len(worker.calls) == 1
+    await finish(rig, loop)
+
+
+class SlowReconnect(FakeWorker):
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = asyncio.Event()
+        self.reconnecting = asyncio.Event()
+
+    async def reconnect(self, server: str) -> Any:
+        self.reconnecting.set()
+        await self.release.wait()
+        return await super().reconnect(server)
+
+
+async def test_a_run_cancelled_before_its_task_starts_runs_none(tmp_path: Path) -> None:
+    from src.ui.views import ServerView
+
+    worker = SlowReconnect()
+    worker.servers = (ServerView(name="playwright", state="failed"),)
+    rig = Rig(tmp_path, worker)
+    loop = await running(rig)
+    run = await rig.dispatcher.fire("price-watch", API)
+    await worker.reconnecting.wait()
+
+    result = await rig.dispatcher.cancel()
+    worker.release.set()
+    await settle()
+
+    assert result.stopping == (run.run_id,)
+    assert worker.calls == []
+    report, = rig.payloads("serve.run.finished")
+    assert (report["status"], report["stop_reason"]) == ("cancelled", "cancelled")
+    await finish(rig, loop)
+
+
+async def test_a_probe_cancelled_by_the_user_is_a_cancelled_run(tmp_path: Path) -> None:
+    probe = {"steps": [{"tool": "snapshot"}]}
+    worker = gated(outcome("cancelled", stop_reason="cancelled", stage="playback", calls=0))
+    rig = Rig(tmp_path, worker, jobs={"p": job(probe=probe, notify_on=["failure", "blocked"])})
+    loop = await running(rig)
+    await rig.dispatcher.fire("p", API)
+    await settle()
+
+    await rig.dispatcher.cancel("p")
+    worker.gate.set()  # type: ignore[union-attr]
+    await settle()
+
+    report, = rig.payloads("serve.run.finished")
+    assert (report["status"], report["stop_reason"]) == ("cancelled", "cancelled")
+    assert len(worker.calls) == 1  # the probe only
+    assert rig.channel.sent == []  # a cancel is not a failure
     await finish(rig, loop)
 
 

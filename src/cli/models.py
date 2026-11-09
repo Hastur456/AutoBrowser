@@ -76,6 +76,11 @@ def tier_problems(settings: Settings, *, provider: LLMProvider | None = None) ->
         return []
     problems: list[str] = []
     for spec in cascade.tiers:
+        if spec.tier_label == settings.llm.model:
+            problems.append(
+                f"cascade tier {spec.tier_label!r} has the label of the session model llm.model: "
+                f"give it a label (cascade.tiers[].label)"
+            )
         try:
             tier_llm_settings(spec, settings.llm, provider=provider)
         except ValueError as exc:

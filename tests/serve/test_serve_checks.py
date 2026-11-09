@@ -156,7 +156,8 @@ def test_a_pool_on_external_browsers_without_a_profile_placeholder_is_warned() -
 
 
 def test_an_unreachable_failure_escalation_is_warned() -> None:
-    cascade = {"enabled": True, "tiers": [{"model": "m2"}], "escalate_after_failures": 3}
+    cascade = {"enabled": True, "tiers": [{"model": "m2"}], "escalate_after_failures": 4}
 
     assert any("escalate_after_failures" in warning for warning in startup_warnings(settings(cascade=cascade)))
-    assert startup_warnings(settings(cascade={**cascade, "escalate_after_failures": 2})) == []
+    # Equal thresholds still escalate: the tier check runs before the failure terminal.
+    assert startup_warnings(settings(cascade={**cascade, "escalate_after_failures": 3})) == []

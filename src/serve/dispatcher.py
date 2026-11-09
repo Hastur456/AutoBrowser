@@ -95,8 +95,10 @@ class _Run:
     queued_at: datetime
     #: A free task (``POST /v1/tasks``) instead of the job's task.
     task: str | None = None
-    #: Cancelled while running: no further task of the run starts.
+    #: Cancelled after leaving the queue: no further task of the run starts.
     cancelled: bool = False
+    #: Set by a cancel, so a run waiting out its job's cooldown stops waiting.
+    woken: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 @dataclass(frozen=True)
@@ -237,17 +239,23 @@ class Dispatcher:
         for run in dropped:
             self._queue.remove(run)
             await self._skip(run, "cancelled")
-        running = dict(self._running)
-        if not target and len(running) > 1:
-            return CancelResult(running=tuple(run.run_id for _, run in sorted(running.items())))
+        # Every run off the queue counts: running, or still waiting out its cooldown.
+        held = dict(self._held)
+        if not target and len(held) > 1:
+            return CancelResult(running=tuple(run.run_id for _, run in sorted(held.items())))
+        cancelled = [run.run_id for run in dropped]
         stopping: list[str] = []
-        for index, run in sorted(running.items()):
+        for index, run in sorted(held.items()):
             if target and target not in (run.run_id, run.job_id):
                 continue
             run.cancelled = True
-            await self._pool.slot(index).worker.cancel()
-            stopping.append(run.run_id)
-        return CancelResult(tuple(run.run_id for run in dropped), tuple(stopping))
+            run.woken.set()
+            if index in self._running:
+                await self._pool.slot(index).worker.cancel()
+                stopping.append(run.run_id)
+            else:
+                cancelled.append(run.run_id)  # skipped{cancelled} when its wait ends
+        return CancelResult(tuple(cancelled), tuple(stopping))
 
     def _refusal(self, job: JobSpec, run: _Run) -> str:
         if self._stopping:
@@ -446,9 +454,9 @@ class Dispatcher:
         last = self._states.load(run.job_id).last_finished_at
         if cooldown and last is not None:
             remaining = cooldown - (self._clock.now() - last).total_seconds()
-            if remaining > 0 and not await self._wait_unless_stopping(remaining):
-                return "shutdown"
-        return ""
+            if remaining > 0 and not await self._wait_unless_stopping(remaining, run):
+                return "cancelled" if run.cancelled and not self._stopping else "shutdown"
+        return "cancelled" if run.cancelled else ""
 
     def _reserve(self, run: _Run) -> None:
         """Hold the run's budget out of the day while it runs (several workers only)."""
@@ -471,17 +479,19 @@ class Dispatcher:
             return self.day_left()
         return DayLeft(tokens=held.tokens, cost=held.cost)
 
-    async def _wait_unless_stopping(self, seconds: float) -> bool:
-        """Sleep ``seconds`` on the stand's clock; ``False`` when the stand stopped meanwhile."""
+    async def _wait_unless_stopping(self, seconds: float, run: _Run) -> bool:
+        """Sleep ``seconds`` on the stand's clock; ``False`` when the stand stopped or the run
+        was cancelled meanwhile."""
 
         sleeping = asyncio.ensure_future(self._clock.sleep(seconds))
         stopping = asyncio.ensure_future(self._stopped.wait())
+        woken = asyncio.ensure_future(run.woken.wait())
         try:
-            await asyncio.wait({sleeping, stopping}, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait({sleeping, stopping, woken}, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            for task in (sleeping, stopping):
+            for task in (sleeping, stopping, woken):
                 task.cancel()
-        return not self._stopping
+        return not self._stopping and not run.cancelled
 
     async def _execute(self, slot: WorkerSlot, run: _Run) -> None:
         started = self._clock.now()
@@ -529,6 +539,9 @@ class Dispatcher:
     async def _run_tasks(
         self, worker: WorkerPort, run: _Run, job: JobSpec | None, budget: dict[str, Any]
     ) -> _Result:
+        if run.cancelled:
+            # Cancelled while the session was being made healthy: no task starts.
+            return _Result(status="cancelled", stop_reason="cancelled")
         labels = {
             "mode": "serve",
             "job_id": run.job_id,
@@ -549,6 +562,10 @@ class Dispatcher:
         fingerprint = ""
         if job.probe is not None:
             probe, fingerprint = await self._run_probe(worker, run, job, labels)
+            if probe.status != "completed" and run.cancelled:
+                # Stopped by the user, not a failure: no failure notification.
+                probe.status, probe.stop_reason, probe.error = "cancelled", "cancelled", ""
+                return probe
             if probe.status != "completed":
                 return probe
             if probe.changed is False:

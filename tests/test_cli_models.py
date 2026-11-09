@@ -123,3 +123,15 @@ def test_check_tiers_reports_each_broken_tier_without_values() -> None:
 
     assert len(problems) == 1
     assert "broken" in problems[0] and "sk-secret" not in problems[0]
+
+
+def test_check_tiers_reports_a_tier_labelled_like_the_session_model() -> None:
+    settings = Settings(
+        _env_file=None,
+        llm=LLMSettings(model="cheap"),
+        cascade=CascadeSettings(enabled=True, tiers=[ModelTierSpec(model="cheap")]),
+    )
+
+    problems = models.tier_problems(settings)
+
+    assert len(problems) == 1 and "label" in problems[0]

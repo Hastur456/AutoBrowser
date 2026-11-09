@@ -37,7 +37,7 @@ from src.serve.dispatcher import Dispatcher
 from src.serve.ledger import Ledger
 from src.serve.notify import LogChannel, NotificationChannel, Notifier, WebhookOutChannel
 from src.serve.paths import WORKER_PROFILE, ServePaths, serve_paths
-from src.serve.pool import WorkerPool
+from src.serve.pool import WorkerPool, WorkerStartError
 from src.serve.runtime import ServeRuntime, ServeServiceError, ServeStartError
 from src.serve.scheduler import Scheduler
 from src.serve.state import ChannelStateStore, JobStateStore
@@ -248,7 +248,8 @@ async def _serve(
     try:
         # The HTTP server ends the stand: uvicorn returns on SIGINT/SIGTERM (Ctrl+C on Windows).
         await runtime.serve(until=until if until is not None else http_server(app, serve).serve())
-    except ServeStartError as exc:
+    except (ServeStartError, WorkerStartError) as exc:
+        # WorkerStartError names the worker and the error type, never a secret.
         _err(str(exc))
         return USAGE_EXIT_CODE
     except ServeServiceError as exc:
