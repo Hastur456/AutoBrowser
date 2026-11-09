@@ -135,7 +135,7 @@
 | ToolCallNormalizer | Stateless protocol folded by `ToolBroker` around every call (`normalize_request` before, `normalize_result` after). |
 | ToolDef | Provider-neutral, model-visible tool schema (`name`, `description`, `input_schema`) independent of any provider. |
 | ToolRegistry | Lazy registry that exposes tools from static lists (the session's memory and skill tools), generic providers and live sources such as `MCPToolSource`, plus the registered `ToolCallNormalizer`s. |
-| Kept snapshots | `BrowserState.snapshots`: per tool server, the output of its latest successful read-only (MCP `readOnlyHint`) call; a successful state-changing call of that server drops the entry. Decided by annotations, never by tool names; replaces the removed `ToolRoles`. |
+| Kept snapshots | `EnvironmentState.snapshots` (`LoopState.environment`): per tool server, the output of its latest successful read-only (MCP `readOnlyHint`) call; a successful state-changing call of that server drops the entry. Decided by annotations, never by tool names; replaces the removed `ToolRoles`. |
 | Trace replay | Loading `events.jsonl` records to summarize terminal status and print compact action sequences for diagnostics or eval failures. |
 | Turn cap | `settings.loop.turn_cap` (default 50) upper bound on engine turns before the run is blocked; set via `AUTOBROWSER_LOOP__TURN_CAP`. |
 | Cost ladder | Stages a run climbs only when needed and never above `RunProfile.max_stage`: `probe` (0, stand only) → `playback` (1) → `retarget` (2) → `agent` (3) → `human` (4). `LADDER_ORDER` in `src/contracts.py`; transitions emit `ladder.escalated`. |

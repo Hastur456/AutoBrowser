@@ -4,6 +4,13 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-11-09 Server Context, Neutral Prompts and EnvironmentState](2026-11-09-server-context-and-neutral-prompts.md)
+  (Accepted, Russian): the MCP `initialize` `instructions` and the argument-free prompts an
+  `mcp_servers` entry names in `context_prompts` become system blocks
+  (`src/harness/server_context.py`); the prompts name no server, tool or site, and the browser
+  rules live only in the `browser-agent-rules` skill; `BrowserState` becomes
+  `EnvironmentState` (`LoopState.environment`) and the never-written `last_browser_action`
+  fields are removed. Extends the name-free tool handling and agent skills ADRs.
 - [2026-11-09 Cascade Above the Session Model, Chat Channels and the Worker Pool](2026-11-09-cascade-channels-and-worker-pool.md)
   (Accepted, Russian): phase 4 of the stand. Tier 0 is always the session model and
   `cascade.tiers` are the tiers above it, built by `src/cli/models.py`; the pure

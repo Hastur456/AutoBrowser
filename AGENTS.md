@@ -36,7 +36,7 @@ the same entry point). Core code lives in `src/`:
   `EngineResources`, and the `Agent` that runs one `TaskRequest`.
 - `src/agent_loop/`: runtime-facing action contracts, model action parsing, eventing, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary around the engine.
 - `src/contracts.py`: provider-neutral typed tool/plan/observation contracts and loop thresholds (no imports from the loop, harness, or browser layers).
-- `src/state.py`: type-only `AgentState`/`BrowserState` TypedDicts kept for annotation.
+- `src/state.py`: the type-only `AgentState` TypedDict kept for annotation.
 - `src/messages.py`: dependency-free provider-neutral chat `Message`/`ToolCall` types shared by the engine and providers.
 - `src/llm.py`: the provider-neutral `ChatModel`/`ModelResponse` chat contract and the model
   tiers (`ModelPrice`, `ModelTier`, `ModelTiers`). Model defaults live in `src/config.py`
@@ -291,9 +291,9 @@ Prefer focused unit tests for loop decisions, policy decisions, state transition
 
 ## Browser Tool Rules
 
-The MVP is moving away from deterministic, browser-specific rules towards a universal agent without hardcodes: the model decides how to use whatever tools the configured MCP servers expose. Do not add tool-, site- or page-structure-specific rules to the engine, guards, harness or memory policy. The prompts still carry older browser rules; they are revised separately — leave them unchanged unless asked.
+The MVP is moving away from deterministic, browser-specific rules towards a universal agent without hardcodes: the model decides how to use whatever tools the configured MCP servers expose. Do not add tool-, site- or page-structure-specific rules to the engine, guards, harness or memory policy. The prompts are server-neutral; browser rules live in the built-in `browser-agent-rules` skill, and each MCP server can explain its own tools through its `instructions` and the prompts its `mcp_servers` entry names (`src/harness/server_context.py`).
 
-Tests, evals and prompts use the exposed tool names (`browser_navigate`, `browser_click`, …), but no production code decides by a name: snapshots follow `readOnlyHint` per server and arguments follow the tool schema (`docs/decisions/2026-10-19-name-free-tool-handling.md`). Do not put Playwright MCP schema adaptation in executor or prompt code: add servers through `mcp_servers` and adapt calls with `ToolCallNormalizer`s.
+Tests, evals and the browser-rules skill use the exposed tool names (`browser_navigate`, `browser_click`, …), but no production code decides by a name: snapshots follow `readOnlyHint` per server and arguments follow the tool schema (`docs/decisions/2026-10-19-name-free-tool-handling.md`). Do not put Playwright MCP schema adaptation in executor or prompt code: add servers through `mcp_servers` and adapt calls with `ToolCallNormalizer`s.
 
 ## Commit & Pull Request Guidelines
 
