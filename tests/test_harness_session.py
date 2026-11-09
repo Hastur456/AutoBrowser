@@ -64,6 +64,9 @@ class FakeMCPRuntime:
         _ = require_browser
         self.started = True
 
+    async def context_sections(self, **_kwargs: Any) -> list[Any]:
+        return []
+
     async def close(self) -> None:
         self.closed = True
 

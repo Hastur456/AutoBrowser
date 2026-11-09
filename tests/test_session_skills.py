@@ -175,3 +175,27 @@ def test_a_resumed_history_gets_the_current_system_prompt() -> None:
     assert refreshed[0].content == "new prompt"
     assert "hi" in [message.content for message in refreshed]
     assert kept[0].content == "old prompt with a Skills catalog"  # no explicit prompt: untouched
+
+
+@pytest.mark.asyncio
+async def test_the_server_context_follows_the_browser_rules_in_the_system_prompt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from src.agent_loop.context import PromptSection
+
+    section = PromptSection(
+        name="mcp:fs", title="Server Instructions: fs", text="Paths are relative.", priority=46
+    )
+
+    async def context_sections(self: Any, **_kwargs: Any) -> list[PromptSection]:
+        return [section]
+
+    monkeypatch.setattr(FakeMCPRuntime, "context_sections", context_sections)
+    context = await start_session(monkeypatch, tmp_path, SkillsSettings())
+
+    prompt = system_prompt(context)
+    assert prompt.index("Browser Rules") < prompt.index("Server Instructions: fs")
+    assert "Paths are relative." in prompt
+    started = [event for event in read_typed_events(context.session_dir) if event["type"] == "session.started"]
+    assert started[0]["payload"]["server_context"] == ["mcp:fs"]
+    await context.close()

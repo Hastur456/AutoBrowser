@@ -43,6 +43,8 @@ EventType = Literal[
     # Agent skills (src/harness/skills.py).
     "skills.invalid",
     "skills.shadowed",
+    # Context the MCP servers provide (src/harness/server_context.py).
+    "mcp.context_skipped",
     # Cost ladder and playback of recordings (src/agent_loop/execution/loop.py).
     "ladder.escalated",
     "playback.started",

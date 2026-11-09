@@ -147,6 +147,8 @@ class ManagedServer:
     session: ClientSession | None = None
     server_info: types.Implementation | None = None
     capabilities: types.ServerCapabilities | None = None
+    # ``InitializeResult.instructions``: how the server says its tools are meant to be used.
+    instructions: str | None = None
 
     # catalog: the last successfully fetched one; survives a dropped connection
     tools: dict[str, ToolDescriptor] = field(default_factory=dict)
@@ -355,6 +357,11 @@ class MCPManager:
 
     def servers(self) -> list[str]:
         return list(self._servers)
+
+    def instructions(self, name: str) -> str | None:
+        """The ``instructions`` the server sent at its last ``initialize`` (``None``: none)."""
+
+        return self._get(name).instructions
 
     def server_config(self, name: str) -> Any:
         return self._get(name).config
@@ -589,6 +596,7 @@ class MCPManager:
         managed.session = session
         managed.server_info = init.serverInfo
         managed.capabilities = init.capabilities
+        managed.instructions = init.instructions
         self._apply_catalog(managed, catalog)
         managed.catalog_stale = False
         managed.generation += 1
@@ -819,6 +827,7 @@ class MCPManager:
             raise ServerUnavailableError(managed.name, managed.last_error) from exc
         managed.server_info = init.serverInfo
         managed.capabilities = init.capabilities
+        managed.instructions = init.instructions
         self._apply_catalog(managed, catalog)
         managed.catalog_stale = False
         managed.generation += 1

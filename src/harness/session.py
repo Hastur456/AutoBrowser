@@ -549,6 +549,9 @@ class SessionContext:
     #: The session's skills (``settings.skills``), read once in :meth:`initialize` after MCP
     #: starts (a skill may require the browser capability).
     skill_store: SkillStore | None = None
+    #: What the MCP servers say about their tools (their ``instructions`` and the prompts their
+    #: entries name), read once in :meth:`initialize` (``src/harness/server_context.py``).
+    server_context: list[PromptSection] = field(default_factory=list)
     #: Recordings and the recorder (``settings.replay.enabled``), built in :meth:`initialize`;
     #: ``None`` when replay is off.
     recording_store: RecordingStore | None = None
@@ -714,6 +717,9 @@ class SessionContext:
                 self._close_child_stderr()
                 raise
             self.mcp = mcp
+            self.server_context = await mcp.context_sections(
+                on_event=self.emit_server_context_event
+            )
             session_tools += self._load_skills(settings)
             # The MCP tool source is live: rediscovery (list_changed) and servers going
             # down / coming back are reflected on the next registry read.
@@ -751,6 +757,7 @@ class SessionContext:
                 "session_id": self.session_id,
                 "resumed": self.resumed_from_sequence is not None,
                 "skills": self._skills_snapshot(),
+                "server_context": [section.name for section in self.server_context],
                 "labels": dict(self.config.labels),
             },
         )
@@ -816,14 +823,24 @@ class SessionContext:
         return []
 
     def _prompt_sections(self, settings: Any) -> list[PromptSection]:
-        """The session's fixed system blocks: the skill catalog when skills are enabled, and
-        the always-on bodies (the browser rules in a browser session) either way."""
+        """The session's fixed system blocks: the skill catalog when skills are enabled, the
+        always-on bodies (the browser rules in a browser session) either way, and the context
+        the MCP servers provide."""
 
         store = self.skill_store
         if store is None:
-            return []
+            return list(self.server_context)
         catalog = catalog_section(store) if settings.skills.enabled else []
-        return catalog + always_sections(store)
+        return catalog + always_sections(store) + list(self.server_context)
+
+    def emit_server_context_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        """Forward a server-context event (``mcp.context_skipped``) to the event stream."""
+
+        self.event_emitter.emit(
+            event_type,  # type: ignore[arg-type]
+            source="harness.server_context",
+            payload=payload,
+        )
 
     def emit_skill_event(self, event_type: str, payload: dict[str, Any]) -> None:
         """Forward a skills event (``skills.*``) to the session's event stream."""

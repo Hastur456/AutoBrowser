@@ -177,6 +177,11 @@ browser:
   #       command: npx
   #       args: [-y, "@playwright/mcp@latest", --headless, --browser, chromium,
   #              --user-data-dir, /data/serve/profiles/w0]
+  #       # Every mcp_servers entry may also set what the server tells the agent
+  #       # about its tools (src/harness/server_context.py), as system blocks:
+  #       use_instructions: true                # (default) its initialize instructions
+  #       context_prompts: []                   # (default) argument-free prompts to read
+  #       context_max_chars: 8000               # (default) the cap of each block
   launch: cdp                                   # (default)
   # --headless=new for the Chrome the session starts (launch: cdp only).
   headless: false                               # (default)

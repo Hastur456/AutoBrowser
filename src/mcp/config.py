@@ -72,6 +72,12 @@ class _BaseServerConfig(BaseModel):
     call_timeout_s: float = Field(default=60.0, gt=0)  # tools/call
     ping_timeout_s: float = Field(default=5.0, gt=0)
     reconnect: ReconnectPolicy = Field(default_factory=ReconnectPolicy)
+    # Server context as system blocks (src/harness/server_context.py): the ``instructions``
+    # the server sends at ``initialize``, and the argument-free prompts named here, read once
+    # at session start. Each block is cut to ``context_max_chars``.
+    use_instructions: bool = True
+    context_prompts: list[str] = Field(default_factory=list)
+    context_max_chars: int = Field(default=8_000, ge=1)
 
 
 class StdioServerConfig(_BaseServerConfig):
