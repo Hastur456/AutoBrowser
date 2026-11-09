@@ -36,10 +36,16 @@ class ApprovalsPort(Protocol):
 
 
 class ApprovalBridge:
-    def __init__(self, worker: WorkerPort, notifier: Notifier, dispatcher: Dispatcher) -> None:
+    """The approvals of one worker (``index`` in the pool): its tickets go out as
+    notifications naming the run of that worker."""
+
+    def __init__(
+        self, worker: WorkerPort, notifier: Notifier, dispatcher: Dispatcher, *, index: int = 0
+    ) -> None:
         self._worker = worker
         self._notifier = notifier
         self._dispatcher = dispatcher
+        self._index = index
         self._tasks: set[asyncio.Task[Any]] = set()
         self._unsubscribe = lambda: None
 
@@ -83,7 +89,7 @@ class ApprovalBridge:
         task.add_done_callback(self._tasks.discard)
 
     async def _send(self, ticket: ApprovalTicket) -> None:
-        job_id, run_id = self._dispatcher.running() or ("", "")
+        job_id, run_id = self._dispatcher.running_on(self._index) or ("", "")
         where = f" on {ticket.domain}" if ticket.domain else ""
         try:
             await self._notifier.notify(

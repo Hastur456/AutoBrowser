@@ -14,6 +14,7 @@ from src.contracts import RunProfile, TaskUsage
 from src.serve.dispatcher import Dispatcher
 from src.serve.ledger import Ledger
 from src.serve.notify import Notification, Notifier
+from src.serve.pool import WorkerPool
 from src.serve.state import JobStateStore
 from src.serve.tally import RunTally
 from src.ui.views import ServerView, SessionView, TaskOutcome
@@ -168,9 +169,13 @@ class Rig:
 
     def __init__(self, tmp_path: Path, worker: FakeWorker | None = None, *,
                  clock: FakeClock | None = None, channel: RecordingChannel | None = None,
-                 prices_known: bool = True, **settings: Any) -> None:
+                 prices_known: bool = True, workers: list[FakeWorker] | None = None,
+                 **settings: Any) -> None:
+        if workers is not None:
+            settings.setdefault("workers", len(workers))
         self.settings = serve_settings(**settings)
-        self.worker = worker or FakeWorker()
+        self.workers = list(workers) if workers is not None else [worker or FakeWorker()]
+        self.worker = self.workers[0]
         self.clock = clock or FakeClock()
         self.sink = InMemoryEventSink()
         self.events = EventEmitter(self.sink, session_id="serve-test")
@@ -180,7 +185,7 @@ class Rig:
         self.tally = RunTally()
         self.dispatcher = Dispatcher(
             self.settings,
-            self.worker,
+            WorkerPool.from_settings(self.workers, self.settings) if workers is not None else self.worker,
             ledger=self.ledger,
             states=self.states,
             notifier=Notifier([self.channel], self.events, max_chars=self.settings.notify_max_chars),

@@ -1,10 +1,22 @@
-"""The stand's dispatcher: triggers in, one run at a time out (one worker, design V1).
+"""The stand's dispatcher: triggers in, runs out on a pool of workers (design V1/V2).
 
 ``fire`` decides synchronously what happens to a trigger — queued, coalesced or skipped
 (disabled job, cooldown, day budget, full queue, shutdown) — and says so in an event. ``run``
-executes queued runs on the worker: the main task under the job's run profile, then the
-report into the ledger, the notifications and the job state. A failure of one run never stops
-the stand.
+starts queued runs on free workers, in queue order: the main task under the job's run
+profile, then the report into the ledger, the notifications and the job state. A failure of
+one run never stops the stand.
+
+With several workers (``serve.workers``) runs go in parallel, and:
+
+- two runs of one job, or two runs replaying or recording one recording, never run at once
+  (exclusion keys ``job:<id>``, ``recording:<name>``);
+- a pinned job (``JobSpec.worker``) waits for its worker; a worker with pinned jobs runs only
+  those;
+- a running run holds its budget (tokens, money) out of what is left of the day, so parallel
+  runs together never get more than the day has; a run without room waits in the queue.
+
+Everything runs on one asyncio loop and every file write is synchronous, so the ledger and
+the state files never interleave. With one worker the stand behaves exactly as in phase 3.
 """
 
 from __future__ import annotations
@@ -24,6 +36,7 @@ from src.contracts import RunProfile, ladder_rank
 from src.serve.clock import Clock
 from src.serve.ledger import Ledger
 from src.serve.notify import Notification, Notifier
+from src.serve.pool import WorkerPool, WorkerSlot
 from src.serve.profiles import DayLeft, free_task_profile, main_profile, probe_profile
 from src.serve.reports import RunReport, RunState, RunStatus, TaskKind, TaskSummary
 from src.serve.state import JobStateStore
@@ -70,6 +83,8 @@ class CancelResult:
 
     cancelled: tuple[str, ...] = ()
     stopping: tuple[str, ...] = ()
+    #: Without a target and with several runs running: they, none of them cancelled.
+    running: tuple[str, ...] = ()
 
 
 @dataclass
@@ -82,6 +97,14 @@ class _Run:
     task: str | None = None
     #: Cancelled while running: no further task of the run starts.
     cancelled: bool = False
+
+
+@dataclass(frozen=True)
+class _Reservation:
+    """The budget a running run holds out of the day (``None``: that cap is not set)."""
+
+    tokens: int | None
+    cost: float | None
 
 
 @dataclass
@@ -98,15 +121,17 @@ class _Result:
     changed: bool | None = None
     #: Extra notification kinds the run itself raised (a probe's ``change``).
     notes: list[tuple[NotifyKind, str, str]] = field(default_factory=list)
+    #: The highest model tier a task of the run reached (``None``: no escalation).
+    tier: int | None = None
 
 
 class Dispatcher:
-    """Queue, coalescing, cooldown and day budgets over one worker."""
+    """Queue, coalescing, cooldown and day budgets over a pool of workers (one by default)."""
 
     def __init__(
         self,
         settings: ServeSettings,
-        worker: WorkerPort,
+        workers: WorkerPort | WorkerPool,
         *,
         ledger: Ledger,
         states: JobStateStore,
@@ -116,7 +141,7 @@ class Dispatcher:
         clock: Clock,
     ) -> None:
         self._settings = settings
-        self._worker = worker
+        self._pool = workers if isinstance(workers, WorkerPool) else WorkerPool.of(workers)
         self._ledger = ledger
         self._states = states
         self._notifier = notifier
@@ -126,10 +151,14 @@ class Dispatcher:
         self._queue: deque[_Run] = deque()
         self._wakeup = asyncio.Event()
         self._stopped = asyncio.Event()
-        self._running: _Run | None = None
-        self._current: asyncio.Task[None] | None = None
+        #: Slot index -> its run, from leaving the queue to the end (exclusion keys).
+        self._held: dict[int, _Run] = {}
+        #: Slot index -> its run once past the start checks (coalescing, status, cancel).
+        self._running: dict[int, _Run] = {}
+        self._current: dict[int, asyncio.Task[None]] = {}
+        #: Run id -> the budget it holds out of the day (only with several workers).
+        self._reserved: dict[str, _Reservation] = {}
         self._stopping = False
-        self._runs_in_session = 0
         self._serve_state = states.load_serve()
 
     # ------------------------------------------------------------------ triggers
@@ -142,10 +171,21 @@ class Dispatcher:
     def notifier(self) -> Notifier:
         return self._notifier
 
-    def running(self) -> tuple[str, str] | None:
-        """``(job_id, run_id)`` of the run in progress, if any."""
+    @property
+    def pool(self) -> WorkerPool:
+        return self._pool
 
-        run = self._running
+    def running(self) -> tuple[str, str] | None:
+        """``(job_id, run_id)`` of the run in progress on the lowest-index worker, if any."""
+
+        for index in sorted(self._running):
+            return self.running_on(index)
+        return None
+
+    def running_on(self, index: int) -> tuple[str, str] | None:
+        """``(job_id, run_id)`` of the run in progress on worker ``index``, if any."""
+
+        run = self._running.get(index)
         return None if run is None else (run.job_id, run.run_id)
 
     async def fire(self, job_id: str, trigger: TriggerRef) -> FireResult:
@@ -197,12 +237,16 @@ class Dispatcher:
         for run in dropped:
             self._queue.remove(run)
             await self._skip(run, "cancelled")
+        running = dict(self._running)
+        if not target and len(running) > 1:
+            return CancelResult(running=tuple(run.run_id for _, run in sorted(running.items())))
         stopping: list[str] = []
-        running = self._running
-        if running is not None and (not target or target in (running.run_id, running.job_id)):
-            running.cancelled = True
-            await self._worker.cancel()
-            stopping.append(running.run_id)
+        for index, run in sorted(running.items()):
+            if target and target not in (run.run_id, run.job_id):
+                continue
+            run.cancelled = True
+            await self._pool.slot(index).worker.cancel()
+            stopping.append(run.run_id)
         return CancelResult(tuple(run.run_id for run in dropped), tuple(stopping))
 
     def _refusal(self, job: JobSpec, run: _Run) -> str:
@@ -212,7 +256,7 @@ class Dispatcher:
             return "disabled"
         mode = job.coalesce or self._settings.coalesce
         queued = any(item.job_id == run.job_id for item in self._queue)
-        running = self._running is not None and self._running.job_id == run.job_id
+        running = any(item.job_id == run.job_id for item in self._running.values())
         if queued or (running and mode == "drop"):
             return "coalesced"
         state = self._states.load(run.job_id)
@@ -276,67 +320,125 @@ class Dispatcher:
     # ------------------------------------------------------------------ running
 
     async def run(self) -> None:
-        """Execute queued runs until :meth:`stop`."""
+        """Start queued runs on free workers until :meth:`stop`."""
 
         while not self._stopping:
-            if not self._queue:
-                self._wakeup.clear()
+            self._wakeup.clear()
+            await self._start_eligible()
+            if self._stopping:
+                break
+            if not self._wakeup.is_set():
                 await self._wakeup.wait()
-                continue
-            await self._run_next()
 
     async def run_pending(self) -> None:
         """Execute every queued run, then return (tests, one-shot use)."""
 
-        while self._queue and not self._stopping:
-            await self._run_next()
+        while not self._stopping:
+            await self._start_eligible()
+            if not self._current:
+                return
+            await asyncio.wait(set(self._current.values()), return_when=asyncio.FIRST_COMPLETED)
 
     async def stop(self, grace_seconds: float) -> None:
-        """Stop taking triggers, drop the queue, give the running run ``grace_seconds``, then
-        cancel it."""
+        """Stop taking triggers, drop the queue, give the running runs ``grace_seconds``, then
+        cancel them."""
 
         self._stopping = True
         self._stopped.set()
         while self._queue:
             await self._skip(self._queue.popleft(), "shutdown")
         self._wakeup.set()
-        current = self._current
-        if current is None or current.done():
+        tasks = {task for task in self._current.values() if not task.done()}
+        if not tasks:
             return
-        done, _ = await asyncio.wait({current}, timeout=grace_seconds)
-        if done:
+        _, pending = await asyncio.wait(tasks, timeout=grace_seconds)
+        if not pending:
             return
-        await self._worker.cancel()
-        done, _ = await asyncio.wait({current}, timeout=grace_seconds)
-        if not done:
+        for index in sorted(self._running):
+            await self._pool.slot(index).worker.cancel()
+        _, pending = await asyncio.wait(pending, timeout=grace_seconds)
+        if pending:
             # Nothing of the session was running to cancel (a reset, a reconnect): stop the
-            # run itself; its report is lost rather than the shutdown.
-            current.cancel()
-            await asyncio.wait({current})
+            # runs themselves; their reports are lost rather than the shutdown.
+            for task in pending:
+                task.cancel()
+            await asyncio.wait(pending)
 
-    async def _run_next(self) -> None:
-        run = self._queue.popleft()
-        reason = await self._start_refusal(run)
-        if reason:
+    async def _start_eligible(self) -> None:
+        """Start, in queue order, every queued run that may start now: its exclusion keys are
+        free, a worker it may use is free and the day has room after the running runs."""
+
+        for run in list(self._queue):
+            if self._stopping:
+                return
+            if run not in self._queue:
+                continue
             job = self._settings.jobs.get(run.job_id)
-            await self._skip(run, reason, job=job)
-            return
-        self._running = run
-        self._current = asyncio.create_task(self._execute(run))
+            if self._excluded(run, job):
+                continue
+            slot = self._pool.slot_for(run.job_id, job.worker if job is not None else None)
+            if slot is None:
+                continue
+            if self._day_refusal():
+                # The day cap filled up while the run waited.
+                self._queue.remove(run)
+                await self._skip(run, "budget", job=job)
+                continue
+            if not self._day_room():
+                continue
+            self._queue.remove(run)
+            self._start(slot, run)
+
+    def _excluded(self, run: _Run, job: JobSpec | None) -> bool:
+        keys = _exclusion_keys(run, job)
+        return any(
+            keys & _exclusion_keys(other, self._settings.jobs.get(other.job_id))
+            for other in self._held.values()
+        )
+
+    def _day_room(self) -> bool:
+        """Room in the day once the running runs are counted (always, with nothing running)."""
+
+        if not self._held:
+            return True
+        settings = self._settings
+        totals = self._ledger.day_totals(self._ledger.day_of(self._clock.now()))
+        if settings.daily_max_runs is not None and totals.runs + len(self._held) >= settings.daily_max_runs:
+            return False
+        left = self.day_left()
+        return not (
+            (left.tokens is not None and left.tokens <= 0) or (left.cost is not None and left.cost <= 0)
+        )
+
+    def _start(self, slot: WorkerSlot, run: _Run) -> None:
+        slot.busy = True
+        self._held[slot.index] = run
+        # Now, not in the task: the next run of this same scan must see the budget held.
+        self._reserve(run)
+        self._current[slot.index] = asyncio.create_task(self._run_on(slot, run))
+
+    async def _run_on(self, slot: WorkerSlot, run: _Run) -> None:
         try:
-            await self._current
+            reason = await self._start_refusal(run)
+            if reason:
+                await self._skip(run, reason, job=self._settings.jobs.get(run.job_id))
+                return
+            self._running[slot.index] = run
+            await self._execute(slot, run)
         except Exception:  # noqa: BLE001 - a run never stops the stand
             _LOG.exception("run %s of %s failed outside its task", run.run_id, run.job_id)
         finally:
-            self._running = None
-            self._current = None
+            self._reserved.pop(run.run_id, None)
+            self._running.pop(slot.index, None)
+            self._held.pop(slot.index, None)
+            self._current.pop(slot.index, None)
+            slot.busy = False
+            self._wakeup.set()
 
     async def _start_refusal(self, run: _Run) -> str:
-        """Why a queued run may not start after all: the day cap filled up while it waited, or
-        the stand stopped while it waited out its job's cooldown."""
+        """Why a run taken off the queue may not start after all: the stand stopped while it
+        waited out its job's cooldown."""
 
-        if self._day_refusal():
-            return "budget"
         job = self._settings.jobs.get(run.job_id)
         if job is None:
             return ""
@@ -347,6 +449,27 @@ class Dispatcher:
             if remaining > 0 and not await self._wait_unless_stopping(remaining):
                 return "shutdown"
         return ""
+
+    def _reserve(self, run: _Run) -> None:
+        """Hold the run's budget out of the day while it runs (several workers only)."""
+
+        if self._pool.size == 1:
+            return
+        job = self._settings.jobs.get(run.job_id)
+        spec = job.budget if job is not None and job.budget is not None else self._settings.default_run_budget
+        left = self.day_left(exclude=run.run_id)
+        self._reserved[run.run_id] = _Reservation(
+            tokens=_smaller(spec.max_tokens, left.tokens),
+            cost=_smaller(spec.max_cost, left.cost),
+        )
+
+    def _run_day_left(self, run: _Run) -> DayLeft:
+        """What of the day the run's profile may use: its reservation, else the day's rest."""
+
+        held = self._reserved.get(run.run_id)
+        if held is None:
+            return self.day_left()
+        return DayLeft(tokens=held.tokens, cost=held.cost)
 
     async def _wait_unless_stopping(self, seconds: float) -> bool:
         """Sleep ``seconds`` on the stand's clock; ``False`` when the stand stopped meanwhile."""
@@ -360,13 +483,13 @@ class Dispatcher:
                 task.cancel()
         return not self._stopping
 
-    async def _execute(self, run: _Run) -> None:
+    async def _execute(self, slot: WorkerSlot, run: _Run) -> None:
         started = self._clock.now()
         job = self._settings.jobs.get(run.job_id)
         budget: dict[str, Any] = {}
         try:
-            await ensure_healthy(self._worker)
-            result = await self._run_tasks(run, job, budget)
+            await ensure_healthy(slot.worker)
+            result = await self._run_tasks(slot.worker, run, job, budget)
         except Exception as exc:  # noqa: BLE001 - the session could not run the task
             result = _Result(status="failed", error=f"{type(exc).__name__}: {exc}")
         finished = self._clock.now()
@@ -390,6 +513,8 @@ class Dispatcher:
             recording_updated=result.recording_updated,
             notified=notified,
             error=result.error,
+            worker=slot.index if self._pool.size > 1 else None,
+            tier_reached=result.tier,
         )
         self._ledger.append(report)
         if run.job_id:
@@ -399,9 +524,11 @@ class Dispatcher:
             self._save_state(run.job_id, state)
         self._emit("serve.run.finished", report.to_json())
         if result.tasks:
-            await self._count_session_run()
+            await self._count_session_run(slot)
 
-    async def _run_tasks(self, run: _Run, job: JobSpec | None, budget: dict[str, Any]) -> _Result:
+    async def _run_tasks(
+        self, worker: WorkerPort, run: _Run, job: JobSpec | None, budget: dict[str, Any]
+    ) -> _Result:
         labels = {
             "mode": "serve",
             "job_id": run.job_id,
@@ -409,11 +536,11 @@ class Dispatcher:
             "trigger": run.trigger.label(),
         }
         if run.task is not None:
-            profile = free_task_profile(self._settings, day_left=self.day_left(), labels=labels)
+            profile = free_task_profile(self._settings, day_left=self._run_day_left(run), labels=labels)
             budget["run"] = _budget_dict(profile)
-            return await self._run_main(run.task, profile, "free")
+            return await self._run_main(worker, run.task, profile, "free")
         assert job is not None
-        has_recording = job.recording is not None and self._worker.has_recording(job.recording)
+        has_recording = job.recording is not None and worker.has_recording(job.recording)
         max_stage = job.max_stage or self._settings.default_max_stage
         if ladder_rank(max_stage) < ladder_rank("agent") and not has_recording:
             # Nothing may run without the model, and there is nothing to replay.
@@ -421,7 +548,7 @@ class Dispatcher:
         probe: _Result | None = None
         fingerprint = ""
         if job.probe is not None:
-            probe, fingerprint = await self._run_probe(run, job, labels)
+            probe, fingerprint = await self._run_probe(worker, run, job, labels)
             if probe.status != "completed":
                 return probe
             if probe.changed is False:
@@ -431,10 +558,10 @@ class Dispatcher:
                 probe.status, probe.stop_reason, probe.changed = "cancelled", reason, True
                 return probe
         profile = main_profile(
-            job, self._settings, day_left=self.day_left(), labels=labels, has_recording=has_recording
+            job, self._settings, day_left=self._run_day_left(run), labels=labels, has_recording=has_recording
         )
         budget["run"] = _budget_dict(profile)
-        main = await self._run_main(job.task, profile, "main")
+        main = await self._run_main(worker, job.task, profile, "main")
         if probe is None:
             return main
         if main.status == "completed":
@@ -452,12 +579,15 @@ class Dispatcher:
         main.tasks = probe.tasks + main.tasks
         main.usage = _add_usage(probe.usage, main.usage)
         main.changed = True
+        main.tier = _higher(probe.tier, main.tier)
         return main
 
-    async def _run_probe(self, run: _Run, job: JobSpec, labels: dict[str, str]) -> tuple[_Result, str]:
+    async def _run_probe(
+        self, worker: WorkerPort, run: _Run, job: JobSpec, labels: dict[str, str]
+    ) -> tuple[_Result, str]:
         """Stage 0: ``(result, fingerprint)``; ``result.changed`` says whether the main task runs."""
 
-        outcome = await self._worker.run_outcome(job.task, profile=probe_profile(run.job_id, job, labels=labels))
+        outcome = await worker.run_outcome(job.task, profile=probe_profile(run.job_id, job, labels=labels))
         result = self._result(outcome, "probe")
         if result.status != "completed":
             result.status = "failed"
@@ -474,8 +604,10 @@ class Dispatcher:
         result.changed = True
         return result, fingerprint
 
-    async def _run_main(self, task: str, profile: RunProfile, kind: TaskKind) -> _Result:
-        outcome = await self._worker.run_outcome(task, profile=profile)
+    async def _run_main(
+        self, worker: WorkerPort, task: str, profile: RunProfile, kind: TaskKind
+    ) -> _Result:
+        outcome = await worker.run_outcome(task, profile=profile)
         return self._result(outcome, kind)
 
     def _result(self, outcome: TaskOutcome, kind: TaskKind) -> _Result:
@@ -498,6 +630,7 @@ class Dispatcher:
             ],
             playback=tally.playback(),
             recording_updated=tally.recording_saved,
+            tier=tally.tier_reached,
         )
 
     async def _notify(self, run: _Run, job: JobSpec | None, result: _Result) -> tuple[str, ...]:
@@ -523,30 +656,37 @@ class Dispatcher:
             delivered.extend(name for name in names if name not in delivered)
         return tuple(delivered)
 
-    async def _count_session_run(self) -> None:
-        self._runs_in_session += 1
-        if self._runs_in_session >= self._settings.session_max_runs:
-            self._runs_in_session = 0
+    async def _count_session_run(self, slot: WorkerSlot) -> None:
+        slot.runs_in_session += 1
+        if slot.runs_in_session >= self._settings.session_max_runs:
+            slot.runs_in_session = 0
             try:
-                await self._worker.reset()
+                await slot.worker.reset()
             except Exception:  # noqa: BLE001 - the next run tries again
-                _LOG.warning("the worker session was not recreated", exc_info=True)
+                _LOG.warning("the session of worker %s was not recreated", slot.label, exc_info=True)
 
     # ------------------------------------------------------------------ views
 
-    def day_left(self) -> DayLeft:
+    def day_left(self, *, exclude: str = "") -> DayLeft:
+        """What is left of the day: the ledger's totals and the budgets the running runs hold
+        (all but ``exclude``)."""
+
         settings = self._settings
         totals = self._ledger.day_totals(self._ledger.day_of(self._clock.now()))
+        held = [item for run_id, item in self._reserved.items() if run_id != exclude]
+        tokens = totals.tokens + sum(item.tokens or 0 for item in held)
+        cost = totals.cost + sum(item.cost or 0.0 for item in held)
         return DayLeft(
-            tokens=None if settings.daily_max_tokens is None else max(0, settings.daily_max_tokens - totals.tokens),
-            cost=None if settings.daily_max_cost is None else max(0.0, settings.daily_max_cost - totals.cost),
+            tokens=None if settings.daily_max_tokens is None else max(0, settings.daily_max_tokens - tokens),
+            cost=None if settings.daily_max_cost is None else max(0.0, settings.daily_max_cost - cost),
         )
 
     def run_status(self, run_id: str) -> dict[str, Any] | None:
         """A queued or running run's state, else its report; ``None`` when unknown."""
 
-        if self._running is not None and self._running.run_id == run_id:
-            return {**self._payload(self._running), "state": "running"}
+        for run in self._running.values():
+            if run.run_id == run_id:
+                return {**self._payload(run), "state": "running"}
         for run in self._queue:
             if run.run_id == run_id:
                 return {**self._payload(run), "state": "queued"}
@@ -569,9 +709,10 @@ class Dispatcher:
                 ),
                 "counters": dict(state.counters),
             }
-        return {
+        lowest = next((run for _, run in sorted(self._running.items())), None)
+        body: dict[str, Any] = {
             "stopping": self._stopping,
-            "running": None if self._running is None else self._payload(self._running),
+            "running": None if lowest is None else self._payload(lowest),
             "queue": [self._payload(run) for run in self._queue],
             "day": {
                 "date": day.isoformat(),
@@ -584,6 +725,18 @@ class Dispatcher:
             },
             "jobs": jobs,
         }
+        if self._pool.size > 1:
+            body["workers"] = [
+                {
+                    "index": slot.index,
+                    "pinned": sorted(slot.pinned),
+                    "running": (
+                        self._payload(self._running[slot.index]) if slot.index in self._running else None
+                    ),
+                }
+                for slot in self._pool.slots()
+            ]
+        return body
 
     # ------------------------------------------------------------------ helpers
 
@@ -602,6 +755,33 @@ class Dispatcher:
 
 def _run_id() -> str:
     return f"run-{uuid4().hex}"
+
+
+def _exclusion_keys(run: _Run, job: JobSpec | None) -> set[str]:
+    """What two runs may not hold at once: their job, the recording they replay or record."""
+
+    keys = {f"job:{run.job_id}"} if run.job_id else set()
+    if job is not None and job.recording is not None:
+        keys.add(f"recording:{job.recording}")
+    return keys
+
+
+def _smaller(first: Any, second: Any) -> Any:
+    """The smaller of two optional caps (``None`` is no cap)."""
+
+    if first is None:
+        return second
+    if second is None:
+        return first
+    return min(first, second)
+
+
+def _higher(first: int | None, second: int | None) -> int | None:
+    if first is None:
+        return second
+    if second is None:
+        return first
+    return max(first, second)
 
 
 def _outcome_kind(result: _Result) -> NotifyKind | None:

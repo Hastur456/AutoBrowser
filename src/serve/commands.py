@@ -236,6 +236,11 @@ class ServeCommands:
 
     async def _cancel(self, target: str) -> tuple[str, CommandOutcome]:
         result = await self._dispatcher.cancel(target)
+        if result.running:
+            return (
+                f"Several runs are running ({', '.join(result.running)}): name one, or a job.",
+                "refused",
+            )
         if not result.cancelled and not result.stopping:
             return "There is nothing to cancel.", "refused"
         parts = []

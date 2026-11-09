@@ -12,7 +12,9 @@ from typing import Any
 
 from src.agent_loop.events import EventRecord
 
-_COUNTED = frozenset({"playback.started", "playback.step", "playback.diverged", "recording.saved"})
+_COUNTED = frozenset(
+    {"playback.started", "playback.step", "playback.diverged", "recording.saved", "ladder.escalated"}
+)
 
 
 @dataclass
@@ -25,6 +27,8 @@ class TaskTally:
     diverged_at: int | None = None
     diverged: str = ""
     recording_saved: bool = False
+    #: The highest model tier the cascade moved the task to; ``None``: no tier change.
+    tier_reached: int | None = None
 
     def playback(self) -> dict[str, Any]:
         """The run report's ``playback`` block; empty when the task replayed nothing."""
@@ -62,6 +66,10 @@ class RunTally:
             step = payload.get("step")
             tally.diverged_at = int(step) if isinstance(step, int) else None
             tally.diverged = str(payload.get("kind") or "")
+        elif record.type == "ladder.escalated":
+            tier = payload.get("tier")
+            if isinstance(tier, int):
+                tally.tier_reached = max(tally.tier_reached or 0, tier)
         else:
             tally.recording_saved = True
 

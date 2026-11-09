@@ -1,0 +1,501 @@
+{
+ "calls": [
+  "Open the page and report the price.",
+  "Open the page and report the price.",
+  "Open the page and report the price."
+ ],
+ "events": [
+  [
+   "serve.trigger.fired",
+   {
+    "job_id": "a",
+    "run_id": "run-0",
+    "trigger": {
+     "id": "manual",
+     "type": "api"
+    }
+   }
+  ],
+  [
+   "serve.run.queued",
+   {
+    "job_id": "a",
+    "position": 1,
+    "run_id": "run-0",
+    "trigger": {
+     "id": "manual",
+     "type": "api"
+    }
+   }
+  ],
+  [
+   "serve.trigger.fired",
+   {
+    "job_id": "b",
+    "run_id": "run-1",
+    "trigger": {
+     "id": "manual",
+     "type": "api"
+    }
+   }
+  ],
+  [
+   "serve.run.queued",
+   {
+    "job_id": "b",
+    "position": 2,
+    "run_id": "run-1",
+    "trigger": {
+     "id": "manual",
+     "type": "api"
+    }
+   }
+  ],
+  [
+   "serve.trigger.fired",
+   {
+    "job_id": "b",
+    "run_id": "run-2",
+    "trigger": {
+     "id": "manual",
+     "type": "api"
+    }
+   }
+  ],
+  [
+   "serve.run.skipped",
+   {
+    "job_id": "b",
+    "reason": "coalesced",
+    "run_id": "run-2",
+    "trigger": {
+     "id": "manual",
+     "type": "api"
+    }
+   }
+  ],
+  [
+   "serve.trigger.fired",
+   {
+    "job_id": "c",
+    "run_id": "run-3",
+    "trigger": {
+     "id": "manual",
+     "type": "api"
+    }
+   }
+  ],
+  [
+   "serve.run.queued",
+   {
+    "job_id": "c",
+    "position": 3,
+    "run_id": "run-3",
+    "trigger": {
+     "id": "manual",
+     "type": "api"
+    }
+   }
+  ],
+  [
+   "serve.run.finished",
+   {
+    "budget": {
+     "day_spent_cost": 0.01,
+     "run": {
+      "max_cost": null,
+      "max_model_calls": 30,
+      "max_tokens": null
+     }
+    },
+    "changed": null,
+    "duration_ms": 0,
+    "error": "",
+    "finished_at": "2026-11-04T09:00:00+00:00",
+    "job_id": "a",
+    "notified": [],
+    "playback": {},
+    "recording_updated": false,
+    "run_id": "run-0",
+    "stage_reached": "agent",
+    "started_at": "2026-11-04T09:00:00+00:00",
+    "status": "completed",
+    "stop_reason": "answered",
+    "tasks": [
+     {
+      "kind": "main",
+      "stage": "agent",
+      "status": "completed",
+      "stop_reason": "answered",
+      "task_id": "t1"
+     }
+    ],
+    "trigger": {
+     "id": "manual",
+     "type": "api"
+    },
+    "usage": {
+     "by_model": {},
+     "by_stage": {},
+     "cost": 0.01,
+     "input_tokens": 50,
+     "model_calls": 1,
+     "output_tokens": 50
+    }
+   }
+  ],
+  [
+   "serve.run.finished",
+   {
+    "budget": {
+     "day_spent_cost": 0.02,
+     "run": {
+      "max_cost": null,
+      "max_model_calls": 30,
+      "max_tokens": null
+     }
+    },
+    "changed": null,
+    "duration_ms": 0,
+    "error": "",
+    "finished_at": "2026-11-04T09:00:00+00:00",
+    "job_id": "b",
+    "notified": [
+     "test"
+    ],
+    "playback": {},
+    "recording_updated": false,
+    "run_id": "run-1",
+    "stage_reached": "agent",
+    "started_at": "2026-11-04T09:00:00+00:00",
+    "status": "blocked",
+    "stop_reason": "budget_exhausted",
+    "tasks": [
+     {
+      "kind": "main",
+      "stage": "agent",
+      "status": "blocked",
+      "stop_reason": "budget_exhausted",
+      "task_id": "t2"
+     }
+    ],
+    "trigger": {
+     "id": "manual",
+     "type": "api"
+    },
+    "usage": {
+     "by_model": {},
+     "by_stage": {},
+     "cost": 0.01,
+     "input_tokens": 50,
+     "model_calls": 1,
+     "output_tokens": 50
+    }
+   }
+  ],
+  [
+   "serve.run.finished",
+   {
+    "budget": {
+     "day_spent_cost": 0.03,
+     "run": {
+      "max_cost": null,
+      "max_model_calls": 30,
+      "max_tokens": null
+     }
+    },
+    "changed": null,
+    "duration_ms": 0,
+    "error": "",
+    "finished_at": "2026-11-04T09:00:00+00:00",
+    "job_id": "c",
+    "notified": [],
+    "playback": {},
+    "recording_updated": false,
+    "run_id": "run-3",
+    "stage_reached": "agent",
+    "started_at": "2026-11-04T09:00:00+00:00",
+    "status": "failed",
+    "stop_reason": "answered",
+    "tasks": [
+     {
+      "kind": "main",
+      "stage": "agent",
+      "status": "failed",
+      "stop_reason": "answered",
+      "task_id": "t3"
+     }
+    ],
+    "trigger": {
+     "id": "manual",
+     "type": "api"
+    },
+    "usage": {
+     "by_model": {},
+     "by_stage": {},
+     "cost": 0.01,
+     "input_tokens": 50,
+     "model_calls": 1,
+     "output_tokens": 50
+    }
+   }
+  ]
+ ],
+ "fired": [
+  [
+   "queued",
+   ""
+  ],
+  [
+   "queued",
+   ""
+  ],
+  [
+   "coalesced",
+   "coalesced"
+  ],
+  [
+   "queued",
+   ""
+  ]
+ ],
+ "ledger": [
+  {
+   "budget": {
+    "day_spent_cost": 0.01,
+    "run": {
+     "max_cost": null,
+     "max_model_calls": 30,
+     "max_tokens": null
+    }
+   },
+   "changed": null,
+   "duration_ms": 0,
+   "error": "",
+   "finished_at": "2026-11-04T09:00:00+00:00",
+   "job_id": "a",
+   "notified": [],
+   "playback": {},
+   "recording_updated": false,
+   "run_id": "run-0",
+   "stage_reached": "agent",
+   "started_at": "2026-11-04T09:00:00+00:00",
+   "status": "completed",
+   "stop_reason": "answered",
+   "tasks": [
+    {
+     "kind": "main",
+     "stage": "agent",
+     "status": "completed",
+     "stop_reason": "answered",
+     "task_id": "t1"
+    }
+   ],
+   "trigger": {
+    "id": "manual",
+    "type": "api"
+   },
+   "usage": {
+    "by_model": {},
+    "by_stage": {},
+    "cost": 0.01,
+    "input_tokens": 50,
+    "model_calls": 1,
+    "output_tokens": 50
+   }
+  },
+  {
+   "budget": {
+    "day_spent_cost": 0.02,
+    "run": {
+     "max_cost": null,
+     "max_model_calls": 30,
+     "max_tokens": null
+    }
+   },
+   "changed": null,
+   "duration_ms": 0,
+   "error": "",
+   "finished_at": "2026-11-04T09:00:00+00:00",
+   "job_id": "b",
+   "notified": [
+    "test"
+   ],
+   "playback": {},
+   "recording_updated": false,
+   "run_id": "run-1",
+   "stage_reached": "agent",
+   "started_at": "2026-11-04T09:00:00+00:00",
+   "status": "blocked",
+   "stop_reason": "budget_exhausted",
+   "tasks": [
+    {
+     "kind": "main",
+     "stage": "agent",
+     "status": "blocked",
+     "stop_reason": "budget_exhausted",
+     "task_id": "t2"
+    }
+   ],
+   "trigger": {
+    "id": "manual",
+    "type": "api"
+   },
+   "usage": {
+    "by_model": {},
+    "by_stage": {},
+    "cost": 0.01,
+    "input_tokens": 50,
+    "model_calls": 1,
+    "output_tokens": 50
+   }
+  },
+  {
+   "budget": {
+    "day_spent_cost": 0.03,
+    "run": {
+     "max_cost": null,
+     "max_model_calls": 30,
+     "max_tokens": null
+    }
+   },
+   "changed": null,
+   "duration_ms": 0,
+   "error": "",
+   "finished_at": "2026-11-04T09:00:00+00:00",
+   "job_id": "c",
+   "notified": [],
+   "playback": {},
+   "recording_updated": false,
+   "run_id": "run-3",
+   "stage_reached": "agent",
+   "started_at": "2026-11-04T09:00:00+00:00",
+   "status": "failed",
+   "stop_reason": "answered",
+   "tasks": [
+    {
+     "kind": "main",
+     "stage": "agent",
+     "status": "failed",
+     "stop_reason": "answered",
+     "task_id": "t3"
+    }
+   ],
+   "trigger": {
+    "id": "manual",
+    "type": "api"
+   },
+   "usage": {
+    "by_model": {},
+    "by_stage": {},
+    "cost": 0.01,
+    "input_tokens": 50,
+    "model_calls": 1,
+    "output_tokens": 50
+   }
+  }
+ ],
+ "status_after": {
+  "day": {
+   "cost": 0.03,
+   "date": "2026-11-04",
+   "max_cost": null,
+   "max_runs": 10,
+   "max_tokens": null,
+   "runs": 3,
+   "tokens": 300
+  },
+  "jobs": {
+   "a": {
+    "counters": {},
+    "enabled": true,
+    "last_finished_at": "2026-11-04T09:00:00+00:00",
+    "last_run_id": "run-0",
+    "triggers": []
+   },
+   "b": {
+    "counters": {
+     "coalesced": 1
+    },
+    "enabled": true,
+    "last_finished_at": "2026-11-04T09:00:00+00:00",
+    "last_run_id": "run-1",
+    "triggers": []
+   },
+   "c": {
+    "counters": {},
+    "enabled": true,
+    "last_finished_at": "2026-11-04T09:00:00+00:00",
+    "last_run_id": "run-3",
+    "triggers": []
+   }
+  },
+  "queue": [],
+  "running": null,
+  "stopping": false
+ },
+ "status_before": {
+  "day": {
+   "cost": 0.0,
+   "date": "2026-11-04",
+   "max_cost": null,
+   "max_runs": 10,
+   "max_tokens": null,
+   "runs": 0,
+   "tokens": 0
+  },
+  "jobs": {
+   "a": {
+    "counters": {},
+    "enabled": true,
+    "last_finished_at": null,
+    "last_run_id": "",
+    "triggers": []
+   },
+   "b": {
+    "counters": {
+     "coalesced": 1
+    },
+    "enabled": true,
+    "last_finished_at": null,
+    "last_run_id": "",
+    "triggers": []
+   },
+   "c": {
+    "counters": {},
+    "enabled": true,
+    "last_finished_at": null,
+    "last_run_id": "",
+    "triggers": []
+   }
+  },
+  "queue": [
+   {
+    "job_id": "a",
+    "run_id": "run-0",
+    "trigger": {
+     "id": "manual",
+     "type": "api"
+    }
+   },
+   {
+    "job_id": "b",
+    "run_id": "run-1",
+    "trigger": {
+     "id": "manual",
+     "type": "api"
+    }
+   },
+   {
+    "job_id": "c",
+    "run_id": "run-3",
+    "trigger": {
+     "id": "manual",
+     "type": "api"
+    }
+   }
+  ],
+  "running": null,
+  "stopping": false
+ }
+}
