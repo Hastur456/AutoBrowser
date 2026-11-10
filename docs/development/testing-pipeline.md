@@ -421,8 +421,8 @@ is drawn in [CI/CD Pipeline](../diagrams/ci-cd-pipeline.md).
 2. `doctor --llm`, then `run_batch.py --tasks <suite> --continue-on-error --grade`;
 3. compares the batch with its **nearest measured ancestor** (`ci_state.py compare`): the
    newest `main` measurement of the same Golden Set whose commit is an ancestor of the
-   measured one. A late run of an old commit or a run of an unmerged branch never becomes the
-   base;
+   measured one. A late run of an old commit, a run of an unmerged branch or an `infra`
+   measurement never becomes the base;
 4. turns the comparison into a verdict (`scripts/ci_summary.py live`), writes the status or
    the comments and the issue, and uploads the batch as `regression-batch-<run_id>`.
 
@@ -435,7 +435,7 @@ is drawn in [CI/CD Pipeline](../diagrams/ci-cd-pipeline.md).
 | `infra` | the run broke, no scenario ran, or more than `pipeline.ci_max_inconclusive_ratio` (0.3) of the scenarios ended in `provider_error`/`timeout` | `error` "rerun" | red; opens the issue `regression-infra` |
 
 Only main measurements (after merge, manual) write `ci-state`: the last
-`pipeline.ci_state_keep_batches` (5) batches without their profiles, `history.jsonl`, the
+`pipeline.ci_state_keep_batches` (5) batches of every Golden Set without their profiles, `history.jsonl`, the
 Langfuse journals and `ci/verdicts.jsonl`. A before-merge run never does, so unmerged code
 never becomes a base. One main measurement runs at a time; when several labelled PRs merge
 during one run, a waiting one may be replaced by the next, which covers its changes.

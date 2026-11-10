@@ -38,11 +38,13 @@ are in the [Regression and Langfuse in CI/CD design](../development/2026-11-10-r
   blocks only a requested red run.
 - **The base is the nearest measured ancestor** (`scripts/ci_state.py compare`): among the
   stored main measurements of the same Golden Set, the one whose commit is an ancestor of the
-  measured commit and that no other candidate descends from. A late run of an old commit or a
-  run of an unmerged branch never becomes a base.
+  measured commit and that no other candidate descends from. A late run of an old commit, a
+  run of an unmerged branch or an infra measurement (journalled `infra`, or past the infra share)
+  never becomes a base: an infra kind in the base would turn a new agent failure into `changed`
+  instead of a regression.
 - **State between runs is the `ci-state` artifact chain**, written only by main measurements
   (after merge, manual) and only over a restored chain: the last
-  `pipeline.ci_state_keep_batches` batches, the batch history, the platform journals and
+  `pipeline.ci_state_keep_batches` batches of every Golden Set, the batch history, the platform journals and
   `ci/verdicts.jsonl`. Before-merge runs read it and never write it.
 - **The verdict is local and code** (`scripts/ci_summary.py live`): `pass`, `regression`,
   `no_base`, `perf` (slower or costlier only) or `infra`. `infra` means the run broke, no scenario
