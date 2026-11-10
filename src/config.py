@@ -2074,6 +2074,43 @@ class PipelineSettings(_Section):
         ),
     ] = 0.25
 
+    ci_state_keep_batches: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=1_000,
+            description=(
+                "Batches of main measurements kept in the CI state artifact (scripts/"
+                "ci_state.py save); the oldest are dropped past it."
+            ),
+        ),
+    ] = 5
+
+    ci_max_inconclusive_ratio: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=1.0,
+            description=(
+                "Share of a CI live run's scenarios that may end in an infra failure "
+                "(provider_error, timeout); a larger share makes the verdict infra, not a "
+                "regression or a pass."
+            ),
+        ),
+    ] = 0.3
+
+    ci_release_verdict_max_age_days: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=3_650,
+            description=(
+                "Age in days of the green main measurement a release tag needs on its commit "
+                "or an ancestor (scripts/ci_state.py verdict)."
+            ),
+        ),
+    ] = 14
+
 
 class TelemetrySettings(_Section):
     """OpenTelemetry trace export of every session over OTLP/HTTP (off by default).

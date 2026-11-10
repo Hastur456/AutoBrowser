@@ -483,6 +483,9 @@ pipeline:
   request_chars_tolerance: 0.1                  # (default) accepted request_chars change, relative
   history_max_rows: 50000                       # (default) rows kept in batches/history.jsonl
   batch_metric_tolerance: 0.25                  # (default) accepted metric growth between batch runs
+  ci_state_keep_batches: 5                      # (default) main measurements kept in the CI state
+  ci_max_inconclusive_ratio: 0.3                # (default) infra share past which a CI verdict is infra
+  ci_release_verdict_max_age_days: 14           # (default) max age of the green main run a release needs
 
 # ---------------------------------------------------------------------------
 # OpenTelemetry trace export over OTLP/HTTP (needs `uv sync --group otel`).

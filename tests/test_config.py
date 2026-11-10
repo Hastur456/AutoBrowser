@@ -1515,6 +1515,38 @@ def test_the_batch_metric_tolerance_is_bounded(settings: Any, value: float) -> N
         settings(pipeline={"batch_metric_tolerance": value})
 
 
+def test_the_ci_settings_default_and_read_the_env(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pipeline = settings().pipeline
+    assert pipeline.ci_state_keep_batches == 5
+    assert pipeline.ci_max_inconclusive_ratio == 0.3
+    assert pipeline.ci_release_verdict_max_age_days == 14
+
+    monkeypatch.setenv("AUTOBROWSER_PIPELINE__CI_STATE_KEEP_BATCHES", "2")
+    monkeypatch.setenv("AUTOBROWSER_PIPELINE__CI_MAX_INCONCLUSIVE_RATIO", "0.5")
+    monkeypatch.setenv("AUTOBROWSER_PIPELINE__CI_RELEASE_VERDICT_MAX_AGE_DAYS", "30")
+
+    pipeline = settings().pipeline
+    assert pipeline.ci_state_keep_batches == 2
+    assert pipeline.ci_max_inconclusive_ratio == 0.5
+    assert pipeline.ci_release_verdict_max_age_days == 30
+
+
+@pytest.mark.parametrize(
+    "pipeline",
+    [
+        {"ci_state_keep_batches": 0},
+        {"ci_max_inconclusive_ratio": -0.1},
+        {"ci_max_inconclusive_ratio": 1.1},
+        {"ci_release_verdict_max_age_days": 0},
+    ],
+)
+def test_the_ci_settings_are_bounded(settings: Any, pipeline: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        settings(pipeline=pipeline)
+
+
 # --------------------------------------------------------------------------
 # The telemetry section: OTLP trace export, off by default
 # --------------------------------------------------------------------------
