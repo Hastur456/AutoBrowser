@@ -189,6 +189,12 @@ def test_a_default_request_still_counts_on_recheck(tmp_path: Path) -> None:
     assert [s[1] for s in github.statuses] == ["success"]
 
 
+def test_a_finished_report_leaves_a_marker_for_the_fallback_status(tmp_path: Path) -> None:
+    _live(tmp_path, _report("compared", 1, findings=[REGRESSION]), "before-merge", FakeGitHub())
+
+    assert (tmp_path / "ci-out" / script.DONE_FILE_NAME).read_text(encoding="utf-8") == "regression"
+
+
 def test_before_merge_never_writes_the_verdict_journal(tmp_path: Path) -> None:
     _live(tmp_path, _report("compared", 0), "before-merge", FakeGitHub())
 

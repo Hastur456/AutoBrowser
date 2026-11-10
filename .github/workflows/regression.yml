@@ -1,0 +1,144 @@
+# Optional live regression runs around merges into main
+# (docs/development/2026-11-10-regression-ci-cd-design.md §3, §5.3).
+#
+# - Label `regression:before-merge`: a live run on the PR merge ref; its result is the commit
+#   status `regression/before-merge` on the PR head. Without the label the decide job writes
+#   `success` ("not requested"), so the status may be a required check and still never stop a
+#   merge nobody asked a run for. A label event that changes nothing writes nothing.
+# - Label `regression:after-merge` (set before merging): a live run on the merge commit,
+#   compared with the previous main measurement, updating ci-state and Langfuse.
+# - `regression:skip` opts a PR out of the repository default `vars.REGRESSION_DEFAULT`
+#   (off | before | after | both).
+# - Actions -> regression -> Run workflow: a manual measurement of a commit of main.
+name: regression
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, labeled, unlabeled, closed]
+  workflow_dispatch:
+    inputs:
+      ref:
+        type: string
+        default: main
+        description: A commit or branch of main to measure.
+      suite:
+        type: choice
+        options: [benchmark, smoke, golden]
+        default: benchmark
+      model:
+        type: string
+        required: false
+        description: Another model than ci/regression.yaml's.
+
+permissions:
+  contents: read
+
+jobs:
+  decide:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+    outputs:
+      before: ${{ steps.mode.outputs.before }}
+      after: ${{ steps.mode.outputs.after }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REGRESSION_DEFAULT: ${{ vars.REGRESSION_DEFAULT || 'off' }}
+    defaults:
+      run:
+        # -eo pipefail: a failed decision fails the step instead of passing through tee.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/ci_regression_mode.py
+          sparse-checkout-cone-mode: false
+      - id: mode
+        # Standard library only: no uv sync for a decision.
+        run: python3 scripts/ci_regression_mode.py --event "$GITHUB_EVENT_PATH" | tee -a "$GITHUB_OUTPUT"
+      - name: Write the status that needs no run (or the pending one)
+        if: steps.mode.outputs.before == 'pass' || steps.mode.outputs.before == 'run'
+        env:
+          SHA: ${{ steps.mode.outputs.status_sha }}
+          STATE: ${{ steps.mode.outputs.before == 'run' && 'pending' || 'success' }}
+          REASON: ${{ steps.mode.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$SHA" \
+            -f context=regression/before-merge -f state="$STATE" \
+            -f description="$REASON" -f target_url="$RUN_URL"
+
+  before-merge:
+    needs: decide
+    if: needs.decide.outputs.before == 'run'
+    concurrency:
+      # A newer requested run of the same PR (a push, the label again) cancels this one.
+      group: regression-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      actions: read
+      statuses: write
+      pull-requests: write
+    uses: ./.github/workflows/live-run.yml
+    with:
+      mode: before-merge
+      ref: ""
+      status_sha: ${{ github.event.pull_request.head.sha }}
+      pr: ${{ format('{0}', github.event.pull_request.number) }}
+      suite: ${{ vars.REGRESSION_SUITE || 'benchmark' }}
+      langfuse: false
+    secrets:
+      # No Langfuse keys: before-merge runs never write to the platform (Q7).
+      llm_api_key: ${{ secrets.AUTOBROWSER_LLM_API_KEY }}
+
+  after-merge:
+    needs: decide
+    if: needs.decide.outputs.after == 'run'
+    concurrency:
+      # One main measurement at a time: parallel runs would overwrite each other's ci-state.
+      group: regression-main
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/live-run.yml
+    with:
+      mode: after-merge
+      # The commit that landed on main (also for squash and rebase), not the test merge ref.
+      ref: ${{ github.event.pull_request.merge_commit_sha }}
+      pr: ${{ format('{0}', github.event.pull_request.number) }}
+      suite: ${{ vars.REGRESSION_SUITE || 'benchmark' }}
+      langfuse: true
+    secrets:
+      llm_api_key: ${{ secrets.AUTOBROWSER_LLM_API_KEY }}
+      langfuse_public_key: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+      langfuse_secret_key: ${{ secrets.LANGFUSE_SECRET_KEY }}
+
+  manual:
+    if: github.event_name == 'workflow_dispatch'
+    concurrency:
+      group: regression-main
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/live-run.yml
+    with:
+      mode: manual
+      ref: ${{ inputs.ref }}
+      suite: ${{ inputs.suite }}
+      model: ${{ inputs.model }}
+      langfuse: true
+    secrets:
+      llm_api_key: ${{ secrets.AUTOBROWSER_LLM_API_KEY }}
+      langfuse_public_key: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+      langfuse_secret_key: ${{ secrets.LANGFUSE_SECRET_KEY }}

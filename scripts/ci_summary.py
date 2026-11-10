@@ -47,6 +47,9 @@ STATUS_CONTEXT = "regression/before-merge"
 STATUS_DESCRIPTION_LIMIT = 140
 #: Hidden marker of the one comment a before-merge run keeps editing.
 STICKY_MARKER = "<!-- autobrowser-regression -->"
+#: Written into ``--out`` once the reports are done; without it the workflow's fallback step
+#: marks the before-merge status as an infra error (the job broke before reporting).
+DONE_FILE_NAME = "summary.done"
 REGRESSION_ISSUE_LABEL = "regression-main"
 INFRA_ISSUE_LABEL = "regression-infra"
 GREEN = frozenset({"pass", "no_base", "perf"})
@@ -246,6 +249,8 @@ def run_live(
             },
         )
         _report_main(github, pr, commit, verdict, body, run_url)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / DONE_FILE_NAME).write_text(verdict.kind, encoding="utf-8")
     return EXIT_CODES[verdict.kind]
 
 
