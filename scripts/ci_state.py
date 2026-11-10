@@ -237,13 +237,23 @@ def unpack_state(archive: Path, root: Path) -> None:
 
 
 def pack_state(root: Path, batches_dir: Path, keep: int, out: Path) -> list[str]:
-    """Pack the newest ``keep`` finished batches (without their profiles) and the journals.
+    """Pack the newest ``keep`` finished batches of every Golden Set (without their profiles)
+    and the journals, so runs of one suite never evict the base of another.
 
     Returns the ids of the kept batches.
     """
 
-    batches = sorted(_finished_batches(batches_dir), key=lambda b: str(b[1].get("started_at") or ""))
-    kept = batches[-keep:]
+    by_tasks: dict[str, list[Batch]] = {}
+    for batch in _finished_batches(batches_dir):
+        by_tasks.setdefault(_tasks_of(batch[1]), []).append(batch)
+    kept = sorted(
+        (
+            batch
+            for runs in by_tasks.values()
+            for batch in sorted(runs, key=lambda b: str(b[1].get("started_at") or ""))[-keep:]
+        ),
+        key=lambda b: str(b[1].get("started_at") or ""),
+    )
     journals = [
         batches_dir / HISTORY_FILE_NAME,
         batches_dir / JOURNAL_FILE_NAME,
@@ -297,6 +307,8 @@ def compare_with_base(batch_json: Path, batches_dir: Path, root: Path, is_ancest
         }
     batch_dir, meta, rows = new
     commit = _commit_of(meta)
+    verdicts = read_verdicts(root)
+    max_ratio = get_settings().pipeline.ci_max_inconclusive_ratio
     candidates = [
         batch
         for batch in _finished_batches(batches_dir)
@@ -304,6 +316,7 @@ def compare_with_base(batch_json: Path, batches_dir: Path, root: Path, is_ancest
         and _tasks_of(batch[1]) == _tasks_of(meta)
         and _commit_of(batch[1])
         and commit
+        and _trusted_base(batch, verdicts, max_ratio)
         and is_ancestor(_commit_of(batch[1]), commit)
     ]
     base = nearest(candidates, is_ancestor)
@@ -316,7 +329,7 @@ def compare_with_base(batch_json: Path, batches_dir: Path, root: Path, is_ancest
         return {"status": "no_base", "exit_code": 2, **report}
     comparison = compare_batches(base[1], base[2], meta, rows, get_settings().pipeline)
     (batch_dir / COMPARE_FILE_NAME).write_text(comparison.render_markdown(), encoding="utf-8")
-    pr = _verdict_pr(read_verdicts(root), str(base[1].get("batch_id") or base[0].name))
+    pr = _verdict_pr(verdicts, str(base[1].get("batch_id") or base[0].name))
     return {
         **report,
         "status": "compared" if comparison.comparable else "no_base",
@@ -324,6 +337,19 @@ def compare_with_base(batch_json: Path, batches_dir: Path, root: Path, is_ancest
         "base": {**_batch_summary(base), "pr": pr},
         "comparison": comparison.to_json_dict(perf_gate=True),
     }
+
+
+def _trusted_base(batch: Batch, verdicts: Sequence[Mapping[str, Any]], max_ratio: float) -> bool:
+    """A batch may be a base unless its measurement was infra: journalled so, or with more infra
+    failures than the allowed share. An infra kind in the base turns a new agent failure into
+    ``changed`` instead of ``regression``, so such a base would hide regressions."""
+
+    batch_id = str(batch[1].get("batch_id") or batch[0].name)
+    journalled = [row.get("verdict") for row in verdicts if row.get("batch_id") == batch_id]
+    if journalled and journalled[-1] == "infra":
+        return False
+    counts = _batch_summary(batch)["counts"]
+    return not counts["total"] or counts["infra"] / counts["total"] <= max_ratio
 
 
 def nearest(candidates: Sequence[Batch], is_ancestor: Ancestry) -> Batch | None:

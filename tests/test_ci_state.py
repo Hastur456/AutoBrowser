@@ -392,3 +392,56 @@ def test_the_tasks_command_prints_the_suite_file(capsys: pytest.CaptureFixture[s
     assert script.main(["tasks", "--suite", "golden"]) == 0
     assert capsys.readouterr().out.strip() == "tests/golden/tasks.jsonl"
     assert script.main(["tasks", "--suite", "nope"]) == 2
+
+
+# --------------------------------------------------------------------------
+# review fixes: no infra base, pruning per Golden Set
+# --------------------------------------------------------------------------
+
+
+def test_an_infra_measurement_is_never_a_base(tmp_path: Path, repo: dict[str, Any]) -> None:
+    batches = _batches_dir()
+    root = get_settings().storage.root_dir
+    _batch(batches, "batch-a", "2026-11-01T10:00:00+00:00", repo["a"], [("s1", "passed"), ("s2", "passed")])
+    # The provider went down during the measurement of b: journalled as infra.
+    _batch(batches, "batch-b", "2026-11-02T10:00:00+00:00", repo["b"], [("s1", "provider_error"), ("s2", "passed")])
+    script.append_verdict(root, {"batch_id": "batch-b", "verdict": "infra"})
+    new = _batch(batches, "batch-d", "2026-11-04T10:00:00+00:00", repo["d"], [("s1", "guard_limit"), ("s2", "passed")])
+
+    code, report = _compare(tmp_path, repo, new)
+
+    assert report["base"]["batch_id"] == "batch-a"
+    assert code == 1
+
+
+def test_a_batch_past_the_infra_share_is_never_a_base_even_without_a_verdict(
+    tmp_path: Path, repo: dict[str, Any]
+) -> None:
+    batches = _batches_dir()
+    _batch(batches, "batch-a", "2026-11-01T10:00:00+00:00", repo["a"], [("s1", "passed"), ("s2", "passed")])
+    _batch(batches, "batch-b", "2026-11-02T10:00:00+00:00", repo["b"], [("s1", "timeout"), ("s2", "provider_error")])
+    new = _batch(batches, "batch-d", "2026-11-04T10:00:00+00:00", repo["d"], [("s1", "guard_limit"), ("s2", "passed")])
+
+    _, report = _compare(tmp_path, repo, new)
+
+    assert report["base"]["batch_id"] == "batch-a"
+
+
+def test_save_keeps_the_newest_batches_of_every_golden_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repo: dict[str, Any]
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_PIPELINE__CI_STATE_KEEP_BATCHES", "2")
+    get_settings.cache_clear()
+    batches = _batches_dir()
+    _batch(batches, "batch-bench", "2026-11-01T10:00:00+00:00", repo["a"], [], tasks="benchmark")
+    for day in (2, 3, 4):
+        _batch(batches, f"batch-smoke-{day}", f"2026-11-0{day}T10:00:00+00:00", repo["a"], [], tasks="smoke")
+    archive = tmp_path / "ci-state.tar.gz"
+
+    assert script.main(["save", "--out", str(archive)]) == 0
+
+    with tarfile.open(archive) as tar:
+        names = set(tar.getnames())
+    assert "batches/batch-bench/batch.json" in names
+    assert "batches/batch-smoke-2/batch.json" not in names
+    assert {"batches/batch-smoke-3/batch.json", "batches/batch-smoke-4/batch.json"} <= names

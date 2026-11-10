@@ -105,6 +105,9 @@ jobs:
           uv run scripts/langfuse_sync.py setup || echo "::warning::langfuse_sync setup failed"
       - name: Run the suite
         continue-on-error: true
+        # Below the job's 120: a job timeout is a cancellation, which would skip the report
+        # and leave a before-merge status pending; a step timeout is a failure it survives.
+        timeout-minutes: 100
         run: |
           tasks="$(uv run scripts/ci_state.py tasks --suite "$SUITE")"
           # The batch result is the JSON on stdout; a failed scenario exits 1, which is the
