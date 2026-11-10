@@ -1,0 +1,43 @@
+# The settings profile of the live regression runs on GitHub Actions (.github/workflows/
+# live-run.yml sets AUTOBROWSER_CONFIG_FILE=ci/regression.yaml and AUTOBROWSER_HOME to a
+# runner temp directory). See docs/development/2026-11-10-regression-ci-cd-design.md §5.8.
+#
+# A partial profile: it decides only the fields below and beats the environment for them, so
+# it names no key and no switch the workflow must flip. The model key, the Langfuse keys and
+# eval_platform.enabled come from the environment. tests/test_ci_profile.py loads this file.
+
+llm:
+  provider: ollama                # Q3: the model of the live runs
+  model: gemma4:31b-cloud         # a manual run may pass another one (input `model`)
+
+# The MCP server launches its own headless Chromium; the session starts no browser.
+browser:
+  launch: external
+
+mcp_servers:
+  playwright:
+    transport: stdio
+    command: playwright-mcp       # installed by .github/actions/live-setup
+    args:
+      - --headless
+      - --browser
+      - chromium
+      - --user-data-dir
+      - "{profile_dir}"           # run_batch.py: <batch_dir>/profiles/scenario-N
+      - --no-sandbox              # the runner's kernel gives Chromium no user namespace sandbox
+    stateful: true
+
+permissions:
+  mode: dont_ask                  # nobody answers approvals in a batch
+
+loop:
+  max_task_model_calls: 40        # cost ceiling of one task
+
+telemetry:
+  otlp_enabled: false
+
+eval_platform:                    # `enabled` comes from the environment (live-run.yml, §5.9)
+  environment: ci-main
+  capture_content: none           # N6: no page text leaves the runner
+  auto_sync: true
+  sync_timeout_seconds: 600
