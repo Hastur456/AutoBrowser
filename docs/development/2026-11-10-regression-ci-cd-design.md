@@ -1,6 +1,10 @@
 # Регрессионное тестирование в CI/CD и Langfuse в CI/CD: системный дизайн и ТЗ
 
-Status: Proposed (на согласование, открытые вопросы — §10)
+Status: Accepted (2026-11-10; открытые вопросы §10 приняты по умолчанию)
+Решение: [ADR-2026-11-10: Regression and Langfuse in CI/CD](../decisions/2026-11-10-regression-and-langfuse-in-ci-cd.md).
+Реализация: WP1, WP3–WP6, WP9, WP10 и документация WP11 — в коде (см. «Отличия реализации» в
+конце). Не сделаны: локальный живой прогон на Linux (WP2), прогоны на тестовом PR и настройка
+репозитория (WP6, WP7), мост G8 (WP8, ждёт теста пользователя).
 Date: 2026-11-10
 Расширяет: [Автономный пайплайн тестирования](2026-10-19-autonomous-test-pipeline-design.md).
 Его §4.6.6 «CI-workflow» (ночной прогон на self-hosted Windows и история в ветке `ci-history`)
@@ -907,10 +911,12 @@ $env:AUTOBROWSER_SMOKE_IMAGE = "autobrowser-serve"; uv run pytest -m live tests/
 ## Приложение D. Настройка репозитория (один раз)
 
 ```powershell
-# метки
+# метки (regression-main и regression-infra нужны issue-отчётам прогонов на main)
 gh label create "regression:before-merge" --color D93F0B --description "Live regression run before merging; sets regression/before-merge"
 gh label create "regression:after-merge"  --color 0E8A16 --description "Live regression run on main after merging"
 gh label create "regression:skip"         --color BFD4F2 --description "Opt this PR out of REGRESSION_DEFAULT"
+gh label create "regression-main"         --color B60205 --description "Live regression found on main"
+gh label create "regression-infra"        --color FBCA04 --description "Live regression run on main broke (infra)"
 
 # переменные
 gh variable set REGRESSION_DEFAULT --body off            # off | before | after | both
@@ -937,3 +943,29 @@ gh secret set LANGFUSE_SECRET_KEY
   зелёного `regression/before-merge`.
 - **Замерить `main` после мержа** — поставить `regression:after-merge` до нажатия Merge.
 - **Замерить `main` без PR** — Actions → regression → Run workflow (`ref`, `suite`).
+
+## Отличия реализации от эскизов
+
+Эскизы приложений A и B остались как были. Реализация отличается от них в следующем:
+
+- `AUTOBROWSER_HOME` задаёт шаг, а не `env:` джобы: контекст `runner` в `jobs.<id>.env`
+  недоступен.
+- Секреты передаются в `live-run.yml` явно (`llm_api_key`, `langfuse_*`), а не через
+  `secrets: inherit`. Прогон до мержа получает только ключ модели (§5.12).
+- Файл сюиты берётся из `ci_state.py tasks --suite` (словарь `SUITES` моста), а не из
+  `tests/golden/${SUITE}.jsonl`: у `golden` файл называется `tests/golden/tasks.jsonl`.
+- `ci_summary.py live` берёт вердикт из `compare.json`, а не из `--compare-code`. Только по
+  `compare.json` можно отличить «нет базы» от «нет батча». Коды выхода: 0 — зелёный, 1 —
+  регрессия, 2 — infra.
+- Sticky-комментарий находится по скрытому маркеру через API, а не через
+  `gh pr comment --edit-last`: тот правит последний комментарий бота, а это может быть
+  комментарий другого workflow.
+- После отчёта `ci_summary.py` пишет маркер `ci-out/summary.done`. Если джоба оборвалась до
+  отчёта (setup, uv), запасной шаг ставит статус `error`, иначе статус остался бы `pending`
+  навсегда. Отменённый прогон статус не трогает (`!cancelled()` вместо `always()`).
+- `ci-state` сохраняется, только если `restore` прошёл успешно: загрузка после сбоя
+  `restore` оборвала бы цепочку.
+- `verdict` для релиза не скачивает состояние сам: `docker.yml` сначала вызывает
+  `ci_state.py restore`, затем `verdict`.
+- Недопустимое значение `REGRESSION_DEFAULT` считается `off` и даёт предупреждение. Ошибкой
+  оно не считается, иначе обязательный статус не был бы записан.

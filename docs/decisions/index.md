@@ -4,6 +4,15 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-11-10 Regression and Langfuse in CI/CD](2026-11-10-regression-and-langfuse-in-ci-cd.md)
+  (Accepted): the offline gate on Windows and Linux with all three eval suites; optional live
+  Golden Set runs around merges into `main`, chosen per PR by label (`regression:before-merge`
+  sets the commit status `regression/before-merge`, written explicitly so an unrelated event
+  never masks a red run; `regression:after-merge` measures the merge commit) or by a manual
+  dispatch; the base is the nearest measured ancestor from a `ci-state` artifact chain only
+  main measurements write; Langfuse only in main measurements; the stand image published on
+  tags behind a green main measurement. Extends the autonomous test pipeline and Langfuse
+  platform ADRs.
 - [2026-11-09 Server Context, Neutral Prompts and EnvironmentState](2026-11-09-server-context-and-neutral-prompts.md)
   (Accepted, Russian): the MCP `initialize` `instructions` and the argument-free prompts an
   `mcp_servers` entry names in `context_prompts` become system blocks

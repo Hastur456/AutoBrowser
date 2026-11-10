@@ -316,6 +316,43 @@ uv run pytest tests\test_langfuse_client.py tests\test_langfuse_datasets.py test
 uv run pytest tests\test_otel_spans.py tests\test_otel_trajectory.py tests\test_otel_sink.py
 ```
 
+## 14. In CI
+
+The live regression workflow syncs main measurements (after merge, manual) to a separate
+project; before-merge runs never write to Langfuse and get no keys
+([Testing Pipeline Guide](testing-pipeline.md#live-regression-in-ci),
+[ADR-2026-11-10](../decisions/2026-11-10-regression-and-langfuse-in-ci-cd.md)).
+
+1. In Langfuse create the project `autobrowser-ci` and a key pair (step 2).
+2. In GitHub → Settings → Secrets and variables → Actions:
+
+   | Type | Name | Value |
+   |---|---|---|
+   | Secret | `LANGFUSE_PUBLIC_KEY` | `pk-lf-…` |
+   | Secret | `LANGFUSE_SECRET_KEY` | `sk-lf-…` |
+   | Variable | `LANGFUSE_HOST` | `https://cloud.langfuse.com` (or the US host, or a self-host ≥ 4.59.0) |
+
+3. Check the keys locally first (step 4: `langfuse_sync.py doctor`).
+
+What a main measurement does (`.github/workflows/live-run.yml`):
+
+- `AUTOBROWSER_EVAL_PLATFORM__ENABLED` is set to `true` by one step only when the keys exist;
+  without them every Langfuse step is skipped. `ci/regression.yaml` sets the environment
+  `ci-main`, `capture_content: none` and `auto_sync`.
+- `langfuse_sync.py doctor` (a failure switches the sync off for the run, with a warning),
+  `setup`, the sync inside `run_batch.py`, then
+  `experiment push --pending --suite <suite>` and `status`. Every failure is a warning; the
+  verdict never depends on Langfuse.
+- The batch folders, with their `platform_sync.json` ledgers, travel in the `ci-state`
+  artifact, so the next measurement sends only what is missing. The suite is passed explicitly
+  (`--suite`) until `--pending` reads it from the batch.
+- The experiment link reaches the step summary, the PR comment, the issue and
+  `ci/verdicts.jsonl`.
+
+Hobby budget: one `benchmark` measurement is about 1,900 units (`golden` about 1,100), so
+50,000 a month cover about 26 measurements of `main`; with `REGRESSION_DEFAULT=after` or
+`both` and frequent merges plan a paid tier or a self-host.
+
 ## Command Reference
 
 ```powershell

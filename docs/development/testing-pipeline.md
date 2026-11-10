@@ -13,9 +13,9 @@ Terms such as [Golden Set](../glossary.md), [Grader](../glossary.md) and
 | Level | What it checks | Browser and model | Command | Where it runs |
 |---|---|---|---|---|
 | Unit and contract tests | contracts, layer boundaries, state, policy, hooks, memory, UI | none | `uv run pytest` | CI gate on every PR and push to `main` |
-| Scripted evals | the real engine on 57 scripted scenarios against `agent_loop_v2`, 6 replay scenarios against `playback_v1` and 4 model cascade scenarios against `cascade_v1` | fake browser, scripted model | `uv run scripts/run_evals.py [--scenarios …]` | CI gate (`agent_loop_v2`); the others by hand |
-| Docker smoke | the stand's image: build, `/healthz`, one probe-only job | the image's headless Chromium, no model | `uv run pytest -m live tests/pipeline/test_docker_smoke.py` | by hand (needs a Docker daemon) |
-| Golden Set | the agent on real tasks on real sites, graded by its final answer | real Chrome, Playwright MCP, real model | `uv run scripts/run_batch.py … --grade` | by hand (nightly is planned) |
+| Scripted evals | the real engine on 57 scripted scenarios against `agent_loop_v2`, 6 replay scenarios against `playback_v1` and 4 model cascade scenarios against `cascade_v1` | fake browser, scripted model | `uv run scripts/run_evals.py [--scenarios …]` | CI gate, all three suites |
+| Docker smoke | the stand's image: build, `/healthz`, one probe-only job | the image's headless Chromium, no model | `uv run pytest -m live tests/pipeline/test_docker_smoke.py` | `docker.yml` on PRs that touch the image and on `v*` tags; by hand with a Docker daemon |
+| Golden Set | the agent on real tasks on real sites, graded by its final answer | real Chrome (headless Chromium in CI), Playwright MCP, real model | `uv run scripts/run_batch.py … --grade` | by hand; in CI only on request around a merge into `main` ([Live Regression in CI](#live-regression-in-ci)) |
 
 The offline levels are deterministic and need no network. The Golden Set depends on live sites
 (anti-bot pages, layout changes, geo), so a failure there needs a look at the trace before it is
@@ -23,24 +23,26 @@ called a regression.
 
 ## Offline Gate
 
-`.github/workflows/gate.yml` runs these on `windows-latest`; run the same locally before a push:
+`.github/workflows/gate.yml` runs these on `windows-latest` and `ubuntu-latest`; run the same
+locally before a push:
 
 ```powershell
 uv sync --locked
 uv run pytest
 uv run scripts/run_evals.py --baseline tests/evals/baselines/agent_loop_v2.json --memory-seed tests/evals/memory_seed
+uv run scripts/run_evals.py --scenarios tests/evals/playback_scenarios --baseline tests/evals/baselines/playback_v1.json
+uv run scripts/run_evals.py --scenarios tests/evals/cascade_scenarios --baseline tests/evals/baselines/cascade_v1.json
 ```
 
 - `uv run pytest` deselects tests marked `live` and `bench`; select them with `-m live` or
-  `-m bench`.
-- The replay and cascade suites are not in the CI workflow yet; run them with the change:
-
-  ```powershell
-  uv run scripts/run_evals.py --scenarios tests/evals/playback_scenarios --baseline tests/evals/baselines/playback_v1.json
-  uv run scripts/run_evals.py --scenarios tests/evals/cascade_scenarios --baseline tests/evals/baselines/cascade_v1.json
-  ```
-
-  A `--scenarios` directory names its suite (`tests/evals/cascade_scenarios` -> `cascade`).
+  `-m bench`. The `conpty` tests are skipped off Windows.
+- Each eval suite is its own CI step and runs even after a failed step, so all three results
+  are visible. The job writes `ci-out/junit.xml` and a step summary (`scripts/ci_summary.py
+  gate`: pytest totals, failed tests, one row and the log per eval suite) and uploads `ci-out`
+  as the artifact `gate-<os>`.
+- The Linux job is `continue-on-error` for now: it reports but does not fail the gate until it
+  has been stable for two weeks; then it becomes a required check too.
+- A `--scenarios` directory names its suite (`tests/evals/cascade_scenarios` -> `cascade`).
 - `run_evals.py` runs every scenario of `tests/evals/scenarios/` and prints one line per finding
   (a changed counter, a request size past the tolerance, a missing or orphan baseline row, a
   failed scenario assertion). Exit code `0` means no failing finding, `1` a regression, `2` a
@@ -378,6 +380,90 @@ on the dataset `autobrowser/golden`, with the grades, failure kinds and this ver
 (the verdict and exit codes stay local). `--no-platform-sync` skips it for one run; see the
 [Eval Platform Guide](eval-platform.md).
 
+## Live Regression in CI
+
+The Golden Set runs in CI only on request, around merges into `main`, and both modes are
+optional: a pull request without a label merges without any live run. The design is the
+[Regression and Langfuse in CI/CD design](2026-11-10-regression-ci-cd-design.md); the decision
+record is [ADR-2026-11-10](../decisions/2026-11-10-regression-and-langfuse-in-ci-cd.md); the flow
+is drawn in [CI/CD Pipeline](../diagrams/ci-cd-pipeline.md).
+
+### How to ask for a run
+
+| You want | Do |
+|---|---|
+| merge without live tests | nothing |
+| a check before the merge | add the label `regression:before-merge`, wait for a green `regression/before-merge` |
+| a measurement of `main` after the merge | add `regression:after-merge` **before** pressing Merge |
+| a measurement of `main` without a PR | Actions → regression → Run workflow (`ref`, `suite`, `model`) |
+| opt one PR out of the repository default | add `regression:skip` |
+| merge although the run is red or hangs | remove `regression:before-merge`: the status turns `success` ("removed") |
+
+- The repository variable `REGRESSION_DEFAULT` (`off` by default, `before`, `after`, `both`)
+  requests a mode for every PR; `REGRESSION_SUITE` picks the suite (`benchmark` by default,
+  `smoke`, `golden`). The Merge button has no options, so the choice is made with labels in
+  advance.
+- The before-merge status is written by the workflow itself
+  (`scripts/ci_regression_mode.py`): `success` "not requested" on every new head without the
+  label, `pending` while a run goes, then `success`/`failure`/`error`. A label event that does
+  not change the request writes nothing, so an unrelated label never masks a red run. A run
+  still in flight when the label is removed or a new commit lands rereads the PR and does not
+  write its result.
+- A pull request from a fork gets no status and no run (its token is read-only and gets no
+  secrets).
+
+### What a run does
+
+`.github/workflows/live-run.yml` on `ubuntu-latest` with `ci/regression.yaml` as the profile
+(headless Chromium launched by Playwright MCP, `dont_ask`, no page content to Langfuse):
+
+1. restores the `ci-state` artifact (`scripts/ci_state.py restore`) into a temporary home;
+2. `doctor --llm`, then `run_batch.py --tasks <suite> --continue-on-error --grade`;
+3. compares the batch with its **nearest measured ancestor** (`ci_state.py compare`): the
+   newest `main` measurement of the same Golden Set whose commit is an ancestor of the
+   measured one. A late run of an old commit or a run of an unmerged branch never becomes the
+   base;
+4. turns the comparison into a verdict (`scripts/ci_summary.py live`), writes the status or
+   the comments and the issue, and uploads the batch as `regression-batch-<run_id>`.
+
+| Verdict | When | Before merge | After merge and manual |
+|---|---|---|---|
+| `pass` | `compare` 0 | `success` | green; closes `regression-main` |
+| `regression` | `compare` 1 | `failure` with the scenarios | red; opens or extends the issue `regression-main` |
+| `no_base` | no measured ancestor, or another Golden Set | `success` "no base" | green; becomes the base |
+| `perf` | only slower/costlier (`compare` 3) | `success`, a warning in the comment | green, a warning |
+| `infra` | the run broke, no scenario ran, or more than `pipeline.ci_max_inconclusive_ratio` (0.3) of the scenarios ended in `provider_error`/`timeout` | `error` "rerun" | red; opens the issue `regression-infra` |
+
+Only main measurements (after merge, manual) write `ci-state`: the last
+`pipeline.ci_state_keep_batches` (5) batches without their profiles, `history.jsonl`, the
+Langfuse journals and `ci/verdicts.jsonl`. A before-merge run never does, so unmerged code
+never becomes a base. One main measurement runs at a time; when several labelled PRs merge
+during one run, a waiting one may be replaced by the next, which covers its changes.
+
+A `v*` tag publishes the stand image only with a green main measurement (`pass`, `no_base`,
+`perf`) of the tag's commit or an ancestor younger than
+`pipeline.ci_release_verdict_max_age_days` (14); the variable `RELEASE_REQUIRES_REGRESSION=false`
+switches the check off.
+
+### Reproducing a run locally
+
+The scripts are the same; only the home and the GitHub calls differ:
+
+```powershell
+uv run scripts/run_batch.py --tasks tests\golden\benchmark.jsonl --continue-on-error --grade > batch.json
+uv run scripts/ci_state.py compare --batch-json batch.json --out ci-out   # base: nearest measured ancestor in <home>/batches
+uv run scripts/ci_summary.py live --mode manual --out ci-out --suite benchmark   # verdict; without GITHUB_REPOSITORY no GitHub call
+uv run scripts/ci_state.py restore --archive ci-state.tar.gz              # a CI state downloaded from Actions
+```
+
+The profile `ci/regression.yaml` targets Linux (WSL or a container); on Windows use your own
+profile with Chrome.
+
+### Repository setup
+
+Once, by a maintainer (labels, variables, secrets, the required checks):
+[design, appendix D](2026-11-10-regression-ci-cd-design.md#приложение-d-настройка-репозитория-один-раз).
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
@@ -388,4 +474,6 @@ on the dataset `autobrowser/golden`, with the grades, failure kinds and this ver
 | one Ozon scenario `failed` with `run` | a task ended `blocked`: open the trace for a CAPTCHA, an anti-bot page or a guard limit |
 | many scenarios `provider_error` or `timeout` | the provider is overloaded or down; rerun them, `compare_batches.py` calls them `inconclusive` |
 | `compare_batches.py` exits `2` | the runs used different tasks files, or there is no earlier run of the same set |
+| `regression/before-merge` stays `pending` | the run was cancelled by a newer one, or Actions did not run: push again, re-run the workflow, or remove the label |
+| a before-merge run is `success` "no base" | no `main` measurement of this suite yet: run the workflow by hand on `main` |
 | `items` fails on an answer that looks right | the answer's shape (a list split by bold names, a transposed table); see the limits above |

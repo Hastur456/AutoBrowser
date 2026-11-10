@@ -121,7 +121,10 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   - Langfuse on `main` measurements only;
   - the Docker image published on tags;
   - what GitHub cannot do and why.
-  It extends the autonomous pipeline design (Russian, Proposed).
+  It extends the autonomous pipeline design (Russian, Accepted; implemented except the live
+  Linux run, the repository setup and the G8 bridge fix). Decision record:
+  [ADR-2026-11-10](decisions/2026-11-10-regression-and-langfuse-in-ci-cd.md); usage:
+  [Live Regression in CI](development/testing-pipeline.md#live-regression-in-ci).
 - [Batch Analytics and OTLP Trace Export Plan](development/2026-10-29-batch-analytics-and-otlp-export-plan.md)
   (Implemented): self-contained implementation plan — `stop_reason` and `failure_kind`, the batch data
   contract with provenance, traces in the batch folder, run history and
