@@ -442,3 +442,32 @@ def test_token_counts_survive_redaction_but_token_strings_do_not() -> None:
     assert redact_json_safe({"access_tokens": "abc123"}) == {"access_tokens": REDACTED_VALUE}
     assert redact_json_safe({"token": 1234}) == {"token": REDACTED_VALUE}
     assert redact_json_safe({"refresh_tokens": True}) == {"refresh_tokens": REDACTED_VALUE}
+
+
+def test_a_provider_error_is_persisted_with_its_classification() -> None:
+    from src.llm import ModelProviderError, ProviderAttempt
+
+    error = ModelProviderError(
+        "openai_compat: connection failed (dns; APIConnectionError <- ConnectError)",
+        provider="openai_compat",
+        kind="connect",
+        cause="dns",
+        endpoint="https://llm.test/v1",
+        attempts=(ProviderAttempt(attempt=1, elapsed_ms=12, kind="connect", phase="dns"),),
+        elapsed_ms=12,
+    )
+
+    value = redact_json_safe({"error": error})["error"]
+
+    assert value["type"] == "ModelProviderError"
+    assert value["message"].startswith("openai_compat: connection failed (dns")
+    assert (value["kind"], value["cause"], value["retry_safety"]) == ("connect", "dns", "safe")
+    assert value["endpoint"] == "https://llm.test/v1"
+    assert value["attempts"] == [
+        {"attempt": 1, "elapsed_ms": 12, "delay_ms": 0, "kind": "connect", "phase": "dns"}
+    ]
+    json.dumps(value)  # JSON-safe
+
+
+def test_a_plain_exception_keeps_its_type_and_message_only() -> None:
+    assert redact_json_safe(ValueError("boom")) == {"type": "ValueError", "message": "boom"}

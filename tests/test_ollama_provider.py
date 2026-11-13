@@ -152,7 +152,7 @@ async def test_a_reply_without_counters_has_no_usage() -> None:
         (ResponseError("unauthorized secret-key", 401), 401, False, "ollama 401: authentication failed"),
         (ResponseError("overloaded", 503), 503, True, "ollama 503: overloaded"),
         (ConnectionError("refused"), None, True, "ollama: connection failed (ConnectionError)"),
-        (httpx.ReadTimeout("slow"), None, True, "ollama: timed out after 60 s"),
+        (httpx.ReadTimeout("slow"), None, True, "ollama: read timed out after 60 s"),
         (RequestError("must provide a model"), None, False, "ollama: must provide a model"),
     ],
 )
@@ -188,3 +188,35 @@ async def test_unrelated_exceptions_propagate_unchanged() -> None:
 
     with pytest.raises(KeyError):
         await model.complete([user_message("hi")])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error, kind, phase, safety, text",
+    [
+        (httpx.ConnectTimeout("t"), "timeout", "connect", "safe", "ollama: connect timed out after 10 s"),
+        (httpx.PoolTimeout("t"), "timeout", "pool", "safe", "ollama: pool timed out after 10 s"),
+        (httpx.RemoteProtocolError("cut"), "interrupted", None, "ambiguous",
+         "ollama: response interrupted (RemoteProtocolError)"),
+        (ResponseError("busy", 429), "rate_limited", None, "safe", "ollama 429: busy"),
+        (ResponseError("boom", 500), "server_error", None, "ambiguous", "ollama 500: boom"),
+    ],
+)
+async def test_failures_are_classified(
+    error: BaseException, kind: str, phase: str | None, safety: str, text: str
+) -> None:
+    model = model_with(FakeClient(error=error), host="http://user:pw@ollama.test:11434", model="m")
+
+    with pytest.raises(ModelProviderError) as caught:
+        await model.complete([user_message("hi")])
+
+    found = caught.value
+    assert (found.kind, found.phase, found.retry_safety, str(found)) == (kind, phase, safety, text)
+    assert (found.endpoint, found.model) == ("http://ollama.test:11434", "m")
+
+
+def test_the_client_gets_one_timeout_per_phase() -> None:
+    model = OllamaChatModel(settings=LLMSettings(timeout_seconds=90.0, write_timeout_seconds=None))
+
+    timeout = model._client._client.timeout
+    assert (timeout.connect, timeout.read, timeout.write, timeout.pool) == (10.0, 90.0, 90.0, 10.0)

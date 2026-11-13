@@ -388,22 +388,31 @@ def _telemetry_summary(telemetry: TelemetrySettings) -> tuple[str, str, str]:
 def _llm_summary(llm: LLMSettings, stall_budget: float) -> tuple[str, str]:
     """The provider line, offline: protocol, URL, model, key set or not, call budget.
 
-    Never prints the key or a header value. Warns when one model call can outlast the goal
-    stall budget (``timeout_seconds x (max_retries + 1)``).
+    Never prints the key or a header value. The budget names the connect and read
+    timeouts, the attempts (``safe`` retries only, or ``+ambiguous``) and the call deadline
+    (``llm.call_deadline_ratio x loop.progress_timeout_seconds``, always below the goal
+    stall budget). Warns when the read timeout does not fit in that deadline: such a call is
+    cut by the deadline rather than by its own timeout.
     """
 
     key = "key set" if llm.api_key and llm.api_key.get_secret_value().strip() else "no key"
-    if llm.timeout_seconds is None:
-        budget, worst = "no timeout", None
-    else:
-        budget = f"timeout {llm.timeout_seconds:g} s × {llm.max_retries + 1}"
-        worst = llm.timeout_seconds * (llm.max_retries + 1)
+    deadline = llm.call_deadline_ratio * stall_budget
+    read = llm.timeout_seconds
+    connect = llm.phase_timeout("connect")
+    timeouts = "no read timeout" if read is None else f"read {read:g} s"
+    if connect is not None:
+        timeouts = f"connect {connect:g} s / {timeouts}"
+    retries = f"{llm.retry_max_attempts} attempts" + (" +ambiguous" if llm.retry_ambiguous else "")
+    budget = f"{timeouts} · {retries} · deadline {deadline:g} s"
     parts = [llm.provider, _public_url(llm.host) or "client default", llm.model, key, budget]
     if llm.extra_headers:
         parts.append("headers " + ", ".join(sorted(llm.extra_headers)))
     line = " · ".join(parts)
-    if worst is None or worst >= stall_budget:
-        return _WARN, f"{line} — one call may outlast loop.progress_timeout_seconds ({stall_budget:g} s)"
+    if read is None or read >= deadline:
+        return _WARN, (
+            f"{line} — a read can outlast the call deadline ({deadline:g} s = "
+            f"llm.call_deadline_ratio × loop.progress_timeout_seconds)"
+        )
     return _OK, line
 
 

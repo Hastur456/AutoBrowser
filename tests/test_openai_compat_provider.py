@@ -9,6 +9,8 @@ retries) on the locked SDK version.
 from __future__ import annotations
 
 import json
+import socket
+import ssl
 from types import SimpleNamespace
 from typing import Any
 
@@ -647,21 +649,21 @@ async def test_no_retry_by_default() -> None:
 
 
 @pytest.mark.asyncio
-async def test_max_retries_retries_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def no_sleep(_seconds: float) -> None:
-        return None
-
-    monkeypatch.setattr("anyio.sleep", no_sleep)
-    monkeypatch.setattr("asyncio.sleep", no_sleep)
+async def test_the_client_never_retries_even_with_the_legacy_max_retries() -> None:
+    # Retries moved to ResilientChatModel; ``max_retries`` now configures that layer.
     recorder = Recorder(
         httpx.Response(429, json={"error": {"message": "slow down"}}, headers={"retry-after-ms": "1"}),
         ok(),
     )
 
-    response = await transport_model(recorder, max_retries=1).complete([user_message("hi")])
+    with pytest.warns(FutureWarning, match="max_retries is deprecated"):
+        model = transport_model(recorder, max_retries=1)
+    with pytest.raises(ModelProviderError) as caught:
+        await model.complete([user_message("hi")])
 
-    assert response.content == "ok"
-    assert len(recorder.requests) == 2
+    assert caught.value.kind == "rate_limited"
+    assert caught.value.retry_after_seconds == pytest.approx(0.001)
+    assert len(recorder.requests) == 1
 
 
 def test_a_missing_host_never_falls_back_to_the_environment(
@@ -673,8 +675,155 @@ def test_a_missing_host_never_falls_back_to_the_environment(
         build_client(LLMSettings(provider="ollama"))
 
 
-def test_the_client_takes_timeout_and_retries_from_settings() -> None:
-    client = build_client(settings(timeout_seconds=12.0, max_retries=3))
+def test_the_client_takes_one_timeout_per_phase_and_never_retries() -> None:
+    client = build_client(
+        settings(timeout_seconds=12.0, connect_timeout_seconds=3.0, pool_timeout_seconds=None)
+    )
 
-    assert client.timeout == 12.0
-    assert client.max_retries == 3
+    assert (client.timeout.read, client.timeout.connect) == (12.0, 3.0)
+    assert client.timeout.write == 30.0
+    assert client.timeout.pool == 12.0  # None: timeout_seconds
+    assert client.max_retries == 0
+
+
+def test_an_explicit_probe_timeout_covers_every_phase() -> None:
+    client = build_client(settings(), timeout=5.0, max_retries=0)
+
+    assert client.timeout == 5.0
+
+
+# --------------------------------------------------------------------------
+# Classification: kind, phase, cause and retry safety on the real SDK
+# --------------------------------------------------------------------------
+
+
+def failing_model(failure: BaseException, **overrides: Any) -> OpenAICompatChatModel:
+    config = settings(**overrides)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise failure
+
+    client = build_client(config, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    return OpenAICompatChatModel(settings=config, client=client)
+
+
+def chained(error: BaseException, cause: BaseException) -> BaseException:
+    error.__cause__ = cause
+    return error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure, kind, phase, cause, safety, text",
+    [
+        (httpx.ConnectTimeout("t"), "timeout", "connect", None, "safe",
+         "openai_compat: connect timed out after 10 s"),
+        (httpx.ReadTimeout("t"), "timeout", "read", None, "ambiguous",
+         "openai_compat: read timed out after 60 s"),
+        (httpx.WriteTimeout("t"), "timeout", "write", None, "safe",
+         "openai_compat: write timed out after 30 s"),
+        (httpx.PoolTimeout("t"), "timeout", "pool", None, "safe",
+         "openai_compat: pool timed out after 10 s"),
+        (chained(httpx.ConnectError("x"), ConnectionRefusedError(61, "refused")),
+         "connect", None, "refused", "safe",
+         "openai_compat: connection failed (refused; APIConnectionError <- ConnectError)"),
+        (chained(httpx.ConnectError("x"), socket.gaierror(11001, "getaddrinfo failed")),
+         "connect", None, "dns", "safe",
+         "openai_compat: connection failed (dns; APIConnectionError <- ConnectError)"),
+        (chained(httpx.ConnectError("x"), ssl.SSLError("bad cert")),
+         "connect", None, "tls", "safe",
+         "openai_compat: connection failed (tls; APIConnectionError <- ConnectError)"),
+        (chained(httpx.ConnectError("x"), OSError(10051, "unreachable")),
+         "connect", None, "unreachable", "safe",
+         "openai_compat: connection failed (unreachable; APIConnectionError <- ConnectError)"),
+        (httpx.RemoteProtocolError("Server disconnected"), "interrupted", None, None, "ambiguous",
+         "openai_compat: response interrupted (APIConnectionError <- RemoteProtocolError)"),
+    ],
+)
+async def test_transport_failures_are_classified(
+    failure: BaseException, kind: str, phase: str | None, cause: str | None, safety: str, text: str
+) -> None:
+    with pytest.raises(ModelProviderError) as caught:
+        await failing_model(failure).complete([user_message("hi")])
+
+    error = caught.value
+    assert (error.kind, error.phase, error.cause, error.retry_safety) == (kind, phase, cause, safety)
+    assert str(error) == text
+    assert error.retryable is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status, kind, safety",
+    [
+        (400, "bad_request", "never"),
+        (401, "auth", "never"),
+        (402, "payment", "never"),
+        (404, "not_found", "never"),
+        (408, "unavailable", "safe"),
+        (429, "rate_limited", "safe"),
+        (500, "server_error", "ambiguous"),
+        (502, "server_error", "ambiguous"),
+        (503, "unavailable", "safe"),
+        (504, "server_error", "ambiguous"),
+    ],
+)
+async def test_status_errors_are_classified(status: int, kind: str, safety: str) -> None:
+    recorder = Recorder(httpx.Response(status, json={"error": {"message": "nope"}}))
+
+    with pytest.raises(ModelProviderError) as caught:
+        await transport_model(recorder).complete([user_message("hi")])
+
+    error = caught.value
+    assert (error.status_code, error.kind, error.retry_safety) == (status, kind, safety)
+    assert len(recorder.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_after_and_the_request_id_are_read_from_the_error_response() -> None:
+    recorder = Recorder(
+        httpx.Response(
+            429,
+            json={"error": {"message": "slow down"}},
+            headers={"retry-after": "7", "x-request-id": "req_429"},
+        )
+    )
+
+    with pytest.raises(ModelProviderError) as caught:
+        await transport_model(recorder).complete([user_message("hi")])
+
+    assert (caught.value.retry_after_seconds, caught.value.request_id) == (7.0, "req_429")
+
+
+@pytest.mark.asyncio
+async def test_a_successful_reply_carries_the_request_id() -> None:
+    recorder = Recorder(httpx.Response(200, json=completion(), headers={"x-request-id": "req_ok"}))
+
+    response = await transport_model(recorder).complete([user_message("hi")])
+
+    assert response.call is not None and response.call.request_id == "req_ok"
+
+
+@pytest.mark.asyncio
+async def test_errors_name_the_endpoint_without_credentials_and_the_model() -> None:
+    model = failing_model(
+        httpx.ConnectError("x"), host="https://user:sk-secret@llm.test/v1?key=sk-q", model="m-1"
+    )
+
+    with pytest.raises(ModelProviderError) as caught:
+        await model.complete([user_message("hi")])
+
+    payload = caught.value.to_json_dict()
+    assert (payload["endpoint"], payload["model"]) == ("https://llm.test/v1", "m-1")
+    assert "sk-" not in json.dumps(payload)
+
+
+@pytest.mark.asyncio
+async def test_an_authentication_error_never_leaks_the_key_into_its_fields() -> None:
+    recorder = Recorder(httpx.Response(401, json={"error": {"message": "bad key sk-secret"}}))
+
+    with pytest.raises(ModelProviderError) as caught:
+        await transport_model(recorder, api_key="sk-secret").complete([user_message("hi")])
+
+    assert "sk-secret" not in str(caught.value)
+    assert "sk-secret" not in json.dumps(caught.value.to_json_dict())

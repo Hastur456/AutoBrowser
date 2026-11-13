@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from src.agent_loop.execution.usage import budget_exhausted
-from src.agent_loop.model import response_usage
+from src.agent_loop.model import response_call, response_usage
 from src.agent_loop.prompts import PLAYBACK_RETARGET_SYSTEM_PROMPT, PLAYBACK_RETARGET_USER_PROMPT
 from src.agent_loop.recordings import (
     RecordedStep,
@@ -389,9 +389,15 @@ class Retargeter:
             emit("model.responded", {"phase": "retarget", **self._fields, "error": error})
             return None, ModelCallRecord(phase="retarget", model=self._label, tier=self._tier)
         usage = response_usage(response) or {}
+        call = response_call(response)
         emit(
             "model.responded",
-            {"phase": "retarget", **self._fields, **({"usage": usage} if usage else {})},
+            {
+                "phase": "retarget",
+                **self._fields,
+                **({"usage": usage} if usage else {}),
+                **({"call": call} if call else {}),
+            },
         )
         record = ModelCallRecord(
             phase="retarget",

@@ -22,6 +22,7 @@ from src.llm import ModelProviderError
 from src.providers import openai_compat, registry
 from src.providers.ollama import OllamaChatModel
 from src.providers.openai_compat import OpenAICompatChatModel
+from src.providers.resilience import ResilientChatModel
 from src.providers.registry import ProviderProbe, build_chat_model, probe_chat_provider
 
 HOST = "http://llm.test/v1"
@@ -37,12 +38,21 @@ def compat_settings(**overrides: Any) -> LLMSettings:
 
 
 def test_the_setting_picks_the_adapter() -> None:
-    assert isinstance(build_chat_model(settings=LLMSettings()), OllamaChatModel)
-    assert isinstance(build_chat_model(settings=compat_settings()), OpenAICompatChatModel)
+    assert isinstance(build_chat_model(settings=LLMSettings()).inner, OllamaChatModel)
+    assert isinstance(build_chat_model(settings=compat_settings()).inner, OpenAICompatChatModel)
+
+
+def test_every_model_comes_wrapped_in_the_retry_layer() -> None:
+    model = build_chat_model(settings=compat_settings(retry_max_attempts=2, retry_ambiguous=True))
+
+    assert isinstance(model, ResilientChatModel)
+    assert (model.policy.max_attempts, model.policy.retry_ambiguous) == (2, True)
+    # 0.9 of the default 120 s goal stall budget.
+    assert model.policy.deadline_seconds == pytest.approx(108.0)
 
 
 def test_an_explicit_provider_overrides_the_setting() -> None:
-    model = build_chat_model(provider="openai_compat", settings=LLMSettings(host=HOST))
+    model = build_chat_model(provider="openai_compat", settings=LLMSettings(host=HOST)).inner
 
     assert isinstance(model, OpenAICompatChatModel)
     assert model._settings.provider == "openai_compat"
@@ -54,13 +64,13 @@ def test_overriding_to_openai_compat_without_a_host_fails_loudly() -> None:
 
 
 def test_model_and_temperature_keywords_match_every_llm_factory_call() -> None:
-    model = build_chat_model(model="other", temperature=0.4, settings=compat_settings())
+    model = build_chat_model(model="other", temperature=0.4, settings=compat_settings()).inner
 
     assert (model._model, model._temperature) == ("other", 0.4)
 
 
 def test_omitted_model_and_temperature_come_from_the_settings() -> None:
-    model = build_chat_model(settings=compat_settings(model="gemma-4", temperature=None))
+    model = build_chat_model(settings=compat_settings(model="gemma-4", temperature=None)).inner
 
     assert (model._model, model._temperature) == ("gemma-4", None)
 
@@ -144,7 +154,7 @@ def test_an_unlisted_model_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
             httpx.ConnectError("refused"),
             "openai_compat: connection failed (APIConnectionError <- ConnectError)",
         ),
-        (httpx.ReadTimeout("slow"), "openai_compat: timed out after 5 s"),
+        (httpx.ReadTimeout("slow"), "openai_compat: read timed out after 5 s"),
     ],
 )
 def test_failures_are_unreachable_without_retries_or_secrets(
@@ -152,7 +162,7 @@ def test_failures_are_unreachable_without_retries_or_secrets(
 ) -> None:
     requests = mock_transport(monkeypatch, response)
 
-    probe = probe_chat_provider(compat_settings(api_key="sk-secret", max_retries=5), timeout=5)
+    probe = probe_chat_provider(compat_settings(api_key="sk-secret", retry_max_attempts=6, retry_ambiguous=True), timeout=5)
 
     assert probe == ProviderProbe(reachable=False, error=text)
     assert len(requests) == 1

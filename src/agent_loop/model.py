@@ -35,6 +35,18 @@ def response_usage(response: Any) -> dict[str, int] | None:
     return dict(payload) if payload else None
 
 
+def response_call(response: Any) -> dict[str, Any] | None:
+    """How the call went (attempts, wall time, request id) as event fields, ``None`` when
+    nobody recorded it. Read structurally (``ModelResponse.call``), like the usage."""
+
+    call = getattr(response, "call", None)
+    to_json_dict = getattr(call, "to_json_dict", None)
+    if not callable(to_json_dict):
+        return None
+    payload = to_json_dict()
+    return dict(payload) if payload else None
+
+
 @dataclass(frozen=True)
 class ModelTurn:
     """One raw model response together with parsed actions."""

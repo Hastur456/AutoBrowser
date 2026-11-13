@@ -67,13 +67,34 @@ llm:
   # Without a key no Authorization header is sent (local servers);
   # OPENAI_API_KEY is not read.
   # api_key: "YOUR_API_KEY"                        # (unset by default)
-  # Timeout of one HTTP call to the provider, seconds. null waits forever (slow
-  # local models on a CPU).
+  # Read timeout of one HTTP call (waiting for the model's answer), seconds; also
+  # the limit of every phase below set to null. null waits forever (slow local
+  # models on a CPU).
   timeout_seconds: 60.0                         # (default)
-  # openai_compat: retries on connection errors and 408/409/429/5xx, 0..10.
-  # 0 keeps one model call within loop.progress_timeout_seconds; doctor warns
-  # when timeout_seconds x (max_retries + 1) reaches it.
+  # Per-phase timeouts, seconds; null: timeout_seconds. A short connect timeout
+  # shows an unreachable host in seconds instead of a full read timeout.
+  connect_timeout_seconds: 10.0                 # (default)
+  write_timeout_seconds: 30.0                   # (default)
+  pool_timeout_seconds: 10.0                    # (default)
+  # Deprecated: use retry_max_attempts. Above 0 it becomes retry_max_attempts =
+  # max_retries + 1 with retry_ambiguous (a FutureWarning); setting both fails.
   max_retries: 0                                # (default)
+  # Attempts of one model call, the first included, 1..10 (1: no retries).
+  # Only failures where the model never started are retried: connection,
+  # connect/write/pool timeout, 429, 408/409/503/529.
+  retry_max_attempts: 3                         # (default)
+  # Also retry a read timeout, a cut response and 500/502/504: the model may
+  # have generated already, so a retry can pay for the answer twice.
+  retry_ambiguous: false                        # (default)
+  # Full-jitter exponential backoff between attempts, seconds.
+  retry_base_delay_seconds: 1.0                 # (default) 0..60
+  retry_max_delay_seconds: 8.0                  # (default) 0..120, >= the base
+  # Longest Retry-After still waited out; a longer one fails the call at once.
+  retry_after_max_seconds: 30.0                 # (default) 0..300
+  # Share of loop.progress_timeout_seconds one call may take, every attempt and
+  # pause included (0 < x < 1), so the goal watchdog never fires first; doctor
+  # warns when timeout_seconds does not fit in it.
+  call_deadline_ratio: 0.9                      # (default)
   # Reasoning budget: minimal | low | medium | high. Sent by openai_compat,
   # declarative for ollama.
   reasoning_effort: null                        # (default)

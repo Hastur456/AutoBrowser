@@ -152,3 +152,63 @@ def test_model_provider_error_survives_copy_and_pickle() -> None:
         assert str(clone) == "ollama 404: nope"
         assert (clone.provider, clone.status_code, clone.retryable) == ("ollama", 404, False)
         assert clone.__notes__ == ["while planning"]
+
+
+def test_a_classified_provider_error_survives_copy_and_pickle() -> None:
+    import copy
+    import pickle
+
+    from src.llm import ProviderAttempt
+
+    error = ModelProviderError(
+        "p: read timed out after 60 s",
+        provider="p",
+        kind="timeout",
+        phase="read",
+        request_id="req-1",
+        endpoint="https://llm.test/v1",
+        model="m",
+        attempts=(ProviderAttempt(attempt=1, elapsed_ms=60_000, kind="timeout", phase="read"),),
+        elapsed_ms=60_000,
+    )
+
+    for clone in (copy.deepcopy(error), pickle.loads(pickle.dumps(error))):
+        assert clone.to_json_dict() == error.to_json_dict()
+        assert clone.retry_safety == "ambiguous"
+
+
+def test_with_details_copies_the_error_and_keeps_the_original() -> None:
+    error = ModelProviderError("p 503: busy", provider="p", status_code=503, kind="unavailable")
+
+    located = error.with_details(endpoint="https://llm.test/v1", model="m")
+
+    assert located is not error and error.endpoint is None
+    assert (str(located), located.status_code, located.kind, located.model) == (
+        "p 503: busy",
+        503,
+        "unavailable",
+        "m",
+    )
+    with pytest.raises(TypeError, match="unknown ModelProviderError fields"):
+        error.with_details(secret="x")
+
+
+@pytest.mark.parametrize(
+    "fields, safety",
+    [
+        ({"kind": "connect"}, "safe"),
+        ({"kind": "timeout", "phase": "connect"}, "safe"),
+        ({"kind": "timeout", "phase": "read"}, "ambiguous"),
+        ({"kind": "timeout", "phase": "deadline"}, "never"),
+        ({"kind": "rate_limited"}, "safe"),
+        ({"kind": "server_error"}, "ambiguous"),
+        ({"kind": "auth"}, "never"),
+        ({"retryable": True}, "ambiguous"),  # built without a kind: the given flag, cautiously
+        ({}, "never"),
+    ],
+)
+def test_retry_safety_follows_the_classification(fields: dict, safety: str) -> None:
+    error = ModelProviderError("p: failed", provider="p", **fields)
+
+    assert error.retry_safety == safety
+    assert error.retryable is (safety != "never")

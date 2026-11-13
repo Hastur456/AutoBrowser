@@ -20,6 +20,7 @@ from typing import Any
 from src.config import LLMProvider, LLMSettings, get_settings
 from src.llm import ChatModel, ModelProviderError
 from src.providers import ollama, openai_compat
+from src.providers.resilience import ProviderCallPolicy, ResilientChatModel
 
 
 @dataclass(frozen=True)
@@ -47,17 +48,23 @@ def build_chat_model(
     """Build the chat model of ``provider`` (``None``: ``settings.llm.provider``).
 
     Omitted ``model``/``temperature`` fall back to ``settings.llm``, as with every
-    ``llm_factory``.
+    ``llm_factory``. The adapter comes wrapped in a :class:`ResilientChatModel` (its
+    ``inner``): the one place a failed call is retried, within the call deadline derived
+    from ``loop.progress_timeout_seconds``.
     """
 
     resolved = _settings_for(provider, settings)
+    adapter: ChatModel
     if resolved.provider == "ollama":
-        return ollama.OllamaChatModel(model, temperature, settings=resolved, **kwargs)
-    if resolved.provider == "openai_compat":
-        return openai_compat.OpenAICompatChatModel(
+        adapter = ollama.OllamaChatModel(model, temperature, settings=resolved, **kwargs)
+    elif resolved.provider == "openai_compat":
+        adapter = openai_compat.OpenAICompatChatModel(
             model, temperature, settings=resolved, **kwargs
         )
-    raise ValueError(f"Unknown chat provider: {resolved.provider!r}")
+    else:
+        raise ValueError(f"Unknown chat provider: {resolved.provider!r}")
+    policy = ProviderCallPolicy.from_settings(resolved, get_settings().loop)
+    return ResilientChatModel(adapter, policy, provider=resolved.provider)
 
 
 def probe_chat_provider(settings: LLMSettings, *, timeout: float) -> ProviderProbe:
@@ -128,7 +135,15 @@ async def _openai_compat_models(
     try:
         page = await client.models.list(extra_headers=openai_compat.request_headers(settings))
     except Exception as exc:
-        probe_settings = settings.model_copy(update={"timeout_seconds": timeout})
+        # The probe has one limit for every phase (``build_client(timeout=...)``).
+        probe_settings = settings.model_copy(
+            update={
+                "timeout_seconds": timeout,
+                "connect_timeout_seconds": None,
+                "write_timeout_seconds": None,
+                "pool_timeout_seconds": None,
+            }
+        )
         error = openai_compat.provider_error(exc, probe_settings)
         if error is None:
             raise
