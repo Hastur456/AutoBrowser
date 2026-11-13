@@ -4,6 +4,13 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-11-13 Provider Call Resilience](2026-11-13-provider-call-resilience.md)
+  (Proposed): provider errors classified at the adapter (`kind`, `phase`, `cause`, retry safety
+  `safe`/`ambiguous`/`never`, `request_id`, `endpoint`, `attempts`); per-phase HTTP timeouts;
+  one retry layer outside the engine (`ResilientChatModel`, built by `build_chat_model`, SDK
+  retries off) that retries only requests the model never started, with full-jitter backoff,
+  `Retry-After` and a call deadline below the goal stall budget; diagnostics in `goal.failed`
+  and `model.responded`, no new event types. Extends the OpenAI-compatible provider ADR.
 - [2026-11-10 Regression and Langfuse in CI/CD](2026-11-10-regression-and-langfuse-in-ci-cd.md)
   (Accepted): the offline gate on Windows and Linux with all three eval suites; optional live
   Golden Set runs around merges into `main`, chosen per PR by label (`regression:before-merge`
