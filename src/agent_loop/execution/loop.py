@@ -72,7 +72,7 @@ from src.agent_loop.execution.resources import EngineResources
 from src.agent_loop.execution.state import LoopState, TierMarks
 from src.agent_loop.execution.tools import PreparedToolCall, ToolBroker, tool_catalog
 from src.agent_loop.execution.usage import add_call, budget_exhausted, effective_budget
-from src.agent_loop.model import ModelDriver, response_usage
+from src.agent_loop.model import ModelDriver, response_call, response_usage
 from src.config import get_settings
 from src.contracts import (
     ApprovalAnswer,
@@ -483,12 +483,14 @@ class TurnController:
             tools=self._model_tools,
         )
         usage = response_usage(model_turn.response)
+        call = response_call(model_turn.response)
         self._emit(
             "model.responded",
             {
                 "phase": "agent",
                 "metadata": dict(model_turn.metadata or {}),
                 **({"usage": usage} if usage else {}),
+                **({"call": call} if call else {}),
                 **tier,
             },
         )
@@ -569,7 +571,7 @@ class TurnController:
             final_answer=str(update.get("final_answer", "") or ""),
             evidence=tuple(
                 text
-                for text in (state.observation, *state.browser.snapshots.values())
+                for text in (state.observation, *state.environment.snapshots.values())
                 if str(text or "")
             ),
             stop_hook_active=state.stop_blocks > 0,
@@ -773,7 +775,7 @@ class TurnController:
             task=state.task,
             turn=self.turn,
             tool_result=dict(state.tool_result or {}),
-            snapshots=dict(state.browser.snapshots),
+            snapshots=dict(state.environment.snapshots),
             tool_schemas=self._catalog,
             usage=state.usage,
         )
@@ -976,7 +978,7 @@ class TurnController:
         state = state.apply(observation_update)
         self._emit(
             "observation.compiled",
-            {"observation": state.observation, "has_snapshot": bool(state.browser.snapshots)},
+            {"observation": state.observation, "has_snapshot": bool(state.environment.snapshots)},
         )
 
         if str(state.decision or "") == "done":
@@ -1569,8 +1571,15 @@ class AgentLoopEngine:
         tier = tiers.tier(state.model_tier)
         response = await tier.model.complete([*messages, user_message(plan_prompt)])
         usage = response_usage(response)
+        call = response_call(response)
         self._emit(
-            "model.responded", {"phase": "plan", **({"usage": usage} if usage else {}), **fields}
+            "model.responded",
+            {
+                "phase": "plan",
+                **({"usage": usage} if usage else {}),
+                **({"call": call} if call else {}),
+                **fields,
+            },
         )
         cost = tier.price.cost(getattr(response, "usage", None)) if tier.price else None
         accounted = add_call(state.usage, stage="agent", model=tier.label, tokens=usage, cost=cost)

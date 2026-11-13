@@ -22,13 +22,14 @@ from typing import Any
 
 import pytest
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from src import config
 from src.config import (
     CONFIG_FILE_ENV_VAR,
     ENV_NESTED_DELIMITER,
     ENV_PREFIX,
+    LLMSettings,
     Settings,
     get_settings,
     home_dir,
@@ -762,10 +763,12 @@ def test_llm_openai_compat_env_names_resolve(
     monkeypatch.setenv("AUTOBROWSER_LLM__EXTRA_HEADERS", '{"X-Title": "AutoBrowser"}')
     monkeypatch.setenv("AUTOBROWSER_LLM__EXTRA_BODY", '{"reasoning": {"max_tokens": 64}}')
 
-    llm = settings().llm
+    with pytest.warns(FutureWarning, match="max_retries is deprecated"):
+        llm = settings().llm
 
     assert llm.provider == "openai_compat"
-    assert llm.max_retries == 2
+    # The legacy client retries become the retry layer's (see the max_retries tests below).
+    assert (llm.max_retries, llm.retry_max_attempts, llm.retry_ambiguous) == (0, 3, True)
     assert llm.max_tokens_param == "max_tokens"
     assert llm.parallel_tool_calls is False
     assert llm.extra_headers == {"X-Title": "AutoBrowser"}
@@ -1515,6 +1518,38 @@ def test_the_batch_metric_tolerance_is_bounded(settings: Any, value: float) -> N
         settings(pipeline={"batch_metric_tolerance": value})
 
 
+def test_the_ci_settings_default_and_read_the_env(
+    settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pipeline = settings().pipeline
+    assert pipeline.ci_state_keep_batches == 5
+    assert pipeline.ci_max_inconclusive_ratio == 0.3
+    assert pipeline.ci_release_verdict_max_age_days == 14
+
+    monkeypatch.setenv("AUTOBROWSER_PIPELINE__CI_STATE_KEEP_BATCHES", "2")
+    monkeypatch.setenv("AUTOBROWSER_PIPELINE__CI_MAX_INCONCLUSIVE_RATIO", "0.5")
+    monkeypatch.setenv("AUTOBROWSER_PIPELINE__CI_RELEASE_VERDICT_MAX_AGE_DAYS", "30")
+
+    pipeline = settings().pipeline
+    assert pipeline.ci_state_keep_batches == 2
+    assert pipeline.ci_max_inconclusive_ratio == 0.5
+    assert pipeline.ci_release_verdict_max_age_days == 30
+
+
+@pytest.mark.parametrize(
+    "pipeline",
+    [
+        {"ci_state_keep_batches": 0},
+        {"ci_max_inconclusive_ratio": -0.1},
+        {"ci_max_inconclusive_ratio": 1.1},
+        {"ci_release_verdict_max_age_days": 0},
+    ],
+)
+def test_the_ci_settings_are_bounded(settings: Any, pipeline: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        settings(pipeline=pipeline)
+
+
 # --------------------------------------------------------------------------
 # The telemetry section: OTLP trace export, off by default
 # --------------------------------------------------------------------------
@@ -2040,3 +2075,50 @@ def test_a_cron_trigger_needs_a_valid_schedule(settings: Any) -> None:
     ]:
         with pytest.raises(ValueError, match=message):
             settings(serve={"jobs": {"j": _job(triggers=[trigger])}})
+
+
+def test_llm_phase_timeouts_fall_back_to_the_read_timeout(settings: Any) -> None:
+    llm = LLMSettings(timeout_seconds=90.0, connect_timeout_seconds=None)
+
+    assert [llm.phase_timeout(p) for p in ("connect", "write", "pool", "read")] == [
+        90.0,
+        30.0,
+        10.0,
+        90.0,
+    ]
+
+
+@pytest.mark.parametrize("spelling", ["null", "None"])
+def test_llm_phase_timeouts_accept_null_from_the_environment(
+    settings: Any, monkeypatch: pytest.MonkeyPatch, spelling: str
+) -> None:
+    monkeypatch.setenv("AUTOBROWSER_LLM__CONNECT_TIMEOUT_SECONDS", spelling)
+
+    assert settings().llm.connect_timeout_seconds is None
+
+
+def test_llm_legacy_max_retries_keeps_an_explicit_retry_ambiguous() -> None:
+    with pytest.warns(FutureWarning):
+        llm = LLMSettings(max_retries=1, retry_ambiguous=False)
+
+    assert (llm.retry_max_attempts, llm.retry_ambiguous, llm.max_retries) == (2, False, 0)
+
+
+def test_llm_legacy_max_retries_and_retry_max_attempts_conflict() -> None:
+    with pytest.raises(ValidationError, match="conflicts with llm.retry_max_attempts"):
+        LLMSettings(max_retries=2, retry_max_attempts=3)
+
+
+def test_llm_mapped_max_retries_survive_a_revalidated_dump() -> None:
+    # A cascade tier revalidates ``llm.model_dump()``: the mapping must not conflict there.
+    with pytest.warns(FutureWarning):
+        llm = LLMSettings(max_retries=2)
+
+    again = LLMSettings.model_validate(llm.model_dump())
+
+    assert (again.retry_max_attempts, again.retry_ambiguous) == (3, True)
+
+
+def test_llm_retry_delays_must_be_in_order() -> None:
+    with pytest.raises(ValidationError, match="retry_max_delay_seconds is below"):
+        LLMSettings(retry_base_delay_seconds=5.0, retry_max_delay_seconds=2.0)

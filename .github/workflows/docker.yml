@@ -1,0 +1,121 @@
+# The stand image (docs/development/2026-11-10-regression-ci-cd-design.md §5.10): built and
+# smoke-tested in pull requests that touch it; on a `v*` tag also checked against the main
+# measurements (ci-state) and published to GHCR.
+name: docker
+
+on:
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - compose.yaml
+      - docker/**
+      - src/**
+      - pyproject.toml
+      - uv.lock
+      - tests/pipeline/test_docker_smoke.py
+      - .github/workflows/docker.yml
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  SMOKE_IMAGE: autobrowser-serve:ci
+
+jobs:
+  build-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ${{ env.SMOKE_IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.21"
+          enable-cache: true
+      - name: Install the locked environment
+        run: uv sync --locked
+      - name: Smoke test (healthz, a probe in headless Chromium, no model)
+        env:
+          AUTOBROWSER_SMOKE_IMAGE: ${{ env.SMOKE_IMAGE }}
+        run: uv run pytest -m live tests/pipeline/test_docker_smoke.py
+
+  release-check:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # R15: `false` publishes a tag without a green main measurement.
+      REQUIRED: ${{ vars.RELEASE_REQUIRES_REGRESSION != 'false' }}
+    steps:
+      - name: The check is switched off
+        if: env.REQUIRED != 'true'
+        run: echo "::notice::RELEASE_REQUIRES_REGRESSION=false; no main measurement is required"
+      - uses: actions/checkout@v4
+        if: env.REQUIRED == 'true'
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        if: env.REQUIRED == 'true'
+        with:
+          version: "0.12.21"
+          enable-cache: true
+      - name: A green main measurement of the tag or an ancestor
+        if: env.REQUIRED == 'true'
+        run: |
+          echo "AUTOBROWSER_HOME=$RUNNER_TEMP/abhome" >> "$GITHUB_ENV"
+          export AUTOBROWSER_HOME="$RUNNER_TEMP/abhome"
+          uv sync --locked
+          uv run scripts/ci_state.py restore
+          uv run scripts/ci_state.py verdict --commit "$GITHUB_SHA"
+
+  publish:
+    needs: release-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # :vX.Y.Z and :latest
+          tags: |
+            type=ref,event=tag
+          flavor: |
+            latest=true
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha

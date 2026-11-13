@@ -322,8 +322,10 @@ Compare the latest batch with the previous one of the same set:
 - Use `tests/mcp_fixtures/fake_server.py` (a real MCP server) or the `_FakeBrowserTools`
   helper of `src/agent_loop/evals.py` for deterministic tests that should not require Chrome,
   CDP, or network.
-- Keep Playwright MCP snapshot/ref knowledge in `src/browser/` and the user's prompts, never
-  in the engine, guards or harness.
+- Keep Playwright MCP snapshot/ref knowledge in `src/browser/` and the built-in
+  `browser-agent-rules` skill, never in the engine, guards, harness or the (server-neutral)
+  prompts. A server explains its own tools through its `instructions` and the prompts its
+  `mcp_servers` entry names in `context_prompts` (`src/harness/server_context.py`).
 - Prefer focused tests for loop decisions, state transitions, prompt
   constraints, policy decisions, tool registry behavior, and observer
   normalization.

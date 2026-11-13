@@ -3,8 +3,8 @@
 Behaviour switches mirror the failure modes the manager must handle: a stateful counter
 (state loss on restart), a slow tool (timeouts), a crashing tool (transport drop during a
 call), a delayed silent exit (death with nothing in flight), runtime tool registration with
-``notifications/tools/list_changed``, a dotted tool name (name sanitizing), a resource and a
-prompt.
+``notifications/tools/list_changed``, a dotted tool name (name sanitizing), a resource, a
+prompt with an argument and one without, and ``instructions`` from ``FAKE_SERVER_INSTRUCTIONS``.
 
 Annotations: ``get.user`` is read-only, ``increment`` a non-destructive mutation and
 ``echo`` is unannotated (a server without annotations).
@@ -24,6 +24,7 @@ server = FastMCP(
     os.environ.get("FAKE_SERVER_NAME", "fake"),
     log_level="WARNING",
     port=int(os.environ.get("FAKE_SERVER_PORT", "8000")),
+    instructions=os.environ.get("FAKE_SERVER_INSTRUCTIONS") or None,
 )
 _state = {"counter": 0}
 
@@ -94,6 +95,12 @@ def notes() -> str:
 @server.prompt()
 def greet(who: str) -> str:
     return f"Say hello to {who}"
+
+
+@server.prompt()
+def rules() -> str:
+    """How to use the fake tools."""
+    return "Call echo before increment."
 
 
 if __name__ == "__main__":

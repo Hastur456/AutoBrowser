@@ -11,7 +11,7 @@
       "observation_count": 2,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 21805,
+      "request_chars": 15707,
       "terminal_status": "completed",
       "tool_call_count": 2,
       "trace_complete": true
@@ -25,7 +25,7 @@
       "observation_count": 3,
       "policy_block_count": 0,
       "repeated_action_count": 0,
-      "request_chars": 44042,
+      "request_chars": 31846,
       "terminal_status": "completed",
       "tool_call_count": 3,
       "trace_complete": true

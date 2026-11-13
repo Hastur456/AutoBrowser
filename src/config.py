@@ -295,11 +295,40 @@ class LLMSettings(_Section):
         Field(
             gt=0.0,
             description=(
-                "Timeout of one HTTP call to the provider, both adapters. ``None`` "
-                "waits forever."
+                "Read timeout of one HTTP call to the provider (waiting for the model's "
+                "answer), both adapters, and the limit of every phase set to ``None`` "
+                "below. ``None`` waits forever."
             ),
         ),
     ] = 60.0
+
+    connect_timeout_seconds: Annotated[
+        float | None,
+        Field(
+            gt=0.0,
+            description=(
+                "Timeout of establishing the TCP/TLS connection; ``None``: timeout_seconds."
+            ),
+        ),
+    ] = 10.0
+
+    write_timeout_seconds: Annotated[
+        float | None,
+        Field(
+            gt=0.0,
+            description="Timeout of sending the request body; ``None``: timeout_seconds.",
+        ),
+    ] = 30.0
+
+    pool_timeout_seconds: Annotated[
+        float | None,
+        Field(
+            gt=0.0,
+            description=(
+                "Timeout of waiting for a free pooled connection; ``None``: timeout_seconds."
+            ),
+        ),
+    ] = 10.0
 
     max_retries: Annotated[
         int,
@@ -307,11 +336,74 @@ class LLMSettings(_Section):
             ge=0,
             le=10,
             description=(
-                "``openai_compat``: client retries on connection errors, 408/409/"
-                "429/5xx. 0 keeps one model call within the goal stall budget."
+                "Deprecated: use retry_max_attempts. A value above 0 becomes "
+                "retry_max_attempts = max_retries + 1 with retry_ambiguous (the old client "
+                "retries), with a FutureWarning; the client itself never retries."
             ),
         ),
     ] = 0
+
+    retry_max_attempts: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=10,
+            description=(
+                "Attempts of one model call, the first included; 1: no retries. Only "
+                "failures where the model never started (connection, connect/write/pool "
+                "timeout, 429, 408/409/503/529) are retried unless retry_ambiguous is set."
+            ),
+        ),
+    ] = 3
+
+    retry_ambiguous: Annotated[
+        bool,
+        Field(
+            description=(
+                "Also retry a read timeout, a cut response and 500/502/504: the model may "
+                "have generated already, so a retry can pay for the answer twice."
+            ),
+        ),
+    ] = False
+
+    retry_base_delay_seconds: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=60.0,
+            description="Base of the exponential backoff (full jitter) between attempts.",
+        ),
+    ] = 1.0
+
+    retry_max_delay_seconds: Annotated[
+        float,
+        Field(ge=0.0, le=120.0, description="Longest pause between two attempts."),
+    ] = 8.0
+
+    retry_after_max_seconds: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=300.0,
+            description=(
+                "Longest Retry-After the provider may ask for and still be waited out; a "
+                "longer one fails the call at once."
+            ),
+        ),
+    ] = 30.0
+
+    call_deadline_ratio: Annotated[
+        float,
+        Field(
+            gt=0.0,
+            lt=1.0,
+            description=(
+                "Share of loop.progress_timeout_seconds one model call may take, every "
+                "attempt and pause included. Below 1 so the goal watchdog, which sees no "
+                "events during a call, never fires first and hides the provider error."
+            ),
+        ),
+    ] = 0.9
 
     reasoning_effort: Annotated[
         Literal["minimal", "low", "medium", "high"] | None,
@@ -414,12 +506,66 @@ class LLMSettings(_Section):
         Field(min_length=1, description="Currency of llm.prices and of cost reports."),
     ] = "USD"
 
-    @field_validator("temperature", "timeout_seconds", "parallel_tool_calls", mode="before")
+    @field_validator(
+        "temperature",
+        "timeout_seconds",
+        "connect_timeout_seconds",
+        "write_timeout_seconds",
+        "pool_timeout_seconds",
+        "parallel_tool_calls",
+        mode="before",
+    )
     @classmethod
     def _null_string_means_unset(cls, value: Any) -> Any:
         """Let an env var spell ``None`` as ``null``/``none`` for the nullable scalars."""
 
         return _null_string_to_none(value)
+
+    @model_validator(mode="after")
+    def _retry_delays_in_order(self) -> "LLMSettings":
+        if self.retry_max_delay_seconds < self.retry_base_delay_seconds:
+            raise ValueError(
+                "llm.retry_max_delay_seconds is below llm.retry_base_delay_seconds."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _legacy_max_retries(self) -> "LLMSettings":
+        """``max_retries`` (the old client retries) becomes the retry layer's settings.
+
+        It is zeroed once mapped, so a dump revalidated later (a cascade tier) sees no
+        conflict; naming both explicitly is one.
+        """
+
+        if self.max_retries <= 0:
+            return self
+        if "retry_max_attempts" in self.model_fields_set:
+            raise ValueError(
+                "llm.max_retries is deprecated and conflicts with llm.retry_max_attempts: "
+                "set only retry_max_attempts (and retry_ambiguous)."
+            )
+        warnings.warn(
+            "llm.max_retries is deprecated: use llm.retry_max_attempts "
+            f"(= {self.max_retries + 1}) and llm.retry_ambiguous.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        object.__setattr__(self, "retry_max_attempts", self.max_retries + 1)
+        if "retry_ambiguous" not in self.model_fields_set:
+            object.__setattr__(self, "retry_ambiguous", True)
+        object.__setattr__(self, "max_retries", 0)
+        return self
+
+    def phase_timeout(self, phase: Literal["connect", "write", "pool", "read"]) -> float | None:
+        """The limit of one HTTP phase: its own field, else ``timeout_seconds``."""
+
+        own = {
+            "connect": self.connect_timeout_seconds,
+            "write": self.write_timeout_seconds,
+            "pool": self.pool_timeout_seconds,
+            "read": None,
+        }[phase]
+        return own if own is not None else self.timeout_seconds
 
     @field_validator("extra_body", mode="after")
     @classmethod
@@ -2073,6 +2219,43 @@ class PipelineSettings(_Section):
             ),
         ),
     ] = 0.25
+
+    ci_state_keep_batches: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=1_000,
+            description=(
+                "Batches of main measurements kept in the CI state artifact (scripts/"
+                "ci_state.py save); the oldest are dropped past it."
+            ),
+        ),
+    ] = 5
+
+    ci_max_inconclusive_ratio: Annotated[
+        float,
+        Field(
+            ge=0.0,
+            le=1.0,
+            description=(
+                "Share of a CI live run's scenarios that may end in an infra failure "
+                "(provider_error, timeout); a larger share makes the verdict infra, not a "
+                "regression or a pass."
+            ),
+        ),
+    ] = 0.3
+
+    ci_release_verdict_max_age_days: Annotated[
+        int,
+        Field(
+            ge=1,
+            le=3_650,
+            description=(
+                "Age in days of the green main measurement a release tag needs on its commit "
+                "or an ancestor (scripts/ci_state.py verdict)."
+            ),
+        ),
+    ] = 14
 
 
 class TelemetrySettings(_Section):

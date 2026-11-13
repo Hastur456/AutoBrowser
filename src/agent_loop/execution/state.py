@@ -4,7 +4,7 @@
 It is a frozen dataclass: every state transition returns a *new* `LoopState` via
 :meth:`LoopState.apply`, which accepts the same flat update dicts the ported control
 functions produce (mirroring the legacy graph-node update shape) and routes
-browser-scoped keys into the nested :class:`BrowserState`.
+environment-scoped keys into the nested :class:`EnvironmentState`.
 
 Thresholds and typed contracts live in the neutral ``src.contracts`` /
 ``src.config`` modules (never redefined here) so every layer cannot drift and the
@@ -27,19 +27,12 @@ from src.contracts import (
 )
 from src.messages import Message
 
-# Flat update keys that live on the nested BrowserState rather than LoopState.
-BROWSER_STATE_FIELDS = frozenset(
-    {
-        "snapshots",
-        "last_browser_action",
-        "ineffective_browser_action",
-        "ineffective_browser_actions",
-    }
-)
+# Flat update keys that live on the nested EnvironmentState rather than LoopState.
+ENVIRONMENT_STATE_FIELDS = frozenset({"snapshots"})
 
 
 @dataclass(frozen=True)
-class BrowserState:
+class EnvironmentState:
     """Environment context owned by the execution loop.
 
     ``snapshots`` maps a tool server to the output of its latest successful read-only
@@ -49,9 +42,6 @@ class BrowserState:
     """
 
     snapshots: dict[str, str] = field(default_factory=dict)
-    last_browser_action: ToolRequest = field(default_factory=dict)
-    ineffective_browser_action: ToolRequest = field(default_factory=dict)
-    ineffective_browser_actions: list[ToolRequest] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -68,7 +58,7 @@ class LoopState:
 
     Field set is the superset of the legacy ``AgentState`` that the ported control
     logic reads or writes, minus the vestigial ``counters``/``snapshot_recovery_count``.
-    Browser-scoped fields live under :attr:`browser`.
+    Environment-scoped fields live under :attr:`environment`.
     """
 
     task: str = ""
@@ -89,7 +79,7 @@ class LoopState:
     policy_event: dict[str, Any] = field(default_factory=dict)
 
     observation: str = ""
-    browser: BrowserState = field(default_factory=BrowserState)
+    environment: EnvironmentState = field(default_factory=EnvironmentState)
 
     last_tool: str = ""
     last_args: dict[str, Any] = field(default_factory=dict)
@@ -138,7 +128,7 @@ class LoopState:
         """Return a new ``LoopState`` with ``updates`` merged in.
 
         ``updates`` uses the same flat keys the legacy graph nodes returned; keys in
-        :data:`BROWSER_STATE_FIELDS` are routed into :attr:`browser`. Unknown keys
+        :data:`ENVIRONMENT_STATE_FIELDS` are routed into :attr:`environment`. Unknown keys
         raise so transcription mistakes surface immediately rather than silently
         no-op'ing.
         """
@@ -149,7 +139,7 @@ class LoopState:
         loop_updates: dict[str, Any] = {}
         nested_updates: dict[str, Any] = {}
         for key, value in updates.items():
-            if key in BROWSER_STATE_FIELDS:
+            if key in ENVIRONMENT_STATE_FIELDS:
                 nested_updates[key] = value
             elif key in _LOOP_STATE_FIELDS:
                 loop_updates[key] = value
@@ -157,7 +147,7 @@ class LoopState:
                 raise ValueError(f"Unknown LoopState update key: {key!r}")
 
         if nested_updates:
-            loop_updates["browser"] = replace(self.browser, **nested_updates)
+            loop_updates["environment"] = replace(self.environment, **nested_updates)
         return replace(self, **loop_updates)
 
     def snapshot_mapping(self) -> dict[str, Any]:
@@ -169,16 +159,11 @@ class LoopState:
         """
 
         return {
-            "snapshots": dict(self.browser.snapshots),
+            "snapshots": dict(self.environment.snapshots),
             "tool_result": dict(self.tool_result or {}),
             "error": self.error,
             "last_tool": self.last_tool,
             "last_args": dict(self.last_args),
-            "last_browser_action": dict(self.browser.last_browser_action),
-            "ineffective_browser_action": dict(self.browser.ineffective_browser_action),
-            "ineffective_browser_actions": [
-                dict(action) for action in self.browser.ineffective_browser_actions
-            ],
         }
 
     def to_session_state(self) -> dict[str, Any]:
@@ -191,15 +176,10 @@ class LoopState:
         return {
             "messages": list(self.messages),
             "observation": self.observation,
-            "snapshots": dict(self.browser.snapshots),
+            "snapshots": dict(self.environment.snapshots),
             "last_tool": self.last_tool,
             "last_args": dict(self.last_args),
             "last_tool_request": dict(self.last_tool_request),
-            "last_browser_action": dict(self.browser.last_browser_action),
-            "ineffective_browser_action": dict(self.browser.ineffective_browser_action),
-            "ineffective_browser_actions": [
-                dict(action) for action in self.browser.ineffective_browser_actions
-            ],
         }
 
     @classmethod
@@ -221,8 +201,9 @@ class LoopState:
         known = {
             key: value
             for key, value in overrides.items()
-            # ``browser`` is the nested dataclass, never a flat carried key.
-            if key in BROWSER_STATE_FIELDS or (key in _LOOP_STATE_FIELDS and key != "browser")
+            # ``environment`` is the nested dataclass, never a flat carried key.
+            if key in ENVIRONMENT_STATE_FIELDS
+            or (key in _LOOP_STATE_FIELDS and key != "environment")
         }
         return state.apply(known)
 
@@ -231,8 +212,8 @@ _LOOP_STATE_FIELDS = frozenset(f.name for f in fields(LoopState))
 
 
 __all__ = [
-    "BROWSER_STATE_FIELDS",
-    "BrowserState",
+    "ENVIRONMENT_STATE_FIELDS",
+    "EnvironmentState",
     "LoopState",
     "TierMarks",
 ]

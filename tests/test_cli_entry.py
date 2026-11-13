@@ -222,7 +222,7 @@ def test_doctor_prints_the_provider_without_secrets_or_network(
     out = capsys.readouterr().out
     line = doctor_line(out, "llm")
     assert line.startswith("ok  ")
-    for part in ("openai_compat", "http://llm.test/v1", "gemma-4", "key set", "timeout 60 s × 1", "X-Api-Key"):
+    for part in ("openai_compat", "http://llm.test/v1", "gemma-4", "key set", "read 60 s · 3 attempts", "X-Api-Key"):
         assert part in line
     assert "sk-secret" not in out and "hdr-secret" not in out
     assert "llm probe" not in out
@@ -343,17 +343,32 @@ def test_doctor_warns_when_the_enabled_eval_platform_has_no_host(
     assert line.startswith("!!  ") and "no host" in line
 
 
-def test_doctor_warns_when_a_model_call_can_outlast_the_stall_budget(
+def test_doctor_warns_when_a_read_can_outlast_the_call_deadline(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    use_profile(monkeypatch, tmp_path, "llm:\n  timeout_seconds: 60\n  max_retries: 1\n")
+    # 0.9 x the 120 s stall budget = a 108 s deadline, below the 110 s read timeout.
+    use_profile(monkeypatch, tmp_path, "llm:\n  timeout_seconds: 110\n")
     monkeypatch.setattr(subcommands.shutil, "which", lambda name: None)
 
     entry.main(["doctor"])
 
     line = doctor_line(capsys.readouterr().out, "llm")
     assert line.startswith("!!  ")
+    assert "deadline 108 s" in line
     assert "loop.progress_timeout_seconds" in line
+
+
+def test_doctor_shows_the_phase_timeouts_and_attempts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_profile(monkeypatch, tmp_path, "llm:\n  retry_ambiguous: true\n")
+    monkeypatch.setattr(subcommands.shutil, "which", lambda name: None)
+
+    entry.main(["doctor"])
+
+    line = doctor_line(capsys.readouterr().out, "llm")
+    assert line.startswith("ok  ")
+    assert "connect 10 s / read 60 s · 3 attempts +ambiguous · deadline 108 s" in line
 
 
 @pytest.mark.parametrize(

@@ -519,7 +519,7 @@ class StepView:
     turn: int
     #: The latest ``ToolResult`` (``name``, ``status``, ``content``, ``error``).
     tool_result: Mapping[str, Any]
-    #: Kept read-only outputs per server (``BrowserState.snapshots``).
+    #: Kept read-only outputs per server (``EnvironmentState.snapshots``).
     snapshots: Mapping[str, str]
     #: Tool name -> ``{"server", "read_only", "schema_digest"}`` of the session's tools.
     tool_schemas: Mapping[str, Mapping[str, Any]]

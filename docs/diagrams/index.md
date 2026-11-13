@@ -32,6 +32,9 @@ development workflows.
   `RuntimeLoop`, the render pump as the only writer) and a task with an approval card.
 - [Eval Platform Sync](eval-platform-sync.md): batch folder to Langfuse dataset, experiment
   and scores — components and boundaries, one sync, and the states of an experiment trace.
+- [CI/CD Pipeline](ci-cd-pipeline.md): the offline gate, the optional live regression runs
+  around merges into `main` (decide, before-merge, after-merge, manual), the `ci-state` chain,
+  Langfuse and the release of the stand image; one live run step by step.
 - [Trace Export](trace-export.md): session events through the sinks (`events.jsonl`,
   `agent_trace.jsonl`, the OTLP sink) to Langfuse or another OTLP backend, and the span tree
   of one task.

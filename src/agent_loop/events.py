@@ -43,6 +43,8 @@ EventType = Literal[
     # Agent skills (src/harness/skills.py).
     "skills.invalid",
     "skills.shadowed",
+    # Context the MCP servers provide (src/harness/server_context.py).
+    "mcp.context_skipped",
     # Cost ladder and playback of recordings (src/agent_loop/execution/loop.py).
     "ladder.escalated",
     "playback.started",
@@ -291,10 +293,20 @@ def redact_json_safe(value: Any, *, key: str | None = None) -> Any:
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, BaseException):
-        return {
+        error: dict[str, Any] = {
             "type": type(value).__name__,
             "message": str(value),
         }
+        # An error that classifies itself (``ModelProviderError``: kind, phase, attempts...)
+        # adds those fields, read structurally and redacted like any other value.
+        details = getattr(value, "to_json_dict", None)
+        if callable(details):
+            extra = details()
+            if isinstance(extra, dict):
+                for item_key, item_value in extra.items():
+                    if str(item_key) not in error:
+                        error[str(item_key)] = redact_json_safe(item_value, key=str(item_key))
+        return error
     if isinstance(value, dict):
         return {
             str(item_key): redact_json_safe(item_value, key=str(item_key))

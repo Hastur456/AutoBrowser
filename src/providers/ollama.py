@@ -33,11 +33,15 @@ from src.messages import Message, ToolCall
 from src.providers._wire import (
     arguments_to_dict,
     connection_error,
+    interrupted_error,
+    is_interrupted,
     new_call_id,
     optional_int,
     preview,
+    public_url,
     status_error,
     timeout_error,
+    timeout_phase,
     tool_to_wire,
 )
 
@@ -74,13 +78,21 @@ class OllamaChatModel(ChatModel):
         self._temperature = float(resolved) if resolved is not None else None
         self._max_output_tokens = settings.max_output_tokens
         self._timeout = timeout if timeout is not None else settings.timeout_seconds
+        self._phase_limits = phase_limits(settings, read=self._timeout)
         self._error_preview_chars = settings.error_preview_chars
+        self._host = base_url if base_url is not None else settings.host
         if client is None:
+            import httpx
             from ollama import AsyncClient  # lazy: only needed when a model is built
 
             client = AsyncClient(
-                host=base_url if base_url is not None else settings.host,
-                timeout=self._timeout,
+                host=self._host,
+                timeout=httpx.Timeout(
+                    self._timeout,
+                    connect=self._phase_limits["connect"],
+                    write=self._phase_limits["write"],
+                    pool=self._phase_limits["pool"],
+                ),
                 headers=auth_headers(settings.api_key),
             )
         self._client = client
@@ -104,14 +116,21 @@ class OllamaChatModel(ChatModel):
 
         try:
             reply = await self._client.chat(**request)
-        except ModelProviderError:
-            raise
+        except ModelProviderError as exc:
+            raise self._located(exc) from exc
         except Exception as exc:
-            error = provider_error(exc, self._timeout, self._error_preview_chars)
+            error = provider_error(
+                exc, self._timeout, self._error_preview_chars, phase_limits=self._phase_limits
+            )
             if error is None:
                 raise
-            raise error from exc
+            raise self._located(error) from exc
         return _response_from_reply(reply)
+
+    def _located(self, error: ModelProviderError) -> ModelProviderError:
+        """``error`` with the endpoint (no credentials) and the model it concerns."""
+
+        return error.with_details(endpoint=public_url(self._host), model=self._model)
 
 
 def ollama_llm_factory(
@@ -158,10 +177,29 @@ def _options(
     return options
 
 
+def phase_limits(settings: LLMSettings, *, read: float | None) -> dict[str, float | None]:
+    """The limit of every HTTP phase; ``read`` is the read timeout actually in use."""
+
+    limits = {phase: settings.phase_timeout(phase) for phase in ("connect", "write", "pool")}
+    if read != settings.timeout_seconds:
+        # An explicit ``timeout`` argument stands in for ``timeout_seconds`` everywhere.
+        for phase in ("connect", "write", "pool"):
+            if getattr(settings, f"{phase}_timeout_seconds") is None:
+                limits[phase] = read
+    return {**limits, "read": read}
+
+
 def provider_error(
-    exc: Exception, timeout: float | None, limit: int
+    exc: Exception,
+    timeout: float | None,
+    limit: int,
+    *,
+    phase_limits: dict[str, float | None] | None = None,
 ) -> ModelProviderError | None:
-    """Translate an ``ollama``/``httpx`` failure; ``None`` for anything else."""
+    """Translate an ``ollama``/``httpx`` failure; ``None`` for anything else.
+
+    ``timeout`` is the limit of every phase unless ``phase_limits`` names its own.
+    """
 
     import httpx
     from ollama import RequestError, ResponseError
@@ -174,13 +212,18 @@ def provider_error(
             provider=PROVIDER,
         )
     if isinstance(exc, httpx.TimeoutException):
-        return timeout_error(PROVIDER, timeout)
+        phase = timeout_phase(exc)
+        seconds = (phase_limits or {}).get(phase, timeout) if phase else timeout
+        return timeout_error(PROVIDER, seconds, phase=phase)
+    if isinstance(exc, httpx.TransportError) and is_interrupted(exc):
+        return interrupted_error(PROVIDER, exc)
     if isinstance(exc, (ConnectionError, httpx.TransportError)):
         return connection_error(PROVIDER, exc)
     if isinstance(exc, RequestError):
         return ModelProviderError(
             f"{PROVIDER}: {preview(exc.error, limit) or 'invalid request'}",
             provider=PROVIDER,
+            kind="bad_request",
         )
     return None
 

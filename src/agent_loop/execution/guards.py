@@ -3,7 +3,7 @@
 Ported from the legacy agent-loop guard helpers. State access is typed
 :class:`~src.agent_loop.execution.state.LoopState` attribute access. Each function returns
 a flat update dict that the loop applies through :meth:`LoopState.apply` (which routes
-browser-scoped keys into ``BrowserState``).
+environment-scoped keys into ``EnvironmentState``).
 
 Server-neutral: no element-ref handling and no canonical tool-name mapping. Repeat tracking
 compares tool names and arguments as given; the progress guard reads the action journal

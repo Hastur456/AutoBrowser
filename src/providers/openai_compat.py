@@ -23,21 +23,27 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
 from src.config import LLMSettings, get_settings
 from src.contracts import ToolDef
-from src.llm import ChatModel, ModelProviderError, ModelResponse, ModelUsage
+from src.llm import ChatModel, ModelCallInfo, ModelProviderError, ModelResponse, ModelUsage
 from src.messages import Message, ToolCall
 from src.providers._wire import (
     arguments_to_dict,
     connection_error,
     empty_response_error,
+    interrupted_error,
+    is_interrupted,
     new_call_id,
     optional_int,
     preview,
+    public_url,
+    safe_request_id,
     status_error,
     timeout_error,
+    timeout_phase,
     tool_to_wire,
 )
 
@@ -92,14 +98,24 @@ class OpenAICompatChatModel(ChatModel):
         request = self._request(messages, tools, params)
         try:
             reply = await self._client.chat.completions.create(**request)
-        except ModelProviderError:
-            raise
+        except ModelProviderError as exc:
+            raise self._located(exc) from exc
         except Exception as exc:
             error = provider_error(exc, self._settings)
             if error is None:
                 raise
-            raise error from exc
-        return _response_from_reply(reply)
+            raise self._located(error) from exc
+        try:
+            response = _response_from_reply(reply)
+        except ModelProviderError as exc:
+            raise self._located(exc) from exc
+        rid = safe_request_id(getattr(reply, "_request_id", None))
+        return replace(response, call=ModelCallInfo(request_id=rid)) if rid else response
+
+    def _located(self, error: ModelProviderError) -> ModelProviderError:
+        """``error`` with the endpoint (no credentials) and the model it concerns."""
+
+        return error.with_details(endpoint=public_url(self._settings.host), model=self._model)
 
     def _request(
         self,
@@ -155,8 +171,11 @@ def build_client(
 ) -> Any:
     """An ``AsyncOpenAI`` client configured from ``settings`` alone.
 
-    ``timeout``/``max_retries`` override the settings (the ``doctor --llm`` probe uses its
-    own budget and never retries); ``http_client`` lets tests plug in a mock transport.
+    The client gets one limit per HTTP phase (:meth:`LLMSettings.phase_timeout`) and never
+    retries by itself: retries belong to :class:`~src.providers.resilience.ResilientChatModel`,
+    which knows which failures are safe to repeat. ``timeout`` (one limit for every phase)
+    and ``max_retries`` override that (the ``doctor --llm`` probe uses its own budget);
+    ``http_client`` lets tests plug in a mock transport.
     ``Authorization`` comes from ``llm.extra_headers`` if set there, else from the key,
     else none is sent -- pair every request with :func:`request_headers` for that case.
     """
@@ -189,8 +208,8 @@ def build_client(
     client = AsyncOpenAI(
         api_key=key or _NO_KEY_PLACEHOLDER,
         base_url=settings.host,
-        timeout=timeout if timeout is not None else settings.timeout_seconds,
-        max_retries=max_retries if max_retries is not None else settings.max_retries,
+        timeout=timeout if timeout is not None else http_timeout(settings),
+        max_retries=max_retries if max_retries is not None else 0,
         default_headers=headers,
         http_client=http_client,
     )
@@ -230,22 +249,52 @@ def _user_authorization(settings: LLMSettings) -> str | None:
     return None
 
 
+def http_timeout(settings: LLMSettings) -> Any:
+    """An ``httpx.Timeout`` with the read limit and one limit per other phase."""
+
+    import httpx
+
+    return httpx.Timeout(
+        settings.timeout_seconds,
+        connect=settings.phase_timeout("connect"),
+        write=settings.phase_timeout("write"),
+        pool=settings.phase_timeout("pool"),
+    )
+
+
 def provider_error(exc: BaseException, settings: LLMSettings) -> ModelProviderError | None:
-    """Translate an ``openai`` SDK failure; ``None`` for anything else."""
+    """Translate an ``openai`` SDK failure; ``None`` for anything else.
+
+    The SDK wraps every transport failure in ``APIConnectionError`` (a timeout in its
+    ``APITimeoutError`` subclass); the ``httpx`` cause underneath tells the phase, a
+    connection that never opened from a response cut short.
+    """
 
     import openai
 
     limit = settings.error_preview_chars
     if isinstance(exc, openai.APITimeoutError):
-        return timeout_error(PROVIDER, settings.timeout_seconds)
+        phase = timeout_phase(exc)
+        seconds = settings.phase_timeout(phase) if phase else settings.timeout_seconds
+        return timeout_error(PROVIDER, seconds, phase=phase)
     if isinstance(exc, openai.APIConnectionError):
+        if is_interrupted(exc):
+            return interrupted_error(PROVIDER, exc)
         return connection_error(PROVIDER, exc)
     if isinstance(exc, openai.APIStatusError):
-        return status_error(PROVIDER, exc.status_code, _error_detail(exc), limit)
+        response = getattr(exc, "response", None)
+        return status_error(
+            PROVIDER,
+            exc.status_code,
+            _error_detail(exc),
+            limit,
+            headers=getattr(response, "headers", None),
+        )
     if isinstance(exc, openai.APIError):
         return ModelProviderError(
             f"{PROVIDER}: {preview(exc.message, limit) or 'unreadable response'}",
             provider=PROVIDER,
+            kind="malformed_response",
         )
     return None
 

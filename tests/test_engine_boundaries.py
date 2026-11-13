@@ -19,13 +19,11 @@ SRC = ROOT / "src"
 ENGINE = SRC / "agent_loop" / "execution"
 ENGINE_MODULES = sorted(ENGINE.glob("*.py"))
 
-#: The prompts are revised by the user separately and still describe Playwright tools.
-PROMPT_MODULES = {SRC / "agent_loop" / "prompts.py"}
-SOURCE_MODULES = sorted(path for path in SRC.rglob("*.py") if path not in PROMPT_MODULES)
+#: The prompts included: they are server-neutral (browser rules live in the browser skill).
+SOURCE_MODULES = sorted(SRC.rglob("*.py"))
 
 # A word starting with ``browser_`` is a browser tool name (``browser_snapshot``,
-# ``browser_tabs``) or the prefix itself; state fields such as ``last_browser_action`` do not
-# match.
+# ``browser_tabs``) or the prefix itself; words such as ``fake_browser`` do not match.
 BROWSER_TOOL_NAME = re.compile(r"\bbrowser_\w*")
 #: A string literal that is a browser tool name or the bare prefix.
 BROWSER_NAME_LITERAL = re.compile(r"^browser_\w*$")
@@ -66,6 +64,42 @@ def test_the_engine_imports_nothing_from_the_browser_layer(path: Path) -> None:
     ]
 
     assert not browser_imports, f"{path.name} imports {browser_imports}"
+
+
+def _identifiers(tree: ast.AST) -> set[str]:
+    """Every name the code defines or reads, plus string keys (``"snapshots"``)."""
+
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.arg, ast.keyword)) and node.arg:
+            names.add(node.arg)
+        elif (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and re.fullmatch(r"\w+", node.value)
+        ):
+            names.add(node.value)
+    return names
+
+
+#: The harness class ``EngineResources.from_harness`` is typed against (not engine state).
+ENGINE_BROWSER_NAMES_ALLOWED = {"BrowserHarness"}
+
+
+@pytest.mark.parametrize("path", ENGINE_MODULES, ids=lambda path: path.name)
+def test_the_engine_state_has_no_browser_names(path: Path) -> None:
+    """The loop state is the environment's (``EnvironmentState``), not the browser's."""
+
+    names = _identifiers(ast.parse(path.read_text(encoding="utf-8"))) - ENGINE_BROWSER_NAMES_ALLOWED
+    browserish = sorted(name for name in names if "browser" in name.lower())
+
+    assert not browserish, f"{path.name} uses {browserish}"
 
 
 #: Test-pipeline analytics: they read eval results and answers, the engine never needs them.
@@ -223,7 +257,7 @@ def test_the_fence_sees_the_source_modules() -> None:
     names = {path.relative_to(SRC).as_posix() for path in SOURCE_MODULES}
 
     assert {"agent_loop/execution/loop.py", "harness/session.py", "browser/permissions.py"} <= names
-    assert "agent_loop/prompts.py" not in names
+    assert "agent_loop/prompts.py" in names
 
 
 # -- model providers -----------------------------------------------------------------------

@@ -30,7 +30,7 @@ AutoBrowser turns a natural-language browser task into a controlled loop:
 | `src/agent_loop/` | Runtime-facing action contracts, model action parsing, lifecycle events, replay/evals, metrics, batch/export helpers, context assembly, prompts, skills, and the `GoalRunner` lifecycle boundary. |
 | `src/contracts.py` | Provider-neutral typed tool/plan/observation contracts (no imports from the loop, harness, or browser layers). |
 | `src/config.py` | Typed environment-driven settings — the single source of truth for every tunable. Neutral leaf like `src/contracts.py`; see [the settings ADR](../decisions/2026-09-16-typed-settings-module.md). |
-| `src/state.py` | Type-only `AgentState`/`BrowserState` TypedDicts kept for annotation. |
+| `src/state.py` | Type-only `AgentState` TypedDict kept for annotation. |
 | `src/messages.py` | Dependency-free provider-neutral chat `Message`/`ToolCall` types shared by the engine and providers. |
 | `src/llm.py` | The provider-neutral `ChatModel`/`ModelResponse` chat contract the engine drives, plus `ModelPrice`, `ModelTier` and `ModelTiers` (the session model and the cascade tiers above it). |
 | `src/providers/` | Thin `ChatModel` adapters — `ollama.py` (`/api/chat`) and `openai_compat.py` (Chat Completions) — that serialize `Message`/`ToolDef` to a wire protocol and parse replies into `ModelResponse` (with `ModelUsage`); `registry.py` picks one by `llm.provider` and probes it for `doctor --llm`. Imported only by `src/cli/`. |

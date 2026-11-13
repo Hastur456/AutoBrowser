@@ -47,7 +47,7 @@ class _Capture:
     plan: list[PlanStep] = field(default_factory=list)
     current_step: int | None = None
     pending: Mapping[str, Any] | None = None
-    #: Mirror of ``BrowserState.snapshots`` and of the latest tool output.
+    #: Mirror of ``EnvironmentState.snapshots`` and of the latest tool output.
     snapshots: dict[str, str] = field(default_factory=dict)
     latest: str = ""
     servers: set[str] = field(default_factory=set)
@@ -98,7 +98,7 @@ class Recorder:
         """Record the task ``task_id`` as ``name``; raises for an invalid name.
 
         ``snapshots`` are the kept outputs the task starts from (the carried
-        ``BrowserState.snapshots``): the engine's page view on the first step includes them,
+        ``EnvironmentState.snapshots``): the engine's page view on the first step includes them,
         so the mirror must too.
         """
 

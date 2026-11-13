@@ -21,9 +21,11 @@ from typing import Any, TextIO
 
 from mcp.types import Implementation
 
+from src.agent_loop.context import PromptSection
 from src.config import PROFILE_DIR_PLACEHOLDER, get_settings
 from src.harness.mcp_tools import MCPToolSource
 from src.harness.normalization import SchemaArgsNormalizer, ToolCallNormalizer
+from src.harness.server_context import ContextEvent, server_sections
 from src.mcp import (
     ConnectionState,
     MCPManager,
@@ -135,6 +137,13 @@ class MCPRuntime:
 
     async def close(self) -> None:
         await self.manager.shutdown()
+
+    async def context_sections(
+        self, *, on_event: ContextEvent | None = None
+    ) -> list[PromptSection]:
+        """What the servers say about their tools, as system blocks (``server_context``)."""
+
+        return await server_sections(self.manager, on_event=on_event)
 
     def status(self) -> dict[str, ServerStatus]:
         return self.manager.status()

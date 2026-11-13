@@ -66,8 +66,8 @@ started consuming the terminal `AgentLoopResult` directly. The legacy
 `src/agent_loop/adapters/` bridge and `src/cli/task_runner.py` are gone. Neutral typed
 contracts live in `src/contracts.py` (imports nothing from `src/agent_loop/`,
 `src/harness/`, or `src/browser/`), including the `CompletionStatus`/`GoalStatus`
-literals and `goal_status_from_completion()`; `AgentState`/`BrowserState` remain as
-type-only TypedDicts in `src/state.py` for annotation; prompts are consolidated in
+literals and `goal_status_from_completion()`; `AgentState` remains a type-only TypedDict
+in `src/state.py` for annotation; prompts are consolidated in
 `src/agent_loop/prompts.py`; model defaults are in `src/llm.py`.
 
 Model access runs over the
@@ -117,17 +117,22 @@ adaptation in the engine or prompts — add servers through `mcp_servers` (`src/
 
 **No logic is keyed on tool names** — the harness works the same with any tools, browser or
 not (`docs/decisions/2026-10-19-name-free-tool-handling.md`). `src/agent_loop/execution/`
-imports nothing from `src/browser/`, and no module under `src/` except the user's
-`prompts.py` holds a browser tool name (`tests/test_engine_boundaries.py`). Instead:
+imports nothing from `src/browser/` and names nothing `browser` (the loop state is
+`LoopState.environment: EnvironmentState`), and no module under `src/` holds a browser tool
+name — the prompts included (`tests/test_engine_boundaries.py`, `tests/test_prompts.py`).
+Instead:
 
 - kept snapshots are per server, from the MCP `readOnlyHint`: a successful read-only call
-  stores its output in `BrowserState.snapshots[server]`, a successful state-changing call of
+  stores its output in `EnvironmentState.snapshots[server]`, a successful state-changing call of
   that server drops it; tools without annotations keep nothing;
 - the browser layer reads text formats (`- Page URL:`, `[ref=…]`) from the latest output and
   the kept snapshots, never names;
 - arguments are filtered by the tool schema (`SchemaArgsNormalizer`);
 - prompt sections come from the session's configuration (`ContextAssembler(sections=…)`;
-  the always-on browser-rules skill iff a browser server is configured).
+  the always-on browser-rules skill iff a browser server is configured) and from the servers
+  themselves: their `initialize` `instructions` and the argument-free prompts an `mcp_servers`
+  entry names in `context_prompts` (`src/harness/server_context.py`,
+  `docs/decisions/2026-11-09-server-context-and-neutral-prompts.md`).
 
 ## The Engine Loop
 
@@ -154,8 +159,9 @@ reads the reason); a refused approval is terminal `blocked`. `settings.loop.turn
 The MVP is moving away from deterministic, browser-specific rules towards a universal agent
 without hardcodes: the model decides how to work with whatever tools the configured MCP
 servers expose. Don't add new tool-, site- or page-structure-specific rules to the engine,
-guards, harness, memory policy or descriptive docs. The prompts still carry older browser
-rules; they are revised separately by the user — leave them unchanged unless asked.
+guards, harness, memory policy or descriptive docs. The prompts in `src/agent_loop/prompts.py`
+are server-neutral; browser rules (Playwright tool names, snapshots and refs) live only in the
+built-in `browser-agent-rules` skill. The prompts remain the user's to revise.
 
 `tests/mcp_fixtures/fake_server.py` (a real MCP server) and the local `_FakeBrowserTools`
 helper (`src/agent_loop/evals.py`, duplicated where individual tests need it — there is no
@@ -339,8 +345,9 @@ Agent Skills `SKILL.md` folders (`docs/decisions/2026-10-26-agent-skills.md`; gu
 - `skill_view` (`readOnlyHint`, `server: skills`) in `src/harness/skill_tool.py` returns a body
   or a file inside the skill folder; nothing in a skill is executed.
 - The session hands `ContextAssembler(sections=…)` neutral `PromptSection`s: the `Skills`
-  catalog (when enabled) and the always-on bodies — the browser rules are the built-in
-  `browser-agent-rules` skill, sent whether or not skills are enabled.
+  catalog (when enabled), the always-on bodies — the browser rules are the built-in
+  `browser-agent-rules` skill, sent whether or not skills are enabled — and the server context
+  blocks (priority 46).
   `get_system_prompt()` is the agent prompt plus these sections (the `Tool Inventory` block is
   never sent: tools go as native schemas).
 - The engine and the assembler never import the skill modules or name the tool

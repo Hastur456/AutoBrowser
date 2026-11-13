@@ -142,7 +142,7 @@ def test_context_assembler_is_the_only_prompt_boundary() -> None:
     )
     assert assembler.plan_prompt(
         {"task": "find a product", "observation": "Searchbox is visible."}
-    ).startswith("You are the planning module for a browser automation agent.")
+    ).startswith("You are the planning module of an automation agent.")
 
 
 def test_user_turn_prompt_appends_action_instruction() -> None:

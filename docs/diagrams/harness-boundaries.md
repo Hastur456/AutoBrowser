@@ -24,7 +24,7 @@ flowchart TB
     MODELS["model tiers: session model<br/>+ cascade tiers"]
   end
   subgraph HARNESS["BrowserHarness (per-task composition root)"]
-    CA["ContextAssembler<br/>(prompt sections from skills)"]
+    CA["ContextAssembler<br/>(prompt sections from skills<br/>and MCP server context)"]
     TR["ToolRegistry"]
     TEL["TelemetryObserver, EventEmitter"]
   end
@@ -98,7 +98,10 @@ No tool name decides anything. The `ObservationCompiler` gets the server and the
 snapshot, a successful state-changing call of the server drops it, other servers are
 untouched. The session hands `ContextAssembler` its prompt sections: the always-on skills
 (the browser rules iff a browser server is configured) and, with `skills.enabled`, the
-`Skills` catalog whose bodies the model loads with the `skill_view` harness tool. Neither the
+`Skills` catalog whose bodies the model loads with the `skill_view` harness tool, then the
+server context read once at session start (`src/harness/server_context.py`): each server's
+`initialize` `instructions` and the argument-free prompts its `mcp_servers` entry names in
+`context_prompts` (`mcp:<server>` blocks after the skills). Neither the
 engine nor the assembler knows the skill modules or the tool name
 (`tests/test_skill_boundaries.py`). The engine imports nothing from `src/browser/`
 (`tests/test_engine_boundaries.py`).

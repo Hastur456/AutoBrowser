@@ -20,6 +20,9 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   notes, task digest, persistent memory files — and how to enable, inspect and test them.
 - [Browser Agent Rules](development/browser-agent-rules.md): Playwright MCP
   interaction rules and search-flow debugging guidance.
+- [Langfuse Integration Runbook](development/langfuse.md): step-by-step Langfuse setup with
+  every command — project and keys, `<home>/.env`, `doctor`/`setup`, datasets, batch sync and
+  manual sync, live traces, judges and the annotation queue, recovery, turning it off.
 - [Eval Platform Guide](development/eval-platform.md): batch results as Langfuse datasets,
   experiments and scores (off by default) — connecting, content capture, dataset versions, the
   local verdict as scores, the LLM judge, the annotation queue, recovery.
@@ -107,6 +110,21 @@ workflow, decisions, diagrams, research notes, and shared vocabulary.
   the Windows CI gate, baseline v2 and `run_evals.py`; ADRs
   [pipeline](decisions/2026-10-19-autonomous-test-pipeline.md) and
   [Langfuse](decisions/2026-10-19-langfuse-observability.md)).
+- [Regression Testing and Langfuse in CI/CD Design](development/2026-11-10-regression-ci-cd-design.md):
+  system design and specification (requirements with acceptance criteria, work packages):
+  - the PR gate on Windows and Linux with all three eval suites;
+  - live regression runs only around merges into `main`, each optional and chosen per PR by a
+    label: before merging (a `regression/before-merge` commit status that blocks only a
+    requested, failing run) and after merging (a measurement of `main` that updates the base);
+  - a manual run, no schedule;
+  - the base as the nearest measured ancestor from a `ci-state` artifact chain;
+  - Langfuse on `main` measurements only;
+  - the Docker image published on tags;
+  - what GitHub cannot do and why.
+  It extends the autonomous pipeline design (Russian, Accepted; implemented except the live
+  Linux run, the repository setup and the G8 bridge fix). Decision record:
+  [ADR-2026-11-10](decisions/2026-11-10-regression-and-langfuse-in-ci-cd.md); usage:
+  [Live Regression in CI](development/testing-pipeline.md#live-regression-in-ci).
 - [Batch Analytics and OTLP Trace Export Plan](development/2026-10-29-batch-analytics-and-otlp-export-plan.md)
   (Implemented): self-contained implementation plan — `stop_reason` and `failure_kind`, the batch data
   contract with provenance, traces in the batch folder, run history and

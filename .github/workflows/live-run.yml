@@ -1,0 +1,170 @@
+# One live regression run (reusable; called by regression.yml): a Golden Set suite on live
+# sites against headless Chromium, compared with the nearest measured ancestor from the
+# ci-state artifact chain. See docs/development/2026-11-10-regression-ci-cd-design.md §5.4-§5.9.
+#
+# before-merge  the PR merge ref; writes the regression/before-merge status; never ci-state,
+#               never Langfuse.
+# after-merge   the merge commit on main; journals the verdict, comments the PR, opens or
+#   / manual    closes the regression issue, syncs Langfuse when its keys are set, and
+#               uploads the next ci-state.
+name: live-run
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        type: string
+        required: true
+        description: before-merge | after-merge | manual
+      ref:
+        type: string
+        default: ""
+        description: The commit to check out; empty is the event's default (the PR merge ref).
+      status_sha:
+        type: string
+        default: ""
+        description: The PR head commit of the regression/before-merge status.
+      pr:
+        type: string
+        default: ""
+      suite:
+        type: string
+        default: benchmark
+        description: benchmark | smoke | golden
+      model:
+        type: string
+        default: ""
+        description: Another model than the profile's (llm.model).
+      langfuse:
+        type: boolean
+        default: false
+    secrets:
+      llm_api_key:
+        required: false
+      langfuse_public_key:
+        required: false
+      langfuse_secret_key:
+        required: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      AUTOBROWSER_CONFIG_FILE: ${{ github.workspace }}/ci/regression.yaml
+      AUTOBROWSER_LLM__API_KEY: ${{ secrets.llm_api_key }}
+      AUTOBROWSER_EVAL_PLATFORM__HOST: ${{ vars.LANGFUSE_HOST }}
+      AUTOBROWSER_EVAL_PLATFORM__PUBLIC_KEY: ${{ secrets.langfuse_public_key }}
+      AUTOBROWSER_EVAL_PLATFORM__SECRET_KEY: ${{ secrets.langfuse_secret_key }}
+      PYTHONIOENCODING: utf-8
+      GH_TOKEN: ${{ github.token }}
+      REGRESSION_DEFAULT: ${{ vars.REGRESSION_DEFAULT || 'off' }}
+      # Inputs reach the scripts through the environment, never spliced into a command.
+      MODE: ${{ inputs.mode }}
+      SUITE: ${{ inputs.suite }}
+      MODEL: ${{ inputs.model }}
+      PR: ${{ inputs.pr }}
+      STATUS_SHA: ${{ inputs.status_sha }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          # The whole history: the base is found with git merge-base --is-ancestor.
+          fetch-depth: 0
+      - name: Prepare the home and decide whether Langfuse runs
+        env:
+          HAS_KEYS: ${{ secrets.langfuse_secret_key != '' }}
+          WANTS_LANGFUSE: ${{ inputs.langfuse }}
+        run: |
+          # The `runner` context is not available in job-level env, so the home is set here.
+          echo "AUTOBROWSER_HOME=$RUNNER_TEMP/abhome" >> "$GITHUB_ENV"
+          mkdir -p ci-out
+          on=false
+          if [ "$WANTS_LANGFUSE" = true ] && [ "$HAS_KEYS" = true ]; then on=true; fi
+          echo "AUTOBROWSER_EVAL_PLATFORM__ENABLED=$on" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/live-setup
+      - name: Restore ci-state
+        id: restore
+        run: uv run scripts/ci_state.py restore
+      - name: A main measurement must run a commit of main
+        run: uv run scripts/ci_state.py check-ref --mode "$MODE"
+      - name: Doctor (settings, provider and model, Node.js)
+        run: uv run main.py doctor --llm
+      - name: Langfuse doctor and setup
+        if: env.AUTOBROWSER_EVAL_PLATFORM__ENABLED == 'true'
+        continue-on-error: true
+        run: |
+          if ! uv run scripts/langfuse_sync.py doctor; then
+            echo "::warning::Langfuse doctor failed: this run is not synced"
+            echo "AUTOBROWSER_EVAL_PLATFORM__ENABLED=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          uv run scripts/langfuse_sync.py setup || echo "::warning::langfuse_sync setup failed"
+      - name: Run the suite
+        continue-on-error: true
+        # Below the job's 120: a job timeout is a cancellation, which would skip the report
+        # and leave a before-merge status pending; a step timeout is a failure it survives.
+        timeout-minutes: 100
+        run: |
+          tasks="$(uv run scripts/ci_state.py tasks --suite "$SUITE")"
+          # The batch result is the JSON on stdout; a failed scenario exits 1, which is the
+          # norm on live sites: the comparison with the base decides.
+          uv run scripts/run_batch.py --tasks "$tasks" --continue-on-error --grade \
+            ${MODEL:+--model "$MODEL"} > ci-out/batch.json
+      - name: Compare with the nearest measured ancestor
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: uv run scripts/ci_state.py compare --batch-json ci-out/batch.json --out ci-out
+      - name: Langfuse catch-up
+        if: ${{ !cancelled() && env.AUTOBROWSER_EVAL_PLATFORM__ENABLED == 'true' }}
+        continue-on-error: true
+        run: |
+          uv run scripts/langfuse_sync.py experiment push --pending --suite "$SUITE" \
+            || echo "::warning::Langfuse catch-up failed; the next main measurement retries it"
+          uv run scripts/langfuse_sync.py status
+      - name: Verdict, status, comments, issue
+        id: summary
+        # Not on a cancelled run: a newer run of the same PR writes its own status.
+        if: ${{ !cancelled() }}
+        run: >
+          uv run scripts/ci_summary.py live --mode "$MODE" --out ci-out --suite "$SUITE"
+          --commit "$(git rev-parse HEAD)" --status-sha "$STATUS_SHA" --pr "$PR"
+      - name: Mark the status as an infra error when the run broke before its report
+        if: ${{ !cancelled() && inputs.mode == 'before-merge' && hashFiles('ci-out/summary.done') == '' }}
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$STATUS_SHA" \
+            -f context=regression/before-merge -f state=error \
+            -f description="infra: the run broke before its report, rerun it" \
+            -f target_url="$RUN_URL"
+      - name: Save ci-state (main measurements only)
+        id: save
+        # Only over a restored chain: an upload after a failed restore would cut it.
+        if: ${{ !cancelled() && inputs.mode != 'before-merge' && steps.restore.outcome == 'success' }}
+        run: uv run scripts/ci_state.py save --out ci-state.tar.gz
+      - name: Upload ci-state
+        if: ${{ !cancelled() && steps.save.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-state
+          path: ci-state.tar.gz
+          retention-days: 90
+      - name: Locate the batch
+        id: batch
+        if: ${{ !cancelled() }}
+        run: |
+          dir="$(python3 -c 'import json; print(json.load(open("ci-out/batch.json"))["batch_dir"])' 2>/dev/null || true)"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+      - name: Upload the batch and the reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-batch-${{ github.run_id }}
+          path: |
+            ci-out
+            ${{ steps.batch.outputs.dir }}
+          retention-days: 30

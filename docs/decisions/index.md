@@ -4,6 +4,29 @@ This directory contains Architecture Decision Records (ADRs).
 
 ## Existing Records
 
+- [2026-11-13 Provider Call Resilience](2026-11-13-provider-call-resilience.md)
+  (Proposed): provider errors classified at the adapter (`kind`, `phase`, `cause`, retry safety
+  `safe`/`ambiguous`/`never`, `request_id`, `endpoint`, `attempts`); per-phase HTTP timeouts;
+  one retry layer outside the engine (`ResilientChatModel`, built by `build_chat_model`, SDK
+  retries off) that retries only requests the model never started, with full-jitter backoff,
+  `Retry-After` and a call deadline below the goal stall budget; diagnostics in `goal.failed`
+  and `model.responded`, no new event types. Extends the OpenAI-compatible provider ADR.
+- [2026-11-10 Regression and Langfuse in CI/CD](2026-11-10-regression-and-langfuse-in-ci-cd.md)
+  (Accepted): the offline gate on Windows and Linux with all three eval suites; optional live
+  Golden Set runs around merges into `main`, chosen per PR by label (`regression:before-merge`
+  sets the commit status `regression/before-merge`, written explicitly so an unrelated event
+  never masks a red run; `regression:after-merge` measures the merge commit) or by a manual
+  dispatch; the base is the nearest measured ancestor from a `ci-state` artifact chain only
+  main measurements write; Langfuse only in main measurements; the stand image published on
+  tags behind a green main measurement. Extends the autonomous test pipeline and Langfuse
+  platform ADRs.
+- [2026-11-09 Server Context, Neutral Prompts and EnvironmentState](2026-11-09-server-context-and-neutral-prompts.md)
+  (Accepted, Russian): the MCP `initialize` `instructions` and the argument-free prompts an
+  `mcp_servers` entry names in `context_prompts` become system blocks
+  (`src/harness/server_context.py`); the prompts name no server, tool or site, and the browser
+  rules live only in the `browser-agent-rules` skill; `BrowserState` becomes
+  `EnvironmentState` (`LoopState.environment`) and the never-written `last_browser_action`
+  fields are removed. Extends the name-free tool handling and agent skills ADRs.
 - [2026-11-09 Cascade Above the Session Model, Chat Channels and the Worker Pool](2026-11-09-cascade-channels-and-worker-pool.md)
   (Accepted, Russian): phase 4 of the stand. Tier 0 is always the session model and
   `cascade.tiers` are the tiers above it, built by `src/cli/models.py`; the pure
