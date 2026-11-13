@@ -685,12 +685,12 @@ class BrowserSettings(_Section):
     chrome_path: Annotated[
         Path,
         Field(description="Path to the Chrome executable."),
-    ] = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+    ] = Path("C:/Program Files/Google/Chrome/Application/chrome.exe")
 
     user_data_dir: Annotated[
         Path,
         Field(description="Chrome profile directory reused across sessions."),
-    ] = Path(r"C:\temp\chrome_debug_profile")
+    ] = Path("C:/temp/chrome_debug_profile")
 
     cdp_port: Annotated[
         int,
