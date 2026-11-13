@@ -196,15 +196,17 @@ async def test_the_stand_polls_telegram_and_hands_the_worker_a_broker(monkeypatc
 # -- the worker pool ------------------------------------------------------------------------
 
 
-def test_each_worker_has_its_own_profile_port_and_label(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_each_worker_has_its_own_profile_port_and_label(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from src.cli.serve import worker_args
     from src.config import ServeSettings, StorageSettings
     from src.serve.paths import serve_paths
 
     serve = ServeSettings(workers=3, cdp_port_base=9400)
-    args = worker_args(serve, serve_paths(serve, StorageSettings(root_dir=Path("C:/stand"))), 2)
+    args = worker_args(serve, serve_paths(serve, StorageSettings(root_dir=tmp_path / "stand")), 2)
 
-    assert Path(args.user_data_dir) == Path("C:/stand/serve/profiles/w2")
+    assert Path(args.user_data_dir) == tmp_path / "stand" / "serve" / "profiles" / "w2"
     assert args.cdp_port == 9402
     assert args.labels == {"mode": "serve", "worker": "w2"}
 

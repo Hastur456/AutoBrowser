@@ -684,15 +684,15 @@ def test_serve_check_summary_counts_the_cascade_tiers(
     assert "cascade 1 tiers" in capsys.readouterr().out
 
 
-def test_the_serve_worker_has_its_own_profile_port_and_labels() -> None:
+def test_the_serve_worker_has_its_own_profile_port_and_labels(tmp_path: Path) -> None:
     from src.cli.serve import worker_args
     from src.config import ServeSettings, StorageSettings
     from src.serve.paths import serve_paths
 
     serve = ServeSettings(cdp_port_base=9400)
-    args = worker_args(serve, serve_paths(serve, StorageSettings(root_dir=Path("C:/stand"))))
+    args = worker_args(serve, serve_paths(serve, StorageSettings(root_dir=tmp_path / "stand")))
 
-    assert Path(args.user_data_dir) == Path("C:/stand/serve/profiles/w0")
+    assert Path(args.user_data_dir) == tmp_path / "stand" / "serve" / "profiles" / "w0"
     assert args.cdp_port == 9400
     assert args.labels == {"mode": "serve", "worker": "w0"}
     assert args.interactive is False  # no approval channel: dont_ask

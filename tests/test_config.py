@@ -125,9 +125,9 @@ def test_defaults_match_the_constants_they_replaced(settings: Any) -> None:
     assert config.browser.cdp_port == 9222
     assert config.browser.cdp_timeout_seconds == 30.0
     assert config.browser.chrome_path == Path(
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        "C:/Program Files/Google/Chrome/Application/chrome.exe"
     )
-    assert config.browser.user_data_dir == Path(r"C:\temp\chrome_debug_profile")
+    assert config.browser.user_data_dir == Path("C:/temp/chrome_debug_profile")
     # The session launches a visible Chrome over CDP unless told otherwise (serve mode).
     assert config.browser.launch == "cdp"
     assert config.browser.headless is False
@@ -263,7 +263,7 @@ def test_a_discovered_env_file_can_be_disabled(settings: Any, tmp_path: Path) ->
 
     config = settings(_env_file=None)
 
-    assert config.browser.user_data_dir == Path(r"C:\temp\chrome_debug_profile")
+    assert config.browser.user_data_dir == Path("C:/temp/chrome_debug_profile")
 
 
 def test_empty_env_values_fall_back_to_the_default(

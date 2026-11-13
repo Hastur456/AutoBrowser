@@ -188,7 +188,7 @@ async def test_page_obstacle_detector_ignores_normal_pages_and_takes_extra_patte
 
     assert await run("page_obstacle_detector.py", result_event('- link "Куртка" ref=e10')) is None
     assert await run("page_obstacle_detector.py", result_event(page)) is None
-    extra = await run("page_obstacle_detector.py", result_event(page), "--pattern", "много\\s+запросов")
+    extra = await run("page_obstacle_detector.py", result_event(page), "--pattern", '"много\\s+запросов"')
     assert extra is not None and "bot check" in extra.additional_context
 
 
